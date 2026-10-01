@@ -1,0 +1,30 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+out/
+
+# Compiled Object Files and Libraries
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+
+# macOS junk files
+.DS_Store
+
+# IDE and Editor folders
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+.idea/
+*.swp
+
+# CMake generated artifacts
+compile_commands.json
+CMakeUserPresets.json
