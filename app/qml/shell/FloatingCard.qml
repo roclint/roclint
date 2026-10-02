@@ -5,8 +5,8 @@ import QtQuick.Layouts
 Window {
     id: rootWindow
     title: qsTr("Cadroc")
-    width: 480
-    height: 360
+    width: 460
+    height: 280
     visible: false
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     color: "transparent"
@@ -14,10 +14,6 @@ Window {
     Component.onCompleted: {
         x = (Screen.width - width) / 2
         y = (Screen.height - height) / 2
-    }
-
-    DragHandler {
-        target: rootWindow
     }
 
     // Dismiss with Escape key
@@ -35,45 +31,93 @@ Window {
     Rectangle {
         id: cardBackground
         anchors.fill: parent
-        anchors.margins: 10
-        radius: 12
-        color: "#1E1E2E"
-        border.color: "#45475A"
+        anchors.margins: 8
+        radius: 14
+        color: "#181825"
+        border.color: "#313244"
         border.width: 1
+
+        // Draggable area across the header and card background
+        MouseArea {
+            id: dragArea
+            anchors.fill: parent
+            acceptedButtons: Qt.LeftButton
+            onPressed: rootWindow.startSystemMove()
+        }
 
         ColumnLayout {
             anchors.fill: parent
             anchors.margins: 16
-            spacing: 12
+            spacing: 0
 
-            // Header bar
+            // Header Bar
             RowLayout {
                 Layout.fillWidth: true
-                spacing: 8
+                Layout.preferredHeight: 32
 
                 Text {
-                    text: qsTr("Cadroc / Stardust")
+                    text: qsTr("Cadroc")
                     font.bold: true
                     font.pixelSize: 15
                     color: "#CDD6F4"
                 }
 
-                Item { Layout.fillWidth: true }
-
-                Text {
-                    text: qsTr("Stage 00: B00 Shell")
-                    font.pixelSize: 11
-                    color: "#89DCEB"
+                // Spacer allows dragging by clicking the top bar
+                Item {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
                 }
 
-                Button {
-                    text: "✕"
-                    flat: true
-                    onClicked: {
-                        if (typeof hostController !== "undefined") {
-                            hostController.hideCard()
-                        } else {
-                            rootWindow.hide()
+                // Minimize Button
+                Rectangle {
+                    width: 28
+                    height: 28
+                    radius: 6
+                    color: minMouse.containsMouse ? "#313244" : "transparent"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "—"
+                        color: "#BAC2DE"
+                        font.pixelSize: 14
+                        font.bold: true
+                    }
+
+                    MouseArea {
+                        id: minMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: rootWindow.showMinimized()
+                    }
+                }
+
+                // Close Button
+                Rectangle {
+                    width: 28
+                    height: 28
+                    radius: 6
+                    color: closeMouse.containsMouse ? "#F38BA8" : "transparent"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "✕"
+                        color: closeMouse.containsMouse ? "#11111B" : "#BAC2DE"
+                        font.pixelSize: 13
+                        font.bold: true
+                    }
+
+                    MouseArea {
+                        id: closeMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (typeof hostController !== "undefined") {
+                                hostController.hideCard()
+                            } else {
+                                rootWindow.hide()
+                            }
                         }
                     }
                 }
@@ -83,42 +127,33 @@ Window {
                 Layout.fillWidth: true
                 height: 1
                 color: "#313244"
+                Layout.topMargin: 8
+                Layout.bottomMargin: 16
             }
 
-            // Body
-            Text {
-                text: qsTr("DRAFT (Placeholder Card)")
-                font.bold: true
-                font.pixelSize: 13
-                color: "#F9E2AF"
-            }
-
-            Rectangle {
+            // Body Area: Just cleanly displays "Cadroc"
+            Item {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                color: "#181825"
-                radius: 8
-                border.color: "#313244"
-                border.width: 1
 
-                Text {
+                ColumnLayout {
                     anchors.centerIn: parent
-                    text: qsTr("Resident desktop host active.\n\nClosing this card leaves the host resident in the system tray.\nRe-open from tray restores this single card instance.\nUse Tray -> Quit to terminate.")
-                    color: "#A6ADC8"
-                    font.pixelSize: 12
-                    horizontalAlignment: Text.AlignHCenter
-                }
-            }
+                    spacing: 8
 
-            // Footer
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 12
+                    Text {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: qsTr("Cadroc")
+                        font.bold: true
+                        font.pixelSize: 34
+                        color: "#89B4FA"
+                    }
 
-                Text {
-                    text: qsTr("Host State: ") + (typeof hostController !== "undefined" ? hostController.hostStateString : "RESIDENT")
-                    color: "#A6E3A1"
-                    font.pixelSize: 11
+                    Text {
+                        Layout.alignment: Qt.AlignHCenter
+                        text: qsTr("Desktop Resident Card")
+                        font.pixelSize: 13
+                        color: "#6C7086"
+                    }
                 }
             }
         }
