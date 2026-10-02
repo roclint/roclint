@@ -59,9 +59,7 @@ int main(int argc, char* argv[]) {
 
             // If closed via window controls or system event, hide instead of quitting
             QObject::connect(window, &QQuickWindow::closing,
-                             controller.get(), [controller = controller.get()](QCloseEvent* /*event*/) {
-                controller->hideCard();
-            });
+                             controller.get(), &cadroc::host::HostController::hideCard);
         }
     }
 

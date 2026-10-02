@@ -3,6 +3,8 @@ build/
 build-*/
 cmake-build-*/
 out/
+.venv/
+aqtinstall.log
 
 # Compiled Object Files and Libraries
 *.o
