@@ -81,6 +81,10 @@
 ## 5. Reviewer Sign-Off & Handoff Summary
 
 - **Prerequisite failures:** None. Both A00 and B00 met all acceptance criteria.
+- **macOS Live QA:** Conducted by Jesse K Ramon (Human A) in [`handoffs/Jesse/I00_foundation_review.md`](Jesse/I00_foundation_review.md). Confirmed working card dragging, resident menu-bar presence, hide-on-esc, and clean termination.
+- **QA Polish Implemented:**
+  - Added native `Menlo` monospace font fallback for macOS (`rootWindow.monoFont`) alongside Windows `Consolas` for pixel-perfect ASCII rendering on both OSes.
+  - Made `[-]` button minimize on Windows and hide to tray on macOS (frameless panels cannot dock-minimize on macOS).
 - **Unresolved boundary issues:** None.
 - **Bypassed authorship boundaries:** None. Human A owned core workspace; Human B owned desktop workspace.
 - **Stage 00 Complete:** Foundation checkpoint **I00** is verified and marked **DONE**.

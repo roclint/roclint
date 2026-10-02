@@ -11,6 +11,8 @@ Window {
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     color: "transparent"
 
+    readonly property string monoFont: (Qt.platform.os === "osx" || Qt.platform.os === "macos") ? "Menlo" : "Consolas"
+
     Component.onCompleted: {
         x = (Screen.width - width) / 2
         y = (Screen.height - height) / 2
@@ -61,7 +63,7 @@ Window {
                     model: 34 * 15
                     Text {
                         text: (index % 7 === 0) ? "x" : ((index % 3 === 0) ? "+" : "·")
-                        font.family: "Consolas"
+                        font.family: rootWindow.monoFont
                         font.pixelSize: 11
                         color: "#89DCEB"
                     }
@@ -85,7 +87,7 @@ Window {
                 // Header Title in ASCII bracket format
                 Text {
                     text: "+--[ CADROC ]"
-                    font.family: "Consolas"
+                    font.family: rootWindow.monoFont
                     font.bold: true
                     font.pixelSize: 13
                     color: "#89DCEB" // Cyan terminal accent
@@ -109,7 +111,7 @@ Window {
                     Text {
                         anchors.centerIn: parent
                         text: "[-]"
-                        font.family: "Consolas"
+                        font.family: rootWindow.monoFont
                         font.bold: true
                         font.pixelSize: 12
                         color: minMouse.containsMouse ? "#89DCEB" : "#8B949E"
@@ -120,7 +122,17 @@ Window {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: rootWindow.showMinimized()
+                        onClicked: {
+                            if (Qt.platform.os === "osx" || Qt.platform.os === "macos") {
+                                if (typeof hostController !== "undefined") {
+                                    hostController.hideCard()
+                                } else {
+                                    rootWindow.hide()
+                                }
+                            } else {
+                                rootWindow.showMinimized()
+                            }
+                        }
                     }
                 }
 
@@ -135,7 +147,7 @@ Window {
                     Text {
                         anchors.centerIn: parent
                         text: "[x]"
-                        font.family: "Consolas"
+                        font.family: rootWindow.monoFont
                         font.bold: true
                         font.pixelSize: 12
                         color: closeMouse.containsMouse ? "#FFFFFF" : "#8B949E"
@@ -158,7 +170,7 @@ Window {
 
                 Text {
                     text: "+"
-                    font.family: "Consolas"
+                    font.family: rootWindow.monoFont
                     font.pixelSize: 13
                     color: "#30363D"
                 }
@@ -183,7 +195,7 @@ Window {
                               "| |     / _ \\ | | | | |_) | | | | |    \n" +
                               "| |___ / ___ \\| |_| |  _ <| |_| | |___ \n" +
                               " \\____/_/   \\_\\____/|_| \\_\\___/ \\____|"
-                        font.family: "Consolas"
+                        font.family: rootWindow.monoFont
                         font.bold: true
                         font.pixelSize: 15
                         color: "#C9D1D9" // Crisp terminal text
@@ -197,7 +209,7 @@ Window {
 
                         Text {
                             text: "[ * ]"
-                            font.family: "Consolas"
+                            font.family: rootWindow.monoFont
                             font.bold: true
                             font.pixelSize: 11
                             color: "#7EE787" // Green terminal status light
@@ -205,7 +217,7 @@ Window {
 
                         Text {
                             text: "RESIDENT HOST :: v0.1.0"
-                            font.family: "Consolas"
+                            font.family: rootWindow.monoFont
                             font.pixelSize: 11
                             color: "#8B949E"
                         }
@@ -223,14 +235,14 @@ Window {
 
                 Text {
                     text: "+--"
-                    font.family: "Consolas"
+                    font.family: rootWindow.monoFont
                     font.pixelSize: 12
                     color: "#30363D"
                 }
 
                 Text {
                     text: "[ ESC: HIDE TO TRAY ]"
-                    font.family: "Consolas"
+                    font.family: rootWindow.monoFont
                     font.pixelSize: 10
                     color: "#484F58"
                 }
@@ -243,7 +255,7 @@ Window {
 
                 Text {
                     text: "[ DRAGGABLE ]--+"
-                    font.family: "Consolas"
+                    font.family: rootWindow.monoFont
                     font.pixelSize: 10
                     color: "#484F58"
                 }
