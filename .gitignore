@@ -3,6 +3,8 @@ build/
 build-*/
 cmake-build-*/
 out/
+.venv/
+aqtinstall.log
 
 # Compiled Object Files and Libraries
 *.o
@@ -28,3 +30,6 @@ out/
 # CMake generated artifacts
 compile_commands.json
 CMakeUserPresets.json
+
+# Local diagnostic screenshots
+cadroc_card_render.png

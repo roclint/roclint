@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/shell">
+        <file>FloatingCard.qml</file>
+    </qresource>
+</RCC>
