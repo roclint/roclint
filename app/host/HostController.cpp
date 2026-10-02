@@ -1,12 +1,9 @@
 #include "HostController.hpp"
-#include <QCoreApplication>
 
 namespace cadroc::host {
 
 HostController::HostController(QObject* parent)
-    : QObject(parent),
-      m_hostState(HostState::Resident),
-      m_cardVisibility(CardVisibility::Hidden) {
+    : QObject(parent) {
 }
 
 HostState HostController::hostState() const noexcept {
@@ -39,22 +36,27 @@ bool HostController::isCardVisible() const noexcept {
     return m_cardVisibility != CardVisibility::Hidden;
 }
 
+void HostController::markResident() {
+    if (m_hostState != HostState::Starting) {
+        return;
+    }
+    m_hostState = HostState::Resident;
+    emit hostStateChanged();
+}
+
 void HostController::showCard() {
     if (m_hostState == HostState::Quitting) {
         return;
     }
     // Invariant: repeated show calls focus the single logical card instance
-    m_cardVisibility = CardVisibility::Focused;
-    emit cardVisibilityChanged();
+    setCardVisibility(CardVisibility::Focused);
     emit showCardRequested();
 }
 
 void HostController::hideCard() {
-    if (m_cardVisibility == CardVisibility::Hidden) {
+    if (!setCardVisibility(CardVisibility::Hidden)) {
         return;
     }
-    m_cardVisibility = CardVisibility::Hidden;
-    emit cardVisibilityChanged();
     emit hideCardRequested();
     // Invariant: hiding/closing the card keeps m_hostState at Resident
 }
@@ -71,12 +73,27 @@ void HostController::requestQuit() {
     if (m_hostState == HostState::Quitting) {
         return;
     }
+    hideCard();
     m_hostState = HostState::Quitting;
-    m_cardVisibility = CardVisibility::Hidden;
-    emit cardVisibilityChanged();
     emit hostStateChanged();
+    // The application owner decides how to exit; the controller stays testable.
     emit quitRequested();
-    QCoreApplication::quit();
+}
+
+void HostController::syncCardVisibility(CardVisibility visibility) {
+    if (m_hostState == HostState::Quitting) {
+        return;
+    }
+    setCardVisibility(visibility);
+}
+
+bool HostController::setCardVisibility(CardVisibility visibility) {
+    if (m_cardVisibility == visibility) {
+        return false;
+    }
+    m_cardVisibility = visibility;
+    emit cardVisibilityChanged();
+    return true;
 }
 
 } // namespace cadroc::host

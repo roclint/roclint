@@ -2,6 +2,8 @@
 
 #include <QObject>
 
+#include <memory>
+
 class QSystemTrayIcon;
 class QMenu;
 class QAction;
@@ -28,7 +30,7 @@ private:
 
     HostController* m_controller{nullptr};
     QSystemTrayIcon* m_trayIcon{nullptr};
-    QMenu* m_trayMenu{nullptr};
+    std::unique_ptr<QMenu> m_trayMenu; // QSystemTrayIcon does not take ownership
     QAction* m_openAction{nullptr};
     QAction* m_quitAction{nullptr};
 };

@@ -17,10 +17,15 @@ TrayManager::TrayManager(HostController* controller, QObject* parent)
 TrayManager::~TrayManager() {
     if (m_trayIcon) {
         m_trayIcon->hide();
+        // m_trayMenu is destroyed before the icon (a QObject child), so detach it first.
+        m_trayIcon->setContextMenu(nullptr);
     }
 }
 
 bool TrayManager::initTray() {
+    if (m_trayIcon) {
+        return true;
+    }
     if (!QSystemTrayIcon::isSystemTrayAvailable()) {
         return false;
     }
@@ -33,7 +38,7 @@ bool TrayManager::initTray() {
 }
 
 void TrayManager::createActions() {
-    m_trayMenu = new QMenu();
+    m_trayMenu = std::make_unique<QMenu>();
 
     m_openAction = m_trayMenu->addAction(QStringLiteral("Open Stardust"));
     connect(m_openAction, &QAction::triggered, m_controller, &HostController::showCard);
@@ -46,7 +51,7 @@ void TrayManager::createActions() {
 
 void TrayManager::createTrayIcon() {
     m_trayIcon = new QSystemTrayIcon(this);
-    m_trayIcon->setContextMenu(m_trayMenu);
+    m_trayIcon->setContextMenu(m_trayMenu.get());
     m_trayIcon->setToolTip(QStringLiteral("Stardust / Cadroc - Resident Host"));
 
     // Programmatically drawn crisp vector icon fallback
@@ -67,10 +72,15 @@ void TrayManager::createTrayIcon() {
 }
 
 void TrayManager::onTrayIconActivated(int reason) {
-    if (reason == QSystemTrayIcon::Trigger || reason == QSystemTrayIcon::DoubleClick) {
-        if (m_controller) {
-            m_controller->toggleCard();
-        }
+    if (!m_controller) {
+        return;
+    }
+    // Windows reports a double-click as Trigger followed by DoubleClick. Toggling on
+    // both would show and immediately re-hide the card, so DoubleClick only shows.
+    if (reason == QSystemTrayIcon::Trigger) {
+        m_controller->toggleCard();
+    } else if (reason == QSystemTrayIcon::DoubleClick) {
+        m_controller->showCard();
     }
 }
 

@@ -112,6 +112,7 @@ if(BUILD_TESTING)
         cadroc_core
     )
 
+    target_include_directories(cadroc_core_tests PRIVATE tests)
     target_compile_features(cadroc_core_tests PRIVATE cxx_std_20)
 
     # Register with CTest
@@ -128,6 +129,7 @@ if(BUILD_TESTING)
             Qt6::Core
         )
 
+        target_include_directories(cadroc_viewmodel_tests PRIVATE tests)
         target_compile_features(cadroc_viewmodel_tests PRIVATE cxx_std_20)
         add_test(NAME cadroc_host_lifecycle COMMAND cadroc_viewmodel_tests)
     endif()

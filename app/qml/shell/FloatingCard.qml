@@ -11,7 +11,18 @@ Window {
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     color: "transparent"
 
-    readonly property string monoFont: (Qt.platform.os === "osx" || Qt.platform.os === "macos") ? "Menlo" : "Consolas"
+    readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
+    readonly property string monoFont: isMac ? "Menlo" : "Consolas"
+
+    // Single dismissal path: always routed through the host controller so its
+    // visibility state stays authoritative.
+    function dismissCard() {
+        if (typeof hostController !== "undefined") {
+            hostController.hideCard()
+        } else {
+            rootWindow.hide()
+        }
+    }
 
     Component.onCompleted: {
         x = (Screen.width - width) / 2
@@ -21,13 +32,7 @@ Window {
     // Dismiss with Escape key
     Shortcut {
         sequence: "Esc"
-        onActivated: {
-            if (typeof hostController !== "undefined") {
-                hostController.hideCard()
-            } else {
-                rootWindow.hide()
-            }
-        }
+        onActivated: rootWindow.dismissCard()
     }
 
     // Main Card Frame
@@ -53,21 +58,31 @@ Window {
             clip: true
             opacity: 0.08
 
-            Grid {
-                anchors.fill: parent
-                columns: 34
-                rows: 15
-                spacing: 8
-
-                Repeater {
-                    model: 34 * 15
-                    Text {
-                        text: (index % 7 === 0) ? "x" : ((index % 3 === 0) ? "+" : "·")
-                        font.family: rootWindow.monoFont
-                        font.pixelSize: 11
-                        color: "#89DCEB"
+            // One Text item instead of a 510-delegate Repeater; letterSpacing and a
+            // fixed line height reproduce the former 8px grid spacing.
+            Text {
+                readonly property int columns: 34
+                readonly property int rows: 15
+                text: {
+                    const lines = []
+                    for (let r = 0; r < rows; ++r) {
+                        let line = ""
+                        for (let c = 0; c < columns; ++c) {
+                            const i = r * columns + c
+                            line += (i % 7 === 0) ? "x" : ((i % 3 === 0) ? "+" : "·")
+                        }
+                        lines.push(line)
                     }
+                    return lines.join("
+")
                 }
+                textFormat: Text.PlainText
+                font.family: rootWindow.monoFont
+                font.pixelSize: 11
+                font.letterSpacing: 8
+                lineHeightMode: Text.FixedHeight
+                lineHeight: 21
+                color: "#89DCEB"
             }
         }
 
@@ -122,17 +137,10 @@ Window {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (Qt.platform.os === "osx" || Qt.platform.os === "macos") {
-                                if (typeof hostController !== "undefined") {
-                                    hostController.hideCard()
-                                } else {
-                                    rootWindow.hide()
-                                }
-                            } else {
-                                rootWindow.showMinimized()
-                            }
-                        }
+                        // macOS does not minimize frameless panels to the Dock, so hide to the
+                        // menu bar there. On Windows the minimize is reported back to the
+                        // controller via the window's visibilityChanged signal.
+                        onClicked: rootWindow.isMac ? rootWindow.dismissCard() : rootWindow.showMinimized()
                     }
                 }
 
@@ -158,13 +166,7 @@ Window {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            if (typeof hostController !== "undefined") {
-                                hostController.hideCard()
-                            } else {
-                                rootWindow.hide()
-                            }
-                        }
+                        onClicked: rootWindow.dismissCard()
                     }
                 }
 
@@ -216,7 +218,7 @@ Window {
                         }
 
                         Text {
-                            text: "RESIDENT HOST :: v0.1.0"
+                            text: "RESIDENT HOST :: v" + Qt.application.version
                             font.family: rootWindow.monoFont
                             font.pixelSize: 11
                             color: "#8B949E"

@@ -55,6 +55,6 @@ $env:PATH = "D:\Qt\6.8.2\msvc2022_64\bin;$env:PATH"
 
 ## 4. Contracts Satisfied
 
-* **[C05 Desktop View-Model Contract](../../contracts/C05_desktop_view_model.md):** Typed lifecycle states (`Hidden`, `Visible`, `Focused`), non-blocking startup.
+* **[C05 Desktop View-Model Contract](../../contracts/C05_desktop_view_model.md):** Typed lifecycle states (Host: `Starting` -> `Resident` -> `Quitting`; Card: `Hidden`, `Visible`, `Focused`), non-blocking startup.
 * **[C08 Runtime & Packaging Contract](../../contracts/C08_runtime_packaging.md):** User-session resident lifetime, explicit quit termination.
 * **[C09 Desktop Invocation & Host Context Contract](../../contracts/C09_invocation_host_context.md):** System tray presence, single-instance focus/toggle rule.

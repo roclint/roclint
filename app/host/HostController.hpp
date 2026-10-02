@@ -35,10 +35,15 @@ public:
     [[nodiscard]] bool isCardVisible() const noexcept;
 
 public slots:
+    void markResident();
     void showCard();
     void hideCard();
     void toggleCard();
     void requestQuit();
+
+    // Records a visibility change the window system made on its own (taskbar
+    // minimize/restore, focus loss). Updates state without emitting show/hide requests.
+    void syncCardVisibility(cadroc::host::CardVisibility visibility);
 
 signals:
     void cardVisibilityChanged();
@@ -48,6 +53,8 @@ signals:
     void quitRequested();
 
 private:
+    bool setCardVisibility(CardVisibility visibility);
+
     HostState m_hostState{HostState::Starting};
     CardVisibility m_cardVisibility{CardVisibility::Hidden};
 };

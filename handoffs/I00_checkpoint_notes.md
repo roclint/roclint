@@ -42,6 +42,7 @@
    - Core library has zero dependencies on Qt, GUI, or desktop host headers.
 
 3. **Lifecycle & Residency Invariant**:
+   - HostController initializes in `Starting` and transitions to `Resident` upon successful QML engine load.
    - `QApplication::setQuitOnLastWindowClosed(false)` guarantees the resident host remains alive when the floating card is hidden or closed.
    - System tray (`QSystemTrayIcon`) provides persistent resident control.
    - Single-instance invariant: invoking show/open toggles or focuses the existing card instance rather than creating duplicates.
@@ -63,6 +64,7 @@
    ```text
    [Cadroc Host] Version: 0.1.0
    [Cadroc Host] Core Version: 0.1.0
+   [Cadroc Host] Host State: RESIDENT
    [Cadroc Host] Qt Version: 6.8.2
    [Cadroc Host] Dry-run passed. QML root object verified. Exiting cleanly.
    ```
