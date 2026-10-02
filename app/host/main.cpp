@@ -11,7 +11,7 @@
 #include <string_view>
 
 int main(int argc, char* argv[]) {
-    // 0. Command-line check for automated/CI dry-run without blocking on GUI loop
+    bool autoShow = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg(argv[i]);
         if (arg == "--dry-run" || arg == "--smoke-test" || arg == "--version") {
@@ -20,6 +20,9 @@ int main(int argc, char* argv[]) {
             std::cout << "[Cadroc Host] Qt Version: " << qVersion() << std::endl;
             std::cout << "[Cadroc Host] Dry-run passed. Exiting cleanly." << std::endl;
             return 0;
+        }
+        if (arg == "--show") {
+            autoShow = true;
         }
     }
 
@@ -74,6 +77,10 @@ int main(int argc, char* argv[]) {
             // If closed via window controls or system event, hide instead of quitting
             QObject::connect(window, &QQuickWindow::closing,
                              controller.get(), &cadroc::host::HostController::hideCard);
+
+            if (autoShow) {
+                controller->showCard();
+            }
         }
     }
 

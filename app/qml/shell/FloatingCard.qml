@@ -11,6 +11,13 @@ Window {
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
     color: "transparent"
 
+    x: (Screen.width - width) / 2
+    y: (Screen.height - height) / 2
+
+    DragHandler {
+        target: rootWindow
+    }
+
     // Dismiss with Escape key
     Shortcut {
         sequence: "Esc"
