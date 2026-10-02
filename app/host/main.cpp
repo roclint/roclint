@@ -50,39 +50,42 @@ int main(int argc, char* argv[]) {
 
     const QUrl url(QStringLiteral("qrc:/shell/FloatingCard.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
-                     &app, [url](QObject* obj, const QUrl& objUrl) {
+                     &app, [url, controller = controller.get(), autoShow](QObject* obj, const QUrl& objUrl) {
         if (!obj && url == objUrl) {
+            std::cerr << "[Cadroc Host] Error: Failed to load QML root object from " << objUrl.toString().toStdString() << std::endl;
             QCoreApplication::exit(-1);
+            return;
         }
-    }, Qt::QueuedConnection);
 
-    engine.load(url);
-
-    // 6. Connect controller signals to the single QQuickWindow
-    if (!engine.rootObjects().isEmpty()) {
-        auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+        auto* window = qobject_cast<QQuickWindow*>(obj);
         if (window) {
-            QObject::connect(controller.get(), &cadroc::host::HostController::showCardRequested,
+            std::cout << "[Cadroc Host] QQuickWindow initialized successfully." << std::endl;
+            QObject::connect(controller, &cadroc::host::HostController::showCardRequested,
                              window, [window]() {
+                std::cout << "[Cadroc Host] Showing floating card window..." << std::endl;
+                window->setVisible(true);
                 window->show();
                 window->raise();
                 window->requestActivate();
             });
 
-            QObject::connect(controller.get(), &cadroc::host::HostController::hideCardRequested,
+            QObject::connect(controller, &cadroc::host::HostController::hideCardRequested,
                              window, [window]() {
+                std::cout << "[Cadroc Host] Hiding floating card window..." << std::endl;
                 window->hide();
             });
 
             // If closed via window controls or system event, hide instead of quitting
             QObject::connect(window, &QQuickWindow::closing,
-                             controller.get(), &cadroc::host::HostController::hideCard);
+                             controller, &cadroc::host::HostController::hideCard);
 
             if (autoShow) {
                 controller->showCard();
             }
         }
-    }
+    }, Qt::QueuedConnection);
+
+    engine.load(url);
 
     std::cout << "[Cadroc Host] Resident background host started. Use System Tray -> Quit to terminate." << std::endl;
     return app.exec();

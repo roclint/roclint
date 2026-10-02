@@ -8,11 +8,13 @@ Window {
     width: 480
     height: 360
     visible: false
-    flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+    flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     color: "transparent"
 
-    x: (Screen.width - width) / 2
-    y: (Screen.height - height) / 2
+    Component.onCompleted: {
+        x = (Screen.width - width) / 2
+        y = (Screen.height - height) / 2
+    }
 
     DragHandler {
         target: rootWindow
