@@ -35,7 +35,7 @@ bool TrayManager::initTray() {
 void TrayManager::createActions() {
     m_trayMenu = new QMenu();
 
-    m_openAction = m_trayMenu->addAction(QStringLiteral("Open Cadroc"));
+    m_openAction = m_trayMenu->addAction(QStringLiteral("Open Stardust"));
     connect(m_openAction, &QAction::triggered, m_controller, &HostController::showCard);
 
     m_trayMenu->addSeparator();
@@ -47,7 +47,7 @@ void TrayManager::createActions() {
 void TrayManager::createTrayIcon() {
     m_trayIcon = new QSystemTrayIcon(this);
     m_trayIcon->setContextMenu(m_trayMenu);
-    m_trayIcon->setToolTip(QStringLiteral("Cadroc - Resident Host"));
+    m_trayIcon->setToolTip(QStringLiteral("Stardust / Cadroc - Resident Host"));
 
     // Programmatically drawn crisp vector icon fallback
     QPixmap pixmap(32, 32);

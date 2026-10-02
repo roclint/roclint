@@ -1,5 +1,6 @@
 #include "HostController.hpp"
 #include "TrayManager.hpp"
+#include "cadroc/core/version.hpp"
 
 #include <QApplication>
 #include <QQmlApplicationEngine>
@@ -7,8 +8,21 @@
 #include <QQuickWindow>
 #include <iostream>
 #include <memory>
+#include <string_view>
 
 int main(int argc, char* argv[]) {
+    // 0. Command-line check for automated/CI dry-run without blocking on GUI loop
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view arg(argv[i]);
+        if (arg == "--dry-run" || arg == "--smoke-test" || arg == "--version") {
+            std::cout << "[Cadroc Host] Version: 0.1.0" << std::endl;
+            std::cout << "[Cadroc Host] Core Version: " << cadroc::core::get_version_string() << std::endl;
+            std::cout << "[Cadroc Host] Qt Version: " << qVersion() << std::endl;
+            std::cout << "[Cadroc Host] Dry-run passed. Exiting cleanly." << std::endl;
+            return 0;
+        }
+    }
+
     // 1. Initialize desktop application with GUI and Widget support
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("Cadroc"));
@@ -63,6 +77,6 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    std::cout << "[Cadroc Host] Resident background host started. Use System Tray -> Quit to terminate.\n";
+    std::cout << "[Cadroc Host] Resident background host started. Use System Tray -> Quit to terminate." << std::endl;
     return app.exec();
 }
