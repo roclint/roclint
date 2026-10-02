@@ -5,6 +5,7 @@ project(Cadroc VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # -----------------------------------------------------------------------------
 # 1. Define the Core Static Library Target (cadroc_core) - A00
@@ -35,6 +36,10 @@ target_compile_features(cadroc_core PUBLIC cxx_std_20)
 option(BUILD_DESKTOP "Build the desktop resident host and shell" ON)
 
 if(BUILD_DESKTOP)
+    if(APPLE AND NOT DEFINED CMAKE_PREFIX_PATH AND EXISTS "/opt/homebrew/opt/qt")
+        list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew/opt/qt")
+    endif()
+
     find_package(Qt6 6.2 COMPONENTS Core Gui Quick Qml Widgets QUIET)
 
     if(Qt6_FOUND)
