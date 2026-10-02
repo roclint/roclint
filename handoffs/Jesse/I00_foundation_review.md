@@ -48,6 +48,15 @@ These items were observed during live macOS testing:
 * **Observation:** Pressing `Esc` dismisses the card, but pressing `Esc` again does not re-summon it once hidden.
 * **Architecture Clarification:** Working as intended for B00. `Esc` is an in-window key event (only heard when the card is focused). Re-summoning from anywhere will be handled by the Global OS Hotkey in Stage 01b (Contract C09).
 
+### Note 4: Menu Bar Tray Branding ("Stardust" vs "Cadroc")
+* **Observation:** Clicking the menu bar icon next to the macOS battery displays "Open Stardust", and the tooltip reads "Stardust / Cadroc - Resident Host".
+* **Root Cause:** In `app/host/TrayManager.cpp` (lines 43 & 55), string literals still reference the legacy project name "Stardust".
+* **Recommended Fix:** Update both strings to `QStringLiteral("Open Cadroc")` and `QStringLiteral("Cadroc - Resident Host")`.
+
+### Note 5: HUD Resizing Behavior & Monospace Graphics
+* **Observation:** When resizing the floating widget, the background container expands, but the internal ASCII graphics and ambient matrix do not scale.
+* **Architecture Clarification:** Working as intended. The UI graphics are monospace text glyphs (11px fixed font), not vector/SVG images. The ambient dithering is a 34x15 character grid and the center title is an ASCII banner. As a Spotlight/Raycast-style HUD card (Contract C09), it is meant to stay compact (~520x270). In Stage 01 (B01), the center ASCII graphic will be replaced by the Prompt Text Editor, where window resizing will expand the text input area rather than scaling graphic elements.
+
 ---
 
 ## 3. Product Milestone Status
