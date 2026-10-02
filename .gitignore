@@ -30,3 +30,6 @@ aqtinstall.log
 # CMake generated artifacts
 compile_commands.json
 CMakeUserPresets.json
+
+# Local diagnostic screenshots
+cadroc_card_render.png

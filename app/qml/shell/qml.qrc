@@ -1,6 +1,6 @@
 <RCC>
     <qresource prefix="/shell">
         <file>FloatingCard.qml</file>
-        <file>assets/ascii_sky_clean.jpg</file>
+        <file>assets/ascii_sky_clean.png</file>
     </qresource>
 </RCC>

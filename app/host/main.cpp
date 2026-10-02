@@ -6,22 +6,25 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <QTimer>
 #include <iostream>
 #include <memory>
 #include <string_view>
 
 int main(int argc, char* argv[]) {
+    bool dryRun = false;
     bool autoShow = false;
+    QString screenshotPath;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg(argv[i]);
-        if (arg == "--dry-run" || arg == "--smoke-test" || arg == "--version") {
-            std::cout << "[Cadroc Host] Version: 0.1.0" << std::endl;
-            std::cout << "[Cadroc Host] Core Version: " << cadroc::core::get_version_string() << std::endl;
-            std::cout << "[Cadroc Host] Qt Version: " << qVersion() << std::endl;
-            std::cout << "[Cadroc Host] Dry-run passed. Exiting cleanly." << std::endl;
-            return 0;
+        if (arg == "--dry-run" || arg == "--smoke-test") {
+            dryRun = true;
         }
         if (arg == "--show") {
+            autoShow = true;
+        }
+        if (arg == "--screenshot" && i + 1 < argc) {
+            screenshotPath = QString::fromLocal8Bit(argv[++i]);
             autoShow = true;
         }
     }
@@ -50,7 +53,7 @@ int main(int argc, char* argv[]) {
 
     const QUrl url(QStringLiteral("qrc:/shell/FloatingCard.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
-                     &app, [url, controller = controller.get(), autoShow](QObject* obj, const QUrl& objUrl) {
+                     &app, [url, controller = controller.get(), autoShow, dryRun, screenshotPath](QObject* obj, const QUrl& objUrl) {
         if (!obj && url == objUrl) {
             std::cerr << "[Cadroc Host] Error: Failed to load QML root object from " << objUrl.toString().toStdString() << std::endl;
             QCoreApplication::exit(-1);
@@ -79,13 +82,38 @@ int main(int argc, char* argv[]) {
             QObject::connect(window, &QQuickWindow::closing,
                              controller, &cadroc::host::HostController::hideCard);
 
-            if (autoShow) {
+            if (autoShow && !dryRun) {
                 controller->showCard();
+            }
+
+            if (!screenshotPath.isEmpty()) {
+                QTimer::singleShot(600, window, [window, screenshotPath]() {
+                    const QImage img = window->grabWindow();
+                    if (img.save(screenshotPath)) {
+                        std::cout << "[Cadroc Host] Screenshot saved to " << screenshotPath.toStdString() << std::endl;
+                    } else {
+                        std::cerr << "[Cadroc Host] Error saving screenshot to " << screenshotPath.toStdString() << std::endl;
+                    }
+                    QCoreApplication::quit();
+                });
             }
         }
     }, Qt::QueuedConnection);
 
     engine.load(url);
+
+    if (engine.rootObjects().isEmpty()) {
+        std::cerr << "[Cadroc Host] Error: Failed to load QML root object from " << url.toString().toStdString() << std::endl;
+        return 1;
+    }
+
+    if (dryRun) {
+        std::cout << "[Cadroc Host] Version: 0.1.0" << std::endl;
+        std::cout << "[Cadroc Host] Core Version: " << cadroc::core::get_version_string() << std::endl;
+        std::cout << "[Cadroc Host] Qt Version: " << qVersion() << std::endl;
+        std::cout << "[Cadroc Host] Dry-run passed. QML root object verified. Exiting cleanly." << std::endl;
+        return 0;
+    }
 
     std::cout << "[Cadroc Host] Resident background host started. Use System Tray -> Quit to terminate." << std::endl;
     return app.exec();
