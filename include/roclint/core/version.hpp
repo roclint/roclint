@@ -2,7 +2,7 @@
 
 #include <string_view>
 
-namespace cadroc::core {
+namespace roclint::core {
 
 struct Version {
     int major = 0;

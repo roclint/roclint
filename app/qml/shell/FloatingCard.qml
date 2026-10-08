@@ -4,7 +4,7 @@ import QtQuick.Layouts
 
 Window {
     id: rootWindow
-    title: qsTr("Cadroc")
+    title: qsTr("Roclint")
     width: 520
     height: 270
     visible: false
@@ -92,7 +92,7 @@ Window {
             spacing: 0
 
             // ================================================================
-            // ASCII Top Bar: +-- [ CADROC ] ------------------------ [-] [x] -+
+            // ASCII Top Bar: +-- [ ROCLINT ] ----------------------- [-] [x] -+
             // ================================================================
             RowLayout {
                 Layout.fillWidth: true
@@ -101,7 +101,7 @@ Window {
 
                 // Header Title in ASCII bracket format
                 Text {
-                    text: "+--[ CADROC ]"
+                    text: "+--[ ROCLINT ]"
                     font.family: rootWindow.monoFont
                     font.bold: true
                     font.pixelSize: 13
@@ -184,7 +184,7 @@ Window {
                 Layout.fillHeight: true
 
                 // ============================================================
-                // Center ASCII Art: CADROC
+                // Center ASCII Art: ROCLINT
                 // ============================================================
                 ColumnLayout {
                     anchors.centerIn: parent
@@ -192,11 +192,11 @@ Window {
 
                     Text {
                         Layout.alignment: Qt.AlignHCenter
-                        text: "  ____    _    ____  ____   ___   ____ \n" +
-                              " / ___|  / \\  |  _ \\|  _ \\ / _ \\ / ___|\n" +
-                              "| |     / _ \\ | | | | |_) | | | | |    \n" +
-                              "| |___ / ___ \\| |_| |  _ <| |_| | |___ \n" +
-                              " \\____/_/   \\_\\____/|_| \\_\\___/ \\____|"
+                        text: " ____   ___   ____ _     ___ _   _ _____ \n" +
+                              "|  _ \\ / _ \\ / ___| |   |_ _| \\ | |_   _|\n" +
+                              "| |_) | | | | |   | |    | ||  \\| | | |  \n" +
+                              "|  _ <| |_| | |___| |___ | || |\\  | | |  \n" +
+                              "|_| \\_\\\\___/ \\____|_____|___|_| \\_| |_|  "
                         font.family: rootWindow.monoFont
                         font.bold: true
                         font.pixelSize: 15

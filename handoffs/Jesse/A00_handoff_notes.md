@@ -32,26 +32,26 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 
 # 4. Direct binary execution
-./build/cadroc_core_tests
+./build/roclint_core_tests
 ```
 
 ---
 
 ## 3. Completion Evidence Checklist
 
-- [x] **Configure/build succeeds on current platform:** Clean build of `libcadroc_core.a` using Apple Clang 21 and Ninja.
-- [x] **CTest runner executes smoke test:** `cadroc_core_smoke` passed in 0.00s.
-- [x] **Single Source of Truth versioning:** Version configured in `CMakeLists.txt` and injected via compiler definitions (`CADROC_VERSION_...`).
+- [x] **Configure/build succeeds on current platform:** Clean build of `libroclint_core.a` using Apple Clang 21 and Ninja.
+- [x] **CTest runner executes smoke test:** `roclint_core_smoke` passed in 0.00s.
+- [x] **Single Source of Truth versioning:** Version configured in `CMakeLists.txt` and injected via compiler definitions (`ROCLINT_VERSION_...`).
 - [x] **Editor ergonomics:** `#ifndef` preprocessor fallbacks implemented in `version.cpp` to satisfy VS Code IntelliSense.
 - [x] **Dynamic internal consistency check:** Verified `get_version_string()` matches `ver.major.minor.patch` via `assert(str == constructed)`.
-- [x] **Zero UI/Storage/Model leaks:** Strict module boundary maintained; `cadroc_core` depends only on C++20 standard library.
+- [x] **Zero UI/Storage/Model leaks:** Strict module boundary maintained; `roclint_core` depends only on C++20 standard library.
 
 ---
 
 ## 4. Contracts & Deliverables
 
-* **[C01 Prompt State Contract](../../contracts/C01_prompt_state.md):** Target names (`cadroc_core`, `cadroc::core`) and C++20 compiler baseline established for future `PromptRevision` value types.
+* **[C01 Prompt State Contract](../../contracts/C01_prompt_state.md):** Target names (`roclint_core`, `roclint::core`) and C++20 compiler baseline established for future `PromptRevision` value types.
 * **What Human B / Next Stage May Rely On:**
-  * Public header: `include/cadroc/core/version.hpp`
-  * Static library: `cadroc_core` linked via `target_link_libraries(<target> PRIVATE cadroc_core)`
-  * Core version symbols: `cadroc::core::get_version()` and `cadroc::core::get_version_string()`
+  * Public header: `include/roclint/core/version.hpp`
+  * Static library: `roclint_core` linked via `target_link_libraries(<target> PRIVATE roclint_core)`
+  * Core version symbols: `roclint::core::get_version()` and `roclint::core::get_version_string()`

@@ -3,7 +3,7 @@
 #include <QObject>
 #include <QString>
 
-namespace cadroc::host {
+namespace roclint::host {
 
 enum class HostState {
     Starting,
@@ -43,7 +43,7 @@ public slots:
 
     // Records a visibility change the window system made on its own (taskbar
     // minimize/restore, focus loss). Updates state without emitting show/hide requests.
-    void syncCardVisibility(cadroc::host::CardVisibility visibility);
+    void syncCardVisibility(roclint::host::CardVisibility visibility);
 
 signals:
     void cardVisibilityChanged();
@@ -59,4 +59,4 @@ private:
     CardVisibility m_cardVisibility{CardVisibility::Hidden};
 };
 
-} // namespace cadroc::host
+} // namespace roclint::host

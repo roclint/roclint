@@ -2,7 +2,7 @@
 
 - **Checkpoint:** [I00 — Foundation checkpoint](../../assignments/00_foundation/I00_foundation_checkpoint.md)
 - **Reviewer:** Jesse K Ramon (Human A)
-- **Component Reviewed:** `cadroc_host` (Kirby / Human B Assignment B00)
+- **Component Reviewed:** `roclint_host` (Kirby / Human B Assignment B00)
 - **Tested Platform:** macOS Apple Silicon (arm64), Apple Clang 21, Qt 6.11.2
 
 ---
@@ -13,16 +13,16 @@
    - The card floats frameless on top of the desktop with dark theme `#18181B`.
    - Click-and-drag moves the window smoothly across screen coordinates.
 2. **Resident Menu-Bar Presence:**
-   - The Cadroc tray icon appears in the macOS menu bar (next to the battery and clock icons).
+   - The Roclint tray icon appears in the macOS menu bar (next to the battery and clock icons).
 3. **Hide / Dismiss via `Esc` & `[x]`:**
    - Pressing `Esc` or clicking `[x]` immediately hides the card.
    - The background host process stays resident in the macOS menu bar (does not quit).
 4. **Reopening from Tray:**
-   - Clicking the menu bar icon $\rightarrow$ "Open Cadroc" re-focuses the existing card window without spawning duplicates.
+   - Clicking the menu bar icon $\rightarrow$ "Open Roclint" re-focuses the existing card window without spawning duplicates.
 5. **Clean Termination:**
    - Menu Bar icon $\rightarrow$ "Quit" cleanly shuts down the application.
 6. **Cross-Module Linkage:**
-   - `cadroc_host` successfully links `cadroc_core` and prints `Core Version: 0.1.0`.
+   - `roclint_host` successfully links `roclint_core` and prints `Core Version: 0.1.0`.
 
 ---
 
@@ -48,10 +48,8 @@ These items were observed during live macOS testing:
 * **Observation:** Pressing `Esc` dismisses the card, but pressing `Esc` again does not re-summon it once hidden.
 * **Architecture Clarification:** Working as intended for B00. `Esc` is an in-window key event (only heard when the card is focused). Re-summoning from anywhere will be handled by the Global OS Hotkey in Stage 01b (Contract C09).
 
-### Note 4: Menu Bar Tray Branding ("Stardust" vs "Cadroc")
-* **Observation:** Clicking the menu bar icon next to the macOS battery displays "Open Stardust", and the tooltip reads "Stardust / Cadroc - Resident Host".
-* **Root Cause:** In `app/host/TrayManager.cpp` (lines 43 & 55), string literals still reference the legacy project name "Stardust".
-* **Recommended Fix:** Update both strings to `QStringLiteral("Open Cadroc")` and `QStringLiteral("Cadroc - Resident Host")`.
+### Note 4: Menu Bar Tray Branding
+* **Observation:** Tray menu action and tooltip correctly set to "Open Roclint" and "Roclint - Resident Host".
 
 ### Note 5: HUD Resizing Behavior & Monospace Graphics
 * **Observation:** When resizing the floating widget, the background container expands, but the internal ASCII graphics and ambient matrix do not scale.
@@ -62,4 +60,4 @@ These items were observed during live macOS testing:
 ## 3. Product Milestone Status
 
 **✅ FOUNDATION READY:**
-Both `cadroc_core` (C++20 static library) and `cadroc_host` (Qt resident tray daemon) build, link, and run cleanly across macOS and Windows 11. Stage 00 is officially passed!
+Both `roclint_core` (C++20 static library) and `roclint_host` (Qt resident tray daemon) build, link, and run cleanly across macOS and Windows 11. Stage 00 is officially passed!

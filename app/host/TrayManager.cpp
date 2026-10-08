@@ -8,7 +8,7 @@
 #include <QPainter>
 #include <QPixmap>
 
-namespace cadroc::host {
+namespace roclint::host {
 
 TrayManager::TrayManager(HostController* controller, QObject* parent)
     : QObject(parent), m_controller(controller) {
@@ -40,7 +40,7 @@ bool TrayManager::initTray() {
 void TrayManager::createActions() {
     m_trayMenu = std::make_unique<QMenu>();
 
-    m_openAction = m_trayMenu->addAction(QStringLiteral("Open Cadroc"));
+    m_openAction = m_trayMenu->addAction(QStringLiteral("Open Roclint"));
     connect(m_openAction, &QAction::triggered, m_controller, &HostController::showCard);
 
     m_trayMenu->addSeparator();
@@ -52,7 +52,7 @@ void TrayManager::createActions() {
 void TrayManager::createTrayIcon() {
     m_trayIcon = new QSystemTrayIcon(this);
     m_trayIcon->setContextMenu(m_trayMenu.get());
-    m_trayIcon->setToolTip(QStringLiteral("Cadroc - Resident Host"));
+    m_trayIcon->setToolTip(QStringLiteral("Roclint - Resident Host"));
 
     // Programmatically drawn crisp vector icon fallback
     QPixmap pixmap(32, 32);
@@ -84,4 +84,4 @@ void TrayManager::onTrayIconActivated(int reason) {
     }
 }
 
-} // namespace cadroc::host
+} // namespace roclint::host

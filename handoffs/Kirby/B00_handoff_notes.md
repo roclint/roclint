@@ -25,7 +25,7 @@
 # 1. Configure with Qt 6 prefix
 cmake -B build -S . -DCMAKE_PREFIX_PATH="D:/Qt/6.8.2/msvc2022_64"
 
-# 2. Build Release targets (cadroc_core, cadroc_host_lib, cadroc_host, tests)
+# 2. Build Release targets (roclint_core, roclint_host_lib, roclint_host, tests)
 cmake --build build --config Release
 
 # 3. Run automated CTest suite (Core smoke + Host lifecycle)
@@ -34,18 +34,18 @@ ctest --test-dir build -C Release --output-on-failure
 
 # 4. Dry-run verify desktop executable (headless, non-blocking)
 $env:PATH = "D:\Qt\6.8.2\msvc2022_64\bin;$env:PATH"
-.\build\Release\cadroc_host.exe --dry-run
+.\build\Release\roclint_host.exe --dry-run
 
 # 5. Launch resident host in system tray
-.\build\Release\cadroc_host.exe
+.\build\Release\roclint_host.exe
 ```
 
 ---
 
 ## 3. Completion Evidence Checklist
 
-- [x] **Native process starts without a browser/local web frontend:** Implemented via Qt 6 + Qt Quick/QML native C++ executable (`cadroc_host`).
-- [x] **Tray/menu-bar control exists:** `QSystemTrayIcon` integrated with context menu containing `Open Stardust` and `Quit`.
+- [x] **Native process starts without a browser/local web frontend:** Implemented via Qt 6 + Qt Quick/QML native C++ executable (`roclint_host`).
+- [x] **Tray/menu-bar control exists:** `QSystemTrayIcon` integrated with context menu containing `Open Roclint` and `Quit`.
 - [x] **Closing the placeholder card leaves the host resident:** `QApplication::setQuitOnLastWindowClosed(false)` and `HostController::hideCard()` ensure residency in tray.
 - [x] **Reopen shows the same logical widget, not duplicates:** Single-instance invariant verified in `HostController::showCard()`.
 - [x] **Explicit Quit exits cleanly:** Only `TrayManager -> Quit` or `HostController::requestQuit()` calls `QCoreApplication::quit()`.

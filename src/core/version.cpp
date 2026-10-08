@@ -1,23 +1,23 @@
-#include "cadroc/core/version.hpp"
-#ifndef CADROC_VERSION_MAJOR
-#define CADROC_VERSION_MAJOR 0
-#define CADROC_VERSION_MINOR 1
-#define CADROC_VERSION_PATCH 0
-#define CADROC_VERSION_STRING "0.1.0"
+#include "roclint/core/version.hpp"
+#ifndef ROCLINT_VERSION_MAJOR
+#define ROCLINT_VERSION_MAJOR 0
+#define ROCLINT_VERSION_MINOR 1
+#define ROCLINT_VERSION_PATCH 0
+#define ROCLINT_VERSION_STRING "0.1.0"
 #endif
 
-namespace cadroc::core {
+namespace roclint::core {
 
 Version get_version() noexcept {
     return Version{
-        CADROC_VERSION_MAJOR,
-        CADROC_VERSION_MINOR,
-        CADROC_VERSION_PATCH
+        ROCLINT_VERSION_MAJOR,
+        ROCLINT_VERSION_MINOR,
+        ROCLINT_VERSION_PATCH
     };
 }
 
 std::string_view get_version_string() noexcept {
-    return CADROC_VERSION_STRING;
+    return ROCLINT_VERSION_STRING;
 }
 
-} // namespace cadroc::core
+} // namespace roclint::core

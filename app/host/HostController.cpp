@@ -1,6 +1,6 @@
 #include "HostController.hpp"
 
-namespace cadroc::host {
+namespace roclint::host {
 
 HostController::HostController(QObject* parent)
     : QObject(parent) {
@@ -96,4 +96,4 @@ bool HostController::setCardVisibility(CardVisibility visibility) {
     return true;
 }
 
-} // namespace cadroc::host
+} // namespace roclint::host

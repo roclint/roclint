@@ -8,7 +8,7 @@ class QSystemTrayIcon;
 class QMenu;
 class QAction;
 
-namespace cadroc::host {
+namespace roclint::host {
 
 class HostController;
 
@@ -35,4 +35,4 @@ private:
     QAction* m_quitAction{nullptr};
 };
 
-} // namespace cadroc::host
+} // namespace roclint::host

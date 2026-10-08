@@ -32,12 +32,12 @@
 ## 3. Integration Walkthrough Verification
 
 1. **Clean Configure & Build**:
-   - `cadroc_core` static library compiles cleanly on both Clang and MSVC.
-   - `cadroc_host` desktop executable compiles and links `cadroc_core` and `cadroc_host_lib`.
-   - `cadroc_core_tests` and `cadroc_viewmodel_tests` compile and link against their respective libraries.
+   - `roclint_core` static library compiles cleanly on both Clang and MSVC.
+   - `roclint_host` desktop executable compiles and links `roclint_core` and `roclint_host_lib`.
+   - `roclint_core_tests` and `roclint_viewmodel_tests` compile and link against their respective libraries.
 
 2. **Core / Host Boundary Wiring**:
-   - `cadroc_host` links `cadroc_core` to access version metadata (`cadroc::core::get_version_string()`) without coupling to product semantics.
+   - `roclint_host` links `roclint_core` to access version metadata (`roclint::core::get_version_string()`) without coupling to product semantics.
    - Strict boundary maintained: zero SQLite, zero model providers, zero prompt-state logic in the desktop shell.
    - Core library has zero dependencies on Qt, GUI, or desktop host headers.
 
@@ -50,23 +50,23 @@
 
 4. **Automated Test Evidence**:
    ```text
-   Internal ctest changing into directory: D:/Stardust/Cadroc/build
-   Test project D:/Stardust/Cadroc/build
-       Start 1: cadroc_core_smoke
-   1/2 Test #1: cadroc_core_smoke ................   Passed    0.04 sec
-       Start 2: cadroc_host_lifecycle
-   2/2 Test #2: cadroc_host_lifecycle ............   Passed    0.09 sec
+   Internal ctest changing into directory: build
+   Test project build
+       Start 1: roclint_core_smoke
+   1/2 Test #1: roclint_core_smoke ................   Passed    0.04 sec
+       Start 2: roclint_host_lifecycle
+   2/2 Test #2: roclint_host_lifecycle ............   Passed    0.09 sec
 
    100% tests passed, 0 tests failed out of 2
    ```
 
 5. **Dry-Run Non-Blocking Verification**:
    ```text
-   [Cadroc Host] Version: 0.1.0
-   [Cadroc Host] Core Version: 0.1.0
-   [Cadroc Host] Host State: RESIDENT
-   [Cadroc Host] Qt Version: 6.8.2
-   [Cadroc Host] Dry-run passed. QML root object verified. Exiting cleanly.
+   [Roclint Host] Version: 0.1.0
+   [Roclint Host] Core Version: 0.1.0
+   [Roclint Host] Host State: RESIDENT
+   [Roclint Host] Qt Version: 6.8.2
+   [Roclint Host] Dry-run passed. QML root object verified. Exiting cleanly.
    ```
 
 ---
