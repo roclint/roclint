@@ -12,7 +12,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # -----------------------------------------------------------------------------
 add_library(roclint_core STATIC
     src/core/version.cpp
+    src/core/version.cpp
+    src/core/prompt_state/SessionId.cpp
+    src/core/prompt_state/RevisionId.cpp
+    src/core/prompt_state/PromptRevision.cpp
 )
+
 
 # Inject version variables directly into the compiler from CMake
 target_compile_definitions(roclint_core PRIVATE
@@ -27,6 +32,7 @@ target_include_directories(roclint_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
+
 
 target_compile_features(roclint_core PUBLIC cxx_std_20)
 
@@ -117,6 +123,10 @@ if(BUILD_TESTING)
 
     # Register with CTest
     add_test(NAME roclint_core_smoke COMMAND roclint_core_tests)
+
+    target_compile_features(roclint_core PUBLIC cxx_std_20)
+    
+
 
     # ViewModel / Host lifecycle test (B00)
     if(BUILD_DESKTOP AND Qt6_FOUND)

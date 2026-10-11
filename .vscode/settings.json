@@ -8,5 +8,6 @@
     "C_Cpp.default.includePath": [
         "${workspaceFolder}/**",
         "/opt/homebrew/include"
-    ]
+    ],
+    "C_Cpp.default.cppStandard": "c++20"
 }
