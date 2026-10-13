@@ -38,7 +38,7 @@ Window {
     // Scope Governance System (Default: Global Codebase; Local File selectable)
     property string activeScope: "global" // "global" or "local"
     property string targetLocalFile: "SessionManager.cpp"
-    property bool telemetryMaximized: true
+    property bool telemetryMaximized: false
 
     // Real-Time Linter & Ambiguity State
     readonly property bool hasAmbiguity: {
@@ -137,7 +137,7 @@ Window {
 
     function executeHardBypass() {
         if (promptInput.text.trim().length === 0) return;
-        showToast("PIPELINE BYPASSED // DIRECT DISPATCH");
+        showToast("SENT RAW PROMPT");
         if (typeof hostController !== "undefined") {
             hostController.hardBypass(promptInput.text);
         }
@@ -145,12 +145,12 @@ Window {
 
     function handleEnter() {
         if (promptInput.text.trim().length === 0) {
-            showToast("ERROR: PROMPT BUFFER EMPTY");
+            showToast("PLEASE TYPE A PROMPT FIRST");
             return;
         }
 
         if (hasAmbiguity) {
-            // S1 Triage: Resolve based on active scope
+            // Resolve based on active scope
             if (activeScope === "local") {
                 commitChoice(1);
             } else {
@@ -160,21 +160,20 @@ Window {
             let compiled = "";
             const fileTarget = (targetLocalFile.trim().length > 0) ? targetLocalFile.trim() : "SessionManager.cpp";
             if (activeScope === "local") {
-                compiled = "/* ROCLINT [SCOPE_LOCK: MODULE_LOCAL] */\n" +
-                           "/* TARGET FILE: " + fileTarget + " */\n" +
+                compiled = "/* ROCLINT [SCOPE: CURRENT FILE] */\n" +
+                           "/* TARGET: " + fileTarget + " */\n" +
                            "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n\n" +
                            promptInput.text.trim();
             } else {
-                compiled = "/* ROCLINT [SCOPE_LOCK: GLOBAL_CODEBASE] */\n" +
-                           "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n" +
-                           "/* AST INDEX: Workspace Trigram Complete */\n\n" +
+                compiled = "/* ROCLINT [SCOPE: ENTIRE PROJECT] */\n" +
+                           "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n\n" +
                            promptInput.text.trim();
             }
             if (typeof hostController !== "undefined") {
                 hostController.commitPrompt(compiled);
                 hostController.copyToClipboard(compiled);
             }
-            showToast("1-SHOT PROMPT SEALED & COPIED");
+            showToast("PROMPT COPIED TO CLIPBOARD");
         }
     }
 
@@ -182,26 +181,24 @@ Window {
         let compiled = "";
         const fileTarget = (targetLocalFile.trim().length > 0) ? targetLocalFile.trim() : "SessionManager.cpp";
         if (choiceNumber === 1) {
-            compiled = "/* ROCLINT [SCOPE_LOCK: MODULE_LOCAL] */\n" +
-                       "/* TARGET FILE: " + fileTarget + " */\n" +
-                       "/* PROJECT ROOT: " + activeProject.path + " */\n" +
-                       "/* INVARIANTS: ZERO BREAKING CHANGES OUTSIDE " + fileTarget + " */\n\n" +
+            compiled = "/* ROCLINT [SCOPE: CURRENT FILE] */\n" +
+                       "/* TARGET: " + fileTarget + " */\n" +
+                       "/* PROJECT: " + activeProject.path + " */\n" +
+                       "/* RULE: DO NOT MODIFY FILES OUTSIDE " + fileTarget + " */\n\n" +
                        promptInput.text.trim() + "\n\n" +
-                       "/* CONSTRAINTS: PRESERVE PUBLIC SIGNATURES & RE-USE EXISTING LOCKS */";
+                       "/* CONSTRAINTS: KEEP EXISTING PUBLIC APIS UNCHANGED */";
         } else {
-            compiled = "/* ROCLINT [SCOPE_LOCK: WORKSPACE_REFACTOR] */\n" +
-                       "/* SCOPE: GLOBAL CODEBASE (" + activeProject.name + ") */\n" +
-                       "/* PROJECT ROOT: " + activeProject.path + " */\n" +
-                       "/* AST ATTACHED: Workspace AST Trigram Index */\n\n" +
+            compiled = "/* ROCLINT [SCOPE: ENTIRE PROJECT] */\n" +
+                       "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n\n" +
                        promptInput.text.trim() + "\n\n" +
-                       "/* CONSTRAINTS: DETERMINISTIC ROLLBACK PROOF REQUIRED */";
+                       "/* CONSTRAINTS: VERIFY CHANGES ACROSS ALL REFERENCED MODULES */";
         }
 
         if (typeof hostController !== "undefined") {
             hostController.commitPrompt(compiled);
             hostController.copyToClipboard(compiled);
         }
-        showToast("INTENT SEALED // " + (choiceNumber === 1 ? "LOCAL FILE" : "GLOBAL WORKSPACE") + " COPIED");
+        showToast("PROMPT COPIED (" + (choiceNumber === 1 ? "THIS FILE" : "ENTIRE PROJECT") + ")");
         isClarificationActive = false;
     }
 
@@ -305,7 +302,7 @@ Window {
         sequences: ["Alt+M", "Ctrl+M"]
         onActivated: {
             rootWindow.telemetryMaximized = !rootWindow.telemetryMaximized;
-            rootWindow.showToast(rootWindow.telemetryMaximized ? "TELEMETRY: EXPANDED (4 GAUGES)" : "TELEMETRY: MINIMIZED (SUMMARY)");
+            rootWindow.showToast(rootWindow.telemetryMaximized ? "PERFORMANCE: EXPANDED" : "PERFORMANCE: MINIMIZED");
         }
     }
 
@@ -481,7 +478,7 @@ Window {
                         Text {
                             id: statusTextLabel
                             anchors.centerIn: parent
-                            text: rootWindow.hasAmbiguity ? "[ AMBIGUITY: " + rootWindow.ambiguityScore.toFixed(2) + " ]" : "[ STATUS: OK ]"
+                            text: rootWindow.hasAmbiguity ? "[ NEEDS CLARITY ]" : "[ STATUS: OK ]"
                             font.family: rootWindow.monoFont
                             font.bold: true
                             font.pixelSize: 9
@@ -532,7 +529,7 @@ Window {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 rootWindow.pinToTop = !rootWindow.pinToTop;
-                                rootWindow.showToast(rootWindow.pinToTop ? "HUD PINNED // ALWAYS ON TOP" : "HUD UNPINNED // AUTO-DISMISS ACTIVE");
+                                rootWindow.showToast(rootWindow.pinToTop ? "WINDOW PINNED (ALWAYS ON TOP)" : "WINDOW UNPINNED");
                             }
                         }
                     }
@@ -639,7 +636,7 @@ Window {
                                     color: rootWindow.activeScope === "global" ? rootWindow.bgColor : rootWindow.fgColor
                                 }
                                 Text {
-                                    text: "GLOBAL CODEBASE [DEFAULT]"
+                                    text: "ENTIRE PROJECT [DEFAULT]"
                                     font.family: rootWindow.monoFont
                                     font.bold: rootWindow.activeScope === "global"
                                     font.pixelSize: 8
@@ -651,12 +648,12 @@ Window {
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     rootWindow.activeScope = "global";
-                                    rootWindow.showToast("SCOPE: GLOBAL CODEBASE (" + rootWindow.activeProject.name + ")");
+                                    rootWindow.showToast("SCOPE: ENTIRE PROJECT (" + rootWindow.activeProject.name + ")");
                                 }
                             }
                         }
 
-                        // LOCAL FILE Pill
+                        // SINGLE FILE Pill
                         Rectangle {
                             height: 18
                             width: localRow.width + 10
@@ -676,7 +673,7 @@ Window {
                                     color: rootWindow.activeScope === "local" ? rootWindow.bgColor : rootWindow.fgColor
                                 }
                                 Text {
-                                    text: "LOCAL FILE"
+                                    text: "SINGLE FILE"
                                     font.family: rootWindow.monoFont
                                     font.bold: rootWindow.activeScope === "local"
                                     font.pixelSize: 8
@@ -689,7 +686,7 @@ Window {
                                 onClicked: {
                                     rootWindow.activeScope = "local";
                                     localFileInput.forceActiveFocus();
-                                    rootWindow.showToast("SCOPE: LOCAL FILE CLAMP ACTIVE");
+                                    rootWindow.showToast("SCOPE: SINGLE FILE ACTIVE");
                                 }
                             }
                         }
@@ -733,11 +730,11 @@ Window {
 
                         Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
-                        // Active AST Index Tag
+                        // Active Scope Target Tag
                         Text {
                             text: rootWindow.activeScope === "global" ?
-                                  "AST: WORKSPACE TRIGRAM READY" :
-                                  "AST: LOCAL CLAMP (" + (rootWindow.targetLocalFile.length > 0 ? rootWindow.targetLocalFile : "...") + ")"
+                                  "TARGET: ALL FILES" :
+                                  "TARGET: " + (rootWindow.targetLocalFile.length > 0 ? rootWindow.targetLocalFile : "...")
                             font.family: rootWindow.monoFont
                             font.bold: true
                             font.pixelSize: 8
@@ -783,7 +780,7 @@ Window {
 
                                     TextArea {
                                         id: promptInput
-                                        placeholderText: qsTr("// $ prompt input ...\n// Enter raw developer prompt draft here.\n// Example: 'Refactor SessionManager token timeout handling and update active tests'")
+                                        placeholderText: qsTr("// Type your prompt here...\n// Example: 'Update SessionManager timeout handling and run tests'")
                                         placeholderTextColor: rootWindow.commentColor
                                         color: rootWindow.fgColor
                                         font.family: rootWindow.monoFont
@@ -842,14 +839,14 @@ Window {
                                     RowLayout {
                                         spacing: 4
                                         Text {
-                                            text: "DAEMON_INTERCEPT:"
+                                            text: "STATUS:"
                                             font.family: rootWindow.monoFont
                                             font.bold: true
                                             font.pixelSize: 8
                                             color: rootWindow.fgColor
                                         }
                                         Text {
-                                            text: rootWindow.hasAmbiguity ? "TRIAGE_ALERT" : "LISTENING"
+                                            text: rootWindow.hasAmbiguity ? "NEEDS CLARITY" : "READY"
                                             font.family: rootWindow.monoFont
                                             font.bold: true
                                             font.pixelSize: 8
@@ -871,19 +868,19 @@ Window {
                                     Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
                                     Text {
-                                        text: "SYNTAX: VALID"
+                                        text: "INPUT: VALID"
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
                                         color: rootWindow.fgColor
                                     }
                                     Text {
-                                        text: rootWindow.hasAmbiguity ? "LINT: 1 AMBIGUITY" : "LINT: 0 WARNINGS"
+                                        text: rootWindow.hasAmbiguity ? "1 SUGGESTION" : "0 ISSUES"
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
                                         color: rootWindow.hasAmbiguity ? "#FFB000" : rootWindow.fgColor
                                     }
                                     Text {
-                                        text: "ENTROPY: " + rootWindow.ambiguityScore.toFixed(2) + " λ"
+                                        text: "AMBIGUITY: " + (rootWindow.ambiguityScore * 100).toFixed(0) + "%"
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
                                         color: rootWindow.fgColor
@@ -915,7 +912,7 @@ Window {
 
                                 // Indicator tag
                                 Text {
-                                    text: rootWindow.hasAmbiguity ? "▲ LINT [0.84]:" : "✦ LINT:"
+                                    text: rootWindow.hasAmbiguity ? "▲ SUGGESTION:" : "✦ STATUS:"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -925,8 +922,8 @@ Window {
                                 // Message
                                 Text {
                                     text: rootWindow.hasAmbiguity ?
-                                          "Vague action verb ∙ Unanchored target in [" + rootWindow.activeProject.name + "]" :
-                                          "PROMPT HEALTH: NOMINAL ∙ SCOPE: " + (rootWindow.activeScope === "global" ? "GLOBAL CODEBASE" : "LOCAL FILE (" + rootWindow.targetLocalFile + ")")
+                                          "Vague request ∙ Choose target files in [" + rootWindow.activeProject.name + "]" :
+                                          "PROMPT IS CLEAR ∙ SCOPE: " + (rootWindow.activeScope === "global" ? "ENTIRE PROJECT" : "SINGLE FILE (" + rootWindow.targetLocalFile + ")")
                                     font.family: rootWindow.monoFont
                                     font.bold: !rootWindow.hasAmbiguity
                                     font.pixelSize: 8
@@ -941,14 +938,14 @@ Window {
                                     spacing: 6
 
                                     Text {
-                                        text: "RESOLVE:"
+                                        text: "CHOOSE SCOPE:"
                                         font.family: rootWindow.monoFont
                                         font.bold: true
                                         font.pixelSize: 8
                                         color: "#FFB000"
                                     }
 
-                                    // Pill 1: Local Lock
+                                    // Pill 1: Single File Lock
                                     Rectangle {
                                         height: 18
                                         width: res1Text.contentWidth + 10
@@ -960,7 +957,7 @@ Window {
                                         Text {
                                             id: res1Text
                                             anchors.centerIn: parent
-                                            text: "[ 1 / ⇥ LOCAL CLAMP: " + (rootWindow.activeScope === "local" ? rootWindow.targetLocalFile : "MODULE LOCAL") + " ]"
+                                            text: "[ 1 / ⇥ THIS FILE: " + (rootWindow.activeScope === "local" ? rootWindow.targetLocalFile : "SessionManager.cpp") + " ]"
                                             font.family: rootWindow.monoFont
                                             font.bold: true
                                             font.pixelSize: 8
@@ -975,7 +972,7 @@ Window {
                                         }
                                     }
 
-                                    // Pill 2: Global Workspace Refactor
+                                    // Pill 2: Entire Project
                                     Rectangle {
                                         height: 18
                                         width: res2Text.contentWidth + 10
@@ -987,7 +984,7 @@ Window {
                                         Text {
                                             id: res2Text
                                             anchors.centerIn: parent
-                                            text: "[ 2: GLOBAL WORKSPACE ]"
+                                            text: "[ 2: ENTIRE PROJECT ]"
                                             font.family: rootWindow.monoFont
                                             font.bold: true
                                             font.pixelSize: 8
@@ -1027,7 +1024,7 @@ Window {
                         visible: rootWindow.telemetryMaximized
                         spacing: 8
 
-                        // Gauge 1: Resident RAM
+                        // Gauge 1: RAM
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 46
@@ -1043,7 +1040,7 @@ Window {
 
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    Text { text: "RESIDENT RAM:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
+                                    Text { text: "RAM:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
                                     Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
                                     Text { text: rootWindow.liveRam.toFixed(1) + " MB"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 9; color: rootWindow.fgColor }
                                 }
@@ -1086,7 +1083,7 @@ Window {
                             }
                         }
 
-                        // Gauge 3: Context Budget
+                        // Gauge 3: Prompt Size
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 46
@@ -1102,7 +1099,7 @@ Window {
 
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    Text { text: "CONTEXT BUDGET:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
+                                    Text { text: "PROMPT SIZE:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
                                     Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
                                     Text {
                                         text: Math.ceil(promptInput.text.length / 4) + " / " + rootWindow.maxTokens + " TOKENS"
@@ -1131,7 +1128,7 @@ Window {
                             }
                         }
 
-                        // Gauge 4: Idle CPU + Quick Minimize Button
+                        // Gauge 4: CPU + Quick Minimize Button
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: 46
@@ -1147,7 +1144,7 @@ Window {
 
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    Text { text: "IDLE CPU:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
+                                    Text { text: "CPU:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
                                     Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
                                     Text { text: rootWindow.liveCpu.toFixed(2) + "%"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 9; color: rootWindow.fgColor }
                                 }
@@ -1163,7 +1160,7 @@ Window {
                                         Text {
                                             id: nomText
                                             anchors.centerIn: parent
-                                            text: "NOMINAL"
+                                            text: "READY"
                                             font.family: rootWindow.monoFont
                                             font.bold: true
                                             font.pixelSize: 7
@@ -1196,7 +1193,7 @@ Window {
                                             cursorShape: Qt.PointingHandCursor
                                             onClicked: {
                                                 rootWindow.telemetryMaximized = false;
-                                                rootWindow.showToast("TELEMETRY: MINIMIZED TO SUMMARY TICKER");
+                                                rootWindow.showToast("PERFORMANCE: MINIMIZED");
                                             }
                                         }
                                     }
@@ -1221,7 +1218,7 @@ Window {
                             spacing: 8
 
                             Text {
-                                text: "METRICS:"
+                                text: "PERFORMANCE:"
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 8
@@ -1247,7 +1244,7 @@ Window {
                             Text { text: "│"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
 
                             Text {
-                                text: "BUDGET: " + Math.ceil(promptInput.text.length / 4) + "/" + rootWindow.maxTokens + " TOKENS"
+                                text: "LENGTH: " + Math.ceil(promptInput.text.length / 4) + "/" + rootWindow.maxTokens + " TOKENS"
                                 font.family: rootWindow.monoFont
                                 font.pixelSize: 8
                                 color: (Math.ceil(promptInput.text.length / 4) > rootWindow.maxTokens) ? "#FF4D4D" : rootWindow.fgColor
@@ -1289,7 +1286,7 @@ Window {
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
                                         rootWindow.telemetryMaximized = true;
-                                        rootWindow.showToast("TELEMETRY: EXPANDED TO 4-GAUGE MATRIX");
+                                        rootWindow.showToast("PERFORMANCE: EXPANDED");
                                     }
                                 }
                             }
@@ -1300,7 +1297,7 @@ Window {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 rootWindow.telemetryMaximized = true;
-                                rootWindow.showToast("TELEMETRY: EXPANDED TO 4-GAUGE MATRIX");
+                                rootWindow.showToast("PERFORMANCE: EXPANDED");
                             }
                         }
                     }
@@ -1330,7 +1327,7 @@ Window {
                             Text {
                                 id: cTag
                                 anchors.centerIn: parent
-                                text: "COUNT"
+                                text: "STATS"
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 8
@@ -1382,7 +1379,7 @@ Window {
                                 spacing: 4
                                 Text {
                                     id: telToggleText
-                                    text: rootWindow.telemetryMaximized ? "METRICS: [ ▾ MIN ]" : "METRICS: [ ▴ MAX ]"
+                                    text: rootWindow.telemetryMaximized ? "PERFORMANCE: [ ▾ MIN ]" : "PERFORMANCE: [ ▴ MAX ]"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -1397,7 +1394,7 @@ Window {
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     rootWindow.telemetryMaximized = !rootWindow.telemetryMaximized;
-                                    rootWindow.showToast(rootWindow.telemetryMaximized ? "TELEMETRY: EXPANDED (4 GAUGES)" : "TELEMETRY: MINIMIZED (SUMMARY)");
+                                    rootWindow.showToast(rootWindow.telemetryMaximized ? "PERFORMANCE: EXPANDED" : "PERFORMANCE: MINIMIZED");
                                 }
                             }
                         }
@@ -1415,7 +1412,7 @@ Window {
                         Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
                         // Tactile Neo-Brutalist Hard-Shadow Buttons
-                        // Button 1: SHIFT+ENTER: HARD BYPASS
+                        // Button 1: SHIFT+ENTER: SEND RAW
                         Item {
                             width: bypassInner.width + 4
                             height: 24
@@ -1441,7 +1438,7 @@ Window {
                                 Text {
                                     id: b1Text
                                     anchors.centerIn: parent
-                                    text: "[ SHIFT+ENTER: HARD BYPASS ]"
+                                    text: "[ SHIFT+ENTER: SEND RAW ]"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -1457,7 +1454,7 @@ Window {
                             }
                         }
 
-                        // Button 2: ENTER: 1-SHOT TRIAGE
+                        // Button 2: ENTER: ENHANCE & COPY
                         Item {
                             width: triageInner.width + 4
                             height: 24
@@ -1482,7 +1479,7 @@ Window {
                                 Text {
                                     id: b2Text
                                     anchors.centerIn: parent
-                                    text: "[ ENTER: 1-SHOT TRIAGE ]"
+                                    text: "[ ENTER: ENHANCE & COPY ]"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -1498,7 +1495,7 @@ Window {
                             }
                         }
 
-                        // Button 3: COPY_PAYLOAD
+                        // Button 3: COPY PROMPT
                         Item {
                             width: copyInner.width + 4
                             height: 24
@@ -1523,7 +1520,7 @@ Window {
                                 Text {
                                     id: b3Text
                                     anchors.centerIn: parent
-                                    text: "[ COPY_PAYLOAD ]"
+                                    text: "[ COPY PROMPT ]"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -1536,13 +1533,13 @@ Window {
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
                                         if (promptInput.text.trim().length === 0) {
-                                            rootWindow.showToast("BUFFER EMPTY: NOTHING TO COPY");
+                                            rootWindow.showToast("NOTHING TO COPY YET");
                                             return;
                                         }
                                         if (typeof hostController !== "undefined") {
                                             hostController.copyToClipboard(promptInput.text);
                                         }
-                                        rootWindow.showToast("PAYLOAD COPIED TO SYSTEM CLIPBOARD");
+                                        rootWindow.showToast("PROMPT COPIED TO CLIPBOARD");
                                     }
                                 }
                             }
@@ -1629,7 +1626,7 @@ Window {
                                 anchors.leftMargin: 8
                                 anchors.rightMargin: 8
                                 Text {
-                                    text: "ACTIVE WORKSPACE // AST INDEX ROOT"
+                                    text: "SELECT WORKSPACE FOLDER"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -1637,7 +1634,7 @@ Window {
                                 }
                                 Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
                                 Text {
-                                    text: "WORKSPACE"
+                                    text: "PROJECTS"
                                     font.family: rootWindow.monoFont
                                     font.pixelSize: 7
                                     color: rootWindow.fgColor
@@ -1694,7 +1691,7 @@ Window {
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
                                         rootWindow.currentProjectIndex = index;
-                                        rootWindow.showToast("PROJECT SWITCHED: " + modelData.name);
+                                        rootWindow.showToast("PROJECT: " + modelData.name);
                                         projectDropdown.visible = false;
                                     }
                                 }
@@ -1714,7 +1711,7 @@ Window {
                                 spacing: 6
 
                                 Text { text: "[ + ]"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 8; color: rootWindow.fgColor }
-                                Text { text: "ATTACH / OPEN FOLDER..."; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.8 }
+                                Text { text: "OPEN PROJECT FOLDER..."; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.8 }
                             }
 
                             MouseArea {
@@ -1724,7 +1721,7 @@ Window {
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     projectDropdown.visible = false;
-                                    rootWindow.showToast("ATTACH WORKSPACE: RE-ROOTED TO PROJECT DIR");
+                                    rootWindow.showToast("PROJECT FOLDER SELECTED");
                                 }
                             }
                         }
@@ -1774,7 +1771,7 @@ Window {
                                 anchors.leftMargin: 8
                                 anchors.rightMargin: 8
                                 Text {
-                                    text: "LOCAL RUNTIMES // INFERENCE ENGINE"
+                                    text: "SELECT AI MODEL"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -1782,7 +1779,7 @@ Window {
                                 }
                                 Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
                                 Text {
-                                    text: "HOT-SWAP"
+                                    text: "MODELS"
                                     font.family: rootWindow.monoFont
                                     font.pixelSize: 7
                                     color: rootWindow.fgColor
@@ -1862,7 +1859,7 @@ Window {
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
                                         rootWindow.currentModelIndex = index;
-                                        rootWindow.showToast("HOT-SWAPPED: " + modelData.name);
+                                        rootWindow.showToast("MODEL: " + modelData.name);
                                         modelDropdown.visible = false;
                                     }
                                 }
@@ -1890,7 +1887,7 @@ Window {
                                 }
 
                                 Text {
-                                    text: "DOWNLOAD FROM HUGGINGFACE..."
+                                    text: "DOWNLOAD MORE MODELS..."
                                     font.family: rootWindow.monoFont
                                     font.pixelSize: 8
                                     color: rootWindow.fgColor
@@ -1914,7 +1911,7 @@ Window {
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     modelDropdown.visible = false;
-                                    rootWindow.showToast("STUDIO: OPEN DASHBOARD TO DOWNLOAD GGUF WEIGHTS");
+                                    rootWindow.showToast("OPENING DOWNLOAD PAGE...");
                                 }
                             }
                         }
