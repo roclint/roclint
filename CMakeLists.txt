@@ -12,7 +12,6 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 # -----------------------------------------------------------------------------
 add_library(roclint_core STATIC
     src/core/version.cpp
-    src/core/version.cpp
     src/core/prompt_state/SessionId.cpp
     src/core/prompt_state/RevisionId.cpp
     src/core/prompt_state/PromptRevision.cpp
@@ -45,8 +44,19 @@ target_compile_features(roclint_core PUBLIC cxx_std_20)
 option(BUILD_DESKTOP "Build the desktop resident host and shell" ON)
 
 if(BUILD_DESKTOP)
-    if(APPLE AND NOT DEFINED CMAKE_PREFIX_PATH AND EXISTS "/opt/homebrew/opt/qt")
-        list(APPEND CMAKE_PREFIX_PATH "/opt/homebrew/opt/qt")
+    if(APPLE AND NOT DEFINED CMAKE_PREFIX_PATH)
+        # Automatically discover Qt6 across Apple Silicon, Intel Macs, and brew aliases
+        foreach(_qt_search_path
+            "/opt/homebrew/opt/qt"
+            "/opt/homebrew/opt/qt@6"
+            "/usr/local/opt/qt"
+            "/usr/local/opt/qt@6"
+        )
+            if(EXISTS "${_qt_search_path}")
+                list(APPEND CMAKE_PREFIX_PATH "${_qt_search_path}")
+                break()
+            endif()
+        endforeach()
     endif()
 
     find_package(Qt6 6.2 COMPONENTS Core Gui Quick Qml Widgets QUIET)
@@ -71,6 +81,7 @@ if(BUILD_DESKTOP)
         )
 
         target_link_libraries(roclint_host_lib PUBLIC
+            roclint_core
             Qt6::Core
             Qt6::Gui
             Qt6::Widgets
