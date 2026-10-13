@@ -61,14 +61,14 @@ Window {
         if (currentTheme === "light") return "#050505";
         if (currentTheme === "acid") return "#4ADE80";
         if (currentTheme === "amber") return "#FBBF24";
-        return "#F5F5F7";
+        return "#C9D1D9"; // Soft greyish white (calmer contrast, reduced eye strain)
     }
 
     readonly property color borderColor: {
         if (currentTheme === "light") return "#050505";
         if (currentTheme === "acid") return "#22C55E";
         if (currentTheme === "amber") return "#F59E0B";
-        return "#F5F5F7";
+        return "#6E7681"; // Muted slate gray border instead of harsh stark white
     }
 
     readonly property color dimColor: {
@@ -103,7 +103,7 @@ Window {
         if (currentTheme === "light") return "#050505";
         if (currentTheme === "acid") return "#22C55E";
         if (currentTheme === "amber") return "#F59E0B";
-        return "#F5F5F7";
+        return "#3B4252"; // Subtle tactile shadow instead of stark white block
     }
 
     property bool isClarificationActive: false
