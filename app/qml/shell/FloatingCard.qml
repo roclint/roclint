@@ -246,6 +246,7 @@ Window {
         color: rootWindow.bgColor
         border.color: rootWindow.borderColor
         border.width: 2
+        radius: 16
 
         MouseArea {
             id: windowDragArea
@@ -262,6 +263,7 @@ Window {
             color: rootWindow.bgColor
             border.color: rootWindow.borderColor
             border.width: 1
+            radius: 10
 
             ColumnLayout {
                 anchors.fill: parent
@@ -665,6 +667,7 @@ Window {
                             color: rootWindow.inputBgColor
                             border.color: promptInput.activeFocus ? rootWindow.fgColor : rootWindow.borderColor
                             border.width: 1
+                            radius: 6
 
                             // Corner Crosshairs
                             Text { text: "+"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.6; anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 4 }
