@@ -522,7 +522,7 @@ Window {
                     spacing: 8
 
                     Text {
-                        text: "[ CHARS: " + promptInput.length + " | WORDS: " + (promptInput.text.trim().length > 0 ? promptInput.text.trim().split(/\s+/).length : 0) + " ]"
+                        text: "[ CHARS: " + promptInput.length + " ]"
                         font.family: rootWindow.monoFont
                         font.pixelSize: 10
                         color: "#6E7681"
