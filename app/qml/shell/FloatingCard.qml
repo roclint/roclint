@@ -1115,7 +1115,7 @@ Window {
                                             anchors.centerIn: parent
                                             text: {
                                                 const fn = rootWindow.activeScope === "local" ? rootWindow.targetLocalFile : "SessionManager.cpp";
-                                                if (rootWindow.width >= 760) return "[ 1 / ⇥ THIS FILE: " + fn + " ]";
+                                                if (rootWindow.width >= 760) return "[ 1: THIS FILE (" + fn + ") ]";
                                                 if (rootWindow.width >= 640) return "[ 1: " + fn + " ]";
                                                 return "[ 1: FILE ]";
                                             }
@@ -1561,7 +1561,7 @@ Window {
                             Text {
                                 id: b1Text
                                 anchors.centerIn: parent
-                                text: rootWindow.width >= 720 ? "[ ⇧⏎ SEND RAW ]" : "[ RAW ]"
+                                text: rootWindow.width >= 720 ? "[ SEND RAW ]" : "[ RAW ]"
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 8
@@ -1589,7 +1589,7 @@ Window {
                             Text {
                                 id: b2Text
                                 anchors.centerIn: parent
-                                text: rootWindow.width >= 720 ? "[ ⏎ ENHANCE & COPY ]" : "[ ENHANCE ]"
+                                text: rootWindow.width >= 720 ? "[ ENHANCE & COPY ]" : "[ ENHANCE ]"
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 8
@@ -1617,7 +1617,7 @@ Window {
                             Text {
                                 id: hideTextLabel
                                 anchors.centerIn: parent
-                                text: rootWindow.width >= 720 ? "[ ⎋ HIDE ]" : "[ HIDE ]"
+                                text: "[ HIDE ]"
                                 font.family: rootWindow.monoFont
                                 font.pixelSize: 8
                                 color: rootWindow.fgColor
