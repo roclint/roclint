@@ -16,6 +16,7 @@ add_library(roclint_core STATIC
     src/core/prompt_state/SessionId.cpp
     src/core/prompt_state/RevisionId.cpp
     src/core/prompt_state/PromptRevision.cpp
+    src/core/prompt_state/RevisionState.cpp
 )
 
 
@@ -32,6 +33,8 @@ target_include_directories(roclint_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
+
+
 
 
 target_compile_features(roclint_core PUBLIC cxx_std_20)
@@ -126,6 +129,23 @@ if(BUILD_TESTING)
 
     target_compile_features(roclint_core PUBLIC cxx_std_20)
     
+        # Prompt revision test (A01)
+    add_executable(roclint_prompt_revision_tests
+        tests/core/prompt_state/testPromptRevision.cpp
+    )
+    target_link_libraries(roclint_prompt_revision_tests PRIVATE roclint_core)
+    target_include_directories(roclint_prompt_revision_tests PRIVATE tests)
+    target_compile_features(roclint_prompt_revision_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_prompt_revision COMMAND roclint_prompt_revision_tests)
+
+    # Revision state test (A02)
+    add_executable(roclint_revision_state_tests
+        tests/core/prompt_state/testRevisionState.cpp
+    )
+    target_link_libraries(roclint_revision_state_tests PRIVATE roclint_core)
+    target_include_directories(roclint_revision_state_tests PRIVATE tests)
+    target_compile_features(roclint_revision_state_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_revision_state COMMAND roclint_revision_state_tests)
 
 
     # ViewModel / Host lifecycle test (B00)
