@@ -5,8 +5,8 @@ import QtQuick.Layouts
 Window {
     id: rootWindow
     title: qsTr("ROCLINT // RETROFUTURIST POSTER HUD")
-    width: 1080
-    height: 720
+    width: 860
+    height: 560
     visible: false
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     color: "transparent"
@@ -841,244 +841,7 @@ Window {
                         }
                     }
 
-                    // ---------------------------------------------------------
-                    // C. RIGHT ASIDE: Specimen, Celestial Wireframe, Bus, Barcode
-                    // ---------------------------------------------------------
-                    ColumnLayout {
-                        Layout.preferredWidth: 260
-                        Layout.fillHeight: true
-                        spacing: 6
 
-                        // Module 1: Blackletter Specimen Module
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 74
-                            color: "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 6
-                                spacing: 2
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Text { text: "SPECIMEN 01"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 8; color: rootWindow.fgColor }
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                    Text { text: "✶"; font.pixelSize: 9; color: rootWindow.fgColor }
-                                }
-
-                                Text {
-                                    text: "Genesis"
-                                    font.family: rootWindow.serifFont
-                                    font.italic: true
-                                    font.pixelSize: 22
-                                    color: rootWindow.fgColor
-                                }
-
-                                Text {
-                                    text: "The spark passes across the carbon barrier into silicon eternity."
-                                    font.family: rootWindow.monoFont
-                                    font.pixelSize: 7
-                                    color: rootWindow.fgColor
-                                    opacity: 0.75
-                                    wrapMode: Text.WordWrap
-                                    Layout.fillWidth: true
-                                }
-                            }
-                        }
-
-                        // Module 2: Celestial Spherical Harmonic Wireframe (Canvas)
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
-                            color: "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 6
-                                spacing: 4
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Text { text: "HARMONIC MATRIX"; font.family: rootWindow.monoFont; font.pixelSize: 7; color: rootWindow.fgColor }
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                    Text { text: "VT100 RASTER"; font.family: rootWindow.monoFont; font.pixelSize: 7; color: rootWindow.fgColor }
-                                }
-
-                                Item {
-                                    Layout.fillWidth: true
-                                    Layout.fillHeight: true
-
-                                    Canvas {
-                                        id: harmonicCanvas
-                                        anchors.centerIn: parent
-                                        width: Math.min(parent.width, parent.height) - 10
-                                        height: width
-                                        property real rotTick: 0
-
-                                        onPaint: {
-                                            var ctx = getContext("2d");
-                                            ctx.clearRect(0, 0, width, height);
-                                            ctx.strokeStyle = rootWindow.fgColor;
-                                            ctx.lineWidth = 1;
-                                            var cx = width / 2;
-                                            var cy = height / 2;
-                                            var r = (width / 2) - 4;
-
-                                            // Outer circle
-                                            ctx.beginPath();
-                                            ctx.arc(cx, cy, r, 0, 2 * Math.PI);
-                                            ctx.stroke();
-
-                                            // Crosshair center lines
-                                            ctx.beginPath();
-                                            ctx.moveTo(cx, cy - r);
-                                            ctx.lineTo(cx, cy + r);
-                                            ctx.moveTo(cx - r, cy);
-                                            ctx.lineTo(cx + r, cy);
-                                            ctx.stroke();
-
-                                            // Rotating internal ellipses
-                                            var ry = Math.abs(Math.sin(rotTick) * (r * 0.7) + 6);
-                                            var rx = Math.abs(Math.cos(rotTick) * (r * 0.7) + 6);
-
-                                            ctx.beginPath();
-                                            ctx.ellipse(cx, cy, r, ry, 0, 0, 2 * Math.PI);
-                                            ctx.stroke();
-
-                                            ctx.beginPath();
-                                            ctx.ellipse(cx, cy, rx, r, 0, 0, 2 * Math.PI);
-                                            ctx.stroke();
-                                        }
-                                    }
-
-                                    Timer {
-                                        interval: 50
-                                        running: true
-                                        repeat: true
-                                        onTriggered: {
-                                            harmonicCanvas.rotTick += 0.05;
-                                            harmonicCanvas.requestPaint();
-                                        }
-                                    }
-                                }
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Text { text: "LAT: 41°54'12\"N"; font.family: rootWindow.monoFont; font.pixelSize: 7; color: rootWindow.fgColor; opacity: 0.75 }
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                    Text { text: "LON: 12°27'15\"E"; font.family: rootWindow.monoFont; font.pixelSize: 7; color: rootWindow.fgColor; opacity: 0.75 }
-                                }
-                            }
-                        }
-
-                        // Module 3: Stepped Frequency Decay / Dispatch Bus
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 70
-                            color: "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 6
-                                spacing: 3
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Text { text: "// DISPATCH_BUS"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 8; color: rootWindow.fgColor }
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                    Text { text: "0x7F9B4"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor }
-                                }
-
-                                Column {
-                                    id: busContainer
-                                    Layout.fillWidth: true
-                                    spacing: 2
-
-                                    Repeater {
-                                        model: 6
-                                        delegate: Rectangle {
-                                            id: stepBar
-                                            height: 3
-                                            color: rootWindow.fgColor
-                                            property real pctWidth: (1.0 - index * 0.14)
-                                            width: parent.width * pctWidth
-
-                                            Behavior on pctWidth {
-                                                NumberAnimation { duration: 240; easing.type: Easing.InOutQuad }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Timer {
-                                    interval: 240
-                                    running: true
-                                    repeat: true
-                                    onTriggered: {
-                                        var idx = Math.floor(Math.random() * 6);
-                                        var bar = busContainer.children[idx];
-                                        if (bar && bar.pctWidth !== undefined) {
-                                            bar.pctWidth = 0.20 + Math.random() * 0.75;
-                                        }
-                                    }
-                                }
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Text { text: "[BUS: ACTIVE]"; font.family: rootWindow.monoFont; font.pixelSize: 7; color: rootWindow.fgColor; opacity: 0.75 }
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                    Text { text: "[Q: 0.94]"; font.family: rootWindow.monoFont; font.pixelSize: 7; color: rootWindow.fgColor; opacity: 0.75 }
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                    Text { text: "[SYNC: 100%]"; font.family: rootWindow.monoFont; font.pixelSize: 7; color: rootWindow.fgColor; opacity: 0.75 }
-                                }
-                            }
-                        }
-
-                        // Module 4: Procedural Barcode Matrix
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 40
-                            color: "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 4
-                                spacing: 2
-
-                                Row {
-                                    Layout.fillWidth: true
-                                    height: 18
-                                    spacing: 2
-                                    clip: true
-
-                                    Repeater {
-                                        model: [3, 1, 4, 1, 2, 5, 1, 3, 2, 4, 1, 2, 5, 2, 1, 4, 3, 1, 2, 4, 1, 3, 2, 5, 1, 4]
-                                        delegate: Rectangle {
-                                            width: modelData
-                                            height: 18
-                                            color: rootWindow.fgColor
-                                        }
-                                    }
-                                }
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Text { text: "* 9 7 8 0 2 0 1 3 7 9 6 2 4 *"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 7; color: rootWindow.fgColor }
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                    Text { text: "CERTIFIED"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 7; color: rootWindow.fgColor }
-                                }
-                            }
-                        }
-                    }
 
                     // ---------------------------------------------------------
                     // D. RIGHT VERTICAL CALLOUT SPINE
@@ -1132,12 +895,15 @@ Window {
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 46
+                    Layout.maximumHeight: 48
+                    Layout.fillHeight: false
                     spacing: 8
 
                     // Gauge 1: Resident RAM
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        Layout.preferredHeight: 46
+                        Layout.fillHeight: false
                         color: "transparent"
                         border.color: rootWindow.borderColor
                         border.width: 1
@@ -1166,7 +932,8 @@ Window {
                     // Gauge 2: Latency
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        Layout.preferredHeight: 46
+                        Layout.fillHeight: false
                         color: "transparent"
                         border.color: rootWindow.borderColor
                         border.width: 1
@@ -1194,7 +961,8 @@ Window {
                     // Gauge 3: Context Budget
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        Layout.preferredHeight: 46
+                        Layout.fillHeight: false
                         color: "transparent"
                         border.color: rootWindow.borderColor
                         border.width: 1
@@ -1238,7 +1006,8 @@ Window {
                     // Gauge 4: Idle CPU
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.fillHeight: true
+                        Layout.preferredHeight: 46
+                        Layout.fillHeight: false
                         color: "transparent"
                         border.color: rootWindow.borderColor
                         border.width: 1
