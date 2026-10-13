@@ -74,6 +74,8 @@ if(BUILD_DESKTOP)
             app/host/HostController.cpp
             app/host/TrayManager.hpp
             app/host/TrayManager.cpp
+            app/host/GlobalShortcutManager.hpp
+            app/host/GlobalShortcutManager.cpp
         )
 
         target_include_directories(roclint_host_lib PUBLIC
@@ -86,6 +88,10 @@ if(BUILD_DESKTOP)
             Qt6::Gui
             Qt6::Widgets
         )
+
+        if(APPLE)
+            target_link_libraries(roclint_host_lib PUBLIC "-framework Carbon")
+        endif()
 
         target_compile_features(roclint_host_lib PUBLIC cxx_std_20)
 

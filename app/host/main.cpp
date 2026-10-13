@@ -1,5 +1,6 @@
 #include "HostController.hpp"
 #include "TrayManager.hpp"
+#include "GlobalShortcutManager.hpp"
 #include "roclint/core/version.hpp"
 
 #include <QApplication>
@@ -50,6 +51,12 @@ int main(int argc, char* argv[]) {
     auto tray = std::make_unique<roclint::host::TrayManager>(controller.get());
     if (!tray->initTray()) {
         std::cerr << "[Roclint Host] Warning: System tray is not available on this environment.\n";
+    }
+
+    // 4b. Initialize global system hotkey (Cmd+Shift+R)
+    auto shortcutManager = std::make_unique<roclint::host::GlobalShortcutManager>(controller.get());
+    if (!shortcutManager->registerShortcut()) {
+        std::cerr << "[Roclint Host] Warning: Global shortcut could not be registered.\n";
     }
 
     // 5. Initialize QML engine
