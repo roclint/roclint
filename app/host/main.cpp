@@ -15,6 +15,8 @@
 int main(int argc, char* argv[]) {
     bool dryRun = false;
     bool autoShow = false;
+    int customWidth = 0;
+    int customHeight = 0;
     QString screenshotPath;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg(argv[i]);
@@ -23,6 +25,12 @@ int main(int argc, char* argv[]) {
         }
         if (arg == "--show") {
             autoShow = true;
+        }
+        if (arg == "--width" && i + 1 < argc) {
+            customWidth = std::atoi(argv[++i]);
+        }
+        if (arg == "--height" && i + 1 < argc) {
+            customHeight = std::atoi(argv[++i]);
         }
         if (arg == "--screenshot" && i + 1 < argc) {
             screenshotPath = QString::fromLocal8Bit(argv[++i]);
@@ -65,7 +73,7 @@ int main(int argc, char* argv[]) {
 
     const QUrl url(QStringLiteral("qrc:/shell/FloatingCard.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
-                     &app, [url, controller = controller.get(), autoShow, dryRun, screenshotPath](QObject* obj, const QUrl& objUrl) {
+                     &app, [url, controller = controller.get(), autoShow, dryRun, screenshotPath, customWidth, customHeight](QObject* obj, const QUrl& objUrl) {
         if (!obj && url == objUrl) {
             std::cerr << "[Roclint Host] Error: Failed to load QML root object from " << objUrl.toString().toStdString() << std::endl;
             QCoreApplication::exit(-1);
@@ -75,6 +83,12 @@ int main(int argc, char* argv[]) {
         auto* window = qobject_cast<QQuickWindow*>(obj);
         if (window) {
             std::cout << "[Roclint Host] QQuickWindow initialized successfully." << std::endl;
+            if (customWidth > 0) {
+                window->setWidth(customWidth);
+            }
+            if (customHeight > 0) {
+                window->setHeight(customHeight);
+            }
             QObject::connect(controller, &roclint::host::HostController::showCardRequested,
                              window, [window](int x, int y) {
                 std::cout << "[Roclint Host] Showing floating card window at (" << x << ", " << y << ")..." << std::endl;

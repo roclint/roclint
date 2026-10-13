@@ -7,6 +7,8 @@ Window {
     title: qsTr("ROCLINT // RETROFUTURIST POSTER HUD")
     width: 820
     height: 520
+    minimumWidth: 520
+    minimumHeight: 360
     visible: false
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     color: "transparent"
@@ -346,6 +348,90 @@ Window {
             onPressed: rootWindow.startSystemMove()
         }
 
+        // =====================================================================
+        // FRAMELESS WINDOW RESIZE HANDLES (Edge & Corner Dragging)
+        // =====================================================================
+        MouseArea {
+            id: resizeBottomRight
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            width: 14; height: 14
+            z: 100
+            cursorShape: Qt.SizeFDiagCursor
+            onPressed: rootWindow.startSystemResize(Qt.RightEdge | Qt.BottomEdge)
+        }
+        MouseArea {
+            id: resizeRight
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.topMargin: 14; anchors.bottomMargin: 14
+            width: 7
+            z: 100
+            cursorShape: Qt.SizeHorCursor
+            onPressed: rootWindow.startSystemResize(Qt.RightEdge)
+        }
+        MouseArea {
+            id: resizeBottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: 14; anchors.rightMargin: 14
+            height: 7
+            z: 100
+            cursorShape: Qt.SizeVerCursor
+            onPressed: rootWindow.startSystemResize(Qt.BottomEdge)
+        }
+        MouseArea {
+            id: resizeBottomLeft
+            anchors.left: parent.left
+            anchors.bottom: parent.bottom
+            width: 14; height: 14
+            z: 100
+            cursorShape: Qt.SizeBDiagCursor
+            onPressed: rootWindow.startSystemResize(Qt.LeftEdge | Qt.BottomEdge)
+        }
+        MouseArea {
+            id: resizeLeft
+            anchors.left: parent.left
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.topMargin: 14; anchors.bottomMargin: 14
+            width: 7
+            z: 100
+            cursorShape: Qt.SizeHorCursor
+            onPressed: rootWindow.startSystemResize(Qt.LeftEdge)
+        }
+        MouseArea {
+            id: resizeTop
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.leftMargin: 14; anchors.rightMargin: 14
+            height: 7
+            z: 100
+            cursorShape: Qt.SizeVerCursor
+            onPressed: rootWindow.startSystemResize(Qt.TopEdge)
+        }
+        MouseArea {
+            id: resizeTopRight
+            anchors.right: parent.right
+            anchors.top: parent.top
+            width: 14; height: 14
+            z: 100
+            cursorShape: Qt.SizeBDiagCursor
+            onPressed: rootWindow.startSystemResize(Qt.RightEdge | Qt.TopEdge)
+        }
+        MouseArea {
+            id: resizeTopLeft
+            anchors.left: parent.left
+            anchors.top: parent.top
+            width: 14; height: 14
+            z: 100
+            cursorShape: Qt.SizeFDiagCursor
+            onPressed: rootWindow.startSystemResize(Qt.LeftEdge | Qt.TopEdge)
+        }
+
         // SUB-BORDER INSET (Double Bounding Frame)
         Rectangle {
             id: subBorderInset
@@ -355,6 +441,7 @@ Window {
             border.color: rootWindow.borderColor
             border.width: 1
             radius: 10
+            clip: true
 
             ColumnLayout {
                 anchors.fill: parent
@@ -382,7 +469,7 @@ Window {
                     }
 
                     Text {
-                        text: "ROCLINT"
+                        text: rootWindow.width >= 620 ? "ROCLINT" : "ROC"
                         font.family: rootWindow.monoFont
                         font.bold: true
                         font.pixelSize: 10
@@ -393,6 +480,7 @@ Window {
                     // Project Dropdown Selector Pill
                     Rectangle {
                         id: projectSelectorButton
+                        visible: rootWindow.width >= 530
                         height: 20
                         width: projectRow.width + 12
                         color: (projectDropdown.visible || projectMouse.containsMouse) ? rootWindow.dimColor : "transparent"
@@ -406,6 +494,7 @@ Window {
 
                             Text {
                                 text: "PROJECT:"
+                                visible: rootWindow.width >= 720
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 8
@@ -442,6 +531,7 @@ Window {
                     // Model Dropdown Selector Pill
                     Rectangle {
                         id: modelSelectorButton
+                        visible: rootWindow.width >= 570
                         height: 20
                         width: modelRow.width + 12
                         color: (modelDropdown.visible || modelMouse.containsMouse) ? rootWindow.dimColor : "transparent"
@@ -455,13 +545,14 @@ Window {
 
                             Text {
                                 text: "MODEL:"
+                                visible: rootWindow.width >= 760
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 8
                                 color: rootWindow.mutedTextColor
                             }
                             Text {
-                                text: rootWindow.activeModel.name + " (" + rootWindow.activeModel.quant + ") " + (modelDropdown.visible ? "▴" : "▾")
+                                text: (rootWindow.width >= 780 ? (rootWindow.activeModel.name + " (" + rootWindow.activeModel.quant + ")") : (rootWindow.width >= 720 ? rootWindow.activeModel.name : "Llama-3.2")) + " " + (modelDropdown.visible ? "▴" : "▾")
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 8
@@ -490,7 +581,7 @@ Window {
                     // Host Context Advisory Chip (B02H / C09)
                     Rectangle {
                         id: hostContextChip
-                        visible: typeof hostController !== "undefined" && hostController.hasHostContext
+                        visible: (typeof hostController !== "undefined" && hostController.hasHostContext) && rootWindow.width >= 690
                         height: 20
                         width: ctxRow.implicitWidth + 16
                         color: "transparent"
@@ -503,7 +594,7 @@ Window {
                             spacing: 6
 
                             Text {
-                                text: "FROM: " + (typeof hostController !== "undefined" ? hostController.hostContextDisplayName.toUpperCase() : "")
+                                text: (rootWindow.width >= 700 ? "FROM: " : "") + (typeof hostController !== "undefined" ? hostController.hostContextDisplayName.toUpperCase() : "")
                                 font.family: rootWindow.monoFont
                                 font.pixelSize: 8
                                 font.bold: true
@@ -555,7 +646,9 @@ Window {
                         Text {
                             id: statusTextLabel
                             anchors.centerIn: parent
-                            text: rootWindow.hasAmbiguity ? "[ NEEDS CLARITY ]" : "[ STATUS: OK ]"
+                            text: rootWindow.hasAmbiguity ?
+                                  (rootWindow.width >= 660 ? "[ NEEDS CLARITY ]" : (rootWindow.width >= 560 ? "[ CLARIFY ]" : "[ ! ]")) :
+                                  (rootWindow.width >= 660 ? "[ STATUS: OK ]" : (rootWindow.width >= 560 ? "[ OK ]" : "[ ✓ ]"))
                             font.family: rootWindow.monoFont
                             font.bold: true
                             font.pixelSize: 9
@@ -694,7 +787,7 @@ Window {
                                     color: rootWindow.activeScope === "global" ? rootWindow.bgColor : rootWindow.fgColor
                                 }
                                 Text {
-                                    text: "ENTIRE PROJECT [DEFAULT]"
+                                    text: rootWindow.width >= 680 ? "ENTIRE PROJECT [DEFAULT]" : "ALL FILES"
                                     font.family: rootWindow.monoFont
                                     font.bold: rootWindow.activeScope === "global"
                                     font.pixelSize: 8
@@ -753,7 +846,7 @@ Window {
                         Rectangle {
                             visible: rootWindow.activeScope === "local"
                             height: 18
-                            Layout.preferredWidth: 190
+                            Layout.preferredWidth: Math.min(190, Math.max(90, rootWindow.width - 430))
                             color: rootWindow.inputBgColor
                             border.color: localFileInput.activeFocus ? rootWindow.fgColor : rootWindow.borderColor
                             border.width: 1
@@ -790,6 +883,7 @@ Window {
 
                         // Active Scope Target Tag
                         Text {
+                            visible: rootWindow.width >= 690
                             text: rootWindow.activeScope === "global" ?
                                   "TARGET: ALL FILES" :
                                   "TARGET: " + (rootWindow.targetLocalFile.length > 0 ? rootWindow.targetLocalFile : "...")
@@ -926,6 +1020,7 @@ Window {
                                     Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
                                     Text {
+                                        visible: rootWindow.width >= 620
                                         text: "INPUT: VALID"
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
@@ -980,12 +1075,14 @@ Window {
                                 // Message
                                 Text {
                                     text: rootWindow.hasAmbiguity ?
-                                          "Vague request ∙ Choose target files in [" + rootWindow.activeProject.name + "]" :
-                                          "PROMPT IS CLEAR ∙ SCOPE: " + (rootWindow.activeScope === "global" ? "ENTIRE PROJECT" : "SINGLE FILE (" + rootWindow.targetLocalFile + ")")
+                                          (rootWindow.width >= 700 ? ("Vague request ∙ Choose target in [" + rootWindow.activeProject.name + "]") : "Clarify target") :
+                                          (rootWindow.width >= 700 ? ("PROMPT IS CLEAR ∙ SCOPE: " + (rootWindow.activeScope === "global" ? "ENTIRE PROJECT" : "SINGLE FILE (" + rootWindow.targetLocalFile + ")")) : "PROMPT CLEAR")
                                     font.family: rootWindow.monoFont
                                     font.bold: !rootWindow.hasAmbiguity
                                     font.pixelSize: 8
                                     color: rootWindow.hasAmbiguity ? rootWindow.fgColor : "#7EE787"
+                                    elide: Text.ElideRight
+                                    Layout.maximumWidth: rootWindow.hasAmbiguity ? (rootWindow.width >= 760 ? 280 : 160) : 400
                                 }
 
                                 Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
@@ -996,6 +1093,7 @@ Window {
                                     spacing: 6
 
                                     Text {
+                                        visible: rootWindow.width >= 740
                                         text: "CHOOSE SCOPE:"
                                         font.family: rootWindow.monoFont
                                         font.bold: true
@@ -1015,7 +1113,12 @@ Window {
                                         Text {
                                             id: res1Text
                                             anchors.centerIn: parent
-                                            text: "[ 1 / ⇥ THIS FILE: " + (rootWindow.activeScope === "local" ? rootWindow.targetLocalFile : "SessionManager.cpp") + " ]"
+                                            text: {
+                                                const fn = rootWindow.activeScope === "local" ? rootWindow.targetLocalFile : "SessionManager.cpp";
+                                                if (rootWindow.width >= 760) return "[ 1 / ⇥ THIS FILE: " + fn + " ]";
+                                                if (rootWindow.width >= 640) return "[ 1: " + fn + " ]";
+                                                return "[ 1: FILE ]";
+                                            }
                                             font.family: rootWindow.monoFont
                                             font.bold: true
                                             font.pixelSize: 8
@@ -1042,7 +1145,7 @@ Window {
                                         Text {
                                             id: res2Text
                                             anchors.centerIn: parent
-                                            text: "[ 2: ENTIRE PROJECT ]"
+                                            text: rootWindow.width >= 680 ? "[ 2: ENTIRE PROJECT ]" : "[ 2: ALL ]"
                                             font.family: rootWindow.monoFont
                                             font.bold: true
                                             font.pixelSize: 8
@@ -1157,10 +1260,10 @@ Window {
 
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    Text { text: "PROMPT SIZE:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
+                                    Text { text: rootWindow.width >= 640 ? "PROMPT SIZE:" : "SIZE:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
                                     Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
                                     Text {
-                                        text: Math.ceil(promptInput.text.length / 4) + " / " + rootWindow.maxTokens + " TOKENS"
+                                        text: (rootWindow.width >= 640 ? (Math.ceil(promptInput.text.length / 4) + " / " + rootWindow.maxTokens + " TOKENS") : (Math.ceil(promptInput.text.length / 4) + "/" + rootWindow.maxTokens))
                                         font.family: rootWindow.monoFont
                                         font.bold: true
                                         font.pixelSize: 8
@@ -1208,7 +1311,7 @@ Window {
                                 }
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    Text { text: "64 THREADS"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 10; color: rootWindow.fgColor }
+                                    Text { text: rootWindow.width >= 640 ? "64 THREADS" : "64 TH"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 10; color: rootWindow.fgColor }
                                     Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
                                     Rectangle {
@@ -1277,6 +1380,7 @@ Window {
 
                             Text {
                                 text: "PERFORMANCE:"
+                                visible: rootWindow.width >= 680
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 8
@@ -1302,16 +1406,17 @@ Window {
                             Text { text: "│"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
 
                             Text {
-                                text: "LENGTH: " + Math.ceil(promptInput.text.length / 4) + "/" + rootWindow.maxTokens + " TOKENS"
+                                text: (rootWindow.width >= 720 ? "LENGTH: " : "") + Math.ceil(promptInput.text.length / 4) + "/" + rootWindow.maxTokens + (rootWindow.width >= 720 ? " TOKENS" : "")
                                 font.family: rootWindow.monoFont
                                 font.pixelSize: 8
                                 color: (Math.ceil(promptInput.text.length / 4) > rootWindow.maxTokens) ? "#FF4D4D" : rootWindow.fgColor
                             }
 
-                            Text { text: "│"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
+                            Text { text: "│"; visible: rootWindow.width >= 640; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
 
                             Text {
-                                text: "CPU: " + rootWindow.liveCpu.toFixed(2) + "% (64 THREADS)"
+                                visible: rootWindow.width >= 640
+                                text: "CPU: " + rootWindow.liveCpu.toFixed(1) + "%" + (rootWindow.width >= 780 ? " (64 THREADS)" : "")
                                 font.family: rootWindow.monoFont
                                 font.pixelSize: 8
                                 color: rootWindow.fgColor
@@ -1379,6 +1484,7 @@ Window {
 
                         // Live Character & Word Counts
                         Rectangle {
+                            visible: rootWindow.width >= 660
                             height: 16
                             width: cTag.contentWidth + 6
                             color: rootWindow.fgColor
@@ -1402,6 +1508,7 @@ Window {
                         }
 
                         Text {
+                            visible: rootWindow.width >= 660
                             text: "|"
                             font.family: rootWindow.monoFont
                             font.pixelSize: 9
@@ -1409,6 +1516,7 @@ Window {
                         }
 
                         Text {
+                            visible: rootWindow.width >= 660
                             text: "WORDS: " + rootWindow.getWordCount(promptInput.text)
                             font.family: rootWindow.monoFont
                             font.bold: true
@@ -1417,6 +1525,7 @@ Window {
                         }
 
                         Text {
+                            visible: rootWindow.width >= 660
                             text: "|"
                             font.family: rootWindow.monoFont
                             font.pixelSize: 9
@@ -1437,7 +1546,9 @@ Window {
                                 spacing: 4
                                 Text {
                                     id: telToggleText
-                                    text: rootWindow.telemetryMaximized ? "PERFORMANCE: [ ▾ MIN ]" : "PERFORMANCE: [ ▴ MAX ]"
+                                    text: rootWindow.width >= 700 ?
+                                          (rootWindow.telemetryMaximized ? "PERFORMANCE: [ ▾ MIN ]" : "PERFORMANCE: [ ▴ MAX ]") :
+                                          (rootWindow.telemetryMaximized ? "[ ▾ MIN ]" : "[ ▴ MAX ]")
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -1459,12 +1570,14 @@ Window {
 
                         // System Toast Banner
                         Text {
-                            visible: rootWindow.toastMessage.length > 0
+                            visible: rootWindow.toastMessage.length > 0 && rootWindow.width >= 740
                             text: "✦ " + rootWindow.toastMessage
                             font.family: rootWindow.monoFont
                             font.bold: true
                             font.pixelSize: 9
                             color: rootWindow.fgColor
+                            elide: Text.ElideRight
+                            Layout.maximumWidth: Math.max(80, rootWindow.width - 640)
                         }
 
                         Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
@@ -1496,7 +1609,7 @@ Window {
                                 Text {
                                     id: b1Text
                                     anchors.centerIn: parent
-                                    text: "[ ⇧⏎ SEND RAW ]"
+                                    text: rootWindow.width >= 760 ? "[ ⇧⏎ SEND RAW ]" : (rootWindow.width >= 600 ? "[ ⇧⏎ RAW ]" : "[ ⇧⏎ ]")
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -1537,7 +1650,7 @@ Window {
                                 Text {
                                     id: b2Text
                                     anchors.centerIn: parent
-                                    text: "[ ⏎ ENHANCE & COPY ]"
+                                    text: rootWindow.width >= 760 ? "[ ⏎ ENHANCE & COPY ]" : (rootWindow.width >= 600 ? "[ ⏎ ENHANCE ]" : "[ ⏎ ]")
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -1564,7 +1677,7 @@ Window {
                             Text {
                                 id: hideTextLabel
                                 anchors.centerIn: parent
-                                text: "[ ⎋ HIDE ]"
+                                text: rootWindow.width >= 600 ? "[ ⎋ HIDE ]" : "[ ⎋ ]"
                                 font.family: rootWindow.monoFont
                                 font.pixelSize: 8
                                 color: rootWindow.fgColor
