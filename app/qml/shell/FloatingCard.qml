@@ -78,6 +78,20 @@ Window {
         return "#262626";
     }
 
+    readonly property color mutedTextColor: {
+        if (currentTheme === "light") return "#4B5563";
+        if (currentTheme === "acid") return "#4ADE80";
+        if (currentTheme === "amber") return "#D97706";
+        return "#8B949E"; // Crisp, high-contrast readable zinc/slate gray
+    }
+
+    readonly property color commentColor: {
+        if (currentTheme === "light") return "#6B7280";
+        if (currentTheme === "acid") return "#22C55E";
+        if (currentTheme === "amber") return "#B45309";
+        return "#8B949E"; // Legible IDE comment gray
+    }
+
     readonly property color inputBgColor: {
         if (currentTheme === "light") return "#E5E7EB";
         if (currentTheme === "acid") return "#0A140B";
@@ -365,11 +379,12 @@ Window {
                             Text {
                                 text: "PROJECT:"
                                 font.family: rootWindow.monoFont
+                                font.bold: true
                                 font.pixelSize: 8
-                                color: rootWindow.dimColor
+                                color: rootWindow.mutedTextColor
                             }
                             Text {
-                                text: "📁 " + rootWindow.activeProject.name + " " + (projectDropdown.visible ? "▴" : "▾")
+                                text: rootWindow.activeProject.name + " " + (projectDropdown.visible ? "▴" : "▾")
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 8
@@ -413,8 +428,9 @@ Window {
                             Text {
                                 text: "MODEL:"
                                 font.family: rootWindow.monoFont
+                                font.bold: true
                                 font.pixelSize: 8
-                                color: rootWindow.dimColor
+                                color: rootWindow.mutedTextColor
                             }
                             Text {
                                 text: rootWindow.activeModel.name + " (" + rootWindow.activeModel.quant + ") " + (modelDropdown.visible ? "▴" : "▾")
@@ -450,17 +466,17 @@ Window {
                         height: 20
                         width: statusTextLabel.contentWidth + 12
                         color: "transparent"
-                        border.color: isClarificationActive ? "#FFB000" : rootWindow.borderColor
+                        border.color: rootWindow.hasAmbiguity ? "#FFB000" : "#7EE787"
                         border.width: 1
 
                         Text {
                             id: statusTextLabel
                             anchors.centerIn: parent
-                            text: isClarificationActive ? "[ STATUS: WARN ]" : "[ STATUS: OK ]"
+                            text: rootWindow.hasAmbiguity ? "[ AMBIGUITY: " + rootWindow.ambiguityScore.toFixed(2) + " ]" : "[ STATUS: OK ]"
                             font.family: rootWindow.monoFont
                             font.bold: true
                             font.pixelSize: 9
-                            color: isClarificationActive ? "#FFB000" : rootWindow.fgColor
+                            color: rootWindow.hasAmbiguity ? "#FFB000" : "#7EE787"
                         }
                     }
 
@@ -686,8 +702,11 @@ Window {
                                 spacing: 4
 
                                 Text {
-                                    text: "📄"
+                                    text: "FILE:"
+                                    font.family: rootWindow.monoFont
+                                    font.bold: true
                                     font.pixelSize: 8
+                                    color: rootWindow.mutedTextColor
                                 }
 
                                 TextInput {
@@ -711,8 +730,9 @@ Window {
                                   "AST: WORKSPACE TRIGRAM READY" :
                                   "AST: LOCAL CLAMP (" + (rootWindow.targetLocalFile.length > 0 ? rootWindow.targetLocalFile : "...") + ")"
                             font.family: rootWindow.monoFont
+                            font.bold: true
                             font.pixelSize: 8
-                            color: rootWindow.dimColor
+                            color: rootWindow.activeScope === "global" ? "#7EE787" : "#FFB000"
                         }
                     }
                 }
@@ -755,7 +775,7 @@ Window {
                                     TextArea {
                                         id: promptInput
                                         placeholderText: qsTr("// $ prompt input ...\n// Enter raw developer prompt draft here.\n// Example: 'Refactor SessionManager token timeout handling and update active tests'")
-                                        placeholderTextColor: rootWindow.dimColor
+                                        placeholderTextColor: rootWindow.commentColor
                                         color: rootWindow.fgColor
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 12
@@ -899,8 +919,9 @@ Window {
                                           "Vague action verb ∙ Unanchored target in [" + rootWindow.activeProject.name + "]" :
                                           "PROMPT HEALTH: NOMINAL ∙ SCOPE: " + (rootWindow.activeScope === "global" ? "GLOBAL CODEBASE" : "LOCAL FILE (" + rootWindow.targetLocalFile + ")")
                                     font.family: rootWindow.monoFont
+                                    font.bold: !rootWindow.hasAmbiguity
                                     font.pixelSize: 8
-                                    color: rootWindow.hasAmbiguity ? rootWindow.fgColor : rootWindow.dimColor
+                                    color: rootWindow.hasAmbiguity ? rootWindow.fgColor : "#7EE787"
                                 }
 
                                 Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
@@ -1177,7 +1198,7 @@ Window {
                             text: "|"
                             font.family: rootWindow.monoFont
                             font.pixelSize: 9
-                            color: rootWindow.dimColor
+                            color: rootWindow.mutedTextColor
                         }
 
                         Text {
@@ -1466,7 +1487,7 @@ Window {
                                             text: modelData.path
                                             font.family: rootWindow.monoFont
                                             font.pixelSize: 7
-                                            color: rootWindow.dimColor
+                                            color: rootWindow.mutedTextColor
                                             elide: Text.ElideMiddle
                                             Layout.maximumWidth: 220
                                         }
@@ -1689,7 +1710,7 @@ Window {
                                     text: "STUDIO"
                                     font.family: rootWindow.monoFont
                                     font.pixelSize: 7
-                                    color: rootWindow.dimColor
+                                    color: rootWindow.mutedTextColor
                                 }
                             }
 
