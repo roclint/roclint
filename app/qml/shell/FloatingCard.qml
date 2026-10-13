@@ -38,6 +38,7 @@ Window {
     // Scope Governance System (Default: Global Codebase; Local File selectable)
     property string activeScope: "global" // "global" or "local"
     property string targetLocalFile: "SessionManager.cpp"
+    property bool telemetryMaximized: true
 
     // Real-Time Linter & Ambiguity State
     readonly property bool hasAmbiguity: {
@@ -298,6 +299,14 @@ Window {
         sequences: ["Alt+2", "Ctrl+2"]
         enabled: rootWindow.isClarificationActive || rootWindow.hasAmbiguity
         onActivated: rootWindow.commitChoice(2)
+    }
+
+    Shortcut {
+        sequences: ["Alt+M", "Ctrl+M"]
+        onActivated: {
+            rootWindow.telemetryMaximized = !rootWindow.telemetryMaximized;
+            rootWindow.showToast(rootWindow.telemetryMaximized ? "TELEMETRY: EXPANDED (4 GAUGES)" : "TELEMETRY: MINIMIZED (SUMMARY)");
+        }
     }
 
     // =========================================================================
@@ -998,157 +1007,300 @@ Window {
                     }
 
                 // =============================================================
-                // 3. INDUSTRIAL TELEMETRY GAUGES (4 Columns)
+                // 3. INDUSTRIAL TELEMETRY GAUGES (Minimized / Maximized)
                 // =============================================================
-                RowLayout {
+                Item {
+                    id: telemetryContainer
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 46
-                    Layout.maximumHeight: 48
+                    Layout.preferredHeight: rootWindow.telemetryMaximized ? 46 : 22
+                    Layout.maximumHeight: rootWindow.telemetryMaximized ? 48 : 22
                     Layout.fillHeight: false
-                    spacing: 8
+                    clip: true
 
-                    // Gauge 1: Resident RAM
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 46
-                        Layout.fillHeight: false
-                        color: "transparent"
-                        border.color: rootWindow.borderColor
-                        border.width: 1
-
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 6
-                            spacing: 1
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Text { text: "RESIDENT RAM:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
-                                Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                Text { text: rootWindow.liveRam.toFixed(1) + " MB"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 9; color: rootWindow.fgColor }
-                            }
-                            Text {
-                                text: "[■■□□□□□□□□]"
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 11
-                                color: rootWindow.fgColor
-                            }
-                        }
+                    Behavior on Layout.preferredHeight {
+                        NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
                     }
 
-                    // Gauge 2: Latency
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 46
-                        Layout.fillHeight: false
-                        color: "transparent"
-                        border.color: rootWindow.borderColor
-                        border.width: 1
+                    // MAXIMIZED VIEW (4 Detailed Gauge Columns)
+                    RowLayout {
+                        anchors.fill: parent
+                        visible: rootWindow.telemetryMaximized
+                        spacing: 8
 
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 6
-                            spacing: 1
+                        // Gauge 1: Resident RAM
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 46
+                            Layout.fillHeight: false
+                            color: "transparent"
+                            border.color: rootWindow.borderColor
+                            border.width: 1
 
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Text { text: "LATENCY:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
-                                Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                Text { text: "REALTIME"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor }
-                            }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Text { text: "LATENCY: " + rootWindow.liveLatency.toFixed(1) + " MS"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 10; color: rootWindow.fgColor }
-                                Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                Text { text: "±0.02"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.6 }
-                            }
-                        }
-                    }
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                spacing: 1
 
-                    // Gauge 3: Context Budget
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 46
-                        Layout.fillHeight: false
-                        color: "transparent"
-                        border.color: rootWindow.borderColor
-                        border.width: 1
-
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 6
-                            spacing: 1
-
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Text { text: "CONTEXT BUDGET:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
-                                Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Text { text: "RESIDENT RAM:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
+                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+                                    Text { text: rootWindow.liveRam.toFixed(1) + " MB"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 9; color: rootWindow.fgColor }
+                                }
                                 Text {
-                                    text: Math.ceil(promptInput.text.length / 4) + " / " + rootWindow.maxTokens + " TOKENS"
+                                    text: "[■■□□□□□□□□]"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
-                                    font.pixelSize: 8
+                                    font.pixelSize: 11
+                                    color: rootWindow.fgColor
+                                }
+                            }
+                        }
+
+                        // Gauge 2: Latency
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 46
+                            Layout.fillHeight: false
+                            color: "transparent"
+                            border.color: rootWindow.borderColor
+                            border.width: 1
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                spacing: 1
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Text { text: "LATENCY:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
+                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+                                    Text { text: "REALTIME"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor }
+                                }
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Text { text: "LATENCY: " + rootWindow.liveLatency.toFixed(1) + " MS"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 10; color: rootWindow.fgColor }
+                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+                                    Text { text: "±0.02"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
+                                }
+                            }
+                        }
+
+                        // Gauge 3: Context Budget
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 46
+                            Layout.fillHeight: false
+                            color: "transparent"
+                            border.color: rootWindow.borderColor
+                            border.width: 1
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                spacing: 1
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Text { text: "CONTEXT BUDGET:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
+                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+                                    Text {
+                                        text: Math.ceil(promptInput.text.length / 4) + " / " + rootWindow.maxTokens + " TOKENS"
+                                        font.family: rootWindow.monoFont
+                                        font.bold: true
+                                        font.pixelSize: 8
+                                        color: (Math.ceil(promptInput.text.length / 4) > rootWindow.maxTokens) ? "#FF4D4D" : rootWindow.fgColor
+                                    }
+                                }
+                                Text {
+                                    text: {
+                                        const count = Math.ceil(promptInput.text.length / 4);
+                                        const total = 12;
+                                        const filled = Math.min(total, Math.floor((count / rootWindow.maxTokens) * total));
+                                        let s = "[";
+                                        for (let i = 0; i < total; ++i) {
+                                            s += (i < filled) ? "█" : "░";
+                                        }
+                                        return s + "]";
+                                    }
+                                    font.family: rootWindow.monoFont
+                                    font.bold: true
+                                    font.pixelSize: 11
                                     color: (Math.ceil(promptInput.text.length / 4) > rootWindow.maxTokens) ? "#FF4D4D" : rootWindow.fgColor
                                 }
                             }
-                            Text {
-                                text: {
-                                    const count = Math.ceil(promptInput.text.length / 4);
-                                    const total = 12;
-                                    const filled = Math.min(total, Math.floor((count / rootWindow.maxTokens) * total));
-                                    let s = "[";
-                                    for (let i = 0; i < total; ++i) {
-                                        s += (i < filled) ? "█" : "░";
-                                    }
-                                    return s + "]";
+                        }
+
+                        // Gauge 4: Idle CPU + Quick Minimize Button
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 46
+                            Layout.fillHeight: false
+                            color: "transparent"
+                            border.color: rootWindow.borderColor
+                            border.width: 1
+
+                            ColumnLayout {
+                                anchors.fill: parent
+                                anchors.margins: 6
+                                spacing: 1
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Text { text: "IDLE CPU:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
+                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+                                    Text { text: rootWindow.liveCpu.toFixed(2) + "%"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 9; color: rootWindow.fgColor }
                                 }
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 11
-                                color: (Math.ceil(promptInput.text.length / 4) > rootWindow.maxTokens) ? "#FF4D4D" : rootWindow.fgColor
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Text { text: "64 THREADS"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 10; color: rootWindow.fgColor }
+                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+
+                                    Rectangle {
+                                        height: 12
+                                        width: nomText.contentWidth + 6
+                                        color: rootWindow.fgColor
+                                        Text {
+                                            id: nomText
+                                            anchors.centerIn: parent
+                                            text: "NOMINAL"
+                                            font.family: rootWindow.monoFont
+                                            font.bold: true
+                                            font.pixelSize: 7
+                                            color: rootWindow.bgColor
+                                        }
+                                    }
+
+                                    // Minimize Toggle Button
+                                    Rectangle {
+                                        height: 12
+                                        width: minBtnText.contentWidth + 8
+                                        color: minBtnMouse.containsMouse ? rootWindow.dimColor : "transparent"
+                                        border.color: rootWindow.borderColor
+                                        border.width: 1
+                                        radius: 2
+
+                                        Text {
+                                            id: minBtnText
+                                            anchors.centerIn: parent
+                                            text: "▾ MIN"
+                                            font.family: rootWindow.monoFont
+                                            font.bold: true
+                                            font.pixelSize: 7
+                                            color: rootWindow.fgColor
+                                        }
+                                        MouseArea {
+                                            id: minBtnMouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: {
+                                                rootWindow.telemetryMaximized = false;
+                                                rootWindow.showToast("TELEMETRY: MINIMIZED TO SUMMARY TICKER");
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
 
-                    // Gauge 4: Idle CPU
+                    // MINIMIZED VIEW (Compact 1-line Ticker Strip)
                     Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 46
-                        Layout.fillHeight: false
+                        anchors.fill: parent
+                        visible: !rootWindow.telemetryMaximized
                         color: "transparent"
                         border.color: rootWindow.borderColor
                         border.width: 1
+                        radius: 3
 
-                        ColumnLayout {
+                        RowLayout {
                             anchors.fill: parent
-                            anchors.margins: 6
-                            spacing: 1
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            spacing: 8
 
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Text { text: "IDLE CPU:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
-                                Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                Text { text: rootWindow.liveCpu.toFixed(2) + "%"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 9; color: rootWindow.fgColor }
+                            Text {
+                                text: "METRICS:"
+                                font.family: rootWindow.monoFont
+                                font.bold: true
+                                font.pixelSize: 8
+                                color: rootWindow.mutedTextColor
                             }
-                            RowLayout {
-                                Layout.fillWidth: true
-                                Text { text: "64 THREADS"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 10; color: rootWindow.fgColor }
-                                Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                Rectangle {
-                                    height: 12
-                                    width: nomText.contentWidth + 6
+
+                            Text {
+                                text: "RAM: " + rootWindow.liveRam.toFixed(1) + " MB"
+                                font.family: rootWindow.monoFont
+                                font.pixelSize: 8
+                                color: rootWindow.fgColor
+                            }
+
+                            Text { text: "│"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
+
+                            Text {
+                                text: "LATENCY: " + rootWindow.liveLatency.toFixed(1) + " MS"
+                                font.family: rootWindow.monoFont
+                                font.pixelSize: 8
+                                color: rootWindow.fgColor
+                            }
+
+                            Text { text: "│"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
+
+                            Text {
+                                text: "BUDGET: " + Math.ceil(promptInput.text.length / 4) + "/" + rootWindow.maxTokens + " TOKENS"
+                                font.family: rootWindow.monoFont
+                                font.pixelSize: 8
+                                color: (Math.ceil(promptInput.text.length / 4) > rootWindow.maxTokens) ? "#FF4D4D" : rootWindow.fgColor
+                            }
+
+                            Text { text: "│"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
+
+                            Text {
+                                text: "CPU: " + rootWindow.liveCpu.toFixed(2) + "% (64 THREADS)"
+                                font.family: rootWindow.monoFont
+                                font.pixelSize: 8
+                                color: rootWindow.fgColor
+                            }
+
+                            Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+
+                            // Expand Button on Ticker
+                            Rectangle {
+                                height: 14
+                                width: maxBtnText.contentWidth + 8
+                                color: maxBtnMouse.containsMouse ? rootWindow.dimColor : "transparent"
+                                border.color: rootWindow.borderColor
+                                border.width: 1
+                                radius: 2
+
+                                Text {
+                                    id: maxBtnText
+                                    anchors.centerIn: parent
+                                    text: "▴ EXPAND"
+                                    font.family: rootWindow.monoFont
+                                    font.bold: true
+                                    font.pixelSize: 7
                                     color: rootWindow.fgColor
-                                    Text {
-                                        id: nomText
-                                        anchors.centerIn: parent
-                                        text: "NOMINAL"
-                                        font.family: rootWindow.monoFont
-                                        font.bold: true
-                                        font.pixelSize: 7
-                                        color: rootWindow.bgColor
+                                }
+                                MouseArea {
+                                    id: maxBtnMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        rootWindow.telemetryMaximized = true;
+                                        rootWindow.showToast("TELEMETRY: EXPANDED TO 4-GAUGE MATRIX");
                                     }
                                 }
+                            }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                rootWindow.telemetryMaximized = true;
+                                rootWindow.showToast("TELEMETRY: EXPANDED TO 4-GAUGE MATRIX");
                             }
                         }
                     }
@@ -1207,6 +1359,47 @@ Window {
                             font.bold: true
                             font.pixelSize: 9
                             color: rootWindow.fgColor
+                        }
+
+                        Text {
+                            text: "|"
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 9
+                            color: rootWindow.mutedTextColor
+                        }
+
+                        // Telemetry Minimize/Maximize Toggle Pill
+                        Rectangle {
+                            height: 18
+                            width: telToggleText.contentWidth + 12
+                            color: telToggleMouse.containsMouse ? rootWindow.dimColor : "transparent"
+                            border.color: rootWindow.borderColor
+                            border.width: 1
+                            radius: 3
+
+                            RowLayout {
+                                anchors.centerIn: parent
+                                spacing: 4
+                                Text {
+                                    id: telToggleText
+                                    text: rootWindow.telemetryMaximized ? "METRICS: [ ▾ MIN ]" : "METRICS: [ ▴ MAX ]"
+                                    font.family: rootWindow.monoFont
+                                    font.bold: true
+                                    font.pixelSize: 8
+                                    color: rootWindow.fgColor
+                                }
+                            }
+
+                            MouseArea {
+                                id: telToggleMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    rootWindow.telemetryMaximized = !rootWindow.telemetryMaximized;
+                                    rootWindow.showToast(rootWindow.telemetryMaximized ? "TELEMETRY: EXPANDED (4 GAUGES)" : "TELEMETRY: MINIMIZED (SUMMARY)");
+                                }
+                            }
                         }
 
                         // System Toast Banner
