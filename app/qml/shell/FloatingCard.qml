@@ -230,7 +230,9 @@ Window {
     Shortcut {
         sequence: "Esc"
         onActivated: {
-            if (rootWindow.isClarificationActive) {
+            if (modelDropdown.visible) {
+                modelDropdown.visible = false;
+            } else if (rootWindow.isClarificationActive) {
                 rootWindow.isClarificationActive = false;
             } else {
                 rootWindow.dismissCard();
@@ -322,12 +324,13 @@ Window {
                         color: rootWindow.fgColor
                     }
 
-                    // Model Hot-Swap Pill (Ollama / Unsloth style)
+                    // Model Dropdown Selector Pill
                     Rectangle {
+                        id: modelSelectorButton
                         height: 20
                         width: modelRow.width + 12
-                        color: modelMouse.containsMouse ? rootWindow.dimColor : "transparent"
-                        border.color: rootWindow.borderColor
+                        color: (modelDropdown.visible || modelMouse.containsMouse) ? rootWindow.dimColor : "transparent"
+                        border.color: modelDropdown.visible ? rootWindow.fgColor : rootWindow.borderColor
                         border.width: 1
 
                         RowLayout {
@@ -342,7 +345,7 @@ Window {
                                 color: rootWindow.dimColor
                             }
                             Text {
-                                text: rootWindow.activeModel.name + " (" + rootWindow.activeModel.quant + ") ▾"
+                                text: rootWindow.activeModel.name + " (" + rootWindow.activeModel.quant + ") " + (modelDropdown.visible ? "▴" : "▾")
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 8
@@ -356,8 +359,14 @@ Window {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                rootWindow.currentModelIndex = (rootWindow.currentModelIndex + 1) % rootWindow.modelList.length;
-                                rootWindow.showToast("HOT-SWAPPED: " + rootWindow.activeModel.name);
+                                if (!modelDropdown.visible) {
+                                    var pt = modelSelectorButton.mapToItem(subBorderInset, 0, modelSelectorButton.height + 4);
+                                    modelDropdown.x = pt.x;
+                                    modelDropdown.y = pt.y;
+                                    modelDropdown.visible = true;
+                                } else {
+                                    modelDropdown.visible = false;
+                                }
                             }
                         }
                     }
@@ -1156,6 +1165,205 @@ Window {
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: rootWindow.dismissCard()
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Dropdown Backdrop: Click outside dropdown to close
+            MouseArea {
+                id: dropdownBackdrop
+                anchors.fill: parent
+                visible: modelDropdown.visible
+                z: 990
+                onClicked: modelDropdown.visible = false
+            }
+
+            // Neo-Brutalist Model Dropdown Menu
+            Item {
+                id: modelDropdown
+                visible: false
+                z: 999
+                width: 320
+                height: dropdownContent.implicitHeight
+
+                // Hard shadow
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.leftMargin: 4
+                    anchors.topMargin: 4
+                    color: rootWindow.shadowColor
+                    radius: 4
+                }
+
+                // Dropdown Card
+                Rectangle {
+                    id: dropdownCard
+                    anchors.fill: parent
+                    color: rootWindow.bgColor
+                    border.color: rootWindow.borderColor
+                    border.width: 1
+                    radius: 4
+
+                    ColumnLayout {
+                        id: dropdownContent
+                        width: parent.width
+                        spacing: 0
+
+                        // Dropdown Title Strip
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 22
+                            color: rootWindow.dimColor
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 8
+                                anchors.rightMargin: 8
+                                Text {
+                                    text: "LOCAL RUNTIMES // INFERENCE ENGINE"
+                                    font.family: rootWindow.monoFont
+                                    font.bold: true
+                                    font.pixelSize: 8
+                                    color: rootWindow.fgColor
+                                }
+                                Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+                                Text {
+                                    text: "HOT-SWAP"
+                                    font.family: rootWindow.monoFont
+                                    font.pixelSize: 7
+                                    color: rootWindow.fgColor
+                                    opacity: 0.7
+                                }
+                            }
+                        }
+
+                        // Model Item List
+                        Repeater {
+                            model: rootWindow.modelList
+                            delegate: Rectangle {
+                                Layout.fillWidth: true
+                                height: 32
+                                color: (rootWindow.currentModelIndex === index)
+                                       ? (itemMouse.containsMouse ? rootWindow.dimColor : rootWindow.inputBgColor)
+                                       : (itemMouse.containsMouse ? rootWindow.dimColor : "transparent")
+
+                                Rectangle {
+                                    anchors.bottom: parent.bottom
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    height: 1
+                                    color: rootWindow.borderColor
+                                    opacity: 0.2
+                                }
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8
+                                    anchors.rightMargin: 8
+                                    spacing: 8
+
+                                    // Active indicator
+                                    Text {
+                                        text: rootWindow.currentModelIndex === index ? "●" : "○"
+                                        font.family: rootWindow.monoFont
+                                        font.pixelSize: 9
+                                        color: rootWindow.currentModelIndex === index ? rootWindow.fgColor : rootWindow.dimColor
+                                    }
+
+                                    // Model Name
+                                    Text {
+                                        text: modelData.name
+                                        font.family: rootWindow.monoFont
+                                        font.bold: rootWindow.currentModelIndex === index
+                                        font.pixelSize: 9
+                                        color: rootWindow.fgColor
+                                    }
+
+                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+
+                                    // Quantization Tag
+                                    Rectangle {
+                                        height: 14
+                                        width: quantText.contentWidth + 6
+                                        color: rootWindow.currentModelIndex === index ? rootWindow.fgColor : "transparent"
+                                        border.color: rootWindow.borderColor
+                                        border.width: 1
+
+                                        Text {
+                                            id: quantText
+                                            anchors.centerIn: parent
+                                            text: modelData.quant
+                                            font.family: rootWindow.monoFont
+                                            font.bold: true
+                                            font.pixelSize: 7
+                                            color: rootWindow.currentModelIndex === index ? rootWindow.bgColor : rootWindow.fgColor
+                                        }
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: itemMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        rootWindow.currentModelIndex = index;
+                                        rootWindow.showToast("HOT-SWAPPED: " + modelData.name);
+                                        modelDropdown.visible = false;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Studio / HuggingFace Footer Link
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 26
+                            color: hfMouse.containsMouse ? rootWindow.dimColor : "transparent"
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 8
+                                anchors.rightMargin: 8
+                                spacing: 6
+
+                                Text {
+                                    text: "[ + ]"
+                                    font.family: rootWindow.monoFont
+                                    font.bold: true
+                                    font.pixelSize: 8
+                                    color: rootWindow.fgColor
+                                }
+
+                                Text {
+                                    text: "DOWNLOAD FROM HUGGINGFACE..."
+                                    font.family: rootWindow.monoFont
+                                    font.pixelSize: 8
+                                    color: rootWindow.fgColor
+                                    opacity: 0.8
+                                }
+
+                                Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+
+                                Text {
+                                    text: "STUDIO"
+                                    font.family: rootWindow.monoFont
+                                    font.pixelSize: 7
+                                    color: rootWindow.dimColor
+                                }
+                            }
+
+                            MouseArea {
+                                id: hfMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    modelDropdown.visible = false;
+                                    rootWindow.showToast("STUDIO: OPEN DASHBOARD TO DOWNLOAD GGUF WEIGHTS");
+                                }
                             }
                         }
                     }
