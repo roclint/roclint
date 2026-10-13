@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ROCLINT // RETROFUTURIST POSTER HUD</title>
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Google Fonts: Space Grotesk, Space Mono, UnifrakturMaguntia, Cinzel, JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@700;900&family=JetBrains+Mono:ital,wght@0,300;0,400;0,700;0,800;1,400&family=Space+Grotesk:wght@300;400;700;900&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=UnifrakturMaguntia&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            fraktur: ['"UnifrakturMaguntia"', 'serif'],
+            brutal: ['"Space Grotesk"', 'sans-serif'],
+            mono: ['"Space Mono"', 'monospace'],
+            cinzel: ['"Cinzel"', 'serif'],
+            code: ['"JetBrains Mono"', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    :root {
+      --bg-color: #050505;
+      --fg-color: #f5f5f7;
+      --border-color: #f5f5f7;
+      --dim-color: #262626;
+      --accent-color: #ffffff;
+      --shadow-color: #ffffff;
+      --input-bg: #09090b;
+      --scanline-opacity: 0.16;
+      --grain-opacity: 0.12;
+    }
+
+    [data-theme="light"] {
+      --bg-color: #f4f4f4;
+      --fg-color: #050505;
+      --border-color: #050505;
+      --dim-color: #d1d5db;
+      --accent-color: #000000;
+      --shadow-color: #050505;
+      --input-bg: #e5e7eb;
+      --scanline-opacity: 0.08;
+      --grain-opacity: 0.09;
+    }
+
+    [data-theme="acid"] {
+      --bg-color: #070d08;
+      --fg-color: #4ade80;
+      --border-color: #22c55e;
+      --dim-color: #14331b;
+      --accent-color: #86efac;
+      --shadow-color: #22c55e;
+      --input-bg: #0a140b;
+      --scanline-opacity: 0.22;
+      --grain-opacity: 0.14;
+    }
+
+    [data-theme="amber"] {
+      --bg-color: #0f0902;
+      --fg-color: #fbbf24;
+      --border-color: #f59e0b;
+      --dim-color: #3b2207;
+      --accent-color: #fef08a;
+      --shadow-color: #f59e0b;
+      --input-bg: #140d04;
+      --scanline-opacity: 0.24;
+      --grain-opacity: 0.14;
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--fg-color);
+      font-family: 'Space Grotesk', sans-serif;
+      overflow-x: hidden;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      transition: background-color 0.2s ease, color 0.2s ease;
+    }
+
+    /* Xerox Grain Texture Overlay */
+    .grain-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 998;
+      opacity: var(--grain-opacity);
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+    }
+
+    /* CRT Scanline Filter */
+    .scanlines-overlay {
+      background: linear-gradient(
+        to bottom,
+        rgba(255, 255, 255, 0),
+        rgba(255, 255, 255, 0) 50%,
+        rgba(0, 0, 0, 0.45) 50%,
+        rgba(0, 0, 0, 0.45)
+      );
+      background-size: 100% 4px;
+      pointer-events: none;
+      position: fixed;
+      inset: 0;
+      z-index: 997;
+      opacity: var(--scanline-opacity);
+    }
+
+    /* Tactile Neo-Brutalist Hard Shadow Buttons */
+    .brutal-btn {
+      box-shadow: 3px 3px 0px var(--shadow-color);
+      transition: all 0.1s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .brutal-btn:hover {
+      transform: translate(-1px, -1px);
+      box-shadow: 4px 4px 0px var(--shadow-color);
+    }
+    .brutal-btn:active {
+      transform: translate(2px, 2px);
+      box-shadow: 1px 1px 0px var(--shadow-color);
+    }
+
+    /* Vertical Editorial Typography Margins */
+    .vertical-rl {
+      writing-mode: vertical-rl;
+      text-orientation: mixed;
+    }
+    .vertical-lr {
+      writing-mode: vertical-lr;
+      transform: rotate(180deg);
+    }
+
+    /* Fine Technical Grid */
+    .bg-grid-poster {
+      background-size: 20px 20px;
+      background-image: 
+        linear-gradient(to right, var(--dim-color) 1px, transparent 1px),
+        linear-gradient(to bottom, var(--dim-color) 1px, transparent 1px);
+    }
+
+    /* Blinking Caret */
+    @keyframes blink {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0; }
+    }
+    .cursor-blink { animation: blink 0.85s infinite; }
+
+    /* Spark Glitch Flash */
+    @keyframes spark-flash {
+      0% { opacity: 0; transform: scale(0.98); }
+      40% { opacity: 1; filter: invert(1); transform: scale(1.01); }
+      100% { opacity: 0; transform: scale(1); }
+    }
+    .spark-flash-active {
+      animation: spark-flash 0.45s ease-out;
+    }
+
+    /* Custom Scrollbar */
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg-color); }
+    ::-webkit-scrollbar-thumb { background: var(--border-color); }
+
+    textarea::placeholder {
+      color: var(--dim-color);
+      opacity: 0.85;
+    }
+  </style>
+</head>
+<body class="min-h-screen p-2 sm:p-5 md:p-8 flex flex-col items-center justify-center selection:bg-current selection:text-[var(--bg-color)]">
+
+  <div id="grainLayer" class="grain-overlay"></div>
+  <div id="scanlineLayer" class="scanlines-overlay"></div>
+
+  <!-- Interactive Spark Shockwave Canvas Flash -->
+  <div id="flashShield" class="fixed inset-0 bg-white pointer-events-none z-50 opacity-0 transition-opacity duration-300"></div>
+
+  <!-- System Notification Toast Banner -->
+  <div id="toastNotification" class="fixed top-5 left-1/2 -translate-x-1/2 z-50 px-4 py-1.5 bg-[var(--fg-color)] text-[var(--bg-color)] font-mono text-[11px] font-black border-2 border-current uppercase tracking-widest brutal-btn hidden">
+    SYSTEM UPDATED
+  </div>
+
+  <article id="posterBoard" class="w-full max-w-6xl bg-[var(--bg-color)] border-2 border-current p-2.5 sm:p-4 md:p-5 relative transition-colors duration-200 shadow-2xl">
+    
+    <!-- SUB-BORDER INSET (Double Bounding Box Structure) -->
+    <div class="w-full h-full border border-current p-2.5 sm:p-4 flex flex-col justify-between relative bg-[var(--bg-color)]">
+
+      <header class="w-full pb-3 border-b border-current">
+        
+        <!-- Top Metric Bar -->
+        <div class="flex flex-wrap items-center justify-between text-[10px] font-mono tracking-wider mb-2 gap-2">
+          <div class="flex items-center gap-2">
+            <span class="inline-block w-2.5 h-2.5 bg-current animate-pulse"></span>
+            <span class="font-black uppercase tracking-widest">ROCLINT.SYS // CORE_v0.1.0</span>
+            <span class="border border-current px-1.5 py-0.2 hidden sm:inline-block">PRE-RUNTIME INTENT INTERCEPTOR</span>
+          </div>
+
+          <div class="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+            <!-- Status Badge -->
+            <button onclick="handleManualCheck()" id="statusBadge" class="border border-current px-2 py-0.5 text-[10px] font-bold uppercase hover:bg-current hover:text-[var(--bg-color)] transition-colors flex items-center gap-1 cursor-pointer">
+              <span>[ STATUS: <strong id="statusText">OK</strong> ]</span>
+            </button>
+
+            <!-- Latency Pill -->
+            <div class="border border-current px-2 py-0.5 text-[10px] font-bold">
+              [ <span id="hdrLatency">0.0</span> MS ]
+            </div>
+
+            <!-- Invert / Multi-Palette Selectors -->
+            <div class="flex items-center border border-current p-0.5">
+              <button onclick="setTheme('dark')" id="theme-dark" class="px-1.5 py-0.5 text-[9px] font-black uppercase bg-current text-[var(--bg-color)]" title="Void Noir">MONO</button>
+              <button onclick="setTheme('light')" id="theme-light" class="px-1.5 py-0.5 text-[9px] font-black uppercase opacity-60 hover:opacity-100" title="Light Paper">LIGHT</button>
+              <button onclick="setTheme('acid')" id="theme-acid" class="px-1.5 py-0.5 text-[9px] font-black uppercase opacity-60 hover:opacity-100" title="Acid Emerald">ACID</button>
+              <button onclick="setTheme('amber')" id="theme-amber" class="px-1.5 py-0.5 text-[9px] font-black uppercase opacity-60 hover:opacity-100" title="Amber Radiation">AMBR</button>
+            </div>
+
+            <!-- CRT & Sound Toggles -->
+            <button onclick="toggleCRT()" id="crtToggleBtn" class="border border-current px-2 py-0.5 text-[9px] font-bold hover:bg-current hover:text-[var(--bg-color)] cursor-pointer">CRT: ON</button>
+            <button onclick="toggleAudio()" id="soundToggleBtn" class="border border-current px-2 py-0.5 text-[9px] font-bold hover:bg-current hover:text-[var(--bg-color)] cursor-pointer">SND: MUTED</button>
+            <button onclick="igniteSpark()" class="brutal-btn border border-current px-2 py-0.5 text-[9px] font-black bg-current text-[var(--bg-color)] flex items-center gap-1 cursor-pointer" title="Ignite Divine Spark Shockwave">
+              <span>⚡ SPARK</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- AGGRESSIVE MONUMENTAL HEADLINE (Space Grotesk + Unifraktur Subtitle) -->
+        <div class="pt-1">
+          <div class="flex flex-col sm:flex-row sm:items-baseline justify-between gap-1">
+            <h1 class="font-brutal text-4xl sm:text-6xl md:text-7xl font-black uppercase tracking-tighter leading-none select-none">
+              ROCLINT // INTERCEPTOR
+            </h1>
+            <span class="font-fraktur text-2xl sm:text-3xl leading-none text-right opacity-90">
+              Intentio Divina
+            </span>
+          </div>
+
+          <div class="flex flex-wrap items-center justify-between mt-1 pt-1 border-t border-current/40 text-[9px] sm:text-[10px] font-mono tracking-widest uppercase">
+            <span class="flex items-center gap-1">
+              <span>✦</span> <span>HUMAN_ALGORITHM TRANSCENDENCE</span>
+            </span>
+            <span class="hidden md:inline">HOMO SUM: HUMANI NIHIL A ME ALIENUM PUTO</span>
+            <span class="flex items-center gap-1">
+              <span>DOC: 497713199</span> <span>✦</span>
+            </span>
+          </div>
+        </div>
+      </header>
+
+      <main class="w-full my-3 sm:my-4 flex items-stretch justify-between relative bg-grid-poster">
+        
+        <!-- LEFT MARGIN VERTICAL CALLOUT SPINE -->
+        <aside class="hidden lg:flex flex-col items-center justify-between w-8 border-r border-current py-2 select-none">
+          <span class="text-xs">✦</span>
+          <div class="vertical-lr font-brutal font-black tracking-[0.25em] text-[10px] uppercase whitespace-nowrap">
+            V E C T O R · B R U T A L I S M · 2 0 2 6
+          </div>
+          <span class="font-mono text-[8px]">01.02</span>
+        </aside>
+
+        <!-- CENTRAL PROMPT INGESTION & INTERACTION MATRIX -->
+        <section class="flex-1 p-2 sm:p-3 flex flex-col justify-between">
+          
+          <!-- Buffer Header & Quick Payloads Strip -->
+          <div class="flex flex-wrap items-center justify-between border-b border-current pb-2 mb-2 gap-2 text-xs font-mono">
+            <div class="flex items-center gap-2">
+              <span class="font-black bg-current text-[var(--bg-color)] px-1.5 py-0.2 text-[9px]">BUFFER_01</span>
+              <span class="text-[10px] tracking-wider">// RAW_PROMPT_PAYLOAD</span>
+              <span class="text-[9px] opacity-75" id="intentClassificationTag">[INTENT: UNKNOWN]</span>
+            </div>
+
+            <!-- Quick Payload Chips -->
+            <div class="flex items-center gap-1 text-[9px]">
+              <span class="opacity-60 hidden sm:inline">// PRESETS:</span>
+              <button onclick="injectPreset('refactor')" class="border border-current px-1.5 py-0.5 hover:bg-current hover:text-[var(--bg-color)] transition-colors">REFACTOR</button>
+              <button onclick="injectPreset('cuda')" class="border border-current px-1.5 py-0.5 hover:bg-current hover:text-[var(--bg-color)] transition-colors">CUDA_EIGEN</button>
+              <button onclick="injectPreset('auth')" class="border border-current px-1.5 py-0.5 hover:bg-current hover:text-[var(--bg-color)] transition-colors">AUTH_HMAC</button>
+              <button onclick="injectPreset('bench')" class="border border-current px-1.5 py-0.5 hover:bg-current hover:text-[var(--bg-color)] transition-colors hidden sm:inline-block">BENCH_HEAP</button>
+            </div>
+          </div>
+
+          <!-- Prompt Terminal Canvas (Double Bounded Inset) -->
+          <div class="border border-current bg-[var(--input-bg)] p-3 min-h-[300px] sm:min-h-[360px] flex flex-col justify-between relative focus-within:border-current focus-within:ring-1 focus-within:ring-current transition-all">
+            
+            <!-- Corner Crosshair Vectors -->
+            <div class="absolute top-1 left-1 text-[8px] font-mono opacity-60 select-none pointer-events-none">+</div>
+            <div class="absolute top-1 right-1 text-[8px] font-mono opacity-60 select-none pointer-events-none">+</div>
+            <div class="absolute bottom-1 left-1 text-[8px] font-mono opacity-60 select-none pointer-events-none">+</div>
+            <div class="absolute bottom-1 right-1 text-[8px] font-mono opacity-60 select-none pointer-events-none">+</div>
+
+            <textarea 
+              id="promptInput"
+              spellcheck="false"
+              class="w-full flex-1 bg-transparent text-[var(--fg-color)] font-code text-xs sm:text-sm resize-none outline-none leading-relaxed tracking-wide"
+              placeholder="// $ prompt input ...&#10;// Enter raw developer prompt draft here.&#10;// Example: 'Refactor SessionManager token timeout handling and update active tests'"></textarea>
+
+            <!-- Textarea Sub-bar -->
+            <div class="flex flex-wrap items-center justify-between pt-2 border-t border-current/40 text-[9px] font-mono mt-2 gap-2">
+              <div class="flex items-center gap-2">
+                <span class="font-black uppercase">DAEMON_INTERCEPT:</span>
+                <span id="astStatus" class="font-bold">LISTENING</span>
+                <span class="cursor-blink font-bold">█</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <span>SYNTAX: <strong id="syntaxStatus">VALID</strong></span>
+                <span>LINT: <strong id="lintScore">0 WARNINGS</strong></span>
+                <span>ENTROPY: <strong id="entropyScore">0.7842 λ</strong></span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="w-full sm:w-64 md:w-72 border-l border-current p-2.5 sm:p-3 flex flex-col justify-between bg-[var(--bg-color)]">
+          
+          <!-- Section 1: Blackletter Specimen Module -->
+          <div class="border border-current p-2 mb-2">
+            <div class="flex items-center justify-between border-b border-current pb-1 mb-1">
+              <span class="font-mono text-[9px] uppercase tracking-widest font-black">SPECIMEN 01</span>
+              <span class="text-xs">✶</span>
+            </div>
+            <div class="font-fraktur text-3xl sm:text-4xl leading-tight py-0.5 select-none">
+              Genesis
+            </div>
+            <p class="font-mono text-[9px] leading-tight opacity-75 mt-0.5">
+              The spark passes across the carbon barrier into silicon eternity. Zero runtime ambiguity.
+            </p>
+          </div>
+
+          <!-- Section 2: Celestial Spherical Harmonic SVG Wireframe -->
+          <div class="border border-current p-2 mb-2 flex flex-col items-center justify-center relative">
+            <div class="w-full flex justify-between text-[8px] font-mono mb-1">
+              <span>HARMONIC MATRIX</span>
+              <span>VT100 RASTER</span>
+            </div>
+            <div class="w-24 h-24 sm:w-28 sm:h-28 relative flex items-center justify-center">
+              <svg class="w-full h-full stroke-current text-current" viewBox="0 0 100 100" fill="none">
+                <circle cx="50" cy="50" r="44" stroke-width="1.2" />
+                <ellipse cx="50" cy="50" rx="44" ry="18" stroke-width="0.8" id="harmonicLat1" />
+                <ellipse cx="50" cy="50" rx="44" ry="32" stroke-width="0.8" id="harmonicLat2" />
+                <ellipse cx="50" cy="50" rx="18" ry="44" stroke-width="0.8" id="harmonicLon1" />
+                <ellipse cx="50" cy="50" rx="32" ry="44" stroke-width="0.8" id="harmonicLon2" />
+                <line x1="50" y1="6" x2="50" y2="94" stroke-width="1" stroke-dasharray="2,2" />
+                <line x1="6" y1="50" x2="94" y2="50" stroke-width="1" stroke-dasharray="2,2" />
+              </svg>
+            </div>
+            <div class="w-full flex justify-between text-[8px] font-mono mt-1 opacity-75">
+              <span>LAT: 41°54'12"N</span>
+              <span>LON: 12°27'15"E</span>
+            </div>
+          </div>
+
+          <!-- Section 3: Stepped Frequency Decay / Dispatch Bus -->
+          <div class="border border-current p-2 mb-2">
+            <div class="flex items-center justify-between text-[9px] font-mono mb-1">
+              <span class="font-bold">// DISPATCH_BUS</span>
+              <span>0x7F9B4</span>
+            </div>
+            <div class="space-y-1" id="steppedBusContainer">
+              <!-- Dynamically populated stepped bars -->
+            </div>
+            <div class="flex justify-between text-[8px] font-mono mt-1 opacity-75">
+              <span>[BUS: ACTIVE]</span>
+              <span>[Q: 0.94]</span>
+              <span>[SYNC: 100%]</span>
+            </div>
+          </div>
+
+          <!-- Section 4: Procedural Barcode Matrix -->
+          <div class="border-t border-current pt-2 font-mono">
+            <div class="flex items-end gap-[1.5px] h-6 overflow-hidden mb-1">
+              <div class="w-1 bg-current h-full"></div>
+              <div class="w-0.5 bg-current h-full"></div>
+              <div class="w-2 bg-current h-full"></div>
+              <div class="w-1 bg-current h-full"></div>
+              <div class="w-0.5 bg-current h-full"></div>
+              <div class="w-1.5 bg-current h-full"></div>
+              <div class="w-0.5 bg-current h-full"></div>
+              <div class="w-3 bg-current h-full"></div>
+              <div class="w-1 bg-current h-full"></div>
+              <div class="w-0.5 bg-current h-full"></div>
+              <div class="w-2 bg-current h-full"></div>
+              <div class="w-1.5 bg-current h-full"></div>
+              <div class="w-0.5 bg-current h-full"></div>
+              <div class="w-3 bg-current h-full"></div>
+              <div class="w-1 bg-current h-full"></div>
+              <div class="w-0.5 bg-current h-full"></div>
+              <div class="w-2 bg-current h-full"></div>
+              <div class="w-1 bg-current h-full"></div>
+              <div class="w-2.5 bg-current h-full"></div>
+              <div class="w-0.5 bg-current h-full"></div>
+              <div class="w-1.5 bg-current h-full"></div>
+              <div class="w-0.5 bg-current h-full"></div>
+              <div class="w-3 bg-current h-full"></div>
+              <div class="w-1 bg-current h-full"></div>
+              <div class="w-0.5 bg-current h-full"></div>
+              <div class="w-2 bg-current h-full"></div>
+            </div>
+            <div class="flex justify-between text-[8px] font-bold tracking-widest">
+              <span>* 9 7 8 0 2 0 1 3 7 9 6 2 4 *</span>
+              <span>CERTIFIED</span>
+            </div>
+          </div>
+        </aside>
+
+        <!-- RIGHT MARGIN VERTICAL CALLOUT SPINE -->
+        <aside class="hidden lg:flex flex-col items-center justify-between w-8 border-l border-current py-2 select-none">
+          <span class="font-mono text-[8px]">EPS10</span>
+          <div class="vertical-rl font-brutal font-black tracking-[0.25em] text-[10px] uppercase whitespace-nowrap">
+            ✦ A S C I I · T E C H N I C A L · H U D ✦
+          </div>
+          <span class="text-xs">✦</span>
+        </aside>
+      </main>
+
+      <section class="border-t border-current pt-2.5 pb-2 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs font-mono">
+        
+        <!-- Meter 1: Resident RAM -->
+        <div class="border border-current p-2 flex flex-col justify-between">
+          <div class="flex justify-between text-[9px] opacity-75 mb-0.5">
+            <span>RESIDENT RAM:</span>
+            <span id="ramVal" class="font-bold">40.2 MB</span>
+          </div>
+          <div class="text-[11px] font-bold tracking-tight select-none" id="ramBar">
+            [■■□□□□□□□□]
+          </div>
+        </div>
+
+        <!-- Meter 2: Latency -->
+        <div class="border border-current p-2 flex flex-col justify-between">
+          <div class="flex justify-between text-[9px] opacity-75 mb-0.5">
+            <span>LATENCY:</span>
+            <span>REALTIME</span>
+          </div>
+          <div class="text-[11px] font-bold flex items-center justify-between">
+            <span id="latencyGauge">LATENCY: 4.8 MS</span>
+            <span class="text-[8px] opacity-60">±0.02</span>
+          </div>
+        </div>
+
+        <!-- Meter 3: Context Budget Token Gauge -->
+        <div class="border border-current p-2 flex flex-col justify-between">
+          <div class="flex justify-between text-[9px] opacity-75 mb-0.5">
+            <span>CONTEXT BUDGET:</span>
+            <span id="tokenRatio" class="font-bold">0 / 350 TOKENS</span>
+          </div>
+          <div class="text-[11px] font-bold tracking-tight select-none" id="tokenBar">
+            [░░░░░░░░░░░░]
+          </div>
+        </div>
+
+        <!-- Meter 4: Idle CPU & Node Status -->
+        <div class="border border-current p-2 flex flex-col justify-between">
+          <div class="flex justify-between text-[9px] opacity-75 mb-0.5">
+            <span>IDLE CPU:</span>
+            <span id="cpuVal" class="font-bold">0.02%</span>
+          </div>
+          <div class="text-[11px] font-bold flex items-center justify-between">
+            <span>64 THREADS</span>
+            <span class="text-[8px] bg-current text-[var(--bg-color)] px-1 font-black">NOMINAL</span>
+          </div>
+        </div>
+      </section>
+
+      <footer class="border-t-2 border-current pt-3 flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+        <!-- Live Metrics: Characters and Words -->
+        <div class="flex items-center gap-2 text-[10px]">
+          <span class="font-black bg-current text-[var(--bg-color)] px-1.5 py-0.2">COUNT</span>
+          <span>CHARS: <strong id="charCount">0</strong></span>
+          <span class="opacity-40">|</span>
+          <span>WORDS: <strong id="wordCount">0</strong></span>
+        </div>
+
+        <!-- Interactive Keybind Buttons -->
+        <div class="flex items-center flex-wrap gap-2 text-[10px]">
+          <button onclick="handleBypass()" class="brutal-btn border border-current px-2.5 py-1 font-bold hover:bg-current hover:text-[var(--bg-color)] transition-colors cursor-pointer" title="Shift+Enter Hard Bypass">
+            [ <span class="underline">SHIFT+ENTER:</span> HARD BYPASS ]
+          </button>
+          
+          <button onclick="handleTriage()" class="brutal-btn border-2 border-current px-3 py-1 bg-current text-[var(--bg-color)] font-black hover:opacity-90 transition-opacity cursor-pointer" title="Enter: 1-Shot Triage">
+            [ ENTER: 1-SHOT TRIAGE ]
+          </button>
+
+          <button onclick="copyPayload()" class="brutal-btn border border-current px-2.5 py-1 font-bold hover:bg-current hover:text-[var(--bg-color)] transition-colors cursor-pointer">
+            [ COPY_PAYLOAD ]
+          </button>
+
+          <button onclick="handleHide()" class="border border-current px-2 py-1 opacity-75 hover:opacity-100 hover:bg-current hover:text-[var(--bg-color)] cursor-pointer">
+            [ ESC: HIDE ]
+          </button>
+        </div>
+      </footer>
+
+    </div>
+  </article>
+
+  <script>
+    const state = {
+      theme: 'dark',
+      crt: true,
+      soundEnabled: false,
+      audioCtx: null,
+      maxTokens: 350
+    };
+
+    function initAudio() {
+      if (!state.audioCtx) {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (AudioContext) state.audioCtx = new AudioContext();
+      }
+      if (state.audioCtx && state.audioCtx.state === 'suspended') {
+        state.audioCtx.resume();
+      }
+    }
+
+    function beep(freq = 600, duration = 0.035, type = 'sine') {
+      if (!state.soundEnabled) return;
+      try {
+        initAudio();
+        if (!state.audioCtx) return;
+        const osc = state.audioCtx.createOscillator();
+        const gain = state.audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, state.audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.06, state.audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.0001, state.audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(state.audioCtx.destination);
+        osc.start();
+        osc.stop(state.audioCtx.currentTime + duration);
+      } catch (e) {
+        console.warn('Audio synthesis issue:', e);
+      }
+    }
+
+    function toggleAudio() {
+      state.soundEnabled = !state.soundEnabled;
+      if (state.soundEnabled) initAudio();
+      const btn = document.getElementById('soundToggleBtn');
+      btn.innerText = state.soundEnabled ? 'SND: ON' : 'SND: MUTED';
+      if (state.soundEnabled) beep(880, 0.05, 'triangle');
+      showToast(state.soundEnabled ? 'AUDIO SYNTHESIS: ONLINE' : 'AUDIO SYNTHESIS: MUTED');
+    }
+
+    function toggleCRT() {
+      state.crt = !state.crt;
+      document.getElementById('scanlineLayer').style.display = state.crt ? 'block' : 'none';
+      document.getElementById('crtToggleBtn').innerText = state.crt ? 'CRT: ON' : 'CRT: OFF';
+      beep(520, 0.03);
+      showToast(state.crt ? 'CRT SCANLINES: ACTIVATED' : 'CRT SCANLINES: DEACTIVATED');
+    }
+
+    function setTheme(name) {
+      document.body.removeAttribute('data-theme');
+      if (name !== 'dark') {
+        document.body.setAttribute('data-theme', name);
+      }
+      state.theme = name;
+
+      ['dark', 'light', 'acid', 'amber'].forEach(t => {
+        const btn = document.getElementById('theme-' + t);
+        if (t === name) {
+          btn.className = 'px-1.5 py-0.5 text-[9px] font-black uppercase bg-current text-[var(--bg-color)]';
+        } else {
+          btn.className = 'px-1.5 py-0.5 text-[9px] font-black uppercase opacity-60 hover:opacity-100';
+        }
+      });
+      beep(740, 0.04, 'square');
+      showToast('THEME: ' + name.toUpperCase() + ' APPLIED');
+    }
+
+    const busContainer = document.getElementById('steppedBusContainer');
+    const TOTAL_BUS_STEPS = 7;
+
+    function buildSteppedBus() {
+      busContainer.innerHTML = '';
+      for (let i = 0; i < TOTAL_BUS_STEPS; i++) {
+        const width = 100 - (i * 12);
+        const row = document.createElement('div');
+        row.className = 'flex items-center h-1.5';
+        const bar = document.createElement('div');
+        bar.className = 'h-full bg-current transition-all duration-300';
+        bar.style.width = width + '%';
+        bar.id = 'busStep-' + i;
+        row.appendChild(bar);
+        busContainer.appendChild(row);
+      }
+    }
+
+    setInterval(() => {
+      const idx = Math.floor(Math.random() * TOTAL_BUS_STEPS);
+      const bar = document.getElementById('busStep-' + idx);
+      if (bar) {
+        const rand = 25 + Math.random() * 70;
+        bar.style.width = rand.toFixed(0) + '%';
+      }
+    }, 240);
+
+    // Wireframe harmonic ellipse rotation
+    let rotTick = 0;
+    setInterval(() => {
+      rotTick += 0.05;
+      const lat1 = document.getElementById('harmonicLat1');
+      const lon1 = document.getElementById('harmonicLon1');
+      if (lat1) lat1.setAttribute('ry', Math.abs(Math.sin(rotTick) * 26 + 10).toFixed(1));
+      if (lon1) lon1.setAttribute('rx', Math.abs(Math.cos(rotTick) * 26 + 10).toFixed(1));
+    }, 60);
+
+    const promptInput = document.getElementById('promptInput');
+    const charCount = document.getElementById('charCount');
+    const wordCount = document.getElementById('wordCount');
+    const tokenRatio = document.getElementById('tokenRatio');
+    const tokenBar = document.getElementById('tokenBar');
+    const astStatus = document.getElementById('astStatus');
+    const intentTag = document.getElementById('intentClassificationTag');
+    const syntaxStatus = document.getElementById('syntaxStatus');
+    const lintScore = document.getElementById('lintScore');
+
+    function classifyIntent(text) {
+      const lower = text.toLowerCase();
+      if (!text.trim()) return '[INTENT: EMPTY]';
+      if (lower.includes('refactor') || lower.includes('clean') || lower.includes('rewrite')) return '[INTENT: REFACTOR]';
+      if (lower.includes('fix') || lower.includes('bug') || lower.includes('patch') || lower.includes('error')) return '[INTENT: BUGFIX]';
+      if (lower.includes('cuda') || lower.includes('kernel') || lower.includes('gpu') || lower.includes('simd')) return '[INTENT: GPU_OPTIM]';
+      if (lower.includes('auth') || lower.includes('token') || lower.includes('security') || lower.includes('jwt')) return '[INTENT: SECURITY]';
+      if (lower.includes('test') || lower.includes('spec') || lower.includes('bench')) return '[INTENT: VERIFY]';
+      if (lower.includes('create') || lower.includes('add') || lower.includes('implement')) return '[INTENT: FEATURE]';
+      return '[INTENT: GENERAL_PROMPT]';
+    }
+
+    function updateMetrics() {
+      const text = promptInput.value;
+      const chars = text.length;
+      const words = text.trim() === '' ? 0 : text.trim().split(/\s+/).length;
+      const estimatedTokens = Math.ceil(chars / 4);
+
+      charCount.innerText = chars.toLocaleString();
+      wordCount.innerText = words.toLocaleString();
+      tokenRatio.innerText = `${estimatedTokens} / ${state.maxTokens} TOKENS`;
+
+      const totalTicks = 12;
+      const pct = Math.min(1.0, estimatedTokens / state.maxTokens);
+      const filled = Math.floor(pct * totalTicks);
+      
+      let barStr = '[';
+      for (let i = 0; i < totalTicks; i++) {
+        barStr += (i < filled) ? '█' : '░';
+      }
+      barStr += ']';
+      tokenBar.innerText = barStr;
+
+      if (estimatedTokens > state.maxTokens) {
+        tokenBar.className = 'text-[11px] font-bold tracking-tight text-red-500 animate-pulse';
+        lintScore.innerText = 'OVERFLOW CEILING';
+      } else if (estimatedTokens > state.maxTokens * 0.8) {
+        tokenBar.className = 'text-[11px] font-bold tracking-tight text-amber-500';
+        lintScore.innerText = 'APPROACHING CEILING';
+      } else {
+        tokenBar.className = 'text-[11px] font-bold tracking-tight select-none';
+        lintScore.innerText = '0 WARNINGS';
+      }
+
+      intentTag.innerText = classifyIntent(text);
+      syntaxStatus.innerText = text.includes(';') || text.includes('{') || text.length > 5 ? 'VALID' : 'PENDING';
+    }
+
+    promptInput.addEventListener('input', () => {
+      updateMetrics();
+      beep(1100 + Math.floor(Math.random() * 260), 0.015, 'sawtooth');
+    });
+
+    promptInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.shiftKey) {
+        e.preventDefault();
+        handleBypass();
+      } else if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleTriage();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        handleHide();
+      }
+    });
+
+    function handleTriage() {
+      const val = promptInput.value.trim();
+      if (!val) {
+        beep(300, 0.08, 'sawtooth');
+        showToast('ERROR: PROMPT BUFFER EMPTY');
+        return;
+      }
+
+      beep(880, 0.06, 'triangle');
+      document.getElementById('statusText').innerText = 'TRIAGING';
+      astStatus.innerText = 'COMPILING_INTENT';
+
+      const start = performance.now();
+      setTimeout(() => {
+        const elapsed = (performance.now() - start).toFixed(1);
+        document.getElementById('hdrLatency').innerText = elapsed;
+        document.getElementById('latencyGauge').innerText = `LATENCY: ${elapsed} MS`;
+        document.getElementById('statusText').innerText = 'OK';
+        astStatus.innerText = 'TRIAGE_1SHOT_OK';
+        beep(1400, 0.08, 'sine');
+        showToast(`TRIAGE RESOLVED IN ${elapsed}ms`);
+      }, 120 + Math.floor(Math.random() * 60));
+    }
+
+    function handleBypass() {
+      beep(620, 0.08, 'square');
+      document.getElementById('statusText').innerText = 'BYPASSED';
+      astStatus.innerText = 'HARD_BYPASS_ENGAGED';
+      showToast('PIPELINE BYPASSED // DIRECT DISPATCH');
+      setTimeout(() => {
+        document.getElementById('statusText').innerText = 'OK';
+        astStatus.innerText = 'LISTENING';
+      }, 950);
+    }
+
+    function handleHide() {
+      beep(440, 0.06, 'sine');
+      astStatus.innerText = 'IDLE_SLEEP';
+      promptInput.blur();
+      showToast('PROMPT CONTEXT DEFOCUSED');
+    }
+
+    function handleManualCheck() {
+      beep(980, 0.04, 'triangle');
+      showToast('HEALTH CHECK: ALL RASTERS NOMINAL');
+    }
+
+    const presets = {
+      refactor: "Refactor SessionManager token timeout handling and update active test suite with boundary assertions.",
+      cuda: "Optimize CUDA warp dispatch matrix for FP16 tensor broadcast on SM_90 architecture with zero bank conflict.",
+      auth: "Inject cryptographic HMAC-SHA256 signature verification filter before route controller dispatch.",
+      bench: "Benchmark resident heap allocation under sustained 20k RPS throughput; output telemetry breakdown."
+    };
+
+    function injectPreset(key) {
+      if (presets[key]) {
+        promptInput.value = presets[key];
+        updateMetrics();
+        beep(1050, 0.05, 'triangle');
+        showToast(`PRESET LOADED: [${key.toUpperCase()}]`);
+      }
+    }
+
+    function igniteSpark() {
+      const shield = document.getElementById('flashShield');
+      shield.style.opacity = '0.75';
+      beep(1500, 0.12, 'sawtooth');
+      setTimeout(() => {
+        shield.style.opacity = '0';
+        beep(920, 0.08, 'square');
+      }, 80);
+      showToast('⚡ DIVINE IMPULSE SPARK IGNITED');
+    }
+
+    function copyPayload() {
+      const text = promptInput.value;
+      if (!text) {
+        showToast('BUFFER EMPTY: NOTHING TO COPY');
+        beep(300, 0.05, 'sawtooth');
+        return;
+      }
+
+      const tempArea = document.createElement('textarea');
+      tempArea.value = text;
+      document.body.appendChild(tempArea);
+      tempArea.select();
+      try {
+        document.execCommand('copy');
+        beep(1200, 0.04, 'sine');
+        showToast('PAYLOAD COPIED TO SYSTEM CLIPBOARD');
+      } catch (err) {
+        console.warn('Copy failed:', err);
+      }
+      document.body.removeChild(tempArea);
+    }
+
+    let toastTimer = null;
+    function showToast(msg) {
+      const toast = document.getElementById('toastNotification');
+      toast.innerText = msg;
+      toast.classList.remove('hidden');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        toast.classList.add('hidden');
+      }, 2200);
+    }
+
+    setInterval(() => {
+      const ram = (39.8 + Math.random() * 0.8).toFixed(1);
+      document.getElementById('ramVal').innerText = ram + ' MB';
+
+      const cpu = (0.01 + Math.random() * 0.03).toFixed(2);
+      document.getElementById('cpuVal').innerText = cpu + '%';
+
+      const entropy = (0.74 + Math.random() * 0.08).toFixed(4);
+      document.getElementById('entropyScore').innerText = `${entropy} λ`;
+    }, 1400);
+
+    window.onload = function() {
+      buildSteppedBus();
+      updateMetrics();
+      showToast('ROCLINT POSTER HUD // READY');
+    };
+  </script>
+</body>
+</html>
