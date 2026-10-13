@@ -76,6 +76,10 @@ if(BUILD_DESKTOP)
             app/host/TrayManager.cpp
             app/host/GlobalShortcutManager.hpp
             app/host/GlobalShortcutManager.cpp
+            app/host/HostContext.hpp
+            app/host/HostContext.cpp
+            app/host/ScreenPlacement.hpp
+            app/host/ScreenPlacement.cpp
         )
 
         target_include_directories(roclint_host_lib PUBLIC
@@ -90,9 +94,11 @@ if(BUILD_DESKTOP)
         )
 
         if(APPLE)
-            target_link_libraries(roclint_host_lib PUBLIC "-framework Carbon")
+            target_sources(roclint_host_lib PRIVATE app/host/HostContext_mac.mm)
+            set_source_files_properties(app/host/HostContext_mac.mm PROPERTIES COMPILE_OPTIONS "-x;objective-c++")
+            target_link_libraries(roclint_host_lib PUBLIC "-framework Carbon" "-framework AppKit")
         elseif(WIN32)
-            target_link_libraries(roclint_host_lib PUBLIC user32)
+            target_link_libraries(roclint_host_lib PUBLIC user32 psapi)
         endif()
 
         target_compile_features(roclint_host_lib PUBLIC cxx_std_20)
@@ -181,5 +187,21 @@ if(BUILD_TESTING)
         target_include_directories(roclint_viewmodel_tests PRIVATE tests)
         target_compile_features(roclint_viewmodel_tests PRIVATE cxx_std_20)
         add_test(NAME roclint_host_lifecycle COMMAND roclint_viewmodel_tests)
+
+        # Invocation & Stage 01 Integration test (B02 / B02H / I01 / I02)
+        add_executable(roclint_invocation_tests
+            tests/viewmodel/test_invocation_binding.cpp
+        )
+
+        target_link_libraries(roclint_invocation_tests PRIVATE
+            roclint_host_lib
+            roclint_core
+            Qt6::Core
+            Qt6::Gui
+        )
+
+        target_include_directories(roclint_invocation_tests PRIVATE tests app/host)
+        target_compile_features(roclint_invocation_tests PRIVATE cxx_std_20)
+        add_test(NAME roclint_invocation_binding COMMAND roclint_invocation_tests)
     endif()
 endif()

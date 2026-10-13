@@ -76,8 +76,12 @@ int main(int argc, char* argv[]) {
         if (window) {
             std::cout << "[Roclint Host] QQuickWindow initialized successfully." << std::endl;
             QObject::connect(controller, &roclint::host::HostController::showCardRequested,
-                             window, [window]() {
-                std::cout << "[Roclint Host] Showing floating card window..." << std::endl;
+                             window, [window](int x, int y) {
+                std::cout << "[Roclint Host] Showing floating card window at (" << x << ", " << y << ")..." << std::endl;
+                if (x > 0 || y > 0) {
+                    window->setX(x);
+                    window->setY(y);
+                }
                 // showNormal() also restores a minimized card; show() keeps the minimized state
                 window->showNormal();
                 window->raise();

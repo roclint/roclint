@@ -1,4 +1,5 @@
 #include "HostController.hpp"
+#include "ScreenPlacement.hpp"
 
 #include <QGuiApplication>
 #include <QClipboard>
@@ -52,9 +53,20 @@ void HostController::showCard() {
     if (m_hostState == HostState::Quitting) {
         return;
     }
-    // Invariant: repeated show calls focus the single logical card instance
+
+    // 1. Observe frontmost application one-shot at explicit invocation time (B02H)
+    m_hostContext = HostContextDetector::captureFrontmost();
+    emit hostContextChanged();
+
+    // 2. Read clipboard text once (one-shot, B02 / C09)
+    captureClipboardDraft();
+
+    // 3. Screen placement calculation near cursor with boundary clamping (B02)
+    const auto placement = ScreenPlacement::determineTargetPosition(820, 520);
+
+    // 4. Update visibility state and signal UI
     setCardVisibility(CardVisibility::Focused);
-    emit showCardRequested();
+    emit showCardRequested(placement.x, placement.y);
 }
 
 void HostController::hideCard() {
@@ -104,6 +116,38 @@ QString HostController::currentRevisionId() const {
 
 QString HostController::lastCopiedText() const {
     return m_lastCopiedText;
+}
+
+bool HostController::hasHostContext() const noexcept {
+    return m_hostContext.isValid();
+}
+
+QString HostController::hostContextCategory() const {
+    return m_hostContext.categoryString();
+}
+
+QString HostController::hostContextDisplayName() const {
+    return m_hostContext.displayName;
+}
+
+QString HostController::capturedDraftText() const {
+    return m_capturedDraftText;
+}
+
+void HostController::clearHostContext() {
+    m_hostContext = HostContextObservation{};
+    emit hostContextChanged();
+}
+
+void HostController::captureClipboardDraft() {
+    if (auto* cb = QGuiApplication::clipboard()) {
+        const QString clip = cb->text();
+        if (!clip.trimmed().isEmpty()) {
+            m_capturedDraftText = clip;
+            emit capturedDraftTextChanged();
+            emit draftCaptured(clip);
+        }
+    }
 }
 
 void HostController::copyToClipboard(const QString& text) {

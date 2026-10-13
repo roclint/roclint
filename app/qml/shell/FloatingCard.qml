@@ -125,6 +125,18 @@ Window {
         }
     }
 
+    Connections {
+        target: typeof hostController !== "undefined" ? hostController : null
+        function onDraftCaptured(text) {
+            if (text && text.trim().length > 0) {
+                if (promptInput.text.trim().length === 0) {
+                    promptInput.text = text.trim();
+                    rootWindow.showToast("PRE-FILLED FROM CLIPBOARD");
+                }
+            }
+        }
+    }
+
     function dismissCard() {
         isClarificationActive = false;
         toastMessage = "";
@@ -159,13 +171,18 @@ Window {
         } else {
             let compiled = "";
             const fileTarget = (targetLocalFile.trim().length > 0) ? targetLocalFile.trim() : "SessionManager.cpp";
+            const hasCtx = (typeof hostController !== "undefined" && hostController.hasHostContext);
+            const ctxLine = hasCtx ? ("/* HOST CONTEXT: " + hostController.hostContextCategory + " (" + hostController.hostContextDisplayName + ") */\n") : "";
+
             if (activeScope === "local") {
                 compiled = "/* ROCLINT [SCOPE: CURRENT FILE] */\n" +
                            "/* TARGET: " + fileTarget + " */\n" +
+                           ctxLine +
                            "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n\n" +
                            promptInput.text.trim();
             } else {
                 compiled = "/* ROCLINT [SCOPE: ENTIRE PROJECT] */\n" +
+                           ctxLine +
                            "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n\n" +
                            promptInput.text.trim();
             }
@@ -180,15 +197,20 @@ Window {
     function commitChoice(choiceNumber) {
         let compiled = "";
         const fileTarget = (targetLocalFile.trim().length > 0) ? targetLocalFile.trim() : "SessionManager.cpp";
+        const hasCtx = (typeof hostController !== "undefined" && hostController.hasHostContext);
+        const ctxLine = hasCtx ? ("/* HOST CONTEXT: " + hostController.hostContextCategory + " (" + hostController.hostContextDisplayName + ") */\n") : "";
+
         if (choiceNumber === 1) {
             compiled = "/* ROCLINT [SCOPE: CURRENT FILE] */\n" +
                        "/* TARGET: " + fileTarget + " */\n" +
+                       ctxLine +
                        "/* PROJECT: " + activeProject.path + " */\n" +
                        "/* RULE: DO NOT MODIFY FILES OUTSIDE " + fileTarget + " */\n\n" +
                        promptInput.text.trim() + "\n\n" +
                        "/* CONSTRAINTS: KEEP EXISTING PUBLIC APIS UNCHANGED */";
         } else {
             compiled = "/* ROCLINT [SCOPE: ENTIRE PROJECT] */\n" +
+                       ctxLine +
                        "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n\n" +
                        promptInput.text.trim() + "\n\n" +
                        "/* CONSTRAINTS: VERIFY CHANGES ACROSS ALL REFERENCED MODULES */";
@@ -465,6 +487,61 @@ Window {
                         }
                     }
 
+                    // Host Context Advisory Chip (B02H / C09)
+                    Rectangle {
+                        id: hostContextChip
+                        visible: typeof hostController !== "undefined" && hostController.hasHostContext
+                        height: 20
+                        width: ctxRow.implicitWidth + 16
+                        color: "transparent"
+                        border.color: rootWindow.borderColor
+                        border.width: 1
+
+                        Row {
+                            id: ctxRow
+                            anchors.centerIn: parent
+                            spacing: 6
+
+                            Text {
+                                text: "FROM: " + (typeof hostController !== "undefined" ? hostController.hostContextDisplayName.toUpperCase() : "")
+                                font.family: rootWindow.monoFont
+                                font.pixelSize: 8
+                                font.bold: true
+                                color: rootWindow.fgColor
+                            }
+
+                            Rectangle {
+                                width: 14
+                                height: 14
+                                color: clearCtxMouse.containsMouse ? rootWindow.dimColor : "transparent"
+                                border.color: rootWindow.borderColor
+                                border.width: 1
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "×"
+                                    font.family: rootWindow.monoFont
+                                    font.pixelSize: 9
+                                    font.bold: true
+                                    color: rootWindow.mutedTextColor
+                                }
+
+                                MouseArea {
+                                    id: clearCtxMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (typeof hostController !== "undefined") {
+                                            hostController.clearHostContext();
+                                            rootWindow.showToast("CONTEXT CLEARED");
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
                     // Status Badge
@@ -485,25 +562,6 @@ Window {
                             color: rootWindow.hasAmbiguity ? "#FFB000" : "#7EE787"
                         }
                     }
-
-                    // Latency Pill
-                    Rectangle {
-                        height: 20
-                        width: 76
-                        color: "transparent"
-                        border.color: rootWindow.borderColor
-                        border.width: 1
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "[ " + rootWindow.liveLatency.toFixed(1) + " MS ]"
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 9
-                            color: rootWindow.fgColor
-                        }
-                    }
-
-
 
                     // Pin Toggle [PIN]
                     Rectangle {

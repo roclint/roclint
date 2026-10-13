@@ -4,6 +4,7 @@
 #include <QString>
 #include <memory>
 #include "roclint/core/prompt_state/RevisionState.hpp"
+#include "HostContext.hpp"
 
 namespace roclint::host {
 
@@ -27,6 +28,10 @@ class HostController : public QObject {
     Q_PROPERTY(quint64 stateVersion READ stateVersion NOTIFY stateVersionChanged)
     Q_PROPERTY(QString currentRevisionId READ currentRevisionId NOTIFY stateVersionChanged)
     Q_PROPERTY(QString lastCopiedText READ lastCopiedText NOTIFY lastCopiedTextChanged)
+    Q_PROPERTY(bool hasHostContext READ hasHostContext NOTIFY hostContextChanged)
+    Q_PROPERTY(QString hostContextCategory READ hostContextCategory NOTIFY hostContextChanged)
+    Q_PROPERTY(QString hostContextDisplayName READ hostContextDisplayName NOTIFY hostContextChanged)
+    Q_PROPERTY(QString capturedDraftText READ capturedDraftText NOTIFY capturedDraftTextChanged)
 
 public:
     explicit HostController(QObject* parent = nullptr);
@@ -43,12 +48,23 @@ public:
     [[nodiscard]] QString currentRevisionId() const;
     [[nodiscard]] QString lastCopiedText() const;
 
+    [[nodiscard]] bool hasHostContext() const noexcept;
+    [[nodiscard]] QString hostContextCategory() const;
+    [[nodiscard]] QString hostContextDisplayName() const;
+    [[nodiscard]] QString capturedDraftText() const;
+
 public slots:
     void markResident();
     void showCard();
     void hideCard();
     void toggleCard();
     void requestQuit();
+
+    // Host Context actions (B02H)
+    void clearHostContext();
+
+    // Explicit one-shot clipboard capture (B02)
+    void captureClipboardDraft();
 
     // Prompt state & clipboard actions
     void copyToClipboard(const QString& text);
@@ -62,12 +78,15 @@ public slots:
 signals:
     void cardVisibilityChanged();
     void hostStateChanged();
-    void showCardRequested();
+    void showCardRequested(int x, int y);
     void hideCardRequested();
     void quitRequested();
     void stateVersionChanged();
     void lastCopiedTextChanged();
     void promptCopied(const QString& text);
+    void hostContextChanged();
+    void capturedDraftTextChanged();
+    void draftCaptured(const QString& text);
 
 private:
     bool setCardVisibility(CardVisibility visibility);
@@ -76,6 +95,8 @@ private:
     CardVisibility m_cardVisibility{CardVisibility::Hidden};
     std::unique_ptr<roclint::core::RevisionState> m_revisionState;
     QString m_lastCopiedText;
+    HostContextObservation m_hostContext;
+    QString m_capturedDraftText;
 };
 
 } // namespace roclint::host
