@@ -151,7 +151,7 @@ Window {
 
     function executeHardBypass() {
         if (promptInput.text.trim().length === 0) return;
-        showToast("SENT RAW PROMPT");
+        showToast("PROMPT SENT AS-IS");
         if (typeof hostController !== "undefined") {
             hostController.hardBypass(promptInput.text);
         }
@@ -1548,7 +1548,7 @@ Window {
                         Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
                         // Clear Action Buttons (No vague glyphs, clean tactile styling)
-                        // Button 1: RAW
+                        // Button 1: AS-IS
                         Rectangle {
                             id: bypassBtn
                             height: 22
@@ -1561,7 +1561,7 @@ Window {
                             Text {
                                 id: b1Text
                                 anchors.centerIn: parent
-                                text: rootWindow.width >= 720 ? "[ SEND RAW ]" : "[ RAW ]"
+                                text: rootWindow.width >= 720 ? "[ SEND AS-IS ]" : "[ AS-IS ]"
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 8
