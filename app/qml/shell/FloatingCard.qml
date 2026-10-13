@@ -5,8 +5,8 @@ import QtQuick.Layouts
 Window {
     id: rootWindow
     title: qsTr("ROCLINT // RETROFUTURIST POSTER HUD")
-    width: 800
-    height: 490
+    width: 820
+    height: 520
     visible: false
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     color: "transparent"
@@ -25,6 +25,27 @@ Window {
     ]
     property int currentModelIndex: 0
     readonly property var activeModel: modelList[currentModelIndex]
+
+    // Active Project / Workspace System (Antigravity-aligned)
+    property var projectList: [
+        { name: "roclint", path: "/Users/jesse/roclint" },
+        { name: "Stardust_v4_2", path: "/Users/jesse/Stardust_v4_2 2" },
+        { name: "cadroc-core", path: "~/code/cadroc-core" }
+    ]
+    property int currentProjectIndex: 0
+    readonly property var activeProject: projectList[currentProjectIndex]
+
+    // Scope Governance System (Default: Global Codebase; Local File selectable)
+    property string activeScope: "global" // "global" or "local"
+    property string targetLocalFile: "SessionManager.cpp"
+
+    // Real-Time Linter & Ambiguity State
+    readonly property bool hasAmbiguity: {
+        const txt = typeof promptInput !== "undefined" ? promptInput.text.toLowerCase() : "";
+        const ambiguousWords = ["refactor", "clean", "fix", "improve", "update", "change", "optimize", "rewrite"];
+        return ambiguousWords.some(w => txt.includes(w));
+    }
+    readonly property real ambiguityScore: hasAmbiguity ? 0.84 : 0.08
 
     // Multi-Palette Theme System (Direct from user prototype)
     property string currentTheme: "dark" // "dark", "light", "acid", "amber"
@@ -113,22 +134,30 @@ Window {
             return;
         }
 
-        if (isClarificationActive) {
-            commitChoice(1);
-            return;
-        }
-
-        const lower = promptInput.text.toLowerCase();
-        const ambiguousWords = ["refactor", "clean", "fix", "improve", "update", "change", "optimize", "rewrite"];
-        const isAmbiguous = ambiguousWords.some(w => lower.includes(w));
-
-        if (isAmbiguous) {
-            isClarificationActive = true;
-            showToast("AMBIGUITY DETECTED // S1 CLARIFICATION OPEN");
+        if (hasAmbiguity) {
+            // S1 Triage: Resolve based on active scope
+            if (activeScope === "local") {
+                commitChoice(1);
+            } else {
+                commitChoice(2);
+            }
         } else {
+            let compiled = "";
+            const fileTarget = (targetLocalFile.trim().length > 0) ? targetLocalFile.trim() : "SessionManager.cpp";
+            if (activeScope === "local") {
+                compiled = "/* ROCLINT [SCOPE_LOCK: MODULE_LOCAL] */\n" +
+                           "/* TARGET FILE: " + fileTarget + " */\n" +
+                           "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n\n" +
+                           promptInput.text.trim();
+            } else {
+                compiled = "/* ROCLINT [SCOPE_LOCK: GLOBAL_CODEBASE] */\n" +
+                           "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n" +
+                           "/* AST INDEX: Workspace Trigram Complete */\n\n" +
+                           promptInput.text.trim();
+            }
             if (typeof hostController !== "undefined") {
-                hostController.commitPrompt(promptInput.text);
-                hostController.copyToClipboard(promptInput.text);
+                hostController.commitPrompt(compiled);
+                hostController.copyToClipboard(compiled);
             }
             showToast("1-SHOT PROMPT SEALED & COPIED");
         }
@@ -136,15 +165,20 @@ Window {
 
     function commitChoice(choiceNumber) {
         let compiled = "";
+        const fileTarget = (targetLocalFile.trim().length > 0) ? targetLocalFile.trim() : "SessionManager.cpp";
         if (choiceNumber === 1) {
             compiled = "/* ROCLINT [SCOPE_LOCK: MODULE_LOCAL] */\n" +
-                       "/* AST ATTACHED: roclint::core::RevisionState */\n" +
-                       promptInput.text.trim() + "\n" +
-                       "/* CONSTRAINTS: ZERO BREAKING CHANGES OUTSIDE ACTIVE MODULE */";
+                       "/* TARGET FILE: " + fileTarget + " */\n" +
+                       "/* PROJECT ROOT: " + activeProject.path + " */\n" +
+                       "/* INVARIANTS: ZERO BREAKING CHANGES OUTSIDE " + fileTarget + " */\n\n" +
+                       promptInput.text.trim() + "\n\n" +
+                       "/* CONSTRAINTS: PRESERVE PUBLIC SIGNATURES & RE-USE EXISTING LOCKS */";
         } else {
             compiled = "/* ROCLINT [SCOPE_LOCK: WORKSPACE_REFACTOR] */\n" +
-                       "/* AST ATTACHED: Workspace AST Trigram Index */\n" +
-                       promptInput.text.trim() + "\n" +
+                       "/* SCOPE: GLOBAL CODEBASE (" + activeProject.name + ") */\n" +
+                       "/* PROJECT ROOT: " + activeProject.path + " */\n" +
+                       "/* AST ATTACHED: Workspace AST Trigram Index */\n\n" +
+                       promptInput.text.trim() + "\n\n" +
                        "/* CONSTRAINTS: DETERMINISTIC ROLLBACK PROOF REQUIRED */";
         }
 
@@ -152,7 +186,7 @@ Window {
             hostController.commitPrompt(compiled);
             hostController.copyToClipboard(compiled);
         }
-        showToast("INTENT SEALED // OPTION " + choiceNumber + " COPIED");
+        showToast("INTENT SEALED // " + (choiceNumber === 1 ? "LOCAL FILE" : "GLOBAL WORKSPACE") + " COPIED");
         isClarificationActive = false;
     }
 
@@ -220,6 +254,8 @@ Window {
         onActivated: {
             if (modelDropdown.visible) {
                 modelDropdown.visible = false;
+            } else if (projectDropdown.visible) {
+                projectDropdown.visible = false;
             } else if (rootWindow.isClarificationActive) {
                 rootWindow.isClarificationActive = false;
             } else {
@@ -240,13 +276,13 @@ Window {
 
     Shortcut {
         sequences: ["Alt+1", "Ctrl+1"]
-        enabled: rootWindow.isClarificationActive
+        enabled: rootWindow.isClarificationActive || rootWindow.hasAmbiguity
         onActivated: rootWindow.commitChoice(1)
     }
 
     Shortcut {
         sequences: ["Alt+2", "Ctrl+2"]
-        enabled: rootWindow.isClarificationActive
+        enabled: rootWindow.isClarificationActive || rootWindow.hasAmbiguity
         onActivated: rootWindow.commitChoice(2)
     }
 
@@ -310,6 +346,54 @@ Window {
                         font.pixelSize: 10
                         font.letterSpacing: 1
                         color: rootWindow.fgColor
+                    }
+
+                    // Project Dropdown Selector Pill
+                    Rectangle {
+                        id: projectSelectorButton
+                        height: 20
+                        width: projectRow.width + 12
+                        color: (projectDropdown.visible || projectMouse.containsMouse) ? rootWindow.dimColor : "transparent"
+                        border.color: projectDropdown.visible ? rootWindow.fgColor : rootWindow.borderColor
+                        border.width: 1
+
+                        RowLayout {
+                            id: projectRow
+                            anchors.centerIn: parent
+                            spacing: 5
+
+                            Text {
+                                text: "PROJECT:"
+                                font.family: rootWindow.monoFont
+                                font.pixelSize: 8
+                                color: rootWindow.dimColor
+                            }
+                            Text {
+                                text: "📁 " + rootWindow.activeProject.name + " " + (projectDropdown.visible ? "▴" : "▾")
+                                font.family: rootWindow.monoFont
+                                font.bold: true
+                                font.pixelSize: 8
+                                color: rootWindow.fgColor
+                            }
+                        }
+
+                        MouseArea {
+                            id: projectMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                modelDropdown.visible = false;
+                                if (!projectDropdown.visible) {
+                                    var pt = projectSelectorButton.mapToItem(subBorderInset, 0, projectSelectorButton.height + 4);
+                                    projectDropdown.x = pt.x;
+                                    projectDropdown.y = pt.y;
+                                    projectDropdown.visible = true;
+                                } else {
+                                    projectDropdown.visible = false;
+                                }
+                            }
+                        }
                     }
 
                     // Model Dropdown Selector Pill
@@ -486,6 +570,154 @@ Window {
                 }
 
                 // =============================================================
+                // 1b. SCOPE GOVERNANCE STRIP (Global Codebase vs Local File)
+                // =============================================================
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 24
+                    color: rootWindow.dimColor
+                    border.color: rootWindow.borderColor
+                    border.width: 1
+                    radius: 4
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 8
+                        spacing: 8
+
+                        Text {
+                            text: "SCOPE:"
+                            font.family: rootWindow.monoFont
+                            font.bold: true
+                            font.pixelSize: 8
+                            color: rootWindow.fgColor
+                        }
+
+                        // GLOBAL CODEBASE Pill (Default)
+                        Rectangle {
+                            height: 18
+                            width: globalRow.width + 10
+                            color: rootWindow.activeScope === "global" ? rootWindow.fgColor : "transparent"
+                            border.color: rootWindow.borderColor
+                            border.width: 1
+                            radius: 3
+
+                            RowLayout {
+                                id: globalRow
+                                anchors.centerIn: parent
+                                spacing: 4
+                                Text {
+                                    text: rootWindow.activeScope === "global" ? "●" : "○"
+                                    font.family: rootWindow.monoFont
+                                    font.pixelSize: 8
+                                    color: rootWindow.activeScope === "global" ? rootWindow.bgColor : rootWindow.fgColor
+                                }
+                                Text {
+                                    text: "GLOBAL CODEBASE [DEFAULT]"
+                                    font.family: rootWindow.monoFont
+                                    font.bold: rootWindow.activeScope === "global"
+                                    font.pixelSize: 8
+                                    color: rootWindow.activeScope === "global" ? rootWindow.bgColor : rootWindow.fgColor
+                                }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    rootWindow.activeScope = "global";
+                                    rootWindow.showToast("SCOPE: GLOBAL CODEBASE (" + rootWindow.activeProject.name + ")");
+                                }
+                            }
+                        }
+
+                        // LOCAL FILE Pill
+                        Rectangle {
+                            height: 18
+                            width: localRow.width + 10
+                            color: rootWindow.activeScope === "local" ? rootWindow.fgColor : "transparent"
+                            border.color: rootWindow.borderColor
+                            border.width: 1
+                            radius: 3
+
+                            RowLayout {
+                                id: localRow
+                                anchors.centerIn: parent
+                                spacing: 4
+                                Text {
+                                    text: rootWindow.activeScope === "local" ? "●" : "○"
+                                    font.family: rootWindow.monoFont
+                                    font.pixelSize: 8
+                                    color: rootWindow.activeScope === "local" ? rootWindow.bgColor : rootWindow.fgColor
+                                }
+                                Text {
+                                    text: "LOCAL FILE"
+                                    font.family: rootWindow.monoFont
+                                    font.bold: rootWindow.activeScope === "local"
+                                    font.pixelSize: 8
+                                    color: rootWindow.activeScope === "local" ? rootWindow.bgColor : rootWindow.fgColor
+                                }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    rootWindow.activeScope = "local";
+                                    localFileInput.forceActiveFocus();
+                                    rootWindow.showToast("SCOPE: LOCAL FILE CLAMP ACTIVE");
+                                }
+                            }
+                        }
+
+                        // Local File Text Input (Active when local is selected)
+                        Rectangle {
+                            visible: rootWindow.activeScope === "local"
+                            height: 18
+                            Layout.preferredWidth: 190
+                            color: rootWindow.inputBgColor
+                            border.color: localFileInput.activeFocus ? rootWindow.fgColor : rootWindow.borderColor
+                            border.width: 1
+                            radius: 2
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 4
+                                anchors.rightMargin: 4
+                                spacing: 4
+
+                                Text {
+                                    text: "📄"
+                                    font.pixelSize: 8
+                                }
+
+                                TextInput {
+                                    id: localFileInput
+                                    Layout.fillWidth: true
+                                    text: rootWindow.targetLocalFile
+                                    color: rootWindow.fgColor
+                                    font.family: rootWindow.monoFont
+                                    font.pixelSize: 8
+                                    selectByMouse: true
+                                    onTextChanged: rootWindow.targetLocalFile = text
+                                }
+                            }
+                        }
+
+                        Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+
+                        // Active AST Index Tag
+                        Text {
+                            text: rootWindow.activeScope === "global" ?
+                                  "AST: WORKSPACE TRIGRAM READY" :
+                                  "AST: LOCAL CLAMP (" + (rootWindow.targetLocalFile.length > 0 ? rootWindow.targetLocalFile : "...") + ")"
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 8
+                            color: rootWindow.dimColor
+                        }
+                    }
+                }
+
+                // =============================================================
                 // 2. CENTRAL PROMPT INGESTION & INTERACTION MATRIX
                 // =============================================================
                 ColumnLayout {
@@ -530,6 +762,15 @@ Window {
                                         wrapMode: TextEdit.Wrap
                                         selectByMouse: true
                                         focus: true
+
+                                        Keys.onTabPressed: function(event) {
+                                            if (rootWindow.hasAmbiguity) {
+                                                rootWindow.commitChoice(1);
+                                                event.accepted = true;
+                                            } else {
+                                                event.accepted = false;
+                                            }
+                                        }
 
                                         Keys.onReturnPressed: function(event) {
                                             if (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)) {
@@ -579,11 +820,11 @@ Window {
                                             color: rootWindow.fgColor
                                         }
                                         Text {
-                                            text: isClarificationActive ? "TRIAGE_WARNING" : "LISTENING"
+                                            text: rootWindow.hasAmbiguity ? "TRIAGE_ALERT" : "LISTENING"
                                             font.family: rootWindow.monoFont
                                             font.bold: true
                                             font.pixelSize: 8
-                                            color: isClarificationActive ? "#FFB000" : rootWindow.fgColor
+                                            color: rootWindow.hasAmbiguity ? "#FFB000" : rootWindow.fgColor
                                         }
                                         Text {
                                             text: "█"
@@ -607,13 +848,13 @@ Window {
                                         color: rootWindow.fgColor
                                     }
                                     Text {
-                                        text: isClarificationActive ? "LINT: 1 AMBIGUITY" : "LINT: 0 WARNINGS"
+                                        text: rootWindow.hasAmbiguity ? "LINT: 1 AMBIGUITY" : "LINT: 0 WARNINGS"
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
-                                        color: isClarificationActive ? "#FFB000" : rootWindow.fgColor
+                                        color: rootWindow.hasAmbiguity ? "#FFB000" : rootWindow.fgColor
                                     }
                                     Text {
-                                        text: "ENTROPY: 0.7842 λ"
+                                        text: "ENTROPY: " + rootWindow.ambiguityScore.toFixed(2) + " λ"
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
                                         color: rootWindow.fgColor
@@ -622,55 +863,114 @@ Window {
                             }
                         }
 
-                        // S1 Clarification Choices (When Active)
-                        ColumnLayout {
-                            visible: rootWindow.isClarificationActive
+                        // =============================================================
+                        // 2b. SLICK LIVE LINTER & TRIAGE STRIP ("Swingly" C with A/B)
+                        // =============================================================
+                        Rectangle {
+                            id: liveLinterStrip
                             Layout.fillWidth: true
-                            spacing: 4
+                            height: rootWindow.hasAmbiguity ? 30 : 22
+                            color: rootWindow.hasAmbiguity ? "#140D04" : rootWindow.inputBgColor
+                            border.color: rootWindow.hasAmbiguity ? "#FFB000" : rootWindow.borderColor
+                            border.width: 1
+                            radius: 4
 
-                            Rectangle {
-                                Layout.fillWidth: true
-                                height: 26
-                                color: opt1Mouse.containsMouse ? rootWindow.dimColor : "transparent"
-                                border.color: "#FFB000"
-                                border.width: 1
+                            Behavior on height { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+                            Behavior on color { ColorAnimation { duration: 160 } }
 
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 8
+                                anchors.rightMargin: 8
+                                spacing: 8
+
+                                // Indicator tag
+                                Text {
+                                    text: rootWindow.hasAmbiguity ? "▲ LINT [0.84]:" : "✦ LINT:"
+                                    font.family: rootWindow.monoFont
+                                    font.bold: true
+                                    font.pixelSize: 8
+                                    color: rootWindow.hasAmbiguity ? "#FFB000" : "#7EE787"
+                                }
+
+                                // Message
+                                Text {
+                                    text: rootWindow.hasAmbiguity ?
+                                          "Vague action verb ∙ Unanchored target in [" + rootWindow.activeProject.name + "]" :
+                                          "PROMPT HEALTH: NOMINAL ∙ SCOPE: " + (rootWindow.activeScope === "global" ? "GLOBAL CODEBASE" : "LOCAL FILE (" + rootWindow.targetLocalFile + ")")
+                                    font.family: rootWindow.monoFont
+                                    font.pixelSize: 8
+                                    color: rootWindow.hasAmbiguity ? rootWindow.fgColor : rootWindow.dimColor
+                                }
+
+                                Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+
+                                // Resolution Pills (Rendered when ambiguity detected)
                                 RowLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 4
+                                    visible: rootWindow.hasAmbiguity
                                     spacing: 6
-                                    Text { text: "[ 1 / Alt+1 ]"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 9; color: "#FFB000" }
-                                    Text { text: "MODULE SCOPE: Confine edits to active module [AST: RevisionState.hpp:14]"; font.family: rootWindow.monoFont; font.pixelSize: 9; color: rootWindow.fgColor }
-                                }
-                                MouseArea {
-                                    id: opt1Mouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: rootWindow.commitChoice(1)
-                                }
-                            }
 
-                            Rectangle {
-                                Layout.fillWidth: true
-                                height: 26
-                                color: opt2Mouse.containsMouse ? rootWindow.dimColor : "transparent"
-                                border.color: "#FFB000"
-                                border.width: 1
+                                    Text {
+                                        text: "RESOLVE:"
+                                        font.family: rootWindow.monoFont
+                                        font.bold: true
+                                        font.pixelSize: 8
+                                        color: "#FFB000"
+                                    }
 
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.margins: 4
-                                    spacing: 6
-                                    Text { text: "[ 2 / Alt+2 ]"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 9; color: "#FFB000" }
-                                    Text { text: "WORKSPACE REFACTOR: Full project edits authorized with rollback proof"; font.family: rootWindow.monoFont; font.pixelSize: 9; color: rootWindow.fgColor }
-                                }
-                                MouseArea {
-                                    id: opt2Mouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: rootWindow.commitChoice(2)
+                                    // Pill 1: Local Lock
+                                    Rectangle {
+                                        height: 18
+                                        width: res1Text.contentWidth + 10
+                                        color: res1Mouse.containsMouse ? rootWindow.fgColor : "transparent"
+                                        border.color: "#FFB000"
+                                        border.width: 1
+                                        radius: 3
+
+                                        Text {
+                                            id: res1Text
+                                            anchors.centerIn: parent
+                                            text: "[ 1 / ⇥ LOCAL CLAMP: " + (rootWindow.activeScope === "local" ? rootWindow.targetLocalFile : "MODULE LOCAL") + " ]"
+                                            font.family: rootWindow.monoFont
+                                            font.bold: true
+                                            font.pixelSize: 8
+                                            color: res1Mouse.containsMouse ? rootWindow.bgColor : "#FFB000"
+                                        }
+                                        MouseArea {
+                                            id: res1Mouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: rootWindow.commitChoice(1)
+                                        }
+                                    }
+
+                                    // Pill 2: Global Workspace Refactor
+                                    Rectangle {
+                                        height: 18
+                                        width: res2Text.contentWidth + 10
+                                        color: res2Mouse.containsMouse ? rootWindow.fgColor : "transparent"
+                                        border.color: "#FFB000"
+                                        border.width: 1
+                                        radius: 3
+
+                                        Text {
+                                            id: res2Text
+                                            anchors.centerIn: parent
+                                            text: "[ 2: GLOBAL WORKSPACE ]"
+                                            font.family: rootWindow.monoFont
+                                            font.bold: true
+                                            font.pixelSize: 8
+                                            color: res2Mouse.containsMouse ? rootWindow.bgColor : "#FFB000"
+                                        }
+                                        MouseArea {
+                                            id: res2Mouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: rootWindow.commitChoice(2)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -1062,13 +1362,160 @@ Window {
                 }
             }
 
-            // Dropdown Backdrop: Click outside dropdown to close
+            // Dropdown Backdrop: Click outside dropdowns to close
             MouseArea {
                 id: dropdownBackdrop
                 anchors.fill: parent
-                visible: modelDropdown.visible
+                visible: modelDropdown.visible || projectDropdown.visible
                 z: 990
-                onClicked: modelDropdown.visible = false
+                onClicked: {
+                    modelDropdown.visible = false;
+                    projectDropdown.visible = false;
+                }
+            }
+
+            // Neo-Brutalist Project Dropdown Menu
+            Item {
+                id: projectDropdown
+                visible: false
+                z: 999
+                width: 280
+                height: projectDropdownContent.implicitHeight
+
+                // Hard shadow
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.leftMargin: 4
+                    anchors.topMargin: 4
+                    color: rootWindow.shadowColor
+                    radius: 4
+                }
+
+                // Dropdown Card
+                Rectangle {
+                    anchors.fill: parent
+                    color: rootWindow.bgColor
+                    border.color: rootWindow.borderColor
+                    border.width: 1
+                    radius: 4
+
+                    ColumnLayout {
+                        id: projectDropdownContent
+                        width: parent.width
+                        spacing: 0
+
+                        // Dropdown Title Strip
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 22
+                            color: rootWindow.dimColor
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 8
+                                anchors.rightMargin: 8
+                                Text {
+                                    text: "ACTIVE WORKSPACE // AST INDEX ROOT"
+                                    font.family: rootWindow.monoFont
+                                    font.bold: true
+                                    font.pixelSize: 8
+                                    color: rootWindow.fgColor
+                                }
+                                Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+                                Text {
+                                    text: "WORKSPACE"
+                                    font.family: rootWindow.monoFont
+                                    font.pixelSize: 7
+                                    color: rootWindow.fgColor
+                                    opacity: 0.7
+                                }
+                            }
+                        }
+
+                        // Project List
+                        Repeater {
+                            model: rootWindow.projectList
+                            delegate: Rectangle {
+                                Layout.fillWidth: true
+                                height: 32
+                                color: pItemMouse.containsMouse ? rootWindow.dimColor : (rootWindow.currentProjectIndex === index ? rootWindow.inputBgColor : "transparent")
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8
+                                    anchors.rightMargin: 8
+                                    spacing: 8
+
+                                    Text {
+                                        text: rootWindow.currentProjectIndex === index ? "●" : "○"
+                                        font.family: rootWindow.monoFont
+                                        font.pixelSize: 9
+                                        color: rootWindow.currentProjectIndex === index ? rootWindow.fgColor : rootWindow.dimColor
+                                    }
+
+                                    ColumnLayout {
+                                        spacing: 1
+                                        Text {
+                                            text: modelData.name
+                                            font.family: rootWindow.monoFont
+                                            font.bold: rootWindow.currentProjectIndex === index
+                                            font.pixelSize: 9
+                                            color: rootWindow.fgColor
+                                        }
+                                        Text {
+                                            text: modelData.path
+                                            font.family: rootWindow.monoFont
+                                            font.pixelSize: 7
+                                            color: rootWindow.dimColor
+                                            elide: Text.ElideMiddle
+                                            Layout.maximumWidth: 220
+                                        }
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: pItemMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        rootWindow.currentProjectIndex = index;
+                                        rootWindow.showToast("PROJECT SWITCHED: " + modelData.name);
+                                        projectDropdown.visible = false;
+                                    }
+                                }
+                            }
+                        }
+
+                        // Add Folder Action
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 26
+                            color: addProjMouse.containsMouse ? rootWindow.dimColor : "transparent"
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 8
+                                anchors.rightMargin: 8
+                                spacing: 6
+
+                                Text { text: "[ + ]"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 8; color: rootWindow.fgColor }
+                                Text { text: "ATTACH / OPEN FOLDER..."; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.8 }
+                            }
+
+                            MouseArea {
+                                id: addProjMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    projectDropdown.visible = false;
+                                    rootWindow.showToast("ATTACH WORKSPACE: RE-ROOTED TO PROJECT DIR");
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             // Neo-Brutalist Model Dropdown Menu
