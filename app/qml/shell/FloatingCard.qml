@@ -5,8 +5,8 @@ import QtQuick.Layouts
 Window {
     id: rootWindow
     title: qsTr("ROCLINT // RETROFUTURIST POSTER HUD")
-    width: 860
-    height: 560
+    width: 800
+    height: 490
     visible: false
     flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     color: "transparent"
@@ -15,6 +15,16 @@ Window {
     readonly property string monoFont: isMac ? "Menlo" : "Consolas"
     readonly property string sansFont: isMac ? "Helvetica Neue" : "Arial"
     readonly property string serifFont: isMac ? "Times New Roman" : "Georgia"
+
+    // Model Hot-Swapping System (Ollama / Unsloth style)
+    property var modelList: [
+        { name: "Llama-3.2-3B-Instruct", quant: "Q4_K_M" },
+        { name: "DeepSeek-Coder-6.7B", quant: "Q4_K_M" },
+        { name: "Qwen-2.5-Coder-7B", quant: "Q5_K_M" },
+        { name: "Mistral-7B-v0.3", quant: "Q4_K_M" }
+    ]
+    property int currentModelIndex: 0
+    readonly property var activeModel: modelList[currentModelIndex]
 
     // Multi-Palette Theme System (Direct from user prototype)
     property string currentTheme: "dark" // "dark", "light", "acid", "amber"
@@ -271,374 +281,257 @@ Window {
                 spacing: 8
 
                 // =============================================================
-                // 1. TOP HEADER: Status, Latency, Theme Switchers, Headline
+                // 1. TOP HEADER: Status, Model Hot-Swap, Palette, Window Controls
                 // =============================================================
-                ColumnLayout {
+                RowLayout {
                     Layout.fillWidth: true
-                    spacing: 4
+                    Layout.preferredHeight: 24
+                    spacing: 8
 
-                    // Metric Top Bar
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-
-                        // Pulsing status dot
-                        Rectangle {
-                            width: 8
-                            height: 8
-                            color: rootWindow.fgColor
-                            SequentialAnimation on opacity {
-                                loops: Animation.Infinite
-                                NumberAnimation { from: 1.0; to: 0.2; duration: 600; easing.type: Easing.InOutQuad }
-                                NumberAnimation { from: 0.2; to: 1.0; duration: 600; easing.type: Easing.InOutQuad }
-                            }
+                    // Pulsing status dot
+                    Rectangle {
+                        width: 8
+                        height: 8
+                        color: rootWindow.fgColor
+                        SequentialAnimation on opacity {
+                            loops: Animation.Infinite
+                            NumberAnimation { from: 1.0; to: 0.2; duration: 600; easing.type: Easing.InOutQuad }
+                            NumberAnimation { from: 0.2; to: 1.0; duration: 600; easing.type: Easing.InOutQuad }
                         }
+                    }
 
-                        Text {
-                            text: "ROCLINT.SYS // CORE_v0.1.0"
-                            font.family: rootWindow.monoFont
-                            font.bold: true
-                            font.pixelSize: 10
-                            font.letterSpacing: 1
-                            color: rootWindow.fgColor
-                        }
+                    Text {
+                        text: "ROCLINT"
+                        font.family: rootWindow.monoFont
+                        font.bold: true
+                        font.pixelSize: 10
+                        font.letterSpacing: 1
+                        color: rootWindow.fgColor
+                    }
 
-                        Rectangle {
-                            height: 16
-                            width: preText.contentWidth + 8
-                            color: "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
+                    // Model Hot-Swap Pill (Ollama / Unsloth style)
+                    Rectangle {
+                        height: 20
+                        width: modelRow.width + 12
+                        color: modelMouse.containsMouse ? rootWindow.dimColor : "transparent"
+                        border.color: rootWindow.borderColor
+                        border.width: 1
+
+                        RowLayout {
+                            id: modelRow
+                            anchors.centerIn: parent
+                            spacing: 5
+
                             Text {
-                                id: preText
-                                anchors.centerIn: parent
-                                text: "PRE-RUNTIME INTENT INTERCEPTOR"
+                                text: "MODEL:"
                                 font.family: rootWindow.monoFont
+                                font.pixelSize: 8
+                                color: rootWindow.dimColor
+                            }
+                            Text {
+                                text: rootWindow.activeModel.name + " (" + rootWindow.activeModel.quant + ") ▾"
+                                font.family: rootWindow.monoFont
+                                font.bold: true
                                 font.pixelSize: 8
                                 color: rootWindow.fgColor
                             }
                         }
 
-                        Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-
-                        // Status Badge
-                        Rectangle {
-                            height: 20
-                            width: statusTextLabel.contentWidth + 12
-                            color: "transparent"
-                            border.color: isClarificationActive ? "#FFB000" : rootWindow.borderColor
-                            border.width: 1
-
-                            Text {
-                                id: statusTextLabel
-                                anchors.centerIn: parent
-                                text: isClarificationActive ? "[ STATUS: WARN ]" : "[ STATUS: OK ]"
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 9
-                                color: isClarificationActive ? "#FFB000" : rootWindow.fgColor
+                        MouseArea {
+                            id: modelMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                rootWindow.currentModelIndex = (rootWindow.currentModelIndex + 1) % rootWindow.modelList.length;
+                                rootWindow.showToast("HOT-SWAPPED: " + rootWindow.activeModel.name);
                             }
                         }
+                    }
 
-                        // Latency Pill
-                        Rectangle {
-                            height: 20
-                            width: 80
-                            color: "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
+                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
-                            Text {
-                                anchors.centerIn: parent
-                                text: "[ " + rootWindow.liveLatency.toFixed(1) + " MS ]"
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 9
-                                color: rootWindow.fgColor
-                            }
+                    // Status Badge
+                    Rectangle {
+                        height: 20
+                        width: statusTextLabel.contentWidth + 12
+                        color: "transparent"
+                        border.color: isClarificationActive ? "#FFB000" : rootWindow.borderColor
+                        border.width: 1
+
+                        Text {
+                            id: statusTextLabel
+                            anchors.centerIn: parent
+                            text: isClarificationActive ? "[ STATUS: WARN ]" : "[ STATUS: OK ]"
+                            font.family: rootWindow.monoFont
+                            font.bold: true
+                            font.pixelSize: 9
+                            color: isClarificationActive ? "#FFB000" : rootWindow.fgColor
                         }
+                    }
 
-                        // Multi-Palette Theme Switchers (MONO, LIGHT, ACID, AMBR)
-                        Rectangle {
-                            height: 20
-                            width: themeRow.width + 4
-                            color: "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
+                    // Latency Pill
+                    Rectangle {
+                        height: 20
+                        width: 76
+                        color: "transparent"
+                        border.color: rootWindow.borderColor
+                        border.width: 1
 
-                            Row {
-                                id: themeRow
-                                anchors.centerIn: parent
-                                spacing: 2
+                        Text {
+                            anchors.centerIn: parent
+                            text: "[ " + rootWindow.liveLatency.toFixed(1) + " MS ]"
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 9
+                            color: rootWindow.fgColor
+                        }
+                    }
 
-                                Repeater {
-                                    model: [
-                                        { name: "dark", label: "MONO" },
-                                        { name: "light", label: "LIGHT" },
-                                        { name: "acid", label: "ACID" },
-                                        { name: "amber", label: "AMBR" }
-                                    ]
-                                    delegate: Rectangle {
-                                        width: tText.contentWidth + 6
-                                        height: 16
-                                        color: rootWindow.currentTheme === modelData.name ? rootWindow.fgColor : "transparent"
+                    // Multi-Palette Theme Switchers (MONO, LIGHT, ACID, AMBR)
+                    Rectangle {
+                        height: 20
+                        width: themeRow.width + 4
+                        color: "transparent"
+                        border.color: rootWindow.borderColor
+                        border.width: 1
 
-                                        Text {
-                                            id: tText
-                                            anchors.centerIn: parent
-                                            text: modelData.label
-                                            font.family: rootWindow.monoFont
-                                            font.bold: true
-                                            font.pixelSize: 8
-                                            color: rootWindow.currentTheme === modelData.name ? rootWindow.bgColor : rootWindow.fgColor
-                                        }
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: {
-                                                rootWindow.currentTheme = modelData.name;
-                                                rootWindow.showToast("THEME: " + modelData.label + " APPLIED");
-                                            }
+                        Row {
+                            id: themeRow
+                            anchors.centerIn: parent
+                            spacing: 2
+
+                            Repeater {
+                                model: [
+                                    { name: "dark", label: "MONO" },
+                                    { name: "light", label: "LIGHT" },
+                                    { name: "acid", label: "ACID" },
+                                    { name: "amber", label: "AMBR" }
+                                ]
+                                delegate: Rectangle {
+                                    width: tText.contentWidth + 6
+                                    height: 16
+                                    color: rootWindow.currentTheme === modelData.name ? rootWindow.fgColor : "transparent"
+
+                                    Text {
+                                        id: tText
+                                        anchors.centerIn: parent
+                                        text: modelData.label
+                                        font.family: rootWindow.monoFont
+                                        font.bold: true
+                                        font.pixelSize: 8
+                                        color: rootWindow.currentTheme === modelData.name ? rootWindow.bgColor : rootWindow.fgColor
+                                    }
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            rootWindow.currentTheme = modelData.name;
+                                            rootWindow.showToast("THEME: " + modelData.label + " APPLIED");
                                         }
                                     }
                                 }
                             }
                         }
-
-                        // Window Minimize [-]
-                        Rectangle {
-                            width: 22
-                            height: 20
-                            color: minMouse.containsMouse ? rootWindow.dimColor : "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "[-]"
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 9
-                                color: rootWindow.fgColor
-                            }
-                            MouseArea {
-                                id: minMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: rootWindow.isMac ? rootWindow.dismissCard() : rootWindow.showMinimized()
-                            }
-                        }
-
-                        // Window Close [x]
-                        Rectangle {
-                            width: 22
-                            height: 20
-                            color: closeMouse.containsMouse ? "#8B1E1E" : "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "[x]"
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 9
-                                color: rootWindow.fgColor
-                            }
-                            MouseArea {
-                                id: closeMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: rootWindow.dismissCard()
-                            }
-                        }
                     }
 
-                    // AGGRESSIVE MONUMENTAL HEADLINE
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.topMargin: 4
-                        spacing: 8
-
-                        Text {
-                            text: "ROCLINT // INTERCEPTOR"
-                            font.family: rootWindow.sansFont
-                            font.bold: true
-                            font.pixelSize: 38
-                            font.letterSpacing: -1
-                            color: rootWindow.fgColor
-                        }
-
-                        Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-
-                        Text {
-                            text: "Intentio Divina"
-                            font.family: rootWindow.serifFont
-                            font.italic: true
-                            font.pixelSize: 26
-                            color: rootWindow.fgColor
-                            opacity: 0.9
-                        }
-                    }
-
-                    // Subtitle Spine
+                    // Window Minimize [-]
                     Rectangle {
-                        Layout.fillWidth: true
-                        height: 1
-                        color: rootWindow.borderColor
-                        opacity: 0.4
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Text {
-                            text: "✦ HUMAN_ALGORITHM TRANSCENDENCE"
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 8
-                            font.letterSpacing: 1
-                            color: rootWindow.fgColor
-                        }
-                        Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                        Text {
-                            text: "HOMO SUM: HUMANI NIHIL A ME ALIENUM PUTO"
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 8
-                            font.letterSpacing: 1
-                            color: rootWindow.fgColor
-                            opacity: 0.8
-                        }
-                        Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                        Text {
-                            text: "DOC: 497713199 ✦"
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 8
-                            font.letterSpacing: 1
-                            color: rootWindow.fgColor
-                        }
-                    }
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        height: 1
-                        color: rootWindow.borderColor
-                        Layout.topMargin: 4
-                    }
-                }
-
-                // =============================================================
-                // 2. MAIN COCKPIT BODY: Left Margin, Center Canvas, Right Aside
-                // =============================================================
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    spacing: 8
-
-                    // ---------------------------------------------------------
-                    // A. LEFT VERTICAL CALLOUT SPINE
-                    // ---------------------------------------------------------
-                    Rectangle {
-                        Layout.preferredWidth: 26
-                        Layout.fillHeight: true
-                        color: "transparent"
+                        width: 22
+                        height: 20
+                        color: minMouse.containsMouse ? rootWindow.dimColor : "transparent"
                         border.color: rootWindow.borderColor
                         border.width: 1
 
-                        ColumnLayout {
+                        Text {
+                            anchors.centerIn: parent
+                            text: "[-]"
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 9
+                            color: rootWindow.fgColor
+                        }
+                        MouseArea {
+                            id: minMouse
                             anchors.fill: parent
-                            anchors.margins: 4
-                            Text {
-                                text: "✦"
-                                font.pixelSize: 9
-                                color: rootWindow.fgColor
-                                Layout.alignment: Qt.AlignHCenter
-                            }
-                            Item { Layout.fillHeight: true }
-                            Item {
-                                width: 14
-                                height: 220
-                                Layout.alignment: Qt.AlignHCenter
-                                Text {
-                                    text: "V E C T O R · B R U T A L I S M · 2 0 2 6"
-                                    font.family: rootWindow.sansFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: rootWindow.fgColor
-                                    rotation: -90
-                                    anchors.centerIn: parent
-                                }
-                            }
-                            Item { Layout.fillHeight: true }
-                            Text {
-                                text: "01.02"
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 7
-                                color: rootWindow.fgColor
-                                Layout.alignment: Qt.AlignHCenter
-                            }
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: rootWindow.isMac ? rootWindow.dismissCard() : rootWindow.showMinimized()
                         }
                     }
 
-                    // ---------------------------------------------------------
-                    // B. CENTRAL PROMPT INGESTION & INTERACTION MATRIX
-                    // ---------------------------------------------------------
-                    ColumnLayout {
+                    // Window Close [x]
+                    Rectangle {
+                        width: 22
+                        height: 20
+                        color: closeMouse.containsMouse ? "#8B1E1E" : "transparent"
+                        border.color: rootWindow.borderColor
+                        border.width: 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "[x]"
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 9
+                            color: rootWindow.fgColor
+                        }
+                        MouseArea {
+                            id: closeMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: rootWindow.dismissCard()
+                        }
+                    }
+                }
+
+                // Divider below top bar
+                Rectangle {
+                    Layout.fillWidth: true
+                    height: 1
+                    color: rootWindow.borderColor
+                    opacity: 0.3
+                }
+
+                // =============================================================
+                // 2. CENTRAL PROMPT INGESTION & INTERACTION MATRIX
+                // =============================================================
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    spacing: 6
+
+                    // Presets & Ingestion Header Strip
+                    RowLayout {
                         Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        spacing: 6
+                        spacing: 8
 
-                        // Buffer Header & Preset Chips Strip
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 8
+                        Text {
+                            text: "PROMPT INGESTION"
+                            font.family: rootWindow.monoFont
+                            font.bold: true
+                            font.pixelSize: 9
+                            font.letterSpacing: 1
+                            color: rootWindow.fgColor
+                        }
 
-                            Rectangle {
+                        Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+
+                        Text {
+                            text: "PRESETS:"
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 8
+                            color: rootWindow.fgColor
+                            opacity: 0.6
+                        }
+
+                        // Preset Buttons
+                        Repeater {
+                            model: ["refactor", "cuda", "auth", "bench"]
+                            delegate: Rectangle {
                                 height: 18
-                                width: b01Text.contentWidth + 8
-                                color: rootWindow.fgColor
-                                Text {
-                                    id: b01Text
-                                    anchors.centerIn: parent
-                                    text: "BUFFER_01"
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: rootWindow.bgColor
-                                }
-                            }
-
-                            Text {
-                                text: "// RAW_PROMPT_PAYLOAD"
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 9
-                                color: rootWindow.fgColor
-                            }
-
-                            Text {
-                                text: rootWindow.classifyIntent(promptInput.text)
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 8
-                                color: rootWindow.fgColor
-                                opacity: 0.75
-                            }
-
-                            Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-
-                            Text {
-                                text: "// PRESETS:"
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 8
-                                color: rootWindow.fgColor
-                                opacity: 0.6
-                            }
-
-                            // Preset Buttons
-                            Repeater {
-                                model: ["refactor", "cuda", "auth", "bench"]
-                                delegate: Rectangle {
-                                    height: 18
-                                    width: pText.contentWidth + 10
-                                    color: pMouse.containsMouse ? rootWindow.fgColor : "transparent"
-                                    border.color: rootWindow.borderColor
-                                    border.width: 1
+                                width: pText.contentWidth + 10
+                                color: pMouse.containsMouse ? rootWindow.fgColor : "transparent"
+                                border.color: rootWindow.borderColor
+                                border.width: 1
 
                                     Text {
                                         id: pText
@@ -840,54 +733,6 @@ Window {
                             }
                         }
                     }
-
-
-
-                    // ---------------------------------------------------------
-                    // D. RIGHT VERTICAL CALLOUT SPINE
-                    // ---------------------------------------------------------
-                    Rectangle {
-                        Layout.preferredWidth: 26
-                        Layout.fillHeight: true
-                        color: "transparent"
-                        border.color: rootWindow.borderColor
-                        border.width: 1
-
-                        ColumnLayout {
-                            anchors.fill: parent
-                            anchors.margins: 4
-                            Text {
-                                text: "EPS10"
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 7
-                                color: rootWindow.fgColor
-                                Layout.alignment: Qt.AlignHCenter
-                            }
-                            Item { Layout.fillHeight: true }
-                            Item {
-                                width: 14
-                                height: 220
-                                Layout.alignment: Qt.AlignHCenter
-                                Text {
-                                    text: "✦ A S C I I · T E C H N I C A L · H U D ✦"
-                                    font.family: rootWindow.sansFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: rootWindow.fgColor
-                                    rotation: 90
-                                    anchors.centerIn: parent
-                                }
-                            }
-                            Item { Layout.fillHeight: true }
-                            Text {
-                                text: "✦"
-                                font.pixelSize: 9
-                                color: rootWindow.fgColor
-                                Layout.alignment: Qt.AlignHCenter
-                            }
-                        }
-                    }
-                }
 
                 // =============================================================
                 // 3. INDUSTRIAL TELEMETRY GAUGES (4 Columns)
