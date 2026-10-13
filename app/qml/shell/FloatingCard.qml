@@ -1469,7 +1469,7 @@ Window {
 
                         Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
-                        // Tactile Neo-Brutalist Hard-Shadow Buttons
+                        // Tactile Neo-Brutalist Action Buttons
                         // Button 1: SHIFT+ENTER: SEND RAW
                         Item {
                             width: bypassInner.width + 4
@@ -1478,14 +1478,14 @@ Window {
                             Rectangle {
                                 anchors.fill: parent
                                 anchors.margins: 0
-                                anchors.leftMargin: 3
-                                anchors.topMargin: 3
+                                anchors.leftMargin: 2
+                                anchors.topMargin: 2
                                 color: rootWindow.shadowColor
                             }
 
                             Rectangle {
                                 id: bypassInner
-                                width: b1Text.contentWidth + 14
+                                width: b1Text.contentWidth + 12
                                 height: 22
                                 x: bypassMouse.pressed ? 2 : (bypassMouse.containsMouse ? -1 : 0)
                                 y: bypassMouse.pressed ? 2 : (bypassMouse.containsMouse ? -1 : 0)
@@ -1496,7 +1496,7 @@ Window {
                                 Text {
                                     id: b1Text
                                     anchors.centerIn: parent
-                                    text: "[ SHIFT+ENTER: SEND RAW ]"
+                                    text: "[ ⇧⏎ SEND RAW ]"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -1519,8 +1519,8 @@ Window {
 
                             Rectangle {
                                 anchors.fill: parent
-                                anchors.leftMargin: 3
-                                anchors.topMargin: 3
+                                anchors.leftMargin: 2
+                                anchors.topMargin: 2
                                 color: rootWindow.shadowColor
                             }
 
@@ -1537,7 +1537,7 @@ Window {
                                 Text {
                                     id: b2Text
                                     anchors.centerIn: parent
-                                    text: "[ ENTER: ENHANCE & COPY ]"
+                                    text: "[ ⏎ ENHANCE & COPY ]"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -1553,60 +1553,10 @@ Window {
                             }
                         }
 
-                        // Button 3: COPY PROMPT
-                        Item {
-                            width: copyInner.width + 4
-                            height: 24
-
-                            Rectangle {
-                                anchors.fill: parent
-                                anchors.leftMargin: 3
-                                anchors.topMargin: 3
-                                color: rootWindow.shadowColor
-                            }
-
-                            Rectangle {
-                                id: copyInner
-                                width: b3Text.contentWidth + 14
-                                height: 22
-                                x: copyMouse.pressed ? 2 : (copyMouse.containsMouse ? -1 : 0)
-                                y: copyMouse.pressed ? 2 : (copyMouse.containsMouse ? -1 : 0)
-                                color: rootWindow.bgColor
-                                border.color: rootWindow.borderColor
-                                border.width: 1
-
-                                Text {
-                                    id: b3Text
-                                    anchors.centerIn: parent
-                                    text: "[ COPY PROMPT ]"
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: rootWindow.fgColor
-                                }
-                                MouseArea {
-                                    id: copyMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        if (promptInput.text.trim().length === 0) {
-                                            rootWindow.showToast("NOTHING TO COPY YET");
-                                            return;
-                                        }
-                                        if (typeof hostController !== "undefined") {
-                                            hostController.copyToClipboard(promptInput.text);
-                                        }
-                                        rootWindow.showToast("PROMPT COPIED TO CLIPBOARD");
-                                    }
-                                }
-                            }
-                        }
-
-                        // Button 4: ESC: HIDE
+                        // Button 3: ESC: HIDE
                         Rectangle {
                             height: 22
-                            width: hideTextLabel.contentWidth + 12
+                            width: hideTextLabel.contentWidth + 10
                             color: hideMouse.containsMouse ? rootWindow.dimColor : "transparent"
                             border.color: rootWindow.borderColor
                             border.width: 1
@@ -1614,7 +1564,7 @@ Window {
                             Text {
                                 id: hideTextLabel
                                 anchors.centerIn: parent
-                                text: "[ ESC: HIDE ]"
+                                text: "[ ⎋ HIDE ]"
                                 font.family: rootWindow.monoFont
                                 font.pixelSize: 8
                                 color: rootWindow.fgColor
