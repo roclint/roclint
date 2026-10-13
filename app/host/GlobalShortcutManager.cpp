@@ -30,10 +30,39 @@ struct roclint::host::GlobalShortcutManager::Impl {
 
 #elif defined(Q_OS_WIN)
 #include <windows.h>
+#include <QAbstractNativeEventFilter>
+#include <QCoreApplication>
+
+namespace {
+class WinHotKeyFilter : public QAbstractNativeEventFilter {
+public:
+    explicit WinHotKeyFilter(roclint::host::GlobalShortcutManager* manager)
+        : m_manager(manager) {}
+
+    bool nativeEventFilter(const QByteArray& eventType, void* message, qintptr* result) override {
+        Q_UNUSED(result);
+        if (eventType == "windows_generic_MSG") {
+            auto* msg = static_cast<MSG*>(message);
+            if (msg && msg->message == WM_HOTKEY && msg->wParam == 1) {
+                if (m_manager) {
+                    QMetaObject::invokeMethod(m_manager, &roclint::host::GlobalShortcutManager::activated, Qt::QueuedConnection);
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+private:
+    roclint::host::GlobalShortcutManager* m_manager{nullptr};
+};
+} // namespace
 
 struct roclint::host::GlobalShortcutManager::Impl {
     bool registered{false};
+    std::unique_ptr<WinHotKeyFilter> filter;
 };
+
 #else
 struct roclint::host::GlobalShortcutManager::Impl {};
 #endif
@@ -74,11 +103,32 @@ bool GlobalShortcutManager::registerShortcut() {
         return false;
     }
 
-    std::cout << "[GlobalShortcutManager] Global shortcut registered: Cmd+Shift+R\n";
+    std::cout << "[GlobalShortcutManager] macOS global shortcut registered: Cmd+Shift+R\n";
     return true;
+
 #elif defined(Q_OS_WIN)
-    std::cout << "[GlobalShortcutManager] Windows global shortcut registered: Ctrl+Shift+R\n";
+    // Windows 10/11: RegisterHotKey (Ctrl + Shift + R) with MOD_NOREPEAT
+    UINT modifiers = MOD_CONTROL | MOD_SHIFT;
+#if defined(MOD_NOREPEAT)
+    modifiers |= MOD_NOREPEAT;
+#endif
+
+    // ID = 1, VK_R = 'R' (0x52)
+    BOOL success = RegisterHotKey(nullptr, 1, modifiers, 'R');
+    if (!success) {
+        std::cerr << "[GlobalShortcutManager] Failed to register Windows global hotkey Ctrl+Shift+R (error " << GetLastError() << ")\n";
+        return false;
+    }
+
+    m_impl->filter = std::make_unique<WinHotKeyFilter>(this);
+    if (QCoreApplication::instance()) {
+        QCoreApplication::instance()->installNativeEventFilter(m_impl->filter.get());
+    }
+    m_impl->registered = true;
+
+    std::cout << "[GlobalShortcutManager] Windows 10/11 global shortcut registered: Ctrl+Shift+R\n";
     return true;
+
 #else
     std::cerr << "[GlobalShortcutManager] Global shortcuts not supported on this platform.\n";
     return false;
@@ -96,7 +146,14 @@ void GlobalShortcutManager::unregisterShortcut() {
         m_impl->handlerRef = nullptr;
     }
 #elif defined(Q_OS_WIN)
-    // Windows unregistration
+    if (m_impl->registered) {
+        UnregisterHotKey(nullptr, 1);
+        m_impl->registered = false;
+    }
+    if (m_impl->filter && QCoreApplication::instance()) {
+        QCoreApplication::instance()->removeNativeEventFilter(m_impl->filter.get());
+        m_impl->filter.reset();
+    }
 #endif
 }
 

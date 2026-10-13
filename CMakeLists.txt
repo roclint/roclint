@@ -91,6 +91,8 @@ if(BUILD_DESKTOP)
 
         if(APPLE)
             target_link_libraries(roclint_host_lib PUBLIC "-framework Carbon")
+        elseif(WIN32)
+            target_link_libraries(roclint_host_lib PUBLIC user32)
         endif()
 
         target_compile_features(roclint_host_lib PUBLIC cxx_std_20)
