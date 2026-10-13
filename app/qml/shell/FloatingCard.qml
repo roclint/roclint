@@ -397,52 +397,7 @@ Window {
                         }
                     }
 
-                    // Multi-Palette Theme Switchers (MONO, LIGHT, ACID, AMBR)
-                    Rectangle {
-                        height: 20
-                        width: themeRow.width + 4
-                        color: "transparent"
-                        border.color: rootWindow.borderColor
-                        border.width: 1
 
-                        Row {
-                            id: themeRow
-                            anchors.centerIn: parent
-                            spacing: 2
-
-                            Repeater {
-                                model: [
-                                    { name: "dark", label: "MONO" },
-                                    { name: "light", label: "LIGHT" },
-                                    { name: "acid", label: "ACID" },
-                                    { name: "amber", label: "AMBR" }
-                                ]
-                                delegate: Rectangle {
-                                    width: tText.contentWidth + 6
-                                    height: 16
-                                    color: rootWindow.currentTheme === modelData.name ? rootWindow.fgColor : "transparent"
-
-                                    Text {
-                                        id: tText
-                                        anchors.centerIn: parent
-                                        text: modelData.label
-                                        font.family: rootWindow.monoFont
-                                        font.bold: true
-                                        font.pixelSize: 8
-                                        color: rootWindow.currentTheme === modelData.name ? rootWindow.bgColor : rootWindow.fgColor
-                                    }
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: {
-                                            rootWindow.currentTheme = modelData.name;
-                                            rootWindow.showToast("THEME: " + modelData.label + " APPLIED");
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
 
                     // Pin Toggle [PIN]
                     Rectangle {
