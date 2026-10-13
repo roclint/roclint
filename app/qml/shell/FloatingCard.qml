@@ -182,18 +182,6 @@ Window {
         }
     }
 
-    function injectPreset(key) {
-        if (key === "refactor") {
-            promptInput.text = "Refactor SessionManager token timeout handling and update active test suite with boundary assertions.";
-        } else if (key === "cuda") {
-            promptInput.text = "Optimize CUDA warp dispatch matrix for FP16 tensor broadcast on SM_90 architecture with zero bank conflict.";
-        } else if (key === "auth") {
-            promptInput.text = "Inject cryptographic HMAC-SHA256 signature verification filter before route controller dispatch.";
-        } else if (key === "bench") {
-            promptInput.text = "Benchmark resident heap allocation under sustained 20k RPS throughput; output telemetry breakdown.";
-        }
-        showToast("PRESET LOADED: [" + key.toUpperCase() + "]");
-    }
 
     function classifyIntent(text) {
         const lower = text.toLowerCase();
@@ -550,59 +538,7 @@ Window {
                     Layout.fillHeight: true
                     spacing: 6
 
-                    // Presets & Ingestion Header Strip
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
 
-                        Text {
-                            text: "PROMPT INGESTION"
-                            font.family: rootWindow.monoFont
-                            font.bold: true
-                            font.pixelSize: 9
-                            font.letterSpacing: 1
-                            color: rootWindow.fgColor
-                        }
-
-                        Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-
-                        Text {
-                            text: "PRESETS:"
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 8
-                            color: rootWindow.fgColor
-                            opacity: 0.6
-                        }
-
-                        // Preset Buttons
-                        Repeater {
-                            model: ["refactor", "cuda", "auth", "bench"]
-                            delegate: Rectangle {
-                                height: 18
-                                width: pText.contentWidth + 10
-                                color: pMouse.containsMouse ? rootWindow.fgColor : "transparent"
-                                border.color: rootWindow.borderColor
-                                border.width: 1
-
-                                    Text {
-                                        id: pText
-                                        anchors.centerIn: parent
-                                        text: modelData.toUpperCase()
-                                        font.family: rootWindow.monoFont
-                                        font.bold: true
-                                        font.pixelSize: 8
-                                        color: pMouse.containsMouse ? rootWindow.bgColor : rootWindow.fgColor
-                                    }
-                                    MouseArea {
-                                        id: pMouse
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: rootWindow.injectPreset(modelData)
-                                    }
-                                }
-                            }
-                        }
 
                         // Prompt Terminal Canvas (Double Bounded Inset + Corner Crosshairs)
                         Rectangle {
