@@ -77,6 +77,17 @@ Window {
     property real liveCpu: 0.02
     property real liveRam: 40.2
     property int maxTokens: 350
+    property bool pinToTop: false
+    property bool hasBeenActive: false
+
+    onActiveChanged: {
+        if (active) {
+            hasBeenActive = true;
+        } else if (hasBeenActive && visible && !pinToTop) {
+            hasBeenActive = false;
+            dismissCard();
+        }
+    }
 
     function dismissCard() {
         isClarificationActive = false;
@@ -210,6 +221,8 @@ Window {
     onVisibleChanged: {
         if (visible) {
             promptInput.forceActiveFocus();
+        } else {
+            hasBeenActive = false;
         }
     }
 
@@ -430,6 +443,35 @@ Window {
                                         }
                                     }
                                 }
+                            }
+                        }
+                    }
+
+                    // Pin Toggle [PIN]
+                    Rectangle {
+                        width: pinText.contentWidth + 10
+                        height: 20
+                        color: rootWindow.pinToTop ? rootWindow.fgColor : (pinMouse.containsMouse ? rootWindow.dimColor : "transparent")
+                        border.color: rootWindow.borderColor
+                        border.width: 1
+
+                        Text {
+                            id: pinText
+                            anchors.centerIn: parent
+                            text: rootWindow.pinToTop ? "PINNED" : "PIN"
+                            font.family: rootWindow.monoFont
+                            font.bold: rootWindow.pinToTop
+                            font.pixelSize: 8
+                            color: rootWindow.pinToTop ? rootWindow.bgColor : rootWindow.fgColor
+                        }
+                        MouseArea {
+                            id: pinMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                rootWindow.pinToTop = !rootWindow.pinToTop;
+                                rootWindow.showToast(rootWindow.pinToTop ? "HUD PINNED // ALWAYS ON TOP" : "HUD UNPINNED // AUTO-DISMISS ACTIVE");
                             }
                         }
                     }
