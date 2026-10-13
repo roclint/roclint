@@ -148,7 +148,6 @@ void HostController::commitPrompt(const QString& text) {
 void HostController::hardBypass(const QString& text) {
     commitPrompt(text);
     copyToClipboard(text);
-    hideCard();
 }
 
 bool HostController::setCardVisibility(CardVisibility visibility) {

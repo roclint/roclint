@@ -55,7 +55,6 @@ Window {
                 hostController.copyToClipboard(promptInput.text);
             }
             showToast("[ ✓ 1-SHOT PROMPT SEALED & COPIED ]");
-            dismissTimer.start();
         }
     }
 
@@ -79,18 +78,20 @@ Window {
         }
         showToast("[ ✓ INTENT SEALED // OPTION " + choiceNumber + " COPIED ]");
         isClarificationActive = false;
-        dismissTimer.start();
     }
 
     function showToast(msg) {
         toastMessage = msg;
+        toastTimer.restart();
     }
 
     Timer {
-        id: dismissTimer
-        interval: 900
+        id: toastTimer
+        interval: 2500
         repeat: false
-        onTriggered: rootWindow.dismissCard()
+        onTriggered: {
+            rootWindow.toastMessage = "";
+        }
     }
 
     Component.onCompleted: {
@@ -122,6 +123,23 @@ Window {
     Shortcut {
         sequence: "Shift+Enter"
         onActivated: rootWindow.executeHardBypass()
+    }
+
+    Shortcut {
+        sequences: rootWindow.isMac ? ["Meta+Return", "Meta+Enter", "Ctrl+Return", "Ctrl+Enter"] : ["Ctrl+Return", "Ctrl+Enter"]
+        onActivated: rootWindow.handleEnter()
+    }
+
+    Shortcut {
+        sequences: ["Alt+1", "Ctrl+1"]
+        enabled: rootWindow.isClarificationActive
+        onActivated: rootWindow.commitChoice(1)
+    }
+
+    Shortcut {
+        sequences: ["Alt+2", "Ctrl+2"]
+        enabled: rootWindow.isClarificationActive
+        onActivated: rootWindow.commitChoice(2)
     }
 
     // Outer Obsidian Container with Double ASCII Border (Zero Border Radius)
@@ -307,27 +325,23 @@ Window {
                         focus: true
 
                         Keys.onReturnPressed: function(event) {
-                            if (event.modifiers & Qt.ShiftModifier) {
-                                rootWindow.executeHardBypass();
-                                event.accepted = true;
-                            } else {
+                            if (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)) {
                                 rootWindow.handleEnter();
                                 event.accepted = true;
-                            }
-                        }
-
-                        Keys.onDigit1Pressed: function(event) {
-                            if (rootWindow.isClarificationActive && !(event.modifiers & Qt.ShiftModifier)) {
-                                rootWindow.commitChoice(1);
+                            } else if (event.modifiers & Qt.ShiftModifier) {
+                                rootWindow.executeHardBypass();
                                 event.accepted = true;
                             } else {
                                 event.accepted = false;
                             }
                         }
 
-                        Keys.onDigit2Pressed: function(event) {
-                            if (rootWindow.isClarificationActive && !(event.modifiers & Qt.ShiftModifier)) {
-                                rootWindow.commitChoice(2);
+                        Keys.onEnterPressed: function(event) {
+                            if (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)) {
+                                rootWindow.handleEnter();
+                                event.accepted = true;
+                            } else if (event.modifiers & Qt.ShiftModifier) {
+                                rootWindow.executeHardBypass();
                                 event.accepted = true;
                             } else {
                                 event.accepted = false;
@@ -368,7 +382,14 @@ Window {
                             text: "[ ESC: CANCEL ]═╗"
                             font.family: rootWindow.monoFont
                             font.pixelSize: 10
-                            color: "#8B949E"
+                            color: cancelMouse.containsMouse ? "#FFB000" : "#8B949E"
+                            MouseArea {
+                                id: cancelMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: rootWindow.isClarificationActive = false
+                            }
                         }
                     }
 
@@ -386,10 +407,10 @@ Window {
                             anchors.rightMargin: 8
                             spacing: 8
                             Text {
-                                text: "[ 1 ]"
+                                text: "[ 1 / Alt+1 ]"
                                 font.family: rootWindow.monoFont
                                 font.bold: true
-                                font.pixelSize: 12
+                                font.pixelSize: 11
                                 color: "#89DCEB"
                             }
                             Text {
@@ -422,10 +443,10 @@ Window {
                             anchors.rightMargin: 8
                             spacing: 8
                             Text {
-                                text: "[ 2 ]"
+                                text: "[ 2 / Alt+2 ]"
                                 font.family: rootWindow.monoFont
                                 font.bold: true
-                                font.pixelSize: 12
+                                font.pixelSize: 11
                                 color: "#89DCEB"
                             }
                             Text {
@@ -510,7 +531,7 @@ Window {
             // ================================================================
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 26
+                Layout.preferredHeight: 30
                 color: "#0F1115"
                 border.color: "#21262D"
                 border.width: 1
@@ -540,14 +561,82 @@ Window {
 
                     Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
-                    Text {
-                        text: rootWindow.isClarificationActive ?
-                              "[ 1 / 2: SELECT INTENT | ESC: CANCEL ]" :
-                              "[ SHIFT+ENTER: HARD BYPASS | ENTER: 1-SHOT TRIAGE | ESC: HIDE ]"
-                        font.family: rootWindow.monoFont
-                        font.bold: true
-                        font.pixelSize: 10
-                        color: rootWindow.isClarificationActive ? "#FFB000" : "#89DCEB"
+                    // Button 1: Copy Raw
+                    Rectangle {
+                        height: 20
+                        width: copyBtnText.contentWidth + 12
+                        color: copyBtnMouse.containsMouse ? "#21262D" : "#161B22"
+                        border.color: copyBtnMouse.containsMouse ? "#58A6FF" : "#30363D"
+                        border.width: 1
+
+                        Text {
+                            id: copyBtnText
+                            anchors.centerIn: parent
+                            text: "[ 📋 COPY RAW (Shift+Enter) ]"
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 10
+                            color: copyBtnMouse.containsMouse ? "#58A6FF" : "#8B949E"
+                        }
+                        MouseArea {
+                            id: copyBtnMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: rootWindow.executeHardBypass()
+                        }
+                    }
+
+                    // Button 2: Triage
+                    Rectangle {
+                        height: 20
+                        width: triageBtnText.contentWidth + 12
+                        color: triageBtnMouse.containsMouse ? (rootWindow.isClarificationActive ? "#3D2E0B" : "#1A2E20") : "#161B22"
+                        border.color: triageBtnMouse.containsMouse ? (rootWindow.isClarificationActive ? "#FFB000" : "#7EE787") : (rootWindow.isClarificationActive ? "#FFB000" : "#30363D")
+                        border.width: 1
+
+                        Text {
+                            id: triageBtnText
+                            anchors.centerIn: parent
+                            text: rootWindow.isClarificationActive ?
+                                  "[ ⚡ SELECT OPTION (Alt+1 / Alt+2) ]" :
+                                  "[ ⚡ TRIAGE (" + (rootWindow.isMac ? "Cmd+Enter" : "Ctrl+Enter") + ") ]"
+                            font.family: rootWindow.monoFont
+                            font.bold: true
+                            font.pixelSize: 10
+                            color: rootWindow.isClarificationActive ? "#FFB000" : (triageBtnMouse.containsMouse ? "#7EE787" : "#89DCEB")
+                        }
+                        MouseArea {
+                            id: triageBtnMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: rootWindow.handleEnter()
+                        }
+                    }
+
+                    // Button 3: Hide Window
+                    Rectangle {
+                        height: 20
+                        width: hideBtnText.contentWidth + 12
+                        color: hideBtnMouse.containsMouse ? "#21262D" : "#161B22"
+                        border.color: hideBtnMouse.containsMouse ? "#C9D1D9" : "#30363D"
+                        border.width: 1
+
+                        Text {
+                            id: hideBtnText
+                            anchors.centerIn: parent
+                            text: "[ ✕ HIDE (Esc) ]"
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 10
+                            color: hideBtnMouse.containsMouse ? "#C9D1D9" : "#6E7681"
+                        }
+                        MouseArea {
+                            id: hideBtnMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: rootWindow.dismissCard()
+                        }
                     }
                 }
             }
