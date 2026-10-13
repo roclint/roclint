@@ -1482,7 +1482,7 @@ Window {
                         anchors.rightMargin: 8
                         spacing: 8
 
-                        // Live Character & Word Counts
+                        // Live Character & Word Counts (Visible on wider layouts)
                         Rectangle {
                             visible: rootWindow.width >= 660
                             height: 16
@@ -1500,6 +1500,7 @@ Window {
                         }
 
                         Text {
+                            visible: rootWindow.width >= 640
                             text: "CHARS: " + promptInput.text.length
                             font.family: rootWindow.monoFont
                             font.bold: true
@@ -1532,152 +1533,91 @@ Window {
                             color: rootWindow.mutedTextColor
                         }
 
-                        // Telemetry Minimize/Maximize Toggle Pill
-                        Rectangle {
-                            height: 18
-                            width: telToggleText.contentWidth + 12
-                            color: telToggleMouse.containsMouse ? rootWindow.dimColor : "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-                            radius: 3
-
-                            RowLayout {
-                                anchors.centerIn: parent
-                                spacing: 4
-                                Text {
-                                    id: telToggleText
-                                    text: rootWindow.width >= 700 ?
-                                          (rootWindow.telemetryMaximized ? "PERFORMANCE: [ ▾ MIN ]" : "PERFORMANCE: [ ▴ MAX ]") :
-                                          (rootWindow.telemetryMaximized ? "[ ▾ MIN ]" : "[ ▴ MAX ]")
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: rootWindow.fgColor
-                                }
-                            }
-
-                            MouseArea {
-                                id: telToggleMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    rootWindow.telemetryMaximized = !rootWindow.telemetryMaximized;
-                                    rootWindow.showToast(rootWindow.telemetryMaximized ? "PERFORMANCE: EXPANDED" : "PERFORMANCE: MINIMIZED");
-                                }
-                            }
-                        }
-
                         // System Toast Banner
                         Text {
-                            visible: rootWindow.toastMessage.length > 0 && rootWindow.width >= 740
+                            visible: rootWindow.toastMessage.length > 0
                             text: "✦ " + rootWindow.toastMessage
                             font.family: rootWindow.monoFont
                             font.bold: true
                             font.pixelSize: 9
                             color: rootWindow.fgColor
                             elide: Text.ElideRight
-                            Layout.maximumWidth: Math.max(80, rootWindow.width - 640)
+                            Layout.maximumWidth: Math.max(120, rootWindow.width - 320)
                         }
 
                         Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
-                        // Tactile Neo-Brutalist Action Buttons
-                        // Button 1: SHIFT+ENTER: SEND RAW
-                        Item {
-                            width: bypassInner.width + 4
-                            height: 24
-
-                            Rectangle {
-                                anchors.fill: parent
-                                anchors.margins: 0
-                                anchors.leftMargin: 2
-                                anchors.topMargin: 2
-                                color: rootWindow.shadowColor
-                            }
-
-                            Rectangle {
-                                id: bypassInner
-                                width: b1Text.contentWidth + 12
-                                height: 22
-                                x: bypassMouse.pressed ? 2 : (bypassMouse.containsMouse ? -1 : 0)
-                                y: bypassMouse.pressed ? 2 : (bypassMouse.containsMouse ? -1 : 0)
-                                color: rootWindow.bgColor
-                                border.color: rootWindow.borderColor
-                                border.width: 1
-
-                                Text {
-                                    id: b1Text
-                                    anchors.centerIn: parent
-                                    text: rootWindow.width >= 760 ? "[ ⇧⏎ SEND RAW ]" : (rootWindow.width >= 600 ? "[ ⇧⏎ RAW ]" : "[ ⇧⏎ ]")
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: rootWindow.fgColor
-                                }
-                                MouseArea {
-                                    id: bypassMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: rootWindow.executeHardBypass()
-                                }
-                            }
-                        }
-
-                        // Button 2: ENTER: ENHANCE & COPY
-                        Item {
-                            width: triageInner.width + 4
-                            height: 24
-
-                            Rectangle {
-                                anchors.fill: parent
-                                anchors.leftMargin: 2
-                                anchors.topMargin: 2
-                                color: rootWindow.shadowColor
-                            }
-
-                            Rectangle {
-                                id: triageInner
-                                width: b2Text.contentWidth + 14
-                                height: 22
-                                x: triageMouse.pressed ? 2 : (triageMouse.containsMouse ? -1 : 0)
-                                y: triageMouse.pressed ? 2 : (triageMouse.containsMouse ? -1 : 0)
-                                color: rootWindow.fgColor
-                                border.color: rootWindow.borderColor
-                                border.width: 1
-
-                                Text {
-                                    id: b2Text
-                                    anchors.centerIn: parent
-                                    text: rootWindow.width >= 760 ? "[ ⏎ ENHANCE & COPY ]" : (rootWindow.width >= 600 ? "[ ⏎ ENHANCE ]" : "[ ⏎ ]")
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: rootWindow.bgColor
-                                }
-                                MouseArea {
-                                    id: triageMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: rootWindow.handleEnter()
-                                }
-                            }
-                        }
-
-                        // Button 3: ESC: HIDE
+                        // Clear Action Buttons (No vague glyphs, clean tactile styling)
+                        // Button 1: RAW
                         Rectangle {
+                            id: bypassBtn
                             height: 22
-                            width: hideTextLabel.contentWidth + 10
-                            color: hideMouse.containsMouse ? rootWindow.dimColor : "transparent"
+                            width: b1Text.contentWidth + 14
+                            color: bypassMouse.pressed ? rootWindow.dimColor : (bypassMouse.containsMouse ? rootWindow.dimColor : "transparent")
                             border.color: rootWindow.borderColor
                             border.width: 1
+                            radius: 3
+
+                            Text {
+                                id: b1Text
+                                anchors.centerIn: parent
+                                text: rootWindow.width >= 720 ? "[ ⇧⏎ SEND RAW ]" : "[ RAW ]"
+                                font.family: rootWindow.monoFont
+                                font.bold: true
+                                font.pixelSize: 8
+                                color: rootWindow.fgColor
+                            }
+                            MouseArea {
+                                id: bypassMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: rootWindow.executeHardBypass()
+                            }
+                        }
+
+                        // Button 2: ENHANCE (Primary Action)
+                        Rectangle {
+                            id: triageBtn
+                            height: 22
+                            width: b2Text.contentWidth + 16
+                            color: triageMouse.pressed ? rootWindow.dimColor : (triageMouse.containsMouse ? "#E2E8F0" : rootWindow.fgColor)
+                            border.color: rootWindow.borderColor
+                            border.width: 1
+                            radius: 3
+
+                            Text {
+                                id: b2Text
+                                anchors.centerIn: parent
+                                text: rootWindow.width >= 720 ? "[ ⏎ ENHANCE & COPY ]" : "[ ENHANCE ]"
+                                font.family: rootWindow.monoFont
+                                font.bold: true
+                                font.pixelSize: 8
+                                color: triageMouse.pressed ? rootWindow.fgColor : rootWindow.bgColor
+                            }
+                            MouseArea {
+                                id: triageMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: rootWindow.handleEnter()
+                            }
+                        }
+
+                        // Button 3: HIDE
+                        Rectangle {
+                            id: hideBtn
+                            height: 22
+                            width: hideTextLabel.contentWidth + 14
+                            color: hideMouse.pressed ? rootWindow.dimColor : (hideMouse.containsMouse ? rootWindow.dimColor : "transparent")
+                            border.color: rootWindow.borderColor
+                            border.width: 1
+                            radius: 3
 
                             Text {
                                 id: hideTextLabel
                                 anchors.centerIn: parent
-                                text: rootWindow.width >= 600 ? "[ ⎋ HIDE ]" : "[ ⎋ ]"
+                                text: rootWindow.width >= 720 ? "[ ⎋ HIDE ]" : "[ HIDE ]"
                                 font.family: rootWindow.monoFont
                                 font.pixelSize: 8
                                 color: rootWindow.fgColor
