@@ -18,6 +18,8 @@ int main(int argc, char* argv[]) {
     int customWidth = 0;
     int customHeight = 0;
     int resolveChoice = 0;
+    bool openFileDropdown = false;
+    QString targetScope;
     QString screenshotPath;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg(argv[i]);
@@ -35,6 +37,12 @@ int main(int argc, char* argv[]) {
         }
         if (arg == "--resolve" && i + 1 < argc) {
             resolveChoice = std::atoi(argv[++i]);
+        }
+        if (arg == "--open-file-dropdown") {
+            openFileDropdown = true;
+        }
+        if (arg == "--scope" && i + 1 < argc) {
+            targetScope = QString::fromLocal8Bit(argv[++i]);
         }
         if (arg == "--screenshot" && i + 1 < argc) {
             screenshotPath = QString::fromLocal8Bit(argv[++i]);
@@ -77,7 +85,7 @@ int main(int argc, char* argv[]) {
 
     const QUrl url(QStringLiteral("qrc:/shell/FloatingCard.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
-                     &app, [url, controller = controller.get(), autoShow, dryRun, screenshotPath, customWidth, customHeight, resolveChoice](QObject* obj, const QUrl& objUrl) {
+                     &app, [url, controller = controller.get(), autoShow, dryRun, screenshotPath, customWidth, customHeight, resolveChoice, openFileDropdown, targetScope](QObject* obj, const QUrl& objUrl) {
         if (!obj && url == objUrl) {
             std::cerr << "[Roclint Host] Error: Failed to load QML root object from " << objUrl.toString().toStdString() << std::endl;
             QCoreApplication::exit(-1);
@@ -92,6 +100,9 @@ int main(int argc, char* argv[]) {
             }
             if (customHeight > 0) {
                 window->setHeight(customHeight);
+            }
+            if (!targetScope.isEmpty()) {
+                window->setProperty("activeScope", targetScope);
             }
             QObject::connect(controller, &roclint::host::HostController::showCardRequested,
                              window, [window](int x, int y) {
@@ -139,6 +150,12 @@ int main(int argc, char* argv[]) {
                     QTimer::singleShot(250, window, [window, resolveChoice]() {
                         std::cout << "[Roclint Host] Resolving ambiguity with option " << resolveChoice << "..." << std::endl;
                         QMetaObject::invokeMethod(window, "commitChoice", Q_ARG(QVariant, resolveChoice));
+                    });
+                }
+                if (openFileDropdown) {
+                    QTimer::singleShot(300, window, [window]() {
+                        std::cout << "[Roclint Host] Opening single-file target dropdown..." << std::endl;
+                        QMetaObject::invokeMethod(window, "openFileDropdown");
                     });
                 }
 

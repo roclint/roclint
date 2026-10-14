@@ -40,6 +40,15 @@ Window {
     // Scope Governance System (Default: Global Codebase; Local File selectable)
     property string activeScope: "global" // "global" or "local"
     property string targetLocalFile: "FloatingCard.qml"
+    property var projectFiles: [
+        "app/qml/shell/FloatingCard.qml",
+        "app/host/HostController.cpp",
+        "app/host/ScreenPlacement.cpp",
+        "app/host/HostContext.cpp",
+        "src/core/prompt_state/RevisionState.cpp",
+        "src/core/prompt_state/PromptRevision.cpp",
+        "CMakeLists.txt"
+    ]
     property bool telemetryMaximized: false
     property bool isCompiledPreview: false
     property string originalDraft: ""
@@ -263,6 +272,20 @@ Window {
         isClarificationActive = false;
     }
 
+    function openFileDropdown() {
+        activeScope = "local";
+        projectDropdown.visible = false;
+        modelDropdown.visible = false;
+        if (typeof fileDropdown !== "undefined") {
+            fileDropdown.filterText = "";
+            if (typeof fileSearchInput !== "undefined") fileSearchInput.text = "";
+            var pt = fileSelectorButton.mapToItem(subBorderInset, 0, fileSelectorButton.height + 4);
+            fileDropdown.x = Math.min(pt.x, subBorderInset.width - fileDropdown.width - 10);
+            fileDropdown.y = pt.y;
+            fileDropdown.visible = true;
+        }
+    }
+
     function showToast(msg) {
         toastMessage = msg;
         toastTimer.restart();
@@ -329,6 +352,8 @@ Window {
                 modelDropdown.visible = false;
             } else if (projectDropdown.visible) {
                 projectDropdown.visible = false;
+            } else if (typeof fileDropdown !== "undefined" && fileDropdown.visible) {
+                fileDropdown.visible = false;
             } else if (rootWindow.isClarificationActive) {
                 rootWindow.isClarificationActive = false;
             } else {
@@ -873,26 +898,25 @@ Window {
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     rootWindow.activeScope = "local";
-                                    localFileInput.forceActiveFocus();
                                     rootWindow.showToast("SCOPE: SINGLE FILE ACTIVE");
                                 }
                             }
                         }
 
-                        // Local File Text Input (Active when local is selected)
+                        // File Selector Dropdown Button (ONLY visible when activeScope === "local")
                         Rectangle {
+                            id: fileSelectorButton
                             visible: rootWindow.activeScope === "local"
                             height: 18
-                            Layout.preferredWidth: Math.min(190, Math.max(90, rootWindow.width - 430))
-                            color: rootWindow.inputBgColor
-                            border.color: localFileInput.activeFocus ? rootWindow.fgColor : rootWindow.borderColor
+                            width: fileSelectorRow.width + 12
+                            color: (typeof fileDropdown !== "undefined" && fileDropdown.visible || fileSelectorMouse.containsMouse) ? rootWindow.dimColor : rootWindow.inputBgColor
+                            border.color: (typeof fileDropdown !== "undefined" && fileDropdown.visible) ? "#FFB000" : rootWindow.borderColor
                             border.width: 1
                             radius: 2
 
                             RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 4
-                                anchors.rightMargin: 4
+                                id: fileSelectorRow
+                                anchors.centerIn: parent
                                 spacing: 4
 
                                 Text {
@@ -900,18 +924,41 @@ Window {
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
-                                    color: rootWindow.mutedTextColor
+                                    color: "#FFB000"
                                 }
 
-                                TextInput {
-                                    id: localFileInput
-                                    Layout.fillWidth: true
-                                    text: rootWindow.targetLocalFile
-                                    color: rootWindow.fgColor
+                                Text {
+                                    text: (rootWindow.targetLocalFile.length > 0 ? rootWindow.targetLocalFile : "Select file...") + " " + (typeof fileDropdown !== "undefined" && fileDropdown.visible ? "▴" : "▾")
                                     font.family: rootWindow.monoFont
+                                    font.bold: true
                                     font.pixelSize: 8
-                                    selectByMouse: true
-                                    onTextChanged: rootWindow.targetLocalFile = text
+                                    color: rootWindow.fgColor
+                                    elide: Text.ElideMiddle
+                                    Layout.maximumWidth: Math.min(220, Math.max(90, rootWindow.width - 450))
+                                }
+                            }
+
+                            MouseArea {
+                                id: fileSelectorMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    projectDropdown.visible = false;
+                                    modelDropdown.visible = false;
+                                    if (typeof fileDropdown !== "undefined") {
+                                        if (!fileDropdown.visible) {
+                                            fileDropdown.filterText = "";
+                                            if (typeof fileSearchInput !== "undefined") fileSearchInput.text = "";
+                                            var pt = fileSelectorButton.mapToItem(subBorderInset, 0, fileSelectorButton.height + 4);
+                                            fileDropdown.x = Math.min(pt.x, subBorderInset.width - fileDropdown.width - 10);
+                                            fileDropdown.y = pt.y;
+                                            fileDropdown.visible = true;
+                                            if (typeof fileSearchInput !== "undefined") fileSearchInput.forceActiveFocus();
+                                        } else {
+                                            fileDropdown.visible = false;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -919,15 +966,46 @@ Window {
                         Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
                         // Active Scope Target Tag
-                        Text {
-                            visible: rootWindow.width >= 690
-                            text: rootWindow.activeScope === "global" ?
-                                  "TARGET: ALL FILES" :
-                                  "TARGET: " + (rootWindow.targetLocalFile.length > 0 ? rootWindow.targetLocalFile : "...")
-                            font.family: rootWindow.monoFont
-                            font.bold: true
-                            font.pixelSize: 8
-                            color: rootWindow.activeScope === "global" ? "#7EE787" : "#FFB000"
+                        RowLayout {
+                            visible: rootWindow.width >= 640
+                            spacing: 4
+
+                            Text {
+                                text: rootWindow.activeScope === "global" ?
+                                      "TARGET: ALL FILES" :
+                                      "TARGET: @" + (rootWindow.targetLocalFile.length > 0 ? rootWindow.targetLocalFile : "...")
+                                font.family: rootWindow.monoFont
+                                font.bold: true
+                                font.pixelSize: 8
+                                color: rootWindow.activeScope === "global" ? "#7EE787" : "#FFB000"
+                            }
+
+                            // If single file, show a small [×] to quickly clear back to global
+                            Rectangle {
+                                visible: rootWindow.activeScope === "local"
+                                height: 12
+                                width: 12
+                                color: "transparent"
+                                border.color: "#FFB000"
+                                border.width: 1
+                                radius: 2
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: "×"
+                                    font.family: rootWindow.monoFont
+                                    font.bold: true
+                                    font.pixelSize: 8
+                                    color: "#FFB000"
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        rootWindow.activeScope = "global";
+                                        rootWindow.showToast("SCOPE: ALL FILES");
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1727,11 +1805,12 @@ Window {
             MouseArea {
                 id: dropdownBackdrop
                 anchors.fill: parent
-                visible: modelDropdown.visible || projectDropdown.visible
+                visible: modelDropdown.visible || projectDropdown.visible || (typeof fileDropdown !== "undefined" && fileDropdown.visible)
                 z: 990
                 onClicked: {
                     modelDropdown.visible = false;
                     projectDropdown.visible = false;
+                    if (typeof fileDropdown !== "undefined") fileDropdown.visible = false;
                 }
             }
 
@@ -1873,6 +1952,201 @@ Window {
                                     projectDropdown.visible = false;
                                     rootWindow.showToast("PROJECT FOLDER SELECTED");
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Neo-Brutalist Single-File Target Dropdown Menu
+            Item {
+                id: fileDropdown
+                visible: false
+                z: 999
+                width: 320
+                property string filterText: ""
+                readonly property var filteredFiles: {
+                    if (!filterText || filterText.trim() === "") return rootWindow.projectFiles;
+                    var ft = filterText.toLowerCase();
+                    return rootWindow.projectFiles.filter(function(f) {
+                        return f.toLowerCase().indexOf(ft) !== -1;
+                    });
+                }
+                height: fileDropdownContent.implicitHeight
+
+                // Hard shadow
+                Rectangle {
+                    anchors.fill: parent
+                    anchors.leftMargin: 4
+                    anchors.topMargin: 4
+                    color: rootWindow.shadowColor
+                    radius: 4
+                }
+
+                // Dropdown Card
+                Rectangle {
+                    anchors.fill: parent
+                    color: rootWindow.bgColor
+                    border.color: rootWindow.borderColor
+                    border.width: 1
+                    radius: 4
+
+                    ColumnLayout {
+                        id: fileDropdownContent
+                        width: parent.width
+                        spacing: 0
+
+                        // Title Strip
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 22
+                            color: rootWindow.dimColor
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 8
+                                anchors.rightMargin: 8
+                                Text {
+                                    text: "SELECT TARGET FILE"
+                                    font.family: rootWindow.monoFont
+                                    font.bold: true
+                                    font.pixelSize: 8
+                                    color: "#FFB000"
+                                }
+                                Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+                                Text {
+                                    text: "SINGLE-FILE SCOPE"
+                                    font.family: rootWindow.monoFont
+                                    font.pixelSize: 7
+                                    color: rootWindow.fgColor
+                                    opacity: 0.7
+                                }
+                            }
+                        }
+
+                        // Search Filter Input Strip
+                        Rectangle {
+                            Layout.fillWidth: true
+                            height: 26
+                            color: rootWindow.inputBgColor
+                            border.color: fileSearchInput.activeFocus ? "#FFB000" : rootWindow.borderColor
+                            border.width: 1
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 6
+                                anchors.rightMargin: 6
+                                spacing: 4
+
+                                Text {
+                                    text: "FILTER:"
+                                    font.family: rootWindow.monoFont
+                                    font.bold: true
+                                    font.pixelSize: 8
+                                    color: rootWindow.mutedTextColor
+                                }
+
+                                TextInput {
+                                    id: fileSearchInput
+                                    Layout.fillWidth: true
+                                    font.family: rootWindow.monoFont
+                                    font.pixelSize: 8
+                                    color: rootWindow.fgColor
+                                    selectByMouse: true
+                                    text: fileDropdown.filterText
+                                    onTextChanged: fileDropdown.filterText = text
+                                    Keys.onEscapePressed: fileDropdown.visible = false
+                                }
+
+                                Text {
+                                    visible: fileSearchInput.text.length > 0
+                                    text: "×"
+                                    font.family: rootWindow.monoFont
+                                    font.bold: true
+                                    font.pixelSize: 9
+                                    color: rootWindow.mutedTextColor
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: fileSearchInput.text = ""
+                                    }
+                                }
+                            }
+                        }
+
+                        // File List
+                        Repeater {
+                            model: fileDropdown.filteredFiles
+                            delegate: Rectangle {
+                                Layout.fillWidth: true
+                                height: 28
+                                readonly property string fileName: {
+                                    var parts = modelData.split("/");
+                                    return parts[parts.length - 1];
+                                }
+                                readonly property bool isSelected: rootWindow.targetLocalFile === fileName || rootWindow.targetLocalFile === modelData
+                                color: fItemMouse.containsMouse ? rootWindow.dimColor : (isSelected ? rootWindow.inputBgColor : "transparent")
+
+                                RowLayout {
+                                    anchors.fill: parent
+                                    anchors.leftMargin: 8
+                                    anchors.rightMargin: 8
+                                    spacing: 8
+
+                                    Text {
+                                        text: isSelected ? "●" : "○"
+                                        font.family: rootWindow.monoFont
+                                        font.pixelSize: 8
+                                        color: isSelected ? "#FFB000" : rootWindow.dimColor
+                                    }
+
+                                    ColumnLayout {
+                                        spacing: 1
+                                        Layout.fillWidth: true
+                                        Text {
+                                            text: fileName
+                                            font.family: rootWindow.monoFont
+                                            font.bold: isSelected
+                                            font.pixelSize: 9
+                                            color: isSelected ? "#FFB000" : rootWindow.fgColor
+                                        }
+                                        Text {
+                                            text: modelData
+                                            font.family: rootWindow.monoFont
+                                            font.pixelSize: 7
+                                            color: rootWindow.mutedTextColor
+                                            elide: Text.ElideMiddle
+                                            Layout.maximumWidth: 260
+                                        }
+                                    }
+                                }
+
+                                MouseArea {
+                                    id: fItemMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        rootWindow.targetLocalFile = fileName;
+                                        rootWindow.showToast("TARGET FILE: " + fileName);
+                                        fileDropdown.visible = false;
+                                    }
+                                }
+                            }
+                        }
+
+                        // No results message
+                        Rectangle {
+                            visible: fileDropdown.filteredFiles.length === 0
+                            Layout.fillWidth: true
+                            height: 30
+                            color: "transparent"
+                            Text {
+                                anchors.centerIn: parent
+                                text: "No files match '" + fileDropdown.filterText + "'"
+                                font.family: rootWindow.monoFont
+                                font.pixelSize: 8
+                                color: rootWindow.mutedTextColor
                             }
                         }
                     }
