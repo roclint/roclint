@@ -39,11 +39,14 @@ Window {
 
     // Scope Governance System (Default: Global Codebase; Local File selectable)
     property string activeScope: "global" // "global" or "local"
-    property string targetLocalFile: "SessionManager.cpp"
+    property string targetLocalFile: "FloatingCard.qml"
     property bool telemetryMaximized: false
+    property bool isCompiledPreview: false
+    property string originalDraft: ""
 
     // Real-Time Linter & Ambiguity State
     readonly property bool hasAmbiguity: {
+        if (isCompiledPreview) return false;
         const txt = typeof promptInput !== "undefined" ? promptInput.text.toLowerCase() : "";
         const ambiguousWords = ["refactor", "clean", "fix", "improve", "update", "change", "optimize", "rewrite"];
         return ambiguousWords.some(w => txt.includes(w));
@@ -157,57 +160,45 @@ Window {
         }
     }
 
+    function revertToDraft() {
+        if (originalDraft && originalDraft.trim().length > 0) {
+            promptInput.text = originalDraft;
+        }
+        isCompiledPreview = false;
+        showToast("REVERTED TO EDITABLE DRAFT");
+    }
+
     function handleEnter() {
         if (promptInput.text.trim().length === 0) {
             showToast("PLEASE TYPE A PROMPT FIRST");
             return;
         }
 
-        if (hasAmbiguity) {
-            // Resolve based on active scope
-            if (activeScope === "local") {
-                commitChoice(1);
-            } else {
-                commitChoice(2);
-            }
-        } else {
-            let compiled = "";
-            const fileTarget = (targetLocalFile.trim().length > 0) ? targetLocalFile.trim() : "SessionManager.cpp";
-            const hasCtx = (typeof hostController !== "undefined" && hostController.hasHostContext);
-            const ctxLine = hasCtx ? ("/* HOST CONTEXT: " + hostController.hostContextCategory + " (" + hostController.hostContextDisplayName + ") */\n") : "";
-
-            if (activeScope === "local") {
-                compiled = "/* ROCLINT [SCOPE: CURRENT FILE] */\n" +
-                           "/* TARGET: " + fileTarget + " */\n" +
-                           ctxLine +
-                           "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n\n" +
-                           promptInput.text.trim();
-            } else {
-                compiled = "/* ROCLINT [SCOPE: ENTIRE PROJECT] */\n" +
-                           ctxLine +
-                           "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n\n" +
-                           promptInput.text.trim();
-            }
+        if (isCompiledPreview) {
             if (typeof hostController !== "undefined") {
-                hostController.commitPrompt(compiled);
-                hostController.copyToClipboard(compiled);
+                hostController.commitPrompt(promptInput.text);
+                hostController.copyToClipboard(promptInput.text);
             }
             showToast("PROMPT COPIED TO CLIPBOARD");
+            return;
         }
-    }
 
-    function commitChoice(choiceNumber) {
+        if (hasAmbiguity) {
+            commitChoice(1);
+            return;
+        }
+
         let compiled = "";
-        const fileTarget = (targetLocalFile.trim().length > 0) ? targetLocalFile.trim() : "SessionManager.cpp";
+        const fileTarget = (targetLocalFile.trim().length > 0) ? targetLocalFile.trim() : "FloatingCard.qml";
         const hasCtx = (typeof hostController !== "undefined" && hostController.hasHostContext);
         const ctxLine = hasCtx ? ("/* HOST CONTEXT: " + hostController.hostContextCategory + " (" + hostController.hostContextDisplayName + ") */\n") : "";
 
-        if (choiceNumber === 1) {
-            compiled = "/* ROCLINT [SCOPE: CURRENT FILE] */\n" +
+        if (activeScope === "local") {
+            compiled = "/* ROCLINT [SCOPE: SINGLE FILE] */\n" +
                        "/* TARGET: " + fileTarget + " */\n" +
                        ctxLine +
-                       "/* PROJECT: " + activeProject.path + " */\n" +
-                       "/* RULE: DO NOT MODIFY FILES OUTSIDE " + fileTarget + " */\n\n" +
+                       "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n" +
+                       "/* RULE: STRICT SINGLE-FILE LOCK — DO NOT MODIFY FILES OUTSIDE " + fileTarget + " */\n\n" +
                        promptInput.text.trim() + "\n\n" +
                        "/* CONSTRAINTS: KEEP EXISTING PUBLIC APIS UNCHANGED */";
         } else {
@@ -218,11 +209,57 @@ Window {
                        "/* CONSTRAINTS: VERIFY CHANGES ACROSS ALL REFERENCED MODULES */";
         }
 
+        originalDraft = promptInput.text;
+        promptInput.text = compiled;
+        isCompiledPreview = true;
+
         if (typeof hostController !== "undefined") {
             hostController.commitPrompt(compiled);
             hostController.copyToClipboard(compiled);
         }
-        showToast("PROMPT COPIED (" + (choiceNumber === 1 ? "THIS FILE" : "ENTIRE PROJECT") + ")");
+        showToast("ENHANCED & COPIED TO CLIPBOARD");
+    }
+
+    function commitChoice(choiceNumber) {
+        let compiled = "";
+        const opt1Label = "FloatingCard.qml — Responsive action button row";
+        const opt2Label = "ScreenPlacement.cpp — Multi-monitor bounding clamp";
+        const chosenLabel = (choiceNumber === 1) ? opt1Label : opt2Label;
+        const chosenTarget = (choiceNumber === 1) ? "FloatingCard.qml" : "ScreenPlacement.cpp";
+        const hasCtx = (typeof hostController !== "undefined" && hostController.hasHostContext);
+        const ctxLine = hasCtx ? ("/* HOST CONTEXT: " + hostController.hostContextCategory + " (" + hostController.hostContextDisplayName + ") */\n") : "";
+        const baseTask = isCompiledPreview ? originalDraft.trim() : promptInput.text.trim();
+
+        if (activeScope === "local") {
+            compiled = "/* ROCLINT [SCOPE: SINGLE FILE] */\n" +
+                       "/* TARGET: " + chosenTarget + " */\n" +
+                       ctxLine +
+                       "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n" +
+                       "/* RULE: STRICT SINGLE-FILE LOCK — DO NOT MODIFY FILES OUTSIDE " + chosenTarget + " */\n" +
+                       "/* RESOLVED INTENT: Option " + choiceNumber + " (" + chosenLabel + ") */\n\n" +
+                       baseTask + "\n\n" +
+                       "/* CONSTRAINTS: KEEP EXISTING PUBLIC APIS UNCHANGED */";
+        } else {
+            compiled = "/* ROCLINT [SCOPE: ENTIRE PROJECT] */\n" +
+                       "/* PRIMARY FOCUS: " + chosenTarget + " */\n" +
+                       ctxLine +
+                       "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n" +
+                       "/* RESOLVED INTENT: Option " + choiceNumber + " (" + chosenLabel + ") */\n\n" +
+                       baseTask + "\n\n" +
+                       "/* CONSTRAINTS: VERIFY CHANGES ACROSS ALL REFERENCED MODULES */";
+        }
+
+        if (!isCompiledPreview) {
+            originalDraft = promptInput.text;
+        }
+        promptInput.text = compiled;
+        isCompiledPreview = true;
+
+        if (typeof hostController !== "undefined") {
+            hostController.commitPrompt(compiled);
+            hostController.copyToClipboard(compiled);
+        }
+        showToast("COMPILED & COPIED: OPTION " + choiceNumber);
         isClarificationActive = false;
     }
 
@@ -998,21 +1035,55 @@ Window {
                                             color: rootWindow.fgColor
                                         }
                                         Text {
-                                            text: rootWindow.hasAmbiguity ? "NEEDS CLARITY" : "READY"
+                                            text: {
+                                                if (rootWindow.isCompiledPreview) return "COMPILED SPECIFICATION (COPIED)";
+                                                if (rootWindow.hasAmbiguity) return "NEEDS CLARITY";
+                                                return "READY";
+                                            }
                                             font.family: rootWindow.monoFont
                                             font.bold: true
                                             font.pixelSize: 8
-                                            color: rootWindow.hasAmbiguity ? "#FFB000" : rootWindow.fgColor
+                                            color: {
+                                                if (rootWindow.isCompiledPreview) return "#7EE787";
+                                                if (rootWindow.hasAmbiguity) return "#FFB000";
+                                                return rootWindow.fgColor;
+                                            }
                                         }
                                         Text {
                                             text: "█"
                                             font.family: rootWindow.monoFont
                                             font.pixelSize: 8
-                                            color: rootWindow.fgColor
+                                            color: rootWindow.isCompiledPreview ? "#7EE787" : rootWindow.fgColor
                                             SequentialAnimation on opacity {
                                                 loops: Animation.Infinite
                                                 NumberAnimation { from: 1; to: 0; duration: 420 }
                                                 NumberAnimation { from: 0; to: 1; duration: 420 }
+                                            }
+                                        }
+
+                                        // Revert to draft pill when previewing compiled prompt
+                                        Rectangle {
+                                            visible: rootWindow.isCompiledPreview
+                                            height: 16
+                                            width: revertDraftText.contentWidth + 10
+                                            color: "transparent"
+                                            border.color: "#FFB000"
+                                            border.width: 1
+                                            radius: 3
+                                            Text {
+                                                id: revertDraftText
+                                                anchors.centerIn: parent
+                                                text: "[ ↺ EDIT DRAFT ]"
+                                                font.family: rootWindow.monoFont
+                                                font.bold: true
+                                                font.pixelSize: 7
+                                                color: "#FFB000"
+                                            }
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: rootWindow.revertToDraft()
                                             }
                                         }
                                     }
@@ -1021,22 +1092,22 @@ Window {
 
                                     Text {
                                         visible: rootWindow.width >= 620
-                                        text: "INPUT: VALID"
+                                        text: rootWindow.isCompiledPreview ? "MODE: PREVIEW & VERIFY" : "INPUT: VALID"
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
-                                        color: rootWindow.fgColor
+                                        color: rootWindow.isCompiledPreview ? "#7EE787" : rootWindow.fgColor
                                     }
                                     Text {
-                                        text: rootWindow.hasAmbiguity ? "1 SUGGESTION" : "0 ISSUES"
+                                        text: rootWindow.isCompiledPreview ? "ENHANCED" : (rootWindow.hasAmbiguity ? "1 SUGGESTION" : "0 ISSUES")
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
-                                        color: rootWindow.hasAmbiguity ? "#FFB000" : rootWindow.fgColor
+                                        color: rootWindow.isCompiledPreview ? "#7EE787" : (rootWindow.hasAmbiguity ? "#FFB000" : rootWindow.fgColor)
                                     }
                                     Text {
-                                        text: "AMBIGUITY: " + (rootWindow.ambiguityScore * 100).toFixed(0) + "%"
+                                        text: rootWindow.isCompiledPreview ? "AMBIGUITY: 0%" : ("AMBIGUITY: " + (rootWindow.ambiguityScore * 100).toFixed(0) + "%")
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
-                                        color: rootWindow.fgColor
+                                        color: rootWindow.isCompiledPreview ? "#7EE787" : rootWindow.fgColor
                                     }
                                 }
                             }
@@ -1065,7 +1136,7 @@ Window {
 
                                 // Indicator tag
                                 Text {
-                                    text: rootWindow.hasAmbiguity ? "▲ SUGGESTION:" : "✦ STATUS:"
+                                    text: rootWindow.hasAmbiguity ? "▲ AMBIGUITY:" : "✦ STATUS:"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -1075,8 +1146,8 @@ Window {
                                 // Message
                                 Text {
                                     text: rootWindow.hasAmbiguity ?
-                                          (rootWindow.width >= 700 ? ("Vague request ∙ Choose target in [" + rootWindow.activeProject.name + "]") : "Clarify target") :
-                                          (rootWindow.width >= 700 ? ("PROMPT IS CLEAR ∙ SCOPE: " + (rootWindow.activeScope === "global" ? "ENTIRE PROJECT" : "SINGLE FILE (" + rootWindow.targetLocalFile + ")")) : "PROMPT CLEAR")
+                                          (rootWindow.width >= 700 ? ("Multiple target components in [" + rootWindow.activeProject.name + "]") : "Target choice") :
+                                          (rootWindow.width >= 700 ? ("PROMPT CLEAR ∙ SCOPE: " + (rootWindow.activeScope === "global" ? "ENTIRE PROJECT" : "SINGLE FILE (" + rootWindow.targetLocalFile + ")")) : "PROMPT CLEAR")
                                     font.family: rootWindow.monoFont
                                     font.bold: !rootWindow.hasAmbiguity
                                     font.pixelSize: 8
@@ -1094,14 +1165,14 @@ Window {
 
                                     Text {
                                         visible: rootWindow.width >= 740
-                                        text: "CHOOSE SCOPE:"
+                                        text: "RESOLVE TARGET:"
                                         font.family: rootWindow.monoFont
                                         font.bold: true
                                         font.pixelSize: 8
                                         color: "#FFB000"
                                     }
 
-                                    // Pill 1: Single File Lock
+                                    // Pill 1: FloatingCard.qml
                                     Rectangle {
                                         height: 18
                                         width: res1Text.contentWidth + 10
@@ -1114,10 +1185,8 @@ Window {
                                             id: res1Text
                                             anchors.centerIn: parent
                                             text: {
-                                                const fn = rootWindow.activeScope === "local" ? rootWindow.targetLocalFile : "SessionManager.cpp";
-                                                if (rootWindow.width >= 760) return "[ 1: THIS FILE (" + fn + ") ]";
-                                                if (rootWindow.width >= 640) return "[ 1: " + fn + " ]";
-                                                return "[ 1: FILE ]";
+                                                if (rootWindow.width >= 760) return "[ 1: FloatingCard.qml (UI Row) ]";
+                                                return "[ 1: FloatingCard.qml ]";
                                             }
                                             font.family: rootWindow.monoFont
                                             font.bold: true
@@ -1133,7 +1202,7 @@ Window {
                                         }
                                     }
 
-                                    // Pill 2: Entire Project
+                                    // Pill 2: ScreenPlacement.cpp
                                     Rectangle {
                                         height: 18
                                         width: res2Text.contentWidth + 10
@@ -1145,7 +1214,10 @@ Window {
                                         Text {
                                             id: res2Text
                                             anchors.centerIn: parent
-                                            text: rootWindow.width >= 680 ? "[ 2: ENTIRE PROJECT ]" : "[ 2: ALL ]"
+                                            text: {
+                                                if (rootWindow.width >= 760) return "[ 2: ScreenPlacement.cpp (Clamp) ]";
+                                                return "[ 2: ScreenPlacement.cpp ]";
+                                            }
                                             font.family: rootWindow.monoFont
                                             font.bold: true
                                             font.pixelSize: 8
@@ -1548,40 +1620,54 @@ Window {
                         Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
                         // Clear Action Buttons (No vague glyphs, clean tactile styling)
-                        // Button 1: AS-IS
+                        // Button 1: AS-IS or EDIT DRAFT
                         Rectangle {
                             id: bypassBtn
                             height: 22
                             width: b1Text.contentWidth + 14
                             color: bypassMouse.pressed ? rootWindow.dimColor : (bypassMouse.containsMouse ? rootWindow.dimColor : "transparent")
-                            border.color: rootWindow.borderColor
+                            border.color: rootWindow.isCompiledPreview ? "#FFB000" : rootWindow.borderColor
                             border.width: 1
                             radius: 3
 
                             Text {
                                 id: b1Text
                                 anchors.centerIn: parent
-                                text: rootWindow.width >= 720 ? "[ SEND AS-IS ]" : "[ AS-IS ]"
+                                text: {
+                                    if (rootWindow.isCompiledPreview) return "[ ↺ EDIT DRAFT ]";
+                                    return rootWindow.width >= 720 ? "[ SEND AS-IS ]" : "[ AS-IS ]";
+                                }
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 8
-                                color: rootWindow.fgColor
+                                color: rootWindow.isCompiledPreview ? "#FFB000" : rootWindow.fgColor
                             }
                             MouseArea {
                                 id: bypassMouse
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: rootWindow.executeHardBypass()
+                                onClicked: {
+                                    if (rootWindow.isCompiledPreview) {
+                                        rootWindow.revertToDraft();
+                                    } else {
+                                        rootWindow.executeHardBypass();
+                                    }
+                                }
                             }
                         }
 
-                        // Button 2: ENHANCE (Primary Action)
+                        // Button 2: ENHANCE or COPY AGAIN (Primary Action)
                         Rectangle {
                             id: triageBtn
                             height: 22
                             width: b2Text.contentWidth + 16
-                            color: triageMouse.pressed ? rootWindow.dimColor : (triageMouse.containsMouse ? "#E2E8F0" : rootWindow.fgColor)
+                            color: {
+                                if (triageMouse.pressed) return rootWindow.dimColor;
+                                if (triageMouse.containsMouse) return "#E2E8F0";
+                                if (rootWindow.isCompiledPreview) return "#7EE787";
+                                return rootWindow.fgColor;
+                            }
                             border.color: rootWindow.borderColor
                             border.width: 1
                             radius: 3
@@ -1589,11 +1675,14 @@ Window {
                             Text {
                                 id: b2Text
                                 anchors.centerIn: parent
-                                text: rootWindow.width >= 720 ? "[ ENHANCE & COPY ]" : "[ ENHANCE ]"
+                                text: {
+                                    if (rootWindow.isCompiledPreview) return "[ ⏎ COPY AGAIN ]";
+                                    return rootWindow.width >= 720 ? "[ ENHANCE & COPY ]" : "[ ENHANCE ]";
+                                }
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 8
-                                color: triageMouse.pressed ? rootWindow.fgColor : rootWindow.bgColor
+                                color: triageMouse.pressed ? rootWindow.fgColor : (rootWindow.isCompiledPreview ? "#050505" : rootWindow.bgColor)
                             }
                             MouseArea {
                                 id: triageMouse

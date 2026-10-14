@@ -17,6 +17,7 @@ int main(int argc, char* argv[]) {
     bool autoShow = false;
     int customWidth = 0;
     int customHeight = 0;
+    int resolveChoice = 0;
     QString screenshotPath;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg(argv[i]);
@@ -31,6 +32,9 @@ int main(int argc, char* argv[]) {
         }
         if (arg == "--height" && i + 1 < argc) {
             customHeight = std::atoi(argv[++i]);
+        }
+        if (arg == "--resolve" && i + 1 < argc) {
+            resolveChoice = std::atoi(argv[++i]);
         }
         if (arg == "--screenshot" && i + 1 < argc) {
             screenshotPath = QString::fromLocal8Bit(argv[++i]);
@@ -73,7 +77,7 @@ int main(int argc, char* argv[]) {
 
     const QUrl url(QStringLiteral("qrc:/shell/FloatingCard.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
-                     &app, [url, controller = controller.get(), autoShow, dryRun, screenshotPath, customWidth, customHeight](QObject* obj, const QUrl& objUrl) {
+                     &app, [url, controller = controller.get(), autoShow, dryRun, screenshotPath, customWidth, customHeight, resolveChoice](QObject* obj, const QUrl& objUrl) {
         if (!obj && url == objUrl) {
             std::cerr << "[Roclint Host] Error: Failed to load QML root object from " << objUrl.toString().toStdString() << std::endl;
             QCoreApplication::exit(-1);
@@ -131,7 +135,14 @@ int main(int argc, char* argv[]) {
             }
 
             if (!screenshotPath.isEmpty()) {
-                QTimer::singleShot(600, window, [window, screenshotPath]() {
+                if (resolveChoice > 0) {
+                    QTimer::singleShot(250, window, [window, resolveChoice]() {
+                        std::cout << "[Roclint Host] Resolving ambiguity with option " << resolveChoice << "..." << std::endl;
+                        QMetaObject::invokeMethod(window, "commitChoice", Q_ARG(QVariant, resolveChoice));
+                    });
+                }
+
+                QTimer::singleShot(800, window, [window, screenshotPath]() {
                     const QImage img = window->grabWindow();
                     if (img.save(screenshotPath)) {
                         std::cout << "[Roclint Host] Screenshot saved to " << screenshotPath.toStdString() << std::endl;
