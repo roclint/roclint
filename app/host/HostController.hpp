@@ -23,6 +23,7 @@ enum class CardVisibility {
 class HostController : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool isCardVisible READ isCardVisible NOTIFY cardVisibilityChanged)
+    Q_PROPERTY(bool isDashboardVisible READ isDashboardVisible NOTIFY dashboardVisibilityChanged)
     Q_PROPERTY(QString hostStateString READ hostStateString NOTIFY hostStateChanged)
     Q_PROPERTY(QString cardVisibilityString READ cardVisibilityString NOTIFY cardVisibilityChanged)
     Q_PROPERTY(quint64 stateVersion READ stateVersion NOTIFY stateVersionChanged)
@@ -43,6 +44,7 @@ public:
     [[nodiscard]] CardVisibility cardVisibility() const noexcept;
     [[nodiscard]] QString cardVisibilityString() const;
     [[nodiscard]] bool isCardVisible() const noexcept;
+    [[nodiscard]] bool isDashboardVisible() const noexcept;
 
     [[nodiscard]] quint64 stateVersion() const noexcept;
     [[nodiscard]] QString currentRevisionId() const;
@@ -58,6 +60,9 @@ public slots:
     void showCard();
     void hideCard();
     void toggleCard();
+    void showDashboard();
+    void hideDashboard();
+    void toggleDashboard();
     void requestQuit();
 
     // Host Context actions (B02H)
@@ -74,12 +79,16 @@ public slots:
     // Records a visibility change the window system made on its own (taskbar
     // minimize/restore, focus loss). Updates state without emitting show/hide requests.
     void syncCardVisibility(roclint::host::CardVisibility visibility);
+    void syncDashboardVisibility(bool visible);
 
 signals:
     void cardVisibilityChanged();
+    void dashboardVisibilityChanged();
     void hostStateChanged();
     void showCardRequested(int x, int y);
     void hideCardRequested();
+    void showDashboardRequested();
+    void hideDashboardRequested();
     void quitRequested();
     void stateVersionChanged();
     void lastCopiedTextChanged();
@@ -90,9 +99,11 @@ signals:
 
 private:
     bool setCardVisibility(CardVisibility visibility);
+    bool setDashboardVisibility(bool visible);
 
     HostState m_hostState{HostState::Starting};
     CardVisibility m_cardVisibility{CardVisibility::Hidden};
+    bool m_dashboardVisible{false};
     std::unique_ptr<roclint::core::RevisionState> m_revisionState;
     QString m_lastCopiedText;
     HostContextObservation m_hostContext;

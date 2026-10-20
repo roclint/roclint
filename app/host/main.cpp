@@ -21,6 +21,9 @@ int main(int argc, char* argv[]) {
     bool openFileDropdown = false;
     QString targetScope;
     QString screenshotPath;
+    bool autoShowDashboard = false;
+    int dashboardTab = 0;
+    QString dashboardScreenshotPath;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg(argv[i]);
         if (arg == "--dry-run" || arg == "--smoke-test") {
@@ -28,6 +31,16 @@ int main(int argc, char* argv[]) {
         }
         if (arg == "--show") {
             autoShow = true;
+        }
+        if (arg == "--dashboard") {
+            autoShowDashboard = true;
+        }
+        if (arg == "--dashboard-tab" && i + 1 < argc) {
+            dashboardTab = std::atoi(argv[++i]);
+        }
+        if (arg == "--dashboard-screenshot" && i + 1 < argc) {
+            dashboardScreenshotPath = QString::fromLocal8Bit(argv[++i]);
+            autoShowDashboard = true;
         }
         if (arg == "--width" && i + 1 < argc) {
             customWidth = std::atoi(argv[++i]);
@@ -83,18 +96,21 @@ int main(int argc, char* argv[]) {
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("hostController"), controller.get());
 
-    const QUrl url(QStringLiteral("qrc:/shell/FloatingCard.qml"));
+    const QUrl cardUrl(QStringLiteral("qrc:/shell/FloatingCard.qml"));
+    const QUrl dashboardUrl(QStringLiteral("qrc:/shell/DashboardWindow.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
-                     &app, [url, controller = controller.get(), autoShow, dryRun, screenshotPath, customWidth, customHeight, resolveChoice, openFileDropdown, targetScope](QObject* obj, const QUrl& objUrl) {
-        if (!obj && url == objUrl) {
+                     &app, [cardUrl, dashboardUrl, controller = controller.get(), autoShow, autoShowDashboard, dryRun, screenshotPath, dashboardScreenshotPath, customWidth, customHeight, resolveChoice, openFileDropdown, targetScope, dashboardTab](QObject* obj, const QUrl& objUrl) {
+        if (!obj && (cardUrl == objUrl || dashboardUrl == objUrl)) {
             std::cerr << "[Roclint Host] Error: Failed to load QML root object from " << objUrl.toString().toStdString() << std::endl;
             QCoreApplication::exit(-1);
             return;
         }
 
         auto* window = qobject_cast<QQuickWindow*>(obj);
-        if (window) {
-            std::cout << "[Roclint Host] QQuickWindow initialized successfully." << std::endl;
+        if (!window) return;
+
+        if (objUrl == cardUrl) {
+            std::cout << "[Roclint Host] FloatingCard window initialized successfully." << std::endl;
             if (customWidth > 0) {
                 window->setWidth(customWidth);
             }
@@ -169,13 +185,55 @@ int main(int argc, char* argv[]) {
                     QCoreApplication::quit();
                 });
             }
+        } else if (objUrl == dashboardUrl) {
+            std::cout << "[Roclint Host] Dashboard window initialized successfully." << std::endl;
+            if (dashboardTab > 0) {
+                window->setProperty("currentTab", dashboardTab);
+            }
+            QObject::connect(controller, &roclint::host::HostController::showDashboardRequested,
+                             window, [window]() {
+                std::cout << "[Roclint Host] Showing Dashboard window..." << std::endl;
+                window->showNormal();
+                window->raise();
+                window->requestActivate();
+            });
+
+            QObject::connect(controller, &roclint::host::HostController::hideDashboardRequested,
+                             window, [window]() {
+                std::cout << "[Roclint Host] Hiding Dashboard window..." << std::endl;
+                window->hide();
+            });
+
+            QObject::connect(window, &QQuickWindow::closing,
+                             controller, &roclint::host::HostController::hideDashboard);
+
+            QObject::connect(window, &QWindow::visibilityChanged, controller, [window, controller]() {
+                controller->syncDashboardVisibility(window->isVisible() && window->visibility() != QWindow::Minimized);
+            });
+
+            if (autoShowDashboard && !dryRun) {
+                controller->showDashboard();
+            }
+
+            if (!dashboardScreenshotPath.isEmpty()) {
+                QTimer::singleShot(800, window, [window, dashboardScreenshotPath]() {
+                    const QImage img = window->grabWindow();
+                    if (img.save(dashboardScreenshotPath)) {
+                        std::cout << "[Roclint Host] Dashboard screenshot saved to " << dashboardScreenshotPath.toStdString() << std::endl;
+                    } else {
+                        std::cerr << "[Roclint Host] Error saving dashboard screenshot to " << dashboardScreenshotPath.toStdString() << std::endl;
+                    }
+                    QCoreApplication::quit();
+                });
+            }
         }
     }, Qt::QueuedConnection);
 
-    engine.load(url);
+    engine.load(cardUrl);
+    engine.load(dashboardUrl);
 
     if (engine.rootObjects().isEmpty()) {
-        std::cerr << "[Roclint Host] Error: Failed to load QML root object from " << url.toString().toStdString() << std::endl;
+        std::cerr << "[Roclint Host] Error: Failed to load QML root objects" << std::endl;
         return 1;
     }
 

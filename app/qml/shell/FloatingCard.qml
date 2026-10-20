@@ -392,6 +392,15 @@ Window {
         }
     }
 
+    Shortcut {
+        sequences: [StandardKey.Preferences]
+        onActivated: {
+            if (typeof hostController !== "undefined" && hostController) {
+                hostController.showDashboard();
+            }
+        }
+    }
+
     // =========================================================================
     // POSTER BOARD CONTAINER (Double Bounding Box Structure)
     // =========================================================================
@@ -743,6 +752,36 @@ Window {
                             onClicked: {
                                 rootWindow.pinToTop = !rootWindow.pinToTop;
                                 rootWindow.showToast(rootWindow.pinToTop ? "WINDOW PINNED (ALWAYS ON TOP)" : "WINDOW UNPINNED");
+                            }
+                        }
+                    }
+
+                    // Settings Dashboard Button [SET]
+                    Rectangle {
+                        width: setText.contentWidth + 10
+                        height: 20
+                        color: setMouse.containsMouse ? rootWindow.dimColor : "transparent"
+                        border.color: rootWindow.borderColor
+                        border.width: 1
+
+                        Text {
+                            id: setText
+                            anchors.centerIn: parent
+                            text: "SET"
+                            font.family: rootWindow.monoFont
+                            font.bold: true
+                            font.pixelSize: 8
+                            color: rootWindow.fgColor
+                        }
+                        MouseArea {
+                            id: setMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (typeof hostController !== "undefined" && hostController) {
+                                    hostController.showDashboard();
+                                }
                             }
                         }
                     }

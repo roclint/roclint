@@ -43,6 +43,9 @@ void TrayManager::createActions() {
     m_openAction = m_trayMenu->addAction(QStringLiteral("Open Roclint"));
     connect(m_openAction, &QAction::triggered, m_controller, &HostController::showCard);
 
+    m_settingsAction = m_trayMenu->addAction(QStringLiteral("Settings..."));
+    connect(m_settingsAction, &QAction::triggered, m_controller, &HostController::showDashboard);
+
     m_trayMenu->addSeparator();
 
     m_quitAction = m_trayMenu->addAction(QStringLiteral("Quit"));

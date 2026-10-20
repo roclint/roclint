@@ -108,7 +108,8 @@ The architecture consists of five decoupled layers designed for sub-millisecond 
 | **Foreign Key Enforcement** | **`PRAGMA foreign_keys = ON`** | SQLite defaults to ignoring foreign keys unless explicitly enabled on every connection. Required to enforce that prompt revisions and analysis snapshots cannot reference non-existent sessions. |
 | **Model Topology** | **Two-Tier Cascade (S1 + Granite 3B)** | Running a 3B LLM on every prompt keystroke incurs 1.5–2.5s of latency, draining laptop batteries and annoying developers on clear prompts. An ultra-fast (<15ms) classifier gate (S1) filters out clear prompts, reserving generative LLM compute strictly for ambiguous prompts. |
 | **Local LLM Engine** | **`llama.cpp` + Metal GPU** | Complete data privacy for proprietary codebases. Zero network dependency, zero API token costs, and 60+ tokens/sec on Apple Silicon unified memory. |
-| **Model Weights** | **IBM Granite 3B (`Q4_K_M`)** | 3-billion-parameter small language model specifically trained on code, instruction compliance, and enterprise workflows. 4-bit quantization reduces RAM usage to ~2.0 GB while maintaining high semantic accuracy. |
+| **Model Weights** | **IBM Granite 3B (`Q8_0` & `Q4_K_M`)** | 3-billion-parameter small language model. `Q8_0` used for near-lossless governance and syntax accuracy (~3.4 GB RAM); `Q4_K_M` available for memory-constrained hardware (~2.0 GB RAM). |
+| **Ergonomics & Dispatch** | **Two-Tier Progressive Model** | Tier 1 (Day-1 MVP): Zero-permission auto-dismiss on enhance, instantly returning focus to the editor for keyboard-first `Cmd+V` (eliminates 70% friction). Tier 2 (Stage 08): Opt-in Accessibility for direct in-place editor injection under Contract C09 (eliminates 95% friction). |
 
 ---
 
@@ -136,7 +137,9 @@ The architecture consists of five decoupled layers designed for sub-millisecond 
 - Convert user HUD choices into immutable C++ `ConfirmedIntent`.
 - Invoke `granite_rewrite` to generate the "One True Prompt" with AST context (<350 tokens).
 - Render visual inline diffs and typed constraint linting (`MECHANICALLY_VERIFIED`, `USER_CONFIRMED`, `FAILED`).
-- Dispatch verified prompt directly to downstream coding agents.
+- Dispatch verified prompt directly to downstream coding agents:
+  - **Tier 1 (Active):** Auto-dismiss HUD and copy to clipboard for instantaneous `Cmd+V` in the target editor.
+  - **Tier 2 (Contract C09 Extension):** Opt-in direct editor injection via platform Accessibility APIs (`AXUIElement` / Win32 UI Automation) for in-place text replacement.
 
 ---
 

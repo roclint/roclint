@@ -41,6 +41,10 @@ bool HostController::isCardVisible() const noexcept {
     return m_cardVisibility != CardVisibility::Hidden;
 }
 
+bool HostController::isDashboardVisible() const noexcept {
+    return m_dashboardVisible;
+}
+
 void HostController::markResident() {
     if (m_hostState != HostState::Starting) {
         return;
@@ -85,11 +89,35 @@ void HostController::toggleCard() {
     }
 }
 
+void HostController::showDashboard() {
+    if (m_hostState == HostState::Quitting) {
+        return;
+    }
+    setDashboardVisibility(true);
+    emit showDashboardRequested();
+}
+
+void HostController::hideDashboard() {
+    if (!setDashboardVisibility(false)) {
+        return;
+    }
+    emit hideDashboardRequested();
+}
+
+void HostController::toggleDashboard() {
+    if (isDashboardVisible()) {
+        hideDashboard();
+    } else {
+        showDashboard();
+    }
+}
+
 void HostController::requestQuit() {
     if (m_hostState == HostState::Quitting) {
         return;
     }
     hideCard();
+    hideDashboard();
     m_hostState = HostState::Quitting;
     emit hostStateChanged();
     // The application owner decides how to exit; the controller stays testable.
@@ -101,6 +129,13 @@ void HostController::syncCardVisibility(CardVisibility visibility) {
         return;
     }
     setCardVisibility(visibility);
+}
+
+void HostController::syncDashboardVisibility(bool visible) {
+    if (m_hostState == HostState::Quitting) {
+        return;
+    }
+    setDashboardVisibility(visible);
 }
 
 quint64 HostController::stateVersion() const noexcept {
@@ -200,6 +235,15 @@ bool HostController::setCardVisibility(CardVisibility visibility) {
     }
     m_cardVisibility = visibility;
     emit cardVisibilityChanged();
+    return true;
+}
+
+bool HostController::setDashboardVisibility(bool visible) {
+    if (m_dashboardVisible == visible) {
+        return false;
+    }
+    m_dashboardVisible = visible;
+    emit dashboardVisibilityChanged();
     return true;
 }
 

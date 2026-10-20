@@ -14,13 +14,19 @@ int main(int /*argc*/, char* /*argv*/[]) {
 
     int showRequests = 0;
     int hideRequests = 0;
+    int showDashboardRequests = 0;
+    int hideDashboardRequests = 0;
     int quitRequests = 0;
     int visibilityNotifications = 0;
+    int dashboardVisibilityNotifications = 0;
     int stateNotifications = 0;
     QObject::connect(&controller, &HostController::showCardRequested, [&]() { ++showRequests; });
     QObject::connect(&controller, &HostController::hideCardRequested, [&]() { ++hideRequests; });
+    QObject::connect(&controller, &HostController::showDashboardRequested, [&]() { ++showDashboardRequests; });
+    QObject::connect(&controller, &HostController::hideDashboardRequested, [&]() { ++hideDashboardRequests; });
     QObject::connect(&controller, &HostController::quitRequested, [&]() { ++quitRequests; });
     QObject::connect(&controller, &HostController::cardVisibilityChanged, [&]() { ++visibilityNotifications; });
+    QObject::connect(&controller, &HostController::dashboardVisibilityChanged, [&]() { ++dashboardVisibilityNotifications; });
     QObject::connect(&controller, &HostController::hostStateChanged, [&]() { ++stateNotifications; });
 
     // 1. Initial State Check
@@ -87,21 +93,58 @@ int main(int /*argc*/, char* /*argv*/[]) {
     ROCLINT_CHECK(controller.cardVisibility() == CardVisibility::Focused);
     std::cout << "  [PASS] syncCardVisibility tracks external changes; toggle restores.\n";
 
-    // 8. Explicit Quit hides the card, enters Quitting, and is terminal
+    // 8. Dashboard Lifecycle Checks
+    ROCLINT_CHECK(!controller.isDashboardVisible());
+    controller.showDashboard();
+    ROCLINT_CHECK(controller.isDashboardVisible());
+    ROCLINT_CHECK(showDashboardRequests == 1);
+    ROCLINT_CHECK(dashboardVisibilityNotifications == 1);
+
+    controller.hideDashboard();
+    ROCLINT_CHECK(!controller.isDashboardVisible());
+    ROCLINT_CHECK(hideDashboardRequests == 1);
+    ROCLINT_CHECK(dashboardVisibilityNotifications == 2);
+
+    controller.toggleDashboard();
+    ROCLINT_CHECK(controller.isDashboardVisible());
+    controller.toggleDashboard();
+    ROCLINT_CHECK(!controller.isDashboardVisible());
+
+    controller.syncDashboardVisibility(true);
+    ROCLINT_CHECK(controller.isDashboardVisible());
+    controller.syncDashboardVisibility(false);
+    ROCLINT_CHECK(!controller.isDashboardVisible());
+    std::cout << "  [PASS] Dashboard lifecycle (show, hide, toggle, sync) verified.\n";
+
+    // 9. Explicit Quit hides card and dashboard, enters Quitting, and is terminal
+    controller.showCard();
+    controller.showDashboard();
+    ROCLINT_CHECK(controller.isCardVisible());
+    ROCLINT_CHECK(controller.isDashboardVisible());
+
     const int hidesBeforeQuit = hideRequests;
+    const int dashHidesBeforeQuit = hideDashboardRequests;
     controller.requestQuit();
     ROCLINT_CHECK(controller.hostState() == HostState::Quitting);
     ROCLINT_CHECK(!controller.isCardVisible());
+    ROCLINT_CHECK(!controller.isDashboardVisible());
     ROCLINT_CHECK(hideRequests == hidesBeforeQuit + 1);
+    ROCLINT_CHECK(hideDashboardRequests == dashHidesBeforeQuit + 1);
     ROCLINT_CHECK(quitRequests == 1);
     controller.requestQuit();
     ROCLINT_CHECK(quitRequests == 1);
+
     const int showsAfterQuit = showRequests;
+    const int dashShowsAfterQuit = showDashboardRequests;
     controller.showCard();
+    controller.showDashboard();
     controller.syncCardVisibility(CardVisibility::Focused);
+    controller.syncDashboardVisibility(true);
     ROCLINT_CHECK(showRequests == showsAfterQuit);
+    ROCLINT_CHECK(showDashboardRequests == dashShowsAfterQuit);
     ROCLINT_CHECK(!controller.isCardVisible());
-    std::cout << "  [PASS] requestQuit hides card, emits quitRequested once, blocks re-show.\n";
+    ROCLINT_CHECK(!controller.isDashboardVisible());
+    std::cout << "  [PASS] requestQuit hides card & dashboard, emits quitRequested once, blocks re-show.\n";
 
     std::cout << "[Roclint Host Lifecycle Test] ALL CHECKS PASSED.\n";
     return 0;

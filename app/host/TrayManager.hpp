@@ -32,6 +32,7 @@ private:
     QSystemTrayIcon* m_trayIcon{nullptr};
     std::unique_ptr<QMenu> m_trayMenu; // QSystemTrayIcon does not take ownership
     QAction* m_openAction{nullptr};
+    QAction* m_settingsAction{nullptr};
     QAction* m_quitAction{nullptr};
 };
 
