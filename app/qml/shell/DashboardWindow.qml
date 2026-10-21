@@ -87,7 +87,7 @@ Window {
     property string defaultRewriteProfile: "ANTHROPIC_STRUCTURED"
     property string defaultScopePreference: "global"
     property bool passiveHostContextEnabled: true
-    property string globalShortcutString: isMac ? "Cmd+Shift+R" : "Ctrl+Shift+R"
+    property string globalShortcutString: isMac ? "Cmd+Shift+L" : "Ctrl+Shift+L"
     property bool telemetryOptIn: true
     property string toastMessage: ""
 

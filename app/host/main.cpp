@@ -86,7 +86,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "[Roclint Host] Warning: System tray is not available on this environment.\n";
     }
 
-    // 4b. Initialize global system hotkey (Cmd+Shift+R)
+    // 4b. Initialize global system hotkey (Cmd+Shift+L)
     auto shortcutManager = std::make_unique<roclint::host::GlobalShortcutManager>(controller.get());
     if (!shortcutManager->registerShortcut()) {
         std::cerr << "[Roclint Host] Warning: Global shortcut could not be registered.\n";

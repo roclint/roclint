@@ -96,27 +96,27 @@ bool GlobalShortcutManager::registerShortcut() {
     hotKeyID.signature = 'ROCL';
     hotKeyID.id = 1;
 
-    // kVK_ANSI_R is 0x0F, modifiers: cmdKey (0x0100) | shiftKey (0x0200) -> Cmd+Shift+R
-    status = RegisterEventHotKey(kVK_ANSI_R, cmdKey | shiftKey, hotKeyID, GetApplicationEventTarget(), 0, &m_impl->hotKeyRef);
+    // kVK_ANSI_L is 0x25, modifiers: cmdKey (0x0100) | shiftKey (0x0200) -> Cmd+Shift+L
+    status = RegisterEventHotKey(kVK_ANSI_L, cmdKey | shiftKey, hotKeyID, GetApplicationEventTarget(), 0, &m_impl->hotKeyRef);
     if (status != noErr) {
-        std::cerr << "[GlobalShortcutManager] Failed to register global hotkey Cmd+Shift+R: " << status << "\n";
+        std::cerr << "[GlobalShortcutManager] Failed to register global hotkey Cmd+Shift+L: " << status << "\n";
         return false;
     }
 
-    std::cout << "[GlobalShortcutManager] macOS global shortcut registered: Cmd+Shift+R\n";
+    std::cout << "[GlobalShortcutManager] macOS global shortcut registered: Cmd+Shift+L\n";
     return true;
 
 #elif defined(Q_OS_WIN)
-    // Windows 10/11: RegisterHotKey (Ctrl + Shift + R) with MOD_NOREPEAT
+    // Windows 10/11: RegisterHotKey (Ctrl + Shift + L) with MOD_NOREPEAT
     UINT modifiers = MOD_CONTROL | MOD_SHIFT;
 #if defined(MOD_NOREPEAT)
     modifiers |= MOD_NOREPEAT;
 #endif
 
-    // ID = 1, VK_R = 'R' (0x52)
-    BOOL success = RegisterHotKey(nullptr, 1, modifiers, 'R');
+    // ID = 1, VK_L = 'L' (0x4C)
+    BOOL success = RegisterHotKey(nullptr, 1, modifiers, 'L');
     if (!success) {
-        std::cerr << "[GlobalShortcutManager] Failed to register Windows global hotkey Ctrl+Shift+R (error " << GetLastError() << ")\n";
+        std::cerr << "[GlobalShortcutManager] Failed to register Windows global hotkey Ctrl+Shift+L (error " << GetLastError() << ")\n";
         return false;
     }
 
@@ -126,7 +126,7 @@ bool GlobalShortcutManager::registerShortcut() {
     }
     m_impl->registered = true;
 
-    std::cout << "[GlobalShortcutManager] Windows 10/11 global shortcut registered: Ctrl+Shift+R\n";
+    std::cout << "[GlobalShortcutManager] Windows 10/11 global shortcut registered: Ctrl+Shift+L\n";
     return true;
 
 #else

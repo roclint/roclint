@@ -23,7 +23,7 @@ The architecture consists of five decoupled layers designed for sub-millisecond 
 │                        TARGET ENVIRONMENT                              │
 │       (VS Code, Cursor, Terminal, Microsoft Edge, Slack, IDEs)         │
 └──────────────────────────────────┬─────────────────────────────────────┘
-                                   │ Global Shortcut (Cmd+Shift+R / Ctrl+Shift+R)
+                                   │ Global Shortcut (Cmd+Shift+L / Ctrl+Shift+L)
                                    ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │ 1. HOST & PRESENTATION LAYER (Qt6 / C++20 / QML)                       │
@@ -72,7 +72,7 @@ The architecture consists of five decoupled layers designed for sub-millisecond 
 
 ### B. Desktop Host & Invocation (`app/host/**`)
 - **Resident Background Process:** Operates from the macOS menu bar and Windows system tray without holding open browser tabs or background web servers.
-- **Global Shortcut:** Registering Carbon event taps on macOS (`Cmd+Shift+R`) and Win32 hotkeys on Windows.
+- **Global Shortcut:** Registering Carbon event taps on macOS (`Cmd+Shift+L`) and Win32 hotkeys on Windows (`Ctrl+Shift+L`).
 - **One-Shot Clipboard Pre-fill:** On invocation, reads the active system clipboard once to pre-fill the editor if valid text exists. Does not continuously poll the clipboard.
 - **Screen Placement & Clamping:** Detects the physical monitor containing the user's cursor and centers the HUD, clamping window coordinates to avoid display edges or multi-monitor seams.
 - **Passive Host-Context Hint:** Observes the frontmost application (`NSWorkspace` on macOS / `GetForegroundWindow` on Windows) at the moment of invocation without requiring Accessibility/Automation permissions. Maps application names into canonical categories (`CODE_EDITOR`, `TERMINAL`, `BROWSER`, `CHAT`, `DOCUMENT`, `OTHER`) and renders a dismissible chip (`FROM: MICROSOFT EDGE [×]`).

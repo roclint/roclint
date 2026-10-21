@@ -39,12 +39,13 @@ target_include_directories(roclint_core PUBLIC
 target_compile_features(roclint_core PUBLIC cxx_std_20)
 
 # -----------------------------------------------------------------------------
-# 1b. Define the Storage Static Library Target (roclint_storage) - A03
+# 1b. Define the Storage Static Library Target (roclint_storage) - A03 / A04
 # -----------------------------------------------------------------------------
 find_package(SQLite3 REQUIRED)
 
 add_library(roclint_storage STATIC
     src/storage/Database.cpp
+    src/storage/PromptRepository.cpp
 )
 
 target_link_libraries(roclint_storage PUBLIC
@@ -201,6 +202,15 @@ if(BUILD_TESTING)
     target_include_directories(roclint_storage_tests PRIVATE tests)
     target_compile_features(roclint_storage_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_storage COMMAND roclint_storage_tests)
+
+    # Prompt repository test (A04)
+    add_executable(roclint_prompt_repository_tests
+        tests/storage/test_prompt_repository.cpp
+    )
+    target_link_libraries(roclint_prompt_repository_tests PRIVATE roclint_storage)
+    target_include_directories(roclint_prompt_repository_tests PRIVATE tests)
+    target_compile_features(roclint_prompt_repository_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_prompt_repository COMMAND roclint_prompt_repository_tests)
 
 
     # ViewModel / Host lifecycle test (B00)
