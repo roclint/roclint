@@ -74,6 +74,7 @@ class HostController : public QObject {
     Q_PROPERTY(QVariantList proposalConstraints READ proposalConstraints NOTIFY rewriteProposalChanged)
     Q_PROPERTY(bool directInjectionEnabled READ directInjectionEnabled WRITE setDirectInjectionEnabled NOTIFY directInjectionChanged)
     Q_PROPERTY(bool hasAccessibilityPermission READ hasAccessibilityPermission NOTIFY directInjectionChanged)
+    Q_PROPERTY(QString scorerEngine READ scorerEngine WRITE setScorerEngine NOTIFY scorerEngineChanged)
 
 public:
     explicit HostController(QObject* parent = nullptr);
@@ -171,6 +172,8 @@ public slots:
     Q_INVOKABLE void setRewriteProfile(const QString& profile);
     Q_INVOKABLE QVariantMap getConfirmedIntentPayload() const;
     Q_INVOKABLE QString synthesizeRewrite(const QString& promptOverride = "");
+    [[nodiscard]] QString scorerEngine() const noexcept;
+    Q_INVOKABLE void setScorerEngine(const QString& engine);
 
 signals:
     void cardVisibilityChanged();
@@ -197,6 +200,7 @@ signals:
     void rewriteProposalChanged();
     void rewriteSynthesized(const QString& compiledPrompt, const QString& diffText);
     void directInjectionChanged();
+    void scorerEngineChanged();
 
 private:
     bool setCardVisibility(CardVisibility visibility);

@@ -1059,4 +1059,20 @@ QVariantMap HostController::getConfirmedIntentPayload() const {
     return payload;
 }
 
+QString HostController::scorerEngine() const noexcept {
+    return (m_s1Adapter.engine() == bridge::ScorerEngine::JuliaLocal)
+        ? QStringLiteral("julia")
+        : QStringLiteral("jev");
+}
+
+void HostController::setScorerEngine(const QString& engine) {
+    const bridge::ScorerEngine target = (engine.trimmed().toLower() == QLatin1String("jev"))
+        ? bridge::ScorerEngine::JevCloud
+        : bridge::ScorerEngine::JuliaLocal;
+    if (m_s1Adapter.engine() != target) {
+        m_s1Adapter.setEngine(target);
+        emit scorerEngineChanged();
+    }
+}
+
 } // namespace roclint::host

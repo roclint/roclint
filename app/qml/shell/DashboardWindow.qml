@@ -83,7 +83,7 @@ Window {
     property string graniteQuantization: "Q8_0"
     property string graniteResidency: "IDLE_MAPPED"
     property int contextLength: 4096
-    property string scorerMode: "jev" // "jev" or "julia"
+    property string scorerMode: (typeof hostController !== "undefined" ? hostController.scorerEngine : "julia") // "julia" (default) or "jev"
     property string defaultRewriteProfile: "ANTHROPIC_STRUCTURED"
     property string defaultScopePreference: "global"
     property bool passiveHostContextEnabled: true
@@ -769,7 +769,7 @@ Window {
                                                 Text {
                                                     id: jevTxt
                                                     anchors.centerIn: parent
-                                                    text: "[ ● CLOUD JEV (BASELINE STUDY) ]"
+                                                    text: dashboardWindow.scorerMode === "jev" ? "[ ● CLOUD JEV (BASELINE STUDY) ]" : "[ ○ CLOUD JEV (BASELINE STUDY) ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 9
                                                     font.bold: dashboardWindow.scorerMode === "jev"
@@ -778,7 +778,11 @@ Window {
                                                 MouseArea {
                                                     anchors.fill: parent
                                                     cursorShape: Qt.PointingHandCursor
-                                                    onClicked: dashboardWindow.scorerMode = "jev"
+                                                    onClicked: {
+                                                        dashboardWindow.scorerMode = "jev";
+                                                        if (typeof hostController !== "undefined") hostController.setScorerEngine("jev");
+                                                        dashboardWindow.showToast("S1 SCORER: CLOUD JEV ACTIVATED");
+                                                    }
                                                 }
                                             }
 
@@ -792,7 +796,7 @@ Window {
                                                 Text {
                                                     id: juliaTxt
                                                     anchors.centerIn: parent
-                                                    text: "[ ○ LOCAL JULIA-1 (AIR-GAPPED CPU) ]"
+                                                    text: dashboardWindow.scorerMode === "julia" ? "[ ● LOCAL JULIA-1 (AIR-GAPPED CPU) ]" : "[ ○ LOCAL JULIA-1 (AIR-GAPPED CPU) ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 9
                                                     font.bold: dashboardWindow.scorerMode === "julia"
@@ -801,7 +805,11 @@ Window {
                                                 MouseArea {
                                                     anchors.fill: parent
                                                     cursorShape: Qt.PointingHandCursor
-                                                    onClicked: dashboardWindow.scorerMode = "julia"
+                                                    onClicked: {
+                                                        dashboardWindow.scorerMode = "julia";
+                                                        if (typeof hostController !== "undefined") hostController.setScorerEngine("julia");
+                                                        dashboardWindow.showToast("S1 SCORER: LOCAL JULIA-1 (AIR-GAPPED DEFAULT)");
+                                                    }
                                                 }
                                             }
                                         }
