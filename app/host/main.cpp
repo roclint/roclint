@@ -7,6 +7,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
+#include <QScreen>
 #include <QTimer>
 #include <iostream>
 #include <memory>
@@ -200,6 +201,15 @@ int main(int argc, char* argv[]) {
             QObject::connect(controller, &roclint::host::HostController::showDashboardRequested,
                              window, [window]() {
                 std::cout << "[Roclint Host] Showing Dashboard window..." << std::endl;
+                if (window->x() <= 0 && window->y() <= 0) {
+                    if (const auto* s = window->screen()) {
+                        const QRect geom = s->availableGeometry();
+                        const int cx = geom.x() + (geom.width() - window->width()) / 2;
+                        const int cy = geom.y() + (geom.height() - window->height()) / 2;
+                        window->setX(std::max(geom.x(), cx));
+                        window->setY(std::max(geom.y(), cy));
+                    }
+                }
                 window->showNormal();
                 window->raise();
                 window->requestActivate();
