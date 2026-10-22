@@ -42,7 +42,7 @@ int main(int argc, char* argv[]) {
         if (arg == "--show") {
             autoShow = true;
         }
-        if (arg == "--dashboard") {
+        if (arg == "--dashboard" || arg == "--show-dashboard") {
             autoShowDashboard = true;
         }
         if (arg == "--dashboard-tab" && i + 1 < argc) {
