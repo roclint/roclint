@@ -87,6 +87,13 @@ void testPrecedencePhraseIsNotRuleConflict() {
     ROCLINT_CHECK(decision2.inputValidity == InputValidity::Valid);
     ROCLINT_CHECK(!decision2.isAmbiguous);
     ROCLINT_CHECK(decision2.fastPathClear);
+
+    std::string prompt3 = "Prefer stateless token auth over sticky session storage";
+    auto decision3 = adapter.triagePrompt(prompt3);
+    ROCLINT_CHECK(decision3.inputValidity == InputValidity::Valid);
+    ROCLINT_CHECK(!decision3.isAmbiguous);
+    ROCLINT_CHECK(decision3.fastPathClear);
+    ROCLINT_CHECK(decision3.dimension != "rule_conflict");
 }
 
 void testEmptyAndWhitespaceInputValidation() {

@@ -44,6 +44,10 @@ struct S1TriageDecision {
     double latencyMs{0.0};
     ScorerEngine engine{ScorerEngine::JuliaLocal};
     bool fastPathClear{false};
+
+    [[nodiscard]] bool isExecutable() const noexcept {
+        return inputValidity == InputValidity::Valid;
+    }
 };
 
 struct AlternativeProbability {

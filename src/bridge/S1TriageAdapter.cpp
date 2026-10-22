@@ -7,6 +7,14 @@ namespace roclint::bridge {
 
 namespace {
 
+constexpr double kAmbiguityThresholdFastPath   = 0.70;
+constexpr double kAmbiguityScoreRuleConflict    = 0.92;
+constexpr double kAmbiguityScoreTarget          = 0.88;
+constexpr double kAmbiguityScoreAction          = 0.78;
+constexpr double kAmbiguityScoreClear           = 0.22;
+constexpr double kAmbiguityScoreUnscored        = 0.50;
+constexpr double kAmbiguityScoreModelInference  = 0.82;
+
 [[nodiscard]] std::string toLowerString(std::string_view str) {
     std::string result;
     result.reserve(str.size());
@@ -43,7 +51,6 @@ S1TriageDecision S1TriageAdapter::triagePrompt(std::string_view prompt) {
         auto decision = mockTriageHandler_(prompt, engine_);
         const auto endTime = std::chrono::steady_clock::now();
         decision.latencyMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
-        decision.engine = engine_;
         return decision;
     }
 
@@ -86,6 +93,7 @@ S1TriageDecision S1TriageAdapter::triagePrompt(std::string_view prompt) {
         (lowerPrompt.find("takes precedence") != std::string::npos);
 
     const bool hasContradictoryInvariants =
+        !hasExplicitPrecedence &&
         (lowerPrompt.find("stateless") != std::string::npos && 
          (lowerPrompt.find("session") != std::string::npos || lowerPrompt.find("sticky") != std::string::npos));
 
@@ -94,9 +102,24 @@ S1TriageDecision S1TriageAdapter::triagePrompt(std::string_view prompt) {
         (lowerPrompt.find("contradict") != std::string::npos) ||
         (lowerPrompt.find("mutually exclusive") != std::string::npos);
 
+    const bool hasActionKeywords =
+        lowerPrompt.find("timeout") != std::string::npos ||
+        lowerPrompt.find("refactor") != std::string::npos ||
+        lowerPrompt.find("optimize") != std::string::npos ||
+        lowerPrompt.find("handle") != std::string::npos;
+
+    const bool hasActionContextDisjunction =
+        (lowerPrompt.find(" or ") != std::string::npos &&
+         (lowerPrompt.find("should") != std::string::npos ||
+          lowerPrompt.find("instead") != std::string::npos ||
+          lowerPrompt.find("approach") != std::string::npos ||
+          lowerPrompt.find("strategy") != std::string::npos ||
+          lowerPrompt.find("either") != std::string::npos ||
+          hasActionKeywords));
+
     if (hasContradictoryInvariants || hasUnresolvedConflictPhrase) {
         decision.isAmbiguous = true;
-        decision.ambiguityScore = 0.92;
+        decision.ambiguityScore = kAmbiguityScoreRuleConflict;
         decision.dimension = "rule_conflict";
         decision.rationale = "Contradictory operational constraints or unresolved rule conflict detected.";
     } else if (lowerPrompt.find("which") != std::string::npos ||
@@ -105,28 +128,24 @@ S1TriageDecision S1TriageAdapter::triagePrompt(std::string_view prompt) {
                lowerPrompt.find("ui or") != std::string::npos ||
                lowerPrompt.find("frontend or backend") != std::string::npos) {
         decision.isAmbiguous = true;
-        decision.ambiguityScore = 0.88;
+        decision.ambiguityScore = kAmbiguityScoreTarget;
         decision.dimension = "target";
         decision.rationale = "Multiple valid architectural components could satisfy this request.";
-    } else if (lowerPrompt.find("timeout") != std::string::npos ||
-               lowerPrompt.find("refactor") != std::string::npos ||
-               lowerPrompt.find("optimize") != std::string::npos ||
-               lowerPrompt.find("handle") != std::string::npos ||
-               lowerPrompt.find(" or ") != std::string::npos) {
+    } else if (hasActionKeywords || hasActionContextDisjunction) {
         decision.isAmbiguous = true;
-        decision.ambiguityScore = 0.78;
+        decision.ambiguityScore = kAmbiguityScoreAction;
         decision.dimension = "action";
         decision.rationale = "Action implementation path has multiple distinct strategies.";
     } else {
         decision.isAmbiguous = false;
-        decision.ambiguityScore = 0.22;
+        decision.ambiguityScore = kAmbiguityScoreClear;
         decision.dimension = "action";
         decision.rationale = hasExplicitPrecedence
             ? "Prompt explicitly specifies precedence, resolving constraint trade-offs."
             : "Prompt specifies clear, concrete requirements without material ambiguity.";
     }
 
-    decision.fastPathClear = (decision.inputValidity == InputValidity::Valid && decision.ambiguityScore < 0.70);
+    decision.fastPathClear = (decision.inputValidity == InputValidity::Valid && decision.ambiguityScore < kAmbiguityThresholdFastPath);
 
     const auto endTime = std::chrono::steady_clock::now();
     decision.latencyMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
@@ -142,10 +161,9 @@ SnapshotEvaluationResponse S1TriageAdapter::evaluateSnapshot(
         auto resp = mockSnapshotHandler_(analysis, engine_);
         const auto endTime = std::chrono::steady_clock::now();
         resp.totalLatencyMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
-        resp.engine = engine_;
-        resp.executedEngine = engine_;
-        resp.executionStatus = ExecutionStatus::ExecutedMock;
-        resp.modelInferenceExecuted = true;
+        if (!resp.executedEngine.has_value()) {
+            resp.executedEngine = engine_;
+        }
         return resp;
     }
 
@@ -193,18 +211,22 @@ SnapshotEvaluationResponse S1TriageAdapter::evaluateSnapshot(
 
         if (response.modelInferenceExecuted) {
             score.isScored = true;
-            score.ambiguityScore = 0.82;
+            score.ambiguityScore = kAmbiguityScoreModelInference;
             score.noulCertainty = true;
             if (n > 0) {
-                const double uniform = 1.0 / static_cast<double>(n);
-                for (const auto& alt : group.alternatives) {
-                    score.probabilities.push_back({alt.id, uniform});
+                const double topProb = (n == 1) ? 1.0 : 0.60;
+                const double remainingProb = (n > 1) ? (1.0 - topProb) / static_cast<double>(n - 1) : 0.0;
+                score.probabilities.push_back({group.alternatives[0].id, topProb});
+                for (std::size_t i = 1; i < n; ++i) {
+                    score.probabilities.push_back({group.alternatives[i].id, remainingProb});
                 }
-                score.winningAlternativeId = group.alternatives[0].id;
+                auto maxIt = std::max_element(score.probabilities.begin(), score.probabilities.end(),
+                    [](const auto& a, const auto& b) { return a.probability < b.probability; });
+                score.winningAlternativeId = maxIt->alternativeId;
             }
         } else {
             score.isScored = false;
-            score.ambiguityScore = 0.50;
+            score.ambiguityScore = kAmbiguityScoreUnscored;
             score.noulCertainty = false;
             score.winningAlternativeId = std::nullopt;
 
@@ -219,7 +241,6 @@ SnapshotEvaluationResponse S1TriageAdapter::evaluateSnapshot(
         response.groupScores.push_back(std::move(score));
     }
 
-    response.success = true;
     const auto endTime = std::chrono::steady_clock::now();
     response.totalLatencyMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
     return response;
