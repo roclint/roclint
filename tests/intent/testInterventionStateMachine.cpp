@@ -57,7 +57,7 @@ void testMaterialChoiceGroupReachesClarify() {
     });
 
     WorkingIntentState state;
-    ROCLINT_CHECK(state.confirmedAlternatives.empty()); // Guard 2: Zero preselection
+    ROCLINT_CHECK(state.confirmedAlternatives.empty());
 
     auto decision = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
     ROCLINT_CHECK(decision.verdict == InterventionVerdict::Clarify);
@@ -94,17 +94,14 @@ void testTotalOrderingChoiceGroups() {
 
     SnapshotEvaluationResponse snapshotEval;
     snapshotEval.success = true;
-    // g2 has higher S1 score (0.95 vs 0.80)
     snapshotEval.groupScores.push_back(GroupEvaluationScore{.groupId = "group_action", .ambiguityScore = 0.80});
     snapshotEval.groupScores.push_back(GroupEvaluationScore{.groupId = "group_target", .ambiguityScore = 0.95});
 
     WorkingIntentState state;
     auto decision = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
 
-    // Guard 3: Higher S1 score wins over earlier byte offset
     ROCLINT_CHECK(decision.activeItemId == "group_target");
 
-    // When S1 scores tie, earlier byte offset wins (10 < 40)
     snapshotEval.groupScores[0].ambiguityScore = 0.90;
     snapshotEval.groupScores[1].ambiguityScore = 0.90;
     auto decisionTie = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
@@ -134,7 +131,6 @@ void testRound3OffByOneTrap() {
 
     ROCLINT_CHECK(state.roundsCompleted == 3);
 
-    // Guard 1: All items resolved must reach Quiet (not ClarificationBudgetExceeded!)
     auto decision = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
     ROCLINT_CHECK(decision.verdict == InterventionVerdict::Quiet);
     ROCLINT_CHECK(decision.reason == InterventionReasonCode::AllMaterialItemsResolved);

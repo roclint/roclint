@@ -133,23 +133,16 @@ public slots:
     void toggleDashboard();
     void requestQuit();
 
-    // Host Context actions (B02H)
     void clearHostContext();
-
-    // Explicit one-shot clipboard capture (B02)
     void captureClipboardDraft();
 
-    // Prompt state & clipboard actions
     void copyToClipboard(const QString& text);
     void commitPrompt(const QString& text);
     void hardBypass(const QString& text);
 
-    // Records a visibility change the window system made on its own (taskbar
-    // minimize/restore, focus loss). Updates state without emitting show/hide requests.
     void syncCardVisibility(roclint::host::CardVisibility visibility);
     void syncDashboardVisibility(bool visible);
 
-    // Persistence & History actions (I03 / B03)
     Q_INVOKABLE QVariantList getRecentSessions();
     Q_INVOKABLE QVariantList getSessionHistory(const QString& sessionId);
     Q_INVOKABLE void restoreRevision(const QString& revisionId);
@@ -158,7 +151,6 @@ public slots:
     Q_INVOKABLE void purgeHistory();
     Q_INVOKABLE void refreshStorageStats();
 
-    // Clarification & Linter actions (B06 / B07)
     Q_INVOKABLE void analyzePrompt(const QString& text);
     Q_INVOKABLE void confirmChoice(const QString& alternativeId);
     Q_INVOKABLE void submitCustomIntent(const QString& customText);
@@ -214,7 +206,6 @@ private:
     QString m_databasePath;
     QString m_databaseStats;
 
-    // Clarification & Linter engine state (B06)
     roclint::bridge::S1TriageAdapter m_s1Adapter;
     roclint::bridge::GraniteAdapter m_graniteAdapter;
     roclint::core::intent::WorkingIntentState m_workingIntent;
@@ -227,13 +218,11 @@ private:
     QVariantList m_activeAlternatives;
     double m_ambiguityScore{0.0};
 
-    // Confirmed Intent & Provenance state (B07 / C06)
     std::optional<roclint::core::intent::ConfirmedIntent> m_confirmedIntent;
     QString m_rewriteProfile{QStringLiteral("GENERIC@1")};
     QString m_customInstructions;
     void rebuildConfirmedIntent();
 
-    // Granite Rewrite synthesis state (B08 / B08P / A10)
     roclint::bridge::GraniteRewriteAdapter m_rewriteAdapter;
     std::optional<roclint::core::rewrite::RewriteProposal> m_currentProposal;
 };

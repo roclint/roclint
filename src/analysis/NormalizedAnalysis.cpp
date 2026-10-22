@@ -35,7 +35,6 @@ AnalysisValidationResult validateNormalizedAnalysis(const NormalizedAnalysis& an
             result.issues.emplace_back("ChoiceGroup at index " + std::to_string(i) + " has an empty ID.");
         }
 
-        // Cardinality Check 
         if (group.alternatives.size() < ChoiceGroup::kMinAlternatives ||
             group.alternatives.size() > ChoiceGroup::kMaxAlternatives) {
             if (result.status != AnalysisValidationStatus::Invalid) {
@@ -45,7 +44,6 @@ AnalysisValidationResult validateNormalizedAnalysis(const NormalizedAnalysis& an
                                        std::to_string(group.alternatives.size()));
         }
 
-        // Exact-duplicate check
         std::unordered_set<std::string> seenInterpretations;
         for (std::size_t j = 0; j < group.alternatives.size(); ++j) {
             const auto& alt = group.alternatives[j];
@@ -61,7 +59,6 @@ AnalysisValidationResult validateNormalizedAnalysis(const NormalizedAnalysis& an
                 result.issues.emplace_back("ChoiceGroup '" + group.id + "' contains duplicate alternative interpretation: '" + alt.interpretation + "'");
             }
 
-            // Evidence spans check against frozen prompt
             for (const auto& span : alt.evidence) {
                 if (!isValidSpan(promptText, span)) {
                     result.status = AnalysisValidationStatus::Invalid;
@@ -72,7 +69,6 @@ AnalysisValidationResult validateNormalizedAnalysis(const NormalizedAnalysis& an
         }
     }
 
-    // Validate assumptions evidence spans
     for (const auto& assumption : analysis.assumptions) {
         for (const auto& span : assumption.evidence) {
             if (!isValidSpan(promptText, span)) {

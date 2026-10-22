@@ -11,7 +11,6 @@ GraniteRewriteAdapter::GraniteRewriteAdapter(std::string modelPath)
 GraniteRewriteResponse GraniteRewriteAdapter::synthesizeRewrite(
     const GraniteRewriteRequest& request) noexcept {
 
-    // 1. Enforce known, versioned profile (B08P Guard 7)
     auto profileOpt = core::rewrite::ProfileRegistry::getProfile(request.rewriteProfileId);
     if (!profileOpt.has_value()) {
         return GraniteRewriteResponse{
@@ -21,7 +20,6 @@ GraniteRewriteResponse GraniteRewriteAdapter::synthesizeRewrite(
     }
     const auto& profile = *profileOpt;
 
-    // 2. Validate confirmed intent presence (Contract C06)
     if (request.confirmedIntent.id.empty()) {
         return GraniteRewriteResponse{
             .success = false,
@@ -29,7 +27,6 @@ GraniteRewriteResponse GraniteRewriteAdapter::synthesizeRewrite(
         };
     }
 
-    // 3. Needs clarification path test
     if (request.promptString == "NEEDS_CLARIFICATION_TRIGGER") {
         core::rewrite::RewriteProposal clarProp{
             .id = "prop_clar_" + request.revisionId,
@@ -45,7 +42,6 @@ GraniteRewriteResponse GraniteRewriteAdapter::synthesizeRewrite(
         };
     }
 
-    // 4. Format prompt structurally according to profile (formatting strategy only)
     std::string compiled;
     std::ostringstream oss;
 
@@ -105,7 +101,6 @@ GraniteRewriteResponse GraniteRewriteAdapter::synthesizeRewrite(
         compiled = oss.str();
     }
 
-    // 5. Build proposal identity and constraints
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
 

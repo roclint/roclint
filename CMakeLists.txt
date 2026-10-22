@@ -225,7 +225,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_prompt_repository_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_prompt_repository COMMAND roclint_prompt_repository_tests)
 
-    # Literal Evidence & SourceSpan test (A05)
+    # SourceSpan and evidence tests
     add_executable(roclint_source_span_tests
         tests/analysis/testSourceSpan.cpp
     )
@@ -234,7 +234,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_source_span_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_source_span COMMAND roclint_source_span_tests)
 
-    # NormalizedAnalysis types test (A06)
+    # NormalizedAnalysis validation tests
     add_executable(roclint_normalized_analysis_tests
         tests/analysis/testNormalizedAnalysis.cpp
     )
@@ -243,7 +243,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_normalized_analysis_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_normalized_analysis COMMAND roclint_normalized_analysis_tests)
 
-    # Materiality and Semantic Validation Policy test (A07)
+    # Materiality policy tests
     add_executable(roclint_materiality_policy_tests
         tests/analysis/testMaterialityPolicy.cpp
     )
@@ -252,7 +252,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_materiality_policy_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_materiality_policy COMMAND roclint_materiality_policy_tests)
 
-    # Local Granite Analysis Adapter test (B04)
+    # Granite adapter tests
     add_executable(roclint_granite_adapter_tests
         tests/bridge/test_granite_adapter.cpp
     )
@@ -261,7 +261,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_granite_adapter_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_granite_adapter COMMAND roclint_granite_adapter_tests)
 
-    # S1 Fast Triage & Snapshot Adapter test (B05 / B05J)
+    # S1 triage adapter tests
     add_executable(roclint_s1_triage_adapter_tests
         tests/bridge/test_s1_triage_adapter.cpp
     )
@@ -270,7 +270,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_s1_triage_adapter_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_s1_triage_adapter COMMAND roclint_s1_triage_adapter_tests)
 
-    # Analysis Checkpoint integration test (I04)
+    # Analysis Checkpoint integration tests
     add_executable(roclint_analysis_checkpoint_tests
         tests/analysis/test_analysis_checkpoint.cpp
     )
@@ -279,7 +279,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_analysis_checkpoint_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_analysis_checkpoint COMMAND roclint_analysis_checkpoint_tests)
 
-    # Jev Checkpoint integration test (I05)
+    # Fast triage checkpoint tests
     add_executable(roclint_jev_checkpoint_tests
         tests/analysis/test_jev_checkpoint.cpp
     )
@@ -288,7 +288,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_jev_checkpoint_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_jev_checkpoint COMMAND roclint_jev_checkpoint_tests)
 
-    # Intervention State Machine test (A08)
+    # Intervention state machine tests
     add_executable(roclint_intervention_state_machine_tests
         tests/intent/testInterventionStateMachine.cpp
     )
@@ -297,7 +297,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_intervention_state_machine_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_intervention_state_machine COMMAND roclint_intervention_state_machine_tests)
 
-    # Clarification Checkpoint integration test (I06)
+    # Clarification checkpoint tests
     add_executable(roclint_clarification_checkpoint_tests
         tests/intent/test_clarification_checkpoint.cpp
     )
@@ -306,7 +306,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_clarification_checkpoint_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_clarification_checkpoint COMMAND roclint_clarification_checkpoint_tests)
 
-    # ConfirmedIntent & Analysis Provenance test (A09)
+    # Confirmed intent tests
     add_executable(roclint_confirmed_intent_tests
         tests/intent/testConfirmedIntent.cpp
     )
@@ -315,7 +315,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_confirmed_intent_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_confirmed_intent COMMAND roclint_confirmed_intent_tests)
 
-    # Intent Checkpoint integration test (I07)
+    # Intent checkpoint tests
     add_executable(roclint_intent_checkpoint_tests
         tests/intent/test_intent_checkpoint.cpp
     )
@@ -324,7 +324,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_intent_checkpoint_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_intent_checkpoint COMMAND roclint_intent_checkpoint_tests)
 
-    # Rewrite Proposal & Binding test (A10)
+    # Rewrite proposal tests
     add_executable(roclint_rewrite_proposal_tests
         tests/rewrite/testRewriteProposal.cpp
     )
@@ -333,7 +333,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_rewrite_proposal_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_rewrite_proposal COMMAND roclint_rewrite_proposal_tests)
 
-    # Rewrite Profiles test (B08P)
+    # Rewrite profiles tests
     add_executable(roclint_rewrite_profiles_tests
         tests/rewrite/testRewriteProfiles.cpp
     )
@@ -342,7 +342,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_rewrite_profiles_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_rewrite_profiles COMMAND roclint_rewrite_profiles_tests)
 
-    # Rewrite Checkpoint integration test (I08)
+    # Rewrite checkpoint tests
     add_executable(roclint_rewrite_checkpoint_tests
         tests/rewrite/test_rewrite_checkpoint.cpp
     )
@@ -351,7 +351,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_rewrite_checkpoint_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_rewrite_checkpoint COMMAND roclint_rewrite_checkpoint_tests)
 
-    # Approval State & Durable Proof test (A11)
+    # Approval record tests
     add_executable(roclint_approval_record_tests
         tests/review/testApprovalRecord.cpp
     )
@@ -360,7 +360,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_approval_record_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_approval_record COMMAND roclint_approval_record_tests)
 
-    # Approval Checkpoint integration test (I09)
+    # Approval checkpoint tests
     add_executable(roclint_approval_checkpoint_tests
         tests/review/test_approval_checkpoint.cpp
     )

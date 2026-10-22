@@ -92,17 +92,13 @@ void HostController::showCard() {
         return;
     }
 
-    // 1. Observe frontmost application one-shot at explicit invocation time (B02H)
     m_hostContext = HostContextDetector::captureFrontmost();
     emit hostContextChanged();
 
-    // 2. Read clipboard text once (one-shot, B02 / C09)
     captureClipboardDraft();
 
-    // 3. Screen placement calculation near cursor with boundary clamping (B02)
     const auto placement = ScreenPlacement::determineTargetPosition(820, 520);
 
-    // 4. Update visibility state and signal UI
     setCardVisibility(CardVisibility::Focused);
     emit showCardRequested(placement.x, placement.y);
 }
@@ -112,7 +108,6 @@ void HostController::hideCard() {
         return;
     }
     emit hideCardRequested();
-    // Invariant: hiding/closing the card keeps m_hostState at Resident
 }
 
 void HostController::toggleCard() {
@@ -651,7 +646,6 @@ QString HostController::synthesizeRewrite(const QString& promptOverride) {
 
     auto proposal = *resp.proposal;
 
-    // Validate through A10 Core Validator
     auto validation = core::rewrite::RewriteValidator::validateProposal(proposal, revId, *m_confirmedIntent);
     if (!validation.isValid) {
         std::cerr << "[HostController] Proposal failed validation: " << validation.rejectionReason << "\n";
@@ -665,7 +659,6 @@ QString HostController::synthesizeRewrite(const QString& promptOverride) {
     const QString compiled = QString::fromStdString(proposal.compiledPrompt);
     const QString diff = QString::fromStdString(proposal.diffText);
 
-    // Commit to revision history and copy to clipboard as approved text
     commitPrompt(compiled);
     copyToClipboard(compiled);
 

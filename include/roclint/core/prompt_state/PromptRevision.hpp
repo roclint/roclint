@@ -19,11 +19,10 @@ namespace roclint::core
    
 
    public:
-    // Constructor
      PromptRevision(SessionId sessionId, RevisionId revisionId, 
                     std::optional<RevisionId> parentRevisionId,
                     std::string text, std::int64_t createdAtMs = 0);
-    // Getters
+
     [[nodiscard]] const SessionId& sessionId() const noexcept 
     { 
         return sessionId_; 

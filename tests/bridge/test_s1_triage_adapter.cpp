@@ -73,7 +73,6 @@ void testFastTriageRuleConflict() {
 void testPrecedencePhraseIsNotRuleConflict() {
     S1TriageAdapter adapter(ScorerEngine::JuliaLocal);
 
-    // Prompt specifies an explicit precedence rule rather than an unresolved contradiction
     std::string prompt = "Give accessibility requirements priority over visual styling.";
     auto decision = adapter.triagePrompt(prompt);
 
@@ -83,7 +82,6 @@ void testPrecedencePhraseIsNotRuleConflict() {
     ROCLINT_CHECK(decision.dimension != "rule_conflict");
     ROCLINT_CHECK(decision.fastPathClear);
 
-    // Another precedence example: prefer X over Y
     std::string prompt2 = "Prefer SQLite storage over in-memory storage";
     auto decision2 = adapter.triagePrompt(prompt2);
     ROCLINT_CHECK(decision2.inputValidity == InputValidity::Valid);
@@ -94,14 +92,12 @@ void testPrecedencePhraseIsNotRuleConflict() {
 void testEmptyAndWhitespaceInputValidation() {
     S1TriageAdapter adapter(ScorerEngine::JuliaLocal);
 
-    // Completely empty prompt
     auto decisionEmpty = adapter.triagePrompt("");
     ROCLINT_CHECK(decisionEmpty.inputValidity == InputValidity::Empty);
     ROCLINT_CHECK(!decisionEmpty.isAmbiguous);
     ROCLINT_CHECK(!decisionEmpty.fastPathClear);
     ROCLINT_CHECK(decisionEmpty.ambiguityScore == 0.0);
 
-    // Whitespace-only prompt
     auto decisionWhitespace = adapter.triagePrompt("   \t\r\n   ");
     ROCLINT_CHECK(decisionWhitespace.inputValidity == InputValidity::WhitespaceOnly);
     ROCLINT_CHECK(!decisionWhitespace.isAmbiguous);
@@ -110,29 +106,24 @@ void testEmptyAndWhitespaceInputValidation() {
 }
 
 void testEngineAvailabilityTaxonomy() {
-    // 1. Configured local engine without model weights loaded -> DegradedUnranked
     S1TriageAdapter localAdapter(ScorerEngine::JuliaLocal);
     ROCLINT_CHECK(localAdapter.configuredEngine() == ScorerEngine::JuliaLocal);
     ROCLINT_CHECK(!localAdapter.isLocalModelLoaded());
     ROCLINT_CHECK(localAdapter.availability() == SemanticAvailability::DegradedUnranked);
 
-    // 2. Once local weights are verified/loaded -> FullRankedLocal
     localAdapter.setLocalModelLoaded(true);
     ROCLINT_CHECK(localAdapter.isLocalModelLoaded());
     ROCLINT_CHECK(localAdapter.availability() == SemanticAvailability::FullRankedLocal);
 
-    // 3. Cloud engine with cloud available -> FullRankedCloud
     S1TriageAdapter cloudAdapter(ScorerEngine::JevCloud);
     ROCLINT_CHECK(cloudAdapter.configuredEngine() == ScorerEngine::JevCloud);
     ROCLINT_CHECK(cloudAdapter.availability() == SemanticAvailability::FullRankedCloud);
 
-    // 4. Cloud engine when offline -> DegradedUnranked
     cloudAdapter.setCloudAvailable(false);
     ROCLINT_CHECK(cloudAdapter.availability() == SemanticAvailability::DegradedUnranked);
 }
 
 void testExplicitUnscoredResultWhenUnranked() {
-    // Adapter without loaded model runs in DegradedUnranked mode
     S1TriageAdapter adapter(ScorerEngine::JuliaLocal);
     ROCLINT_CHECK(!adapter.isLocalModelLoaded());
 
@@ -164,19 +155,15 @@ void testExplicitUnscoredResultWhenUnranked() {
 
     const auto& score = resp.groupScores.front();
     ROCLINT_CHECK(score.groupId == "group_target");
-
-    // Zero-Preselection Guard: unranked mode must NOT invent a winning alternative!
     ROCLINT_CHECK(!score.winningAlternativeId.has_value());
     ROCLINT_CHECK(!score.isScored);
 
-    // Probabilities are strictly symmetric and uniform (1.0 / N)
     ROCLINT_CHECK(score.probabilities.size() == 2);
     ROCLINT_CHECK(score.probabilities[0].alternativeId == "alt_1");
     ROCLINT_CHECK(score.probabilities[1].alternativeId == "alt_2");
     ROCLINT_CHECK(std::abs(score.probabilities[0].probability - 0.5) < 1e-4);
     ROCLINT_CHECK(std::abs(score.probabilities[1].probability - 0.5) < 1e-4);
 
-    // Permutation invariance: reordering alternatives must NOT produce a winning alternative
     ChoiceGroup permutedGroup = group;
     std::swap(permutedGroup.alternatives[0], permutedGroup.alternatives[1]);
     NormalizedAnalysis permutedAnalysis = analysis;

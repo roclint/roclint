@@ -13,14 +13,10 @@ namespace roclint::core
          PromptRevision currentRevision_;
          std::uint64_t stateVersion_{1};
         public:
-        // Constructor
         explicit RevisionState(const PromptRevision &);
-        // Method to check if the state is stale based on the expected version
         bool isStale(std::uint64_t) const noexcept;
         void commitEdit(std::uint64_t, const RevisionId &,  const std::string &, std::uint64_t);
 
-
-        //getters
         [[nodiscard]] std::uint64_t stateVersion() const noexcept 
         { 
             return stateVersion_; 

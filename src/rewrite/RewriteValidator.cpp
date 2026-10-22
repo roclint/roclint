@@ -26,7 +26,6 @@ ValidationResult RewriteValidator::validateProposal(
         };
     }
 
-    // Stale check 1: Base revision ID must match
     if (proposal.baseRevisionId != currentRevisionId) {
         return ValidationResult{
             .isValid = false,
@@ -36,7 +35,6 @@ ValidationResult RewriteValidator::validateProposal(
         };
     }
 
-    // Stale check 2: Confirmed intent ID must match
     if (proposal.confirmedIntentId != currentIntent.id) {
         return ValidationResult{
             .isValid = false,
@@ -46,7 +44,6 @@ ValidationResult RewriteValidator::validateProposal(
         };
     }
 
-    // Stale check 3: Snapshot hash must match
     if (proposal.sourceSnapshotHash != currentIntent.sourceSnapshotHash) {
         return ValidationResult{
             .isValid = false,
@@ -55,7 +52,6 @@ ValidationResult RewriteValidator::validateProposal(
         };
     }
 
-    // Stale check 4: Current intent must be marked current
     if (!currentIntent.isCurrent) {
         return ValidationResult{
             .isValid = false,
@@ -64,7 +60,6 @@ ValidationResult RewriteValidator::validateProposal(
         };
     }
 
-    // Constraint check: Any failed constraint invalidates the proposal
     for (const auto& c : proposal.constraints) {
         if (c.status == ConstraintStatus::Failed) {
             return ValidationResult{
@@ -75,7 +70,6 @@ ValidationResult RewriteValidator::validateProposal(
         }
     }
 
-    // Empty compiled prompt check
     if (proposal.compiledPrompt.empty()) {
         return ValidationResult{
             .isValid = false,

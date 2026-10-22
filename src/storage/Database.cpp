@@ -48,11 +48,11 @@ namespace roclint::storage
         }
         int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
         int rc = sqlite3_open_v2(
-            path.string().c_str(),    // Filename as a null-terminated C-string
-            &db_,                     // Address of the pointer to receive the handle
-            flags,                   // Behavior configuration flags
-            nullptr                  // Default VFS (Virtual File System)
-            );
+            path.string().c_str(),
+            &db_,
+            flags,
+            nullptr
+        );
 
         if(rc != SQLITE_OK)
         {
@@ -101,36 +101,28 @@ namespace roclint::storage
         std::string error = "SQLite execution error: ";
         if (errMsg) {
             error += errMsg;
-            // SQLite allocates zErrMsg internally; you must free it using sqlite3_free
             sqlite3_free(errMsg);
         } else {
             error += sqlite3_errmsg(db_);
         }
         throw std::runtime_error(error);
     }
+}
 
-        
-    }
-
-    void Database::initializeSchema()
+void Database::initializeSchema()
 {
-    // 1. Enforce relational integrity per-connection
     execute("PRAGMA foreign_keys = ON;");
-
-    // 2. Enable Write-Ahead Logging for concurrency and speed
     execute("PRAGMA journal_mode = WAL;");
-
-    // 3. Create the tables defined in SCHEMA_V1
     execute(std::string(SCHEMA_V1));
 }
 
 Database& Database::operator=(Database&& other) noexcept
 {
-    if (this != &other) // Guard against db1 = std::move(db1)
+    if (this != &other)
     {
-        close();             // 1. Close current connection if open
-        db_ = other.db_;     // 2. Take ownership of other's connection
-        other.db_ = nullptr; // 3. Reset other so it won't close it
+        close();
+        db_ = other.db_;
+        other.db_ = nullptr;
     }
     return *this;
 }

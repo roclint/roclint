@@ -102,7 +102,7 @@ InterventionDecision InterventionStateMachine::evaluate(
                                    ? (kMaxClarificationBudget - workingState.roundsCompleted)
                                    : 0;
 
-    // 1. Provider Gate
+    // Provider Gate
     if (!snapshotEval.success) {
         decision.verdict = InterventionVerdict::Manual;
         decision.reason = InterventionReasonCode::ProviderUnavailable;
@@ -111,7 +111,7 @@ InterventionDecision InterventionStateMachine::evaluate(
         return decision;
     }
 
-    // 2. Structural Gate
+    // Structural Gate
     if (policyResult.overallVerdict == analysis::PolicyVerdict::Rejected) {
         decision.verdict = InterventionVerdict::Manual;
         decision.reason = InterventionReasonCode::InvalidAnalysisStructure;
@@ -120,7 +120,7 @@ InterventionDecision InterventionStateMachine::evaluate(
         return decision;
     }
 
-    // 3. Conflict Priority (Tier 1)
+    // Conflict Priority (Tier 1)
     for (const auto& conflict : analysis.conflicts) {
         if (!workingState.isResolved(conflict.id)) {
             decision.verdict = InterventionVerdict::Manual;
@@ -131,7 +131,6 @@ InterventionDecision InterventionStateMachine::evaluate(
         }
     }
 
-    // Collect unresolved material items
     std::vector<const analysis::ChoiceGroup*> unresolvedEligibleGroups;
     for (const auto& group : analysis.choiceGroups) {
         if (group.material && !workingState.isResolved(group.id)) {
@@ -148,7 +147,7 @@ InterventionDecision InterventionStateMachine::evaluate(
 
     const bool hasUnresolvedItems = !unresolvedEligibleGroups.empty() || !unresolvedMaterialAssumptions.empty();
 
-    // 4. Resolution Gate (Guard 1: Check resolution BEFORE budget cap)
+    // Resolution Gate
     if (!hasUnresolvedItems) {
         decision.verdict = InterventionVerdict::Quiet;
         decision.reason = (workingState.roundsCompleted == 0)
@@ -159,7 +158,6 @@ InterventionDecision InterventionStateMachine::evaluate(
         return decision;
     }
 
-    // Find next candidate item ID for diagnostics and budget cap reporting
     std::string nextCandidateId{};
     if (!unresolvedEligibleGroups.empty()) {
         auto sorted = orderChoiceGroups(analysis.choiceGroups, snapshotEval);
@@ -173,7 +171,7 @@ InterventionDecision InterventionStateMachine::evaluate(
         nextCandidateId = unresolvedMaterialAssumptions.front()->id;
     }
 
-    // 5. Budget Cap Gate (Guard 1: Only triggered when asking a 4th question)
+    // Budget Cap Gate
     if (workingState.roundsCompleted >= kMaxClarificationBudget) {
         decision.verdict = InterventionVerdict::Manual;
         decision.reason = InterventionReasonCode::ClarificationBudgetExceeded;
@@ -182,7 +180,7 @@ InterventionDecision InterventionStateMachine::evaluate(
         return decision;
     }
 
-    // 6. Policy Review Gate
+    // Policy Review Gate
     if (policyResult.overallVerdict == analysis::PolicyVerdict::NeedsManualReview) {
         decision.verdict = InterventionVerdict::Manual;
         decision.reason = InterventionReasonCode::PolicyRequiresManualReview;
@@ -191,7 +189,7 @@ InterventionDecision InterventionStateMachine::evaluate(
         return decision;
     }
 
-    // 7. ChoiceGroup Priority (Tier 2 - Guard 3: Total ordering)
+    // ChoiceGroup Priority (Tier 2)
     if (!unresolvedEligibleGroups.empty()) {
         auto sorted = orderChoiceGroups(analysis.choiceGroups, snapshotEval);
         for (const auto* g : sorted) {
@@ -205,7 +203,7 @@ InterventionDecision InterventionStateMachine::evaluate(
         }
     }
 
-    // 8. Assumption Priority (Tier 3)
+    // Assumption Priority (Tier 3)
     if (!unresolvedMaterialAssumptions.empty()) {
         std::vector<const analysis::Assumption*> sortedAssumptions = unresolvedMaterialAssumptions;
         std::stable_sort(sortedAssumptions.begin(), sortedAssumptions.end(),

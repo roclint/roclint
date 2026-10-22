@@ -9,11 +9,8 @@ namespace roclint::core
         std::string revisionId;
 
     public:
-
-        //constructor
         explicit RevisionId(std::string id);
 
-        //Getter for revisionId
         [[nodiscard]] const std::string& value() const noexcept 
         { 
             return revisionId; 

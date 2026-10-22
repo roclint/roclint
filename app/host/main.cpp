@@ -80,28 +80,22 @@ int main(int argc, char* argv[]) {
     app.setApplicationVersion(QString::fromUtf8(coreVersion.data(), static_cast<qsizetype>(coreVersion.size())));
     app.setOrganizationName(QStringLiteral("roclint"));
 
-    // 2. CRITICAL B00 CONTRACT: Closing windows must NOT quit the resident host
     app.setQuitOnLastWindowClosed(false);
 
-    // 3. Create host controller
     auto controller = std::make_unique<roclint::host::HostController>();
-    // Explicit Quit is the only path that ends the resident host (C08)
     QObject::connect(controller.get(), &roclint::host::HostController::quitRequested,
                      &app, &QCoreApplication::quit, Qt::QueuedConnection);
 
-    // 4. Initialize system tray
     auto tray = std::make_unique<roclint::host::TrayManager>(controller.get());
     if (!tray->initTray()) {
         std::cerr << "[Roclint Host] Warning: System tray is not available on this environment.\n";
     }
 
-    // 4b. Initialize global system hotkey (Cmd+Shift+L)
     auto shortcutManager = std::make_unique<roclint::host::GlobalShortcutManager>(controller.get());
     if (!shortcutManager->registerShortcut()) {
         std::cerr << "[Roclint Host] Warning: Global shortcut could not be registered.\n";
     }
 
-    // 5. Initialize QML engine
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("hostController"), controller.get());
 
