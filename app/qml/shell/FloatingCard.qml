@@ -1933,16 +1933,6 @@ Window {
                                 color: rootWindow.fgColor
                             }
 
-                            Text { text: "│"; visible: rootWindow.width >= 720; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
-
-                            Text {
-                                visible: rootWindow.width >= 720
-                                text: "S1: " + (typeof hostController !== "undefined" && hostController.scorerEngine === "jev" ? "JEV-CLOUD" : "JULIA-1")
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 8
-                                color: "#7EE787"
-                            }
 
                             Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
