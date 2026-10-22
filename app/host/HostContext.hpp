@@ -50,6 +50,10 @@ public:
     static void setMockObservation(std::optional<HostContextObservation> mock);
     static void resetMock();
 
+    // Tier 2: Ambient Direct Editor Injection (macOS Accessibility / AXUIElement)
+    static bool isAccessibilityPermissionGranted() noexcept;
+    static bool performDirectInjection(const QString& text);
+
 private:
     static std::optional<HostContextObservation> s_mockObservation;
 };

@@ -72,6 +72,8 @@ class HostController : public QObject {
     Q_PROPERTY(QString lastDiffText READ lastDiffText NOTIFY rewriteProposalChanged)
     Q_PROPERTY(bool hasProposal READ hasProposal NOTIFY rewriteProposalChanged)
     Q_PROPERTY(QVariantList proposalConstraints READ proposalConstraints NOTIFY rewriteProposalChanged)
+    Q_PROPERTY(bool directInjectionEnabled READ directInjectionEnabled WRITE setDirectInjectionEnabled NOTIFY directInjectionChanged)
+    Q_PROPERTY(bool hasAccessibilityPermission READ hasAccessibilityPermission NOTIFY directInjectionChanged)
 
 public:
     explicit HostController(QObject* parent = nullptr);
@@ -122,6 +124,10 @@ public:
     [[nodiscard]] QString lastDiffText() const;
     [[nodiscard]] bool hasProposal() const noexcept;
     [[nodiscard]] QVariantList proposalConstraints() const;
+    [[nodiscard]] bool directInjectionEnabled() const noexcept { return m_directInjectionEnabled; }
+    void setDirectInjectionEnabled(bool enabled);
+    [[nodiscard]] bool hasAccessibilityPermission() const noexcept;
+    Q_INVOKABLE bool performDirectInjection(const QString& text);
 
 public slots:
     void markResident();
@@ -187,6 +193,7 @@ signals:
     void rewriteProfileChanged(const QString& profile);
     void rewriteProposalChanged();
     void rewriteSynthesized(const QString& compiledPrompt, const QString& diffText);
+    void directInjectionChanged();
 
 private:
     bool setCardVisibility(CardVisibility visibility);
@@ -225,6 +232,7 @@ private:
 
     roclint::bridge::GraniteRewriteAdapter m_rewriteAdapter;
     std::optional<roclint::core::rewrite::RewriteProposal> m_currentProposal;
+    bool m_directInjectionEnabled{false};
 };
 
 } // namespace roclint::host

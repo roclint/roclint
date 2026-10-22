@@ -147,4 +147,14 @@ HostContextCategory HostContextDetector::mapIdentityToCategory(const QString& id
     return HostContextCategory::Other;
 }
 
+#if !defined(Q_OS_MAC)
+bool HostContextDetector::isAccessibilityPermissionGranted() noexcept {
+    return false;
+}
+
+bool HostContextDetector::performDirectInjection(const QString&) {
+    return false;
+}
+#endif
+
 } // namespace roclint::host

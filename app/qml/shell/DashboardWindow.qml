@@ -1095,7 +1095,7 @@ Window {
                                 // Hotkeys & Host Context
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 120
+                                    Layout.preferredHeight: 155
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
                                     border.width: 1
@@ -1168,6 +1168,40 @@ Window {
                                             }
                                             Text {
                                                 text: "Capture one-shot passive frontmost-application context hint (advisory chip, no OS permissions)"
+                                                font.family: dashboardWindow.monoFont
+                                                font.pixelSize: 9
+                                                color: dashboardWindow.fgColor
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            spacing: 8
+                                            Rectangle {
+                                                width: 16; height: 16
+                                                color: (typeof hostController !== "undefined" && hostController.directInjectionEnabled) ? dashboardWindow.fgColor : "transparent"
+                                                border.color: dashboardWindow.borderColor
+                                                border.width: 1
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: (typeof hostController !== "undefined" && hostController.directInjectionEnabled) ? "×" : ""
+                                                    font.family: dashboardWindow.monoFont
+                                                    font.pixelSize: 10
+                                                    font.bold: true
+                                                    color: dashboardWindow.bgColor
+                                                }
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        if (typeof hostController !== "undefined") {
+                                                            hostController.directInjectionEnabled = !hostController.directInjectionEnabled;
+                                                            dashboardWindow.showToast("DIRECT INJECTION: " + (hostController.directInjectionEnabled ? "ENABLED" : "DISABLED (CLIPBOARD FALLBACK)"));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            Text {
+                                                text: "Enable Direct Editor Injection (Replaces text in-place via Accessibility API; falls back to clipboard)"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 9
                                                 color: dashboardWindow.fgColor

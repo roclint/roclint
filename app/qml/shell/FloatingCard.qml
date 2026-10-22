@@ -250,9 +250,20 @@ Window {
 
         if (typeof hostController !== "undefined") {
             hostController.commitPrompt(compiled);
-            hostController.copyToClipboard(compiled);
+            if (hostController.directInjectionEnabled) {
+                const injected = hostController.performDirectInjection(compiled);
+                if (injected) {
+                    showToast("ENHANCED & INJECTED DIRECTLY IN-PLACE");
+                } else {
+                    showToast("FALLBACK: COPIED TO CLIPBOARD");
+                }
+            } else {
+                hostController.copyToClipboard(compiled);
+                showToast("ENHANCED & COPIED TO CLIPBOARD");
+            }
+        } else {
+            showToast("ENHANCED & COPIED TO CLIPBOARD");
         }
-        showToast("ENHANCED & COPIED TO CLIPBOARD");
     }
 
     function commitChoiceById(altId, label) {

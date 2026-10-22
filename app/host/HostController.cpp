@@ -244,6 +244,32 @@ void HostController::copyToClipboard(const QString& text) {
     }
 }
 
+void HostController::setDirectInjectionEnabled(bool enabled) {
+    if (m_directInjectionEnabled != enabled) {
+        m_directInjectionEnabled = enabled;
+        emit directInjectionChanged();
+    }
+}
+
+bool HostController::hasAccessibilityPermission() const noexcept {
+    return HostContextDetector::isAccessibilityPermissionGranted();
+}
+
+bool HostController::performDirectInjection(const QString& text) {
+    if (m_directInjectionEnabled) {
+        bool success = HostContextDetector::performDirectInjection(text);
+        if (success) {
+            m_lastCopiedText = text;
+            emit lastCopiedTextChanged();
+            emit promptCopied(text);
+            return true;
+        }
+    }
+    // Fallback to standard clipboard copy per Contract C09
+    copyToClipboard(text);
+    return false;
+}
+
 void HostController::commitPrompt(const QString& text) {
     if (text.trimmed().isEmpty()) {
         return;
