@@ -88,6 +88,10 @@ Window {
         toastTimer.restart();
     }
 
+    function scrollToPosition(pos) {
+        rightScrollView.ScrollBar.vertical.position = pos;
+    }
+
     Timer {
         id: toastTimer
         interval: 2200
@@ -529,7 +533,7 @@ Window {
                                 // Card 1: Semantic Decision Scorer
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 140
+                                    Layout.preferredHeight: 175
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
                                     border.width: 1
@@ -610,6 +614,76 @@ Window {
                                                         dashboardWindow.showToast("S1 SCORER: CLOUD JEV ACTIVATED");
                                                     }
                                                 }
+                                            }
+                                        }
+
+                                        // Julia Model Weights Status & Download Action
+                                        RowLayout {
+                                            spacing: 8
+                                            visible: dashboardWindow.scorerMode === "julia"
+
+                                            // Status Badge
+                                            Rectangle {
+                                                width: juliaStatusTxt.contentWidth + 14
+                                                height: 22
+                                                color: "transparent"
+                                                border.color: (typeof hostController !== "undefined" && hostController.hasJuliaModel) ? "#7EE787" : "#FFB000"
+                                                border.width: 1
+
+                                                Text {
+                                                    id: juliaStatusTxt
+                                                    anchors.centerIn: parent
+                                                    text: (typeof hostController !== "undefined" && hostController.hasJuliaModel)
+                                                          ? "[ ● ONNX WEIGHTS LOADED ]"
+                                                          : "[ ○ FAST HEURISTIC MODE ]"
+                                                    font.family: dashboardWindow.monoFont
+                                                    font.pixelSize: 8
+                                                    font.bold: true
+                                                    color: (typeof hostController !== "undefined" && hostController.hasJuliaModel) ? "#7EE787" : "#FFB000"
+                                                }
+                                            }
+
+                                            // Download button when weights not yet pulled
+                                            Rectangle {
+                                                visible: typeof hostController !== "undefined" && !hostController.hasJuliaModel && !hostController.isDownloadingModel
+                                                width: dlJuliaCard1Txt.contentWidth + 14
+                                                height: 22
+                                                color: dlJuliaCard1Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
+                                                border.color: dashboardWindow.borderColor
+                                                border.width: 1
+
+                                                Text {
+                                                    id: dlJuliaCard1Txt
+                                                    anchors.centerIn: parent
+                                                    text: "[ ⬇ PULL JULIA-1 ONNX (552 MB) ]"
+                                                    font.family: dashboardWindow.monoFont
+                                                    font.pixelSize: 8
+                                                    font.bold: true
+                                                    color: dlJuliaCard1Mouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                }
+
+                                                MouseArea {
+                                                    id: dlJuliaCard1Mouse
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        if (typeof hostController !== "undefined") {
+                                                            hostController.downloadJuliaModel();
+                                                            dashboardWindow.showToast("DOWNLOADING JULIA-1 ONNX (552 MB)...");
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            // Real-time downloading indicator
+                                            Text {
+                                                visible: typeof hostController !== "undefined" && hostController.isDownloadingModel
+                                                text: "DOWNLOADING: " + (typeof hostController !== "undefined" ? hostController.downloadProgress : 0) + "%"
+                                                font.family: dashboardWindow.monoFont
+                                                font.pixelSize: 8
+                                                font.bold: true
+                                                color: "#FFB000"
                                             }
                                         }
 
@@ -702,6 +776,513 @@ Window {
                                                         font.family: dashboardWindow.monoFont
                                                         font.pixelSize: 8
                                                         color: dashboardWindow.commentColor
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Card 3: IBM Granite SLM & Non-Invasive Model Repository
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    implicitHeight: graniteCardCol.implicitHeight + 28
+                                    color: dashboardWindow.inputBgColor
+                                    border.color: dashboardWindow.borderColor
+                                    border.width: 1
+
+                                    ColumnLayout {
+                                        id: graniteCardCol
+                                        anchors.fill: parent
+                                        anchors.margins: 14
+                                        spacing: 12
+
+                                        RowLayout {
+                                            Text {
+                                                text: "IBM GRANITE SLM :: LOCAL INFERENCE & WEIGHTS MANAGER"
+                                                font.family: dashboardWindow.monoFont
+                                                font.pixelSize: 10
+                                                font.bold: true
+                                                color: dashboardWindow.fgColor
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                            Text {
+                                                text: (typeof hostController !== "undefined" && hostController.useLiveWeights) ? "[LIVE WEIGHTS]" : "[BUILT-IN NATIVE]"
+                                                font.family: dashboardWindow.monoFont
+                                                font.pixelSize: 9
+                                                font.bold: true
+                                                color: (typeof hostController !== "undefined" && hostController.useLiveWeights) ? "#7EE787" : dashboardWindow.mutedTextColor
+                                            }
+                                        }
+
+                                        // Row 1: Engine Mode Toggle
+                                        RowLayout {
+                                            spacing: 10
+
+                                            Rectangle {
+                                                width: nativeBtnTxt.contentWidth + 16
+                                                height: 26
+                                                color: (typeof hostController !== "undefined" && !hostController.useLiveWeights) ? dashboardWindow.fgColor : "transparent"
+                                                border.color: dashboardWindow.borderColor
+                                                border.width: 1
+
+                                                Text {
+                                                    id: nativeBtnTxt
+                                                    anchors.centerIn: parent
+                                                    text: (typeof hostController !== "undefined" && !hostController.useLiveWeights)
+                                                          ? "[ ● BUILT-IN NATIVE ENGINE (<15ms, 0MB RAM) ]"
+                                                          : "[ ○ BUILT-IN NATIVE ENGINE (<15ms, 0MB RAM) ]"
+                                                    font.family: dashboardWindow.monoFont
+                                                    font.pixelSize: 9
+                                                    font.bold: (typeof hostController !== "undefined" && !hostController.useLiveWeights)
+                                                    color: (typeof hostController !== "undefined" && !hostController.useLiveWeights) ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                }
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        if (typeof hostController !== "undefined") {
+                                                            hostController.setUseLiveWeights(false);
+                                                            dashboardWindow.showToast("INFERENCE: NATIVE BUILT-IN C++ ENGINE ACTIVATED");
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                width: liveBtnTxt.contentWidth + 16
+                                                height: 26
+                                                color: (typeof hostController !== "undefined" && hostController.useLiveWeights) ? dashboardWindow.fgColor : "transparent"
+                                                border.color: dashboardWindow.borderColor
+                                                border.width: 1
+
+                                                Text {
+                                                    id: liveBtnTxt
+                                                    anchors.centerIn: parent
+                                                    text: (typeof hostController !== "undefined" && hostController.useLiveWeights)
+                                                          ? "[ ● LIVE MODEL WEIGHTS (OLLAMA / LOCAL GGUF) ]"
+                                                          : "[ ○ LIVE MODEL WEIGHTS (OLLAMA / LOCAL GGUF) ]"
+                                                    font.family: dashboardWindow.monoFont
+                                                    font.pixelSize: 9
+                                                    font.bold: (typeof hostController !== "undefined" && hostController.useLiveWeights)
+                                                    color: (typeof hostController !== "undefined" && hostController.useLiveWeights) ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                }
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        if (typeof hostController !== "undefined") {
+                                                            hostController.setUseLiveWeights(true);
+                                                            dashboardWindow.showToast("INFERENCE: LIVE WEIGHTS ENGINE ACTIVATED");
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Status bar
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            height: 24
+                                            color: dashboardWindow.dimColor
+                                            border.color: dashboardWindow.borderColor
+                                            border.width: 1
+
+                                            RowLayout {
+                                                anchors.fill: parent
+                                                anchors.leftMargin: 8
+                                                anchors.rightMargin: 8
+                                                spacing: 6
+
+                                                Rectangle {
+                                                    width: 6; height: 6
+                                                    color: (typeof hostController !== "undefined" && hostController.availableModels.length > 0) ? "#7EE787" : "#FFB000"
+                                                }
+
+                                                Text {
+                                                    Layout.fillWidth: true
+                                                    text: typeof hostController !== "undefined" ? hostController.modelEngineStatus : "LOADING STATUS..."
+                                                    font.family: dashboardWindow.monoFont
+                                                    font.pixelSize: 8
+                                                    font.bold: true
+                                                    color: dashboardWindow.fgColor
+                                                    elide: Text.ElideRight
+                                                }
+                                            }
+                                        }
+
+                                        // Row 2: Non-Invasive Model Folder Connection
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 4
+
+                                            Text {
+                                                text: "CONNECTED MODEL FOLDER (NON-INVASIVE ACCESS):"
+                                                font.family: dashboardWindow.monoFont
+                                                font.pixelSize: 8
+                                                font.bold: true
+                                                color: dashboardWindow.mutedTextColor
+                                            }
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 8
+
+                                                Rectangle {
+                                                    Layout.fillWidth: true
+                                                    height: 28
+                                                    color: dashboardWindow.bgColor
+                                                    border.color: dashboardWindow.borderColor
+                                                    border.width: 1
+
+                                                    RowLayout {
+                                                        anchors.fill: parent
+                                                        anchors.leftMargin: 8
+                                                        anchors.rightMargin: 8
+
+                                                        Text {
+                                                            Layout.fillWidth: true
+                                                            text: (typeof hostController !== "undefined" && hostController.modelDirectory.length > 0)
+                                                                  ? hostController.modelDirectory
+                                                                  : "No folder connected"
+                                                            font.family: dashboardWindow.monoFont
+                                                            font.pixelSize: 9
+                                                            color: dashboardWindow.fgColor
+                                                            elide: Text.ElideMiddle
+                                                        }
+                                                    }
+                                                }
+
+                                                Rectangle {
+                                                    width: connBtnTxt.contentWidth + 16
+                                                    height: 28
+                                                    color: connectMouse.containsMouse ? dashboardWindow.fgColor : "transparent"
+                                                    border.color: dashboardWindow.borderColor
+                                                    border.width: 1
+
+                                                    Text {
+                                                        id: connBtnTxt
+                                                        anchors.centerIn: parent
+                                                        text: "[ 📂 CONNECT FOLDER... ]"
+                                                        font.family: dashboardWindow.monoFont
+                                                        font.pixelSize: 8
+                                                        font.bold: true
+                                                        color: connectMouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                    }
+
+                                                    MouseArea {
+                                                        id: connectMouse
+                                                        anchors.fill: parent
+                                                        hoverEnabled: true
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: {
+                                                            if (typeof hostController !== "undefined") {
+                                                                const chosen = hostController.openModelFolderDialog();
+                                                                if (chosen && chosen.length > 0) {
+                                                                    dashboardWindow.showToast("CONNECTED MODEL FOLDER: " + chosen);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                Rectangle {
+                                                    width: refreshBtnTxt.contentWidth + 14
+                                                    height: 28
+                                                    color: refreshMouse.containsMouse ? dashboardWindow.fgColor : "transparent"
+                                                    border.color: dashboardWindow.borderColor
+                                                    border.width: 1
+
+                                                    Text {
+                                                        id: refreshBtnTxt
+                                                        anchors.centerIn: parent
+                                                        text: "[ ⟳ RESCAN ]"
+                                                        font.family: dashboardWindow.monoFont
+                                                        font.pixelSize: 8
+                                                        font.bold: true
+                                                        color: refreshMouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                    }
+
+                                                    MouseArea {
+                                                        id: refreshMouse
+                                                        anchors.fill: parent
+                                                        hoverEnabled: true
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: {
+                                                            if (typeof hostController !== "undefined") {
+                                                                hostController.refreshAvailableModels();
+                                                                dashboardWindow.showToast("RESCANNED CONNECTED FOLDER");
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            Text {
+                                                text: "* Non-invasive isolation: Roclint only reads models inside this specific folder. Your hard drive and personal files are never searched."
+                                                font.family: dashboardWindow.monoFont
+                                                font.pixelSize: 8
+                                                color: dashboardWindow.commentColor
+                                            }
+                                        }
+
+                                        // Row 3: Detected Models
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+
+                                            Text {
+                                                text: "DETECTED LOCAL MODELS IN FOLDER / RUNNER:"
+                                                font.family: dashboardWindow.monoFont
+                                                font.pixelSize: 8
+                                                font.bold: true
+                                                color: dashboardWindow.mutedTextColor
+                                            }
+
+                                            Repeater {
+                                                model: (typeof hostController !== "undefined") ? hostController.availableModels : []
+
+                                                delegate: Rectangle {
+                                                    Layout.fillWidth: true
+                                                    height: 26
+                                                    color: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name)
+                                                           ? dashboardWindow.dimColor
+                                                           : "transparent"
+                                                    border.color: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name)
+                                                                  ? dashboardWindow.fgColor
+                                                                  : dashboardWindow.borderColor
+                                                    border.width: 1
+
+                                                    RowLayout {
+                                                        anchors.fill: parent
+                                                        anchors.leftMargin: 8
+                                                        anchors.rightMargin: 8
+                                                        spacing: 8
+
+                                                        Text {
+                                                            text: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name) ? "[ ● ACTIVE ]" : "[ ○ SELECT ]"
+                                                            font.family: dashboardWindow.monoFont
+                                                            font.pixelSize: 8
+                                                            font.bold: true
+                                                            color: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name) ? "#7EE787" : dashboardWindow.mutedTextColor
+                                                        }
+
+                                                        Text {
+                                                            text: modelData.name
+                                                            font.family: dashboardWindow.monoFont
+                                                            font.pixelSize: 9
+                                                            font.bold: true
+                                                            color: dashboardWindow.fgColor
+                                                        }
+
+                                                        Text {
+                                                            text: "(" + modelData.size + ", " + modelData.source + ", " + modelData.quantization + ")"
+                                                            font.family: dashboardWindow.monoFont
+                                                            font.pixelSize: 8
+                                                            color: dashboardWindow.commentColor
+                                                        }
+
+                                                        Item { Layout.fillWidth: true }
+                                                    }
+
+                                                    MouseArea {
+                                                        anchors.fill: parent
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: {
+                                                            if (typeof hostController !== "undefined") {
+                                                                hostController.setActiveModel(modelData.name);
+                                                                dashboardWindow.showToast("ACTIVE MODEL: " + modelData.name);
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            // Fallback banner when 0 models
+                                            Rectangle {
+                                                visible: (typeof hostController !== "undefined" && hostController.availableModels.length === 0)
+                                                Layout.fillWidth: true
+                                                height: 32
+                                                color: dashboardWindow.dimColor
+                                                border.color: dashboardWindow.borderColor
+                                                border.width: 1
+
+                                                RowLayout {
+                                                    anchors.fill: parent
+                                                    anchors.leftMargin: 10
+                                                    anchors.rightMargin: 10
+
+                                                    Text {
+                                                        text: "NO MODELS FOUND. Connect your model directory or download a model below."
+                                                        font.family: dashboardWindow.monoFont
+                                                        font.pixelSize: 8
+                                                        color: dashboardWindow.mutedTextColor
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // Row 4: Download / Pull Models & Live Test
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+
+                                            Text {
+                                                text: "MODEL DOWNLOAD & REPOSITORY ACTIONS:"
+                                                font.family: dashboardWindow.monoFont
+                                                font.pixelSize: 8
+                                                font.bold: true
+                                                color: dashboardWindow.mutedTextColor
+                                            }
+
+                                            // Active download progress
+                                            Rectangle {
+                                                visible: typeof hostController !== "undefined" && hostController.isDownloadingModel
+                                                Layout.fillWidth: true
+                                                height: 44
+                                                color: dashboardWindow.dimColor
+                                                border.color: "#FFB000"
+                                                border.width: 1
+
+                                                ColumnLayout {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 6
+                                                    spacing: 4
+
+                                                    RowLayout {
+                                                        Text {
+                                                            text: "DOWNLOADING MODEL: " + (typeof hostController !== "undefined" ? hostController.downloadProgress : 0) + "%"
+                                                            font.family: dashboardWindow.monoFont
+                                                            font.pixelSize: 8
+                                                            font.bold: true
+                                                            color: "#FFB000"
+                                                        }
+                                                        Item { Layout.fillWidth: true }
+                                                        Text {
+                                                            text: "[ CANCEL ]"
+                                                            font.family: dashboardWindow.monoFont
+                                                            font.pixelSize: 8
+                                                            font.bold: true
+                                                            color: dashboardWindow.fgColor
+                                                            MouseArea {
+                                                                anchors.fill: parent
+                                                                cursorShape: Qt.PointingHandCursor
+                                                                onClicked: {
+                                                                    if (typeof hostController !== "undefined") {
+                                                                        hostController.cancelModelDownload();
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    Text {
+                                                        text: typeof hostController !== "undefined" ? hostController.downloadStatusMessage : ""
+                                                        font.family: dashboardWindow.monoFont
+                                                        font.pixelSize: 8
+                                                        color: dashboardWindow.commentColor
+                                                        elide: Text.ElideRight
+                                                    }
+                                                }
+                                            }
+
+                                            // Download Action Buttons
+                                            Flow {
+                                                visible: typeof hostController === "undefined" || !hostController.isDownloadingModel
+                                                Layout.fillWidth: true
+                                                spacing: 8
+
+                                                Rectangle {
+                                                    width: dl1Txt.contentWidth + 14
+                                                    height: 24
+                                                    color: dl1Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
+                                                    border.color: dashboardWindow.borderColor
+                                                    border.width: 1
+
+                                                    Text {
+                                                        id: dl1Txt
+                                                        anchors.centerIn: parent
+                                                        text: "[ ⬇ PULL GRANITE 4.2 3B (3.9 GB) ]"
+                                                        font.family: dashboardWindow.monoFont
+                                                        font.pixelSize: 8
+                                                        font.bold: true
+                                                        color: dl1Mouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                    }
+
+                                                    MouseArea {
+                                                        id: dl1Mouse
+                                                        anchors.fill: parent
+                                                        hoverEnabled: true
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: {
+                                                            if (typeof hostController !== "undefined") {
+                                                                hostController.downloadModel("granite4.2:3b-q8_0");
+                                                                dashboardWindow.showToast("DOWNLOADING GRANITE 4.2 3B...");
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                Rectangle {
+                                                    width: dl2Txt.contentWidth + 14
+                                                    height: 24
+                                                    color: dl2Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
+                                                    border.color: dashboardWindow.borderColor
+                                                    border.width: 1
+
+                                                    Text {
+                                                        id: dl2Txt
+                                                        anchors.centerIn: parent
+                                                        text: "[ ⬇ PULL GRANITE 3.1 2B (1.5 GB) ]"
+                                                        font.family: dashboardWindow.monoFont
+                                                        font.pixelSize: 8
+                                                        font.bold: true
+                                                        color: dl2Mouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                    }
+
+                                                    MouseArea {
+                                                        id: dl2Mouse
+                                                        anchors.fill: parent
+                                                        hoverEnabled: true
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: {
+                                                            if (typeof hostController !== "undefined") {
+                                                                hostController.downloadModel("granite3.1-dense:2b");
+                                                                dashboardWindow.showToast("DOWNLOADING GRANITE 3.1 2B...");
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                Rectangle {
+                                                    width: testInfTxt.contentWidth + 14
+                                                    height: 24
+                                                    color: testInfMouse.containsMouse ? dashboardWindow.fgColor : "transparent"
+                                                    border.color: "#7EE787"
+                                                    border.width: 1
+
+                                                    Text {
+                                                        id: testInfTxt
+                                                        anchors.centerIn: parent
+                                                        text: (typeof hostController !== "undefined" && hostController.isInferring) ? "[ INFERRING... ]" : "[ 🔬 TEST LIVE INFERENCE ]"
+                                                        font.family: dashboardWindow.monoFont
+                                                        font.pixelSize: 8
+                                                        font.bold: true
+                                                        color: testInfMouse.containsMouse ? dashboardWindow.bgColor : "#7EE787"
+                                                    }
+
+                                                    MouseArea {
+                                                        id: testInfMouse
+                                                        anchors.fill: parent
+                                                        hoverEnabled: true
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: {
+                                                            if (typeof hostController !== "undefined") {
+                                                                dashboardWindow.showToast("TESTING LIVE INFERENCE...");
+                                                                const result = hostController.testLiveInference("refactor auth token handling");
+                                                                dashboardWindow.showToast(result);
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }

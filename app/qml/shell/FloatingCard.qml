@@ -241,7 +241,7 @@ Window {
         const hasIntent = (typeof hostController !== "undefined" && hostController.hasConfirmedIntent && !hostController.isIntentStale);
         const intentHeader = hasIntent ? ("/* TARGET PROFILE: " + profile + " */\n/* " + hostController.confirmedIntentSummary + " */\n") : "";
 
-        if (typeof hostController !== "undefined" && hostController.hasConfirmedIntent && !hostController.isIntentStale) {
+        if (typeof hostController !== "undefined" && promptInput.text.trim().length > 0) {
             const synthesized = hostController.synthesizeRewrite(promptInput.text.trim());
             if (synthesized && synthesized.length > 0) {
                 compiled = synthesized;
@@ -736,6 +736,45 @@ Window {
                     RowLayout {
                         Layout.alignment: Qt.AlignRight
                         spacing: 6
+
+                        // Inference / Engine Badge
+                        Rectangle {
+                            id: engineBadge
+                            visible: rootWindow.width >= 600
+                            implicitWidth: engineBadgeTxt.implicitWidth + 10
+                            implicitHeight: 20
+                            height: 20
+                            color: "transparent"
+                            border.color: (typeof hostController !== "undefined" && hostController.isInferring)
+                                          ? "#FFB000"
+                                          : ((typeof hostController !== "undefined" && hostController.useLiveWeights) ? "#7EE787" : rootWindow.borderColor)
+                            border.width: 1
+
+                            Text {
+                                id: engineBadgeTxt
+                                anchors.centerIn: parent
+                                text: (typeof hostController !== "undefined" && hostController.isInferring)
+                                      ? "[ 🧠 INFERRING... ]"
+                                      : ((typeof hostController !== "undefined" && hostController.useLiveWeights) ? "[ LIVE: GRANITE 3B ]" : "[ NATIVE C++ ]")
+                                font.family: rootWindow.monoFont
+                                font.bold: true
+                                font.pixelSize: 8
+                                color: (typeof hostController !== "undefined" && hostController.isInferring)
+                                       ? "#FFB000"
+                                       : ((typeof hostController !== "undefined" && hostController.useLiveWeights) ? "#7EE787" : rootWindow.mutedTextColor)
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (typeof hostController !== "undefined") {
+                                        hostController.setUseLiveWeights(!hostController.useLiveWeights);
+                                        rootWindow.showToast(hostController.useLiveWeights ? "LIVE SLM ENGINE ACTIVATED" : "NATIVE C++ ENGINE ACTIVATED");
+                                    }
+                                }
+                            }
+                        }
 
                         // Status Badge
                         Rectangle {

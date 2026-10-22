@@ -25,8 +25,10 @@ int main(int argc, char* argv[]) {
     bool autoShowDashboard = false;
     int dashboardTab = 0;
     QString dashboardScreenshotPath;
+    double dashboardScroll = 0.0;
     bool dashboardMaximized = false;
     bool pinCard = false;
+    bool autoEnhance = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg(argv[i]);
         if (arg == "--dry-run" || arg == "--smoke-test") {
@@ -47,6 +49,9 @@ int main(int argc, char* argv[]) {
         }
         if (arg == "--dashboard-tab" && i + 1 < argc) {
             dashboardTab = std::atoi(argv[++i]);
+        }
+        if (arg == "--dashboard-scroll" && i + 1 < argc) {
+            dashboardScroll = std::atof(argv[++i]);
         }
         if (arg == "--dashboard-screenshot" && i + 1 < argc) {
             dashboardScreenshotPath = QString::fromLocal8Bit(argv[++i]);
@@ -71,6 +76,9 @@ int main(int argc, char* argv[]) {
             screenshotPath = QString::fromLocal8Bit(argv[++i]);
             autoShow = true;
         }
+        if (arg == "--enhance") {
+            autoEnhance = true;
+        }
     }
 
     // 1. Initialize desktop application with GUI and Widget support
@@ -84,6 +92,9 @@ int main(int argc, char* argv[]) {
     app.setQuitOnLastWindowClosed(false);
 
     auto controller = std::make_unique<roclint::host::HostController>();
+    if (!controller->availableModels().isEmpty()) {
+        controller->setUseLiveWeights(true);
+    }
     QObject::connect(controller.get(), &roclint::host::HostController::quitRequested,
                      &app, &QCoreApplication::quit, Qt::QueuedConnection);
 
@@ -103,7 +114,7 @@ int main(int argc, char* argv[]) {
     const QUrl cardUrl(QStringLiteral("qrc:/shell/FloatingCard.qml"));
     const QUrl dashboardUrl(QStringLiteral("qrc:/shell/DashboardWindow.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
-                     &app, [cardUrl, dashboardUrl, controller = controller.get(), autoShow, autoShowDashboard, dryRun, screenshotPath, dashboardScreenshotPath, customWidth, customHeight, resolveChoice, openFileDropdown, targetScope, dashboardTab, pinCard, dashboardMaximized](QObject* obj, const QUrl& objUrl) {
+                     &app, [cardUrl, dashboardUrl, controller = controller.get(), autoShow, autoShowDashboard, dryRun, screenshotPath, dashboardScreenshotPath, dashboardScroll, customWidth, customHeight, resolveChoice, openFileDropdown, targetScope, dashboardTab, pinCard, dashboardMaximized, autoEnhance](QObject* obj, const QUrl& objUrl) {
         if (!obj && (cardUrl == objUrl || dashboardUrl == objUrl)) {
             std::cerr << "[Roclint Host] Error: Failed to load QML root object from " << objUrl.toString().toStdString() << std::endl;
             QCoreApplication::exit(-1);
@@ -182,8 +193,16 @@ int main(int argc, char* argv[]) {
                         QMetaObject::invokeMethod(window, "openFileDropdown");
                     });
                 }
+                if (autoEnhance) {
+                    const int enhanceDelay = (resolveChoice > 0) ? 500 : 350;
+                    QTimer::singleShot(enhanceDelay, window, [window]() {
+                        std::cout << "[Roclint Host] Invoking handleEnter() to synthesize rewrite..." << std::endl;
+                        QMetaObject::invokeMethod(window, "handleEnter");
+                    });
+                }
 
-                QTimer::singleShot(800, window, [window, screenshotPath]() {
+                const int captureDelay = autoEnhance ? 6000 : 800;
+                QTimer::singleShot(captureDelay, window, [window, screenshotPath]() {
                     const QImage img = window->grabWindow();
                     if (img.save(screenshotPath)) {
                         std::cout << "[Roclint Host] Screenshot saved to " << screenshotPath.toStdString() << std::endl;
@@ -237,6 +256,11 @@ int main(int argc, char* argv[]) {
             }
 
             if (!dashboardScreenshotPath.isEmpty()) {
+                if (dashboardScroll > 0.0) {
+                    QTimer::singleShot(200, window, [window, dashboardScroll]() {
+                        QMetaObject::invokeMethod(window, "scrollToPosition", Q_ARG(QVariant, dashboardScroll));
+                    });
+                }
                 QTimer::singleShot(800, window, [window, dashboardScreenshotPath]() {
                     const QImage img = window->grabWindow();
                     if (img.save(dashboardScreenshotPath)) {

@@ -4,6 +4,7 @@
 #include <QString>
 #include <QVariantList>
 #include <QVariantMap>
+#include <QProcess>
 #include <memory>
 
 #include "roclint/core/prompt_state/RevisionState.hpp"
@@ -75,6 +76,17 @@ class HostController : public QObject {
     Q_PROPERTY(bool directInjectionEnabled READ directInjectionEnabled WRITE setDirectInjectionEnabled NOTIFY directInjectionChanged)
     Q_PROPERTY(bool hasAccessibilityPermission READ hasAccessibilityPermission NOTIFY directInjectionChanged)
     Q_PROPERTY(QString scorerEngine READ scorerEngine WRITE setScorerEngine NOTIFY scorerEngineChanged)
+    Q_PROPERTY(QString modelDirectory READ modelDirectory WRITE setModelDirectory NOTIFY modelDirectoryChanged)
+    Q_PROPERTY(QVariantList availableModels READ availableModels NOTIFY availableModelsChanged)
+    Q_PROPERTY(QString activeModel READ activeModel WRITE setActiveModel NOTIFY activeModelChanged)
+    Q_PROPERTY(bool useLiveWeights READ useLiveWeights WRITE setUseLiveWeights NOTIFY useLiveWeightsChanged)
+    Q_PROPERTY(QString modelEngineStatus READ modelEngineStatus NOTIFY modelEngineStatusChanged)
+    Q_PROPERTY(bool isDownloadingModel READ isDownloadingModel NOTIFY downloadProgressChanged)
+    Q_PROPERTY(int downloadProgress READ downloadProgress NOTIFY downloadProgressChanged)
+    Q_PROPERTY(QString downloadStatusMessage READ downloadStatusMessage NOTIFY downloadProgressChanged)
+    Q_PROPERTY(bool isInferring READ isInferring NOTIFY isInferringChanged)
+    Q_PROPERTY(bool hasJuliaModel READ hasJuliaModel NOTIFY availableModelsChanged)
+    Q_PROPERTY(QString juliaModelStatus READ juliaModelStatus NOTIFY availableModelsChanged)
 
 public:
     explicit HostController(QObject* parent = nullptr);
@@ -175,6 +187,31 @@ public slots:
     [[nodiscard]] QString scorerEngine() const noexcept;
     Q_INVOKABLE void setScorerEngine(const QString& engine);
 
+    [[nodiscard]] QString modelDirectory() const noexcept { return m_modelDirectory; }
+    void setModelDirectory(const QString& dir);
+
+    [[nodiscard]] QVariantList availableModels() const noexcept { return m_availableModels; }
+    [[nodiscard]] QString activeModel() const noexcept { return m_activeModel; }
+    void setActiveModel(const QString& model);
+
+    [[nodiscard]] bool useLiveWeights() const noexcept { return m_useLiveWeights; }
+    void setUseLiveWeights(bool enabled);
+
+    [[nodiscard]] QString modelEngineStatus() const noexcept;
+    [[nodiscard]] bool isDownloadingModel() const noexcept { return m_isDownloadingModel; }
+    [[nodiscard]] int downloadProgress() const noexcept { return m_downloadProgress; }
+    [[nodiscard]] QString downloadStatusMessage() const noexcept { return m_downloadStatusMessage; }
+    [[nodiscard]] bool isInferring() const noexcept { return m_isInferring; }
+    [[nodiscard]] bool hasJuliaModel() const noexcept;
+    [[nodiscard]] QString juliaModelStatus() const noexcept;
+
+    Q_INVOKABLE QString openModelFolderDialog();
+    Q_INVOKABLE void refreshAvailableModels();
+    Q_INVOKABLE void downloadModel(const QString& modelTag);
+    Q_INVOKABLE void downloadJuliaModel();
+    Q_INVOKABLE void cancelModelDownload();
+    Q_INVOKABLE QString testLiveInference(const QString& samplePrompt = "");
+
 signals:
     void cardVisibilityChanged();
     void dashboardVisibilityChanged();
@@ -201,6 +238,14 @@ signals:
     void rewriteSynthesized(const QString& compiledPrompt, const QString& diffText);
     void directInjectionChanged();
     void scorerEngineChanged();
+    void modelDirectoryChanged();
+    void availableModelsChanged();
+    void activeModelChanged();
+    void useLiveWeightsChanged();
+    void modelEngineStatusChanged();
+    void downloadProgressChanged();
+    void isInferringChanged();
+    void liveInferenceCompleted(const QString& result, double latencyMs);
 
 private:
     bool setCardVisibility(CardVisibility visibility);
@@ -240,6 +285,19 @@ private:
     roclint::bridge::GraniteRewriteAdapter m_rewriteAdapter;
     std::optional<roclint::core::rewrite::RewriteProposal> m_currentProposal;
     bool m_directInjectionEnabled{false};
+
+    roclint::bridge::GraniteOptionDiscoveryResponse queryLiveGraniteOptions(const roclint::bridge::GraniteOptionDiscoveryRequest& req);
+    roclint::bridge::GraniteRewriteResponse queryLiveGraniteRewrite(const roclint::bridge::GraniteRewriteRequest& req);
+
+    QString m_modelDirectory;
+    QVariantList m_availableModels;
+    QString m_activeModel{QStringLiteral("granite4.2:3b-q8_0")};
+    bool m_useLiveWeights{false};
+    bool m_isDownloadingModel{false};
+    int m_downloadProgress{0};
+    QString m_downloadStatusMessage;
+    bool m_isInferring{false};
+    std::unique_ptr<QProcess> m_downloadProcess;
 };
 
 } // namespace roclint::host

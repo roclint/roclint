@@ -321,6 +321,28 @@ int main(int argc, char* argv[]) {
         std::cout << "  [PASS] Granite rewrite successfully synthesized, verified by A10, and copied to clipboard.\n";
     }
 
+    // =========================================================================
+    // 8. Direct Prompt Enhancement & Action Bug Synthesis
+    // =========================================================================
+    std::cout << "\n--- 8. Direct Prompt Enhancement & Action Bug Synthesis ---\n";
+    {
+        HostController controller;
+        controller.markResident();
+
+        // Test direct enhancement of prompt without prior ambiguity resolution
+        QString directCompiled = controller.synthesizeRewrite("fix the bugs in the project");
+        ROCLINT_CHECK(!directCompiled.isEmpty());
+        ROCLINT_CHECK(controller.hasProposal());
+        ROCLINT_CHECK(controller.hasConfirmedIntent());
+        std::cout << "  [PASS] Direct prompt enhancement synthesized without requiring prior question interaction.\n";
+
+        // Test ambiguity detection for bug prompts
+        controller.analyzePrompt("fix the bugs in the project");
+        ROCLINT_CHECK(controller.isClarifying());
+        ROCLINT_CHECK(controller.activeAlternatives().size() >= 2);
+        std::cout << "  [PASS] Vague action prompt 'fix the bugs in the project' triggers ambiguity clarification.\n";
+    }
+
     std::cout << "\n=========================================================\n";
     std::cout << "  ALL STAGE 01 / I01 / I02 / B06 / B07 / B08 INTEGRATION CHECKS PASSED!\n";
     std::cout << "=========================================================\n";

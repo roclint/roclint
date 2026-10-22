@@ -392,19 +392,39 @@ GraniteOptionDiscoveryResponse GraniteAdapter::discoverOptions(const GraniteOpti
                     << "      }\n"
                     << "    ]\n";
     } else {
-        jsonBuilder << "    \"question\": \"Which implementation strategy should be applied?\",\n"
-                    << "    \"alternatives\": [\n"
-                    << "      {\n"
-                    << "        \"id\": \"alt_action_1\",\n"
-                    << "        \"label\": \"Graceful timeout with automatic retry backoff\",\n"
-                    << "        \"why_material\": \"Preserves connection resilience without user interruption\"\n"
-                    << "      },\n"
-                    << "      {\n"
-                    << "        \"id\": \"alt_action_2\",\n"
-                    << "        \"label\": \"Immediate failure with explicit error code\",\n"
-                    << "        \"why_material\": \"Fast-fails unrecoverable operations immediately\"\n"
-                    << "      }\n"
-                    << "    ]\n";
+        if (req.promptString.find("bug") != std::string::npos ||
+            req.promptString.find("fix") != std::string::npos ||
+            req.promptString.find("error") != std::string::npos ||
+            req.promptString.find("crash") != std::string::npos ||
+            req.promptString.find("issue") != std::string::npos) {
+            jsonBuilder << "    \"question\": \"Which bugfix scope should be targeted?\",\n"
+                        << "    \"alternatives\": [\n"
+                        << "      {\n"
+                        << "        \"id\": \"alt_action_1\",\n"
+                        << "        \"label\": \"Targeted fix: Address immediate errors/failures with minimal code changes\",\n"
+                        << "        \"why_material\": \"Minimizes regression risk and preserves existing code behavior\"\n"
+                        << "      },\n"
+                        << "      {\n"
+                        << "        \"id\": \"alt_action_2\",\n"
+                        << "        \"label\": \"Comprehensive sweep: Audit and resolve root causes across modules and tests\",\n"
+                        << "        \"why_material\": \"Ensures long-term robustness and cleans up related technical debt\"\n"
+                        << "      }\n"
+                        << "    ]\n";
+        } else {
+            jsonBuilder << "    \"question\": \"Which implementation strategy should be applied?\",\n"
+                        << "    \"alternatives\": [\n"
+                        << "      {\n"
+                        << "        \"id\": \"alt_action_1\",\n"
+                        << "        \"label\": \"Graceful timeout with automatic retry backoff\",\n"
+                        << "        \"why_material\": \"Preserves connection resilience without user interruption\"\n"
+                        << "      },\n"
+                        << "      {\n"
+                        << "        \"id\": \"alt_action_2\",\n"
+                        << "        \"label\": \"Immediate failure with explicit error code\",\n"
+                        << "        \"why_material\": \"Fast-fails unrecoverable operations immediately\"\n"
+                        << "      }\n"
+                        << "    ]\n";
+        }
     }
     jsonBuilder << "  }\n}";
 

@@ -42,6 +42,14 @@ void testFastTriageAmbiguousAction() {
     ROCLINT_CHECK(decision.ambiguityScore >= 0.70);
     ROCLINT_CHECK(decision.dimension == "action");
     ROCLINT_CHECK(!decision.fastPathClear);
+
+    std::string promptFix = "fix the bugs in the project";
+    auto decisionFix = adapter.triagePrompt(promptFix);
+    ROCLINT_CHECK(decisionFix.inputValidity == InputValidity::Valid);
+    ROCLINT_CHECK(decisionFix.isAmbiguous);
+    ROCLINT_CHECK(decisionFix.ambiguityScore >= 0.70);
+    ROCLINT_CHECK(decisionFix.dimension == "action");
+    ROCLINT_CHECK(!decisionFix.fastPathClear);
 }
 
 void testFastTriageAmbiguousTarget() {

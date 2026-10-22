@@ -1,6 +1,9 @@
 #include "HostController.hpp"
 #include "support/check.hpp"
 
+#include <QTemporaryDir>
+#include <QFile>
+#include <QDir>
 #include <iostream>
 
 using roclint::host::CardVisibility;
@@ -145,6 +148,49 @@ int main(int /*argc*/, char* /*argv*/[]) {
     ROCLINT_CHECK(!controller.isCardVisible());
     ROCLINT_CHECK(!controller.isDashboardVisible());
     std::cout << "  [PASS] requestQuit hides card & dashboard, emits quitRequested once, blocks re-show.\n";
+
+    // 10. Julia-1 Model Detection & S1 Download Invokable
+    {
+        HostController testController;
+        // Verify default status reflects heuristic mode when not loaded
+        std::cout << "  [INFO] Initial juliaModelStatus: " << testController.juliaModelStatus().toStdString() << "\n";
+        ROCLINT_CHECK(!testController.juliaModelStatus().isEmpty());
+
+        // Test connected folder scanning
+        QTemporaryDir tempDir;
+        ROCLINT_CHECK(tempDir.isValid());
+        testController.setModelDirectory(tempDir.path());
+        ROCLINT_CHECK(!testController.hasJuliaModel());
+
+        // Create dummy model.onnx in connected folder
+        QDir(tempDir.path()).mkdir(QStringLiteral("julia-1"));
+        QFile dummyOnnx(tempDir.path() + QStringLiteral("/julia-1/model.onnx"));
+        ROCLINT_CHECK(dummyOnnx.open(QIODevice::WriteOnly));
+        dummyOnnx.write(QByteArray(105000, 'x'));
+        dummyOnnx.close();
+
+        testController.refreshAvailableModels();
+        ROCLINT_CHECK(testController.hasJuliaModel());
+        ROCLINT_CHECK(testController.juliaModelStatus().contains(QStringLiteral("READY")));
+
+        // Verify Julia-1 does NOT appear in availableModels (SLM list) to prevent deselecting active Granite SLM
+        bool juliaInSLMList = false;
+        for (const auto& m : testController.availableModels()) {
+            if (m.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("SupersonicLabs/Julia-1")) {
+                juliaInSLMList = true;
+                break;
+            }
+        }
+        ROCLINT_CHECK(!juliaInSLMList);
+
+        // Verify active Granite SLM is preserved and dual-pipeline inference succeeds
+        testController.setActiveModel(QStringLiteral("granite4.2:3b-q8_0"));
+        QString result = testController.testLiveInference(QStringLiteral("refactor auth token handling"));
+        ROCLINT_CHECK(result.contains(QStringLiteral("DUAL")));
+        ROCLINT_CHECK(result.contains(QStringLiteral("Julia-1")));
+        ROCLINT_CHECK(result.contains(QStringLiteral("SLM")));
+        std::cout << "  [PASS] Julia-1 Decision Scorer and Granite SLM dual execution verified.\n";
+    }
 
     std::cout << "[Roclint Host Lifecycle Test] ALL CHECKS PASSED.\n";
     return 0;

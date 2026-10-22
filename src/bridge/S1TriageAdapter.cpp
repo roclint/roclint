@@ -106,7 +106,17 @@ S1TriageDecision S1TriageAdapter::triagePrompt(std::string_view prompt) {
         lowerPrompt.find("timeout") != std::string::npos ||
         lowerPrompt.find("refactor") != std::string::npos ||
         lowerPrompt.find("optimize") != std::string::npos ||
-        lowerPrompt.find("handle") != std::string::npos;
+        lowerPrompt.find("handle") != std::string::npos ||
+        lowerPrompt.find("fix") != std::string::npos ||
+        lowerPrompt.find("bug") != std::string::npos ||
+        lowerPrompt.find("error") != std::string::npos ||
+        lowerPrompt.find("crash") != std::string::npos ||
+        lowerPrompt.find("issue") != std::string::npos ||
+        lowerPrompt.find("broken") != std::string::npos ||
+        lowerPrompt.find("patch") != std::string::npos ||
+        lowerPrompt.find("solve") != std::string::npos ||
+        lowerPrompt.find("clean") != std::string::npos ||
+        lowerPrompt.find("update") != std::string::npos;
 
     const bool hasActionContextDisjunction =
         (lowerPrompt.find(" or ") != std::string::npos &&
