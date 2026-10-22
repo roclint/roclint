@@ -24,10 +24,19 @@ int main(int argc, char* argv[]) {
     bool autoShowDashboard = false;
     int dashboardTab = 0;
     QString dashboardScreenshotPath;
+    bool dashboardMaximized = false;
+    bool pinCard = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg(argv[i]);
         if (arg == "--dry-run" || arg == "--smoke-test") {
             dryRun = true;
+        }
+        if (arg == "--dashboard-maximized") {
+            dashboardMaximized = true;
+            autoShowDashboard = true;
+        }
+        if (arg == "--pin") {
+            pinCard = true;
         }
         if (arg == "--show") {
             autoShow = true;
@@ -99,7 +108,7 @@ int main(int argc, char* argv[]) {
     const QUrl cardUrl(QStringLiteral("qrc:/shell/FloatingCard.qml"));
     const QUrl dashboardUrl(QStringLiteral("qrc:/shell/DashboardWindow.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
-                     &app, [cardUrl, dashboardUrl, controller = controller.get(), autoShow, autoShowDashboard, dryRun, screenshotPath, dashboardScreenshotPath, customWidth, customHeight, resolveChoice, openFileDropdown, targetScope, dashboardTab](QObject* obj, const QUrl& objUrl) {
+                     &app, [cardUrl, dashboardUrl, controller = controller.get(), autoShow, autoShowDashboard, dryRun, screenshotPath, dashboardScreenshotPath, customWidth, customHeight, resolveChoice, openFileDropdown, targetScope, dashboardTab, pinCard, dashboardMaximized](QObject* obj, const QUrl& objUrl) {
         if (!obj && (cardUrl == objUrl || dashboardUrl == objUrl)) {
             std::cerr << "[Roclint Host] Error: Failed to load QML root object from " << objUrl.toString().toStdString() << std::endl;
             QCoreApplication::exit(-1);
@@ -157,6 +166,10 @@ int main(int argc, char* argv[]) {
             QObject::connect(window, &QWindow::visibilityChanged, controller, syncVisibility);
             QObject::connect(window, &QWindow::activeChanged, controller, syncVisibility);
 
+            if (pinCard) {
+                window->setProperty("pinToTop", true);
+            }
+
             if (autoShow && !dryRun) {
                 controller->showCard();
             }
@@ -212,7 +225,11 @@ int main(int argc, char* argv[]) {
             });
 
             if (autoShowDashboard && !dryRun) {
-                controller->showDashboard();
+                if (dashboardMaximized) {
+                    window->showMaximized();
+                } else {
+                    controller->showDashboard();
+                }
             }
 
             if (!dashboardScreenshotPath.isEmpty()) {

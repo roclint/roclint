@@ -127,6 +127,42 @@ namespace roclint::storage
             }
             current = 2;
         }
+
+        // Migration step 2 -> 3: Approvals table and indices (A11 / C06)
+        if (current < 3 && targetVersion >= 3)
+        {
+            db_.execute("BEGIN IMMEDIATE TRANSACTION;");
+            try
+            {
+                db_.execute("CREATE TABLE IF NOT EXISTS approvals ("
+                            "id TEXT PRIMARY KEY NOT NULL, "
+                            "session_id TEXT NOT NULL, "
+                            "revision_id TEXT NOT NULL, "
+                            "snapshot_id TEXT NOT NULL, "
+                            "snapshot_hash INTEGER NOT NULL, "
+                            "intent_id TEXT NOT NULL, "
+                            "proposal_id TEXT NOT NULL, "
+                            "proposal_hash INTEGER NOT NULL, "
+                            "approved_text TEXT NOT NULL, "
+                            "edit_generation INTEGER NOT NULL DEFAULT 0, "
+                            "created_at_ms INTEGER NOT NULL, "
+                            "is_current INTEGER NOT NULL DEFAULT 1, "
+                            "binding_hash INTEGER NOT NULL, "
+                            "FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE, "
+                            "FOREIGN KEY(revision_id) REFERENCES prompt_revisions(revision_id) ON DELETE CASCADE"
+                            ");");
+                db_.execute("CREATE INDEX IF NOT EXISTS idx_approvals_session ON approvals(session_id, is_current);");
+                db_.execute("CREATE INDEX IF NOT EXISTS idx_approvals_revision ON approvals(revision_id, is_current);");
+                setSchemaVersion(3);
+                db_.execute("COMMIT;");
+            }
+            catch (...)
+            {
+                db_.execute("ROLLBACK;");
+                throw;
+            }
+            current = 3;
+        }
     }
 
     void PromptRepository::migrate()
@@ -357,5 +393,165 @@ namespace roclint::storage
             );
         }
         return std::nullopt;
+    }
+
+    void PromptRepository::saveApproval(const core::review::ApprovalRecord& approval)
+    {
+        db_.execute("BEGIN IMMEDIATE TRANSACTION;");
+        try
+        {
+            // Invalidate any previously current approval for this session
+            {
+                Statement invStmt(db_.rawHandle(),
+                    "UPDATE approvals SET is_current = 0 WHERE session_id = ?1;");
+                sqlite3_bind_text(invStmt.get(), 1, approval.sessionId.value().c_str(),
+                    static_cast<int>(approval.sessionId.value().size()), SQLITE_TRANSIENT);
+                if (sqlite3_step(invStmt.get()) != SQLITE_DONE)
+                {
+                    throw std::runtime_error("Failed to invalidate prior approvals: " +
+                        std::string(sqlite3_errmsg(db_.rawHandle())));
+                }
+            }
+
+            // Insert new approval
+            {
+                Statement insStmt(db_.rawHandle(),
+                    "INSERT INTO approvals ("
+                    "id, session_id, revision_id, snapshot_id, snapshot_hash, "
+                    "intent_id, proposal_id, proposal_hash, approved_text, "
+                    "edit_generation, created_at_ms, is_current, binding_hash) "
+                    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13);");
+
+                sqlite3_bind_text(insStmt.get(), 1, approval.id.c_str(), static_cast<int>(approval.id.size()), SQLITE_TRANSIENT);
+                sqlite3_bind_text(insStmt.get(), 2, approval.sessionId.value().c_str(), static_cast<int>(approval.sessionId.value().size()), SQLITE_TRANSIENT);
+                sqlite3_bind_text(insStmt.get(), 3, approval.revisionId.value().c_str(), static_cast<int>(approval.revisionId.value().size()), SQLITE_TRANSIENT);
+                sqlite3_bind_text(insStmt.get(), 4, approval.snapshotId.c_str(), static_cast<int>(approval.snapshotId.size()), SQLITE_TRANSIENT);
+                sqlite3_bind_int64(insStmt.get(), 5, static_cast<sqlite3_int64>(approval.snapshotHash));
+                sqlite3_bind_text(insStmt.get(), 6, approval.intentId.c_str(), static_cast<int>(approval.intentId.size()), SQLITE_TRANSIENT);
+                sqlite3_bind_text(insStmt.get(), 7, approval.proposalId.c_str(), static_cast<int>(approval.proposalId.size()), SQLITE_TRANSIENT);
+                sqlite3_bind_int64(insStmt.get(), 8, static_cast<sqlite3_int64>(approval.proposalHash));
+                sqlite3_bind_text(insStmt.get(), 9, approval.approvedText.c_str(), static_cast<int>(approval.approvedText.size()), SQLITE_TRANSIENT);
+                sqlite3_bind_int(insStmt.get(), 10, approval.editGeneration);
+                sqlite3_bind_int64(insStmt.get(), 11, approval.createdAtMs);
+                sqlite3_bind_int(insStmt.get(), 12, approval.isCurrent ? 1 : 0);
+                sqlite3_bind_int64(insStmt.get(), 13, static_cast<sqlite3_int64>(approval.bindingHash));
+
+                if (sqlite3_step(insStmt.get()) != SQLITE_DONE)
+                {
+                    throw std::runtime_error("Failed to insert approval: " +
+                        std::string(sqlite3_errmsg(db_.rawHandle())));
+                }
+            }
+
+            db_.execute("COMMIT;");
+        }
+        catch (...)
+        {
+            db_.execute("ROLLBACK;");
+            throw;
+        }
+    }
+
+    void PromptRepository::invalidateApproval(const core::SessionId& sessionId)
+    {
+        Statement stmt(db_.rawHandle(), "UPDATE approvals SET is_current = 0 WHERE session_id = ?1;");
+        sqlite3_bind_text(stmt.get(), 1, sessionId.value().c_str(), static_cast<int>(sessionId.value().size()), SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt.get()) != SQLITE_DONE)
+        {
+            throw std::runtime_error("Failed to invalidate approval: " + std::string(sqlite3_errmsg(db_.rawHandle())));
+        }
+    }
+
+    std::optional<core::review::ApprovalRecord> PromptRepository::getCurrentApproval(const core::SessionId& sessionId) const
+    {
+        Statement stmt(db_.rawHandle(),
+            "SELECT id, session_id, revision_id, snapshot_id, snapshot_hash, "
+            "intent_id, proposal_id, proposal_hash, approved_text, edit_generation, "
+            "created_at_ms, is_current, binding_hash "
+            "FROM approvals WHERE session_id = ?1 AND is_current = 1 "
+            "ORDER BY created_at_ms DESC, rowid DESC LIMIT 1;");
+
+        sqlite3_bind_text(stmt.get(), 1, sessionId.value().c_str(), static_cast<int>(sessionId.value().size()), SQLITE_TRANSIENT);
+
+        if (sqlite3_step(stmt.get()) == SQLITE_ROW)
+        {
+            const auto* idText = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0));
+            const auto* sessText = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1));
+            const auto* revText = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2));
+            const auto* snapText = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 3));
+            const std::uint64_t snapHash = static_cast<std::uint64_t>(sqlite3_column_int64(stmt.get(), 4));
+            const auto* intText = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 5));
+            const auto* propText = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 6));
+            const std::uint64_t propHash = static_cast<std::uint64_t>(sqlite3_column_int64(stmt.get(), 7));
+            const auto* appText = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 8));
+            const int editGen = sqlite3_column_int(stmt.get(), 9);
+            const std::int64_t createdAt = sqlite3_column_int64(stmt.get(), 10);
+            const bool isCurr = sqlite3_column_int(stmt.get(), 11) != 0;
+            const std::uint64_t bindHash = static_cast<std::uint64_t>(sqlite3_column_int64(stmt.get(), 12));
+
+            return core::review::ApprovalRecord{
+                .id = idText ? idText : "",
+                .sessionId = core::SessionId(sessText ? sessText : ""),
+                .revisionId = core::RevisionId(revText ? revText : ""),
+                .snapshotId = snapText ? snapText : "",
+                .snapshotHash = snapHash,
+                .intentId = intText ? intText : "",
+                .proposalId = propText ? propText : "",
+                .proposalHash = propHash,
+                .approvedText = appText ? appText : "",
+                .editGeneration = editGen,
+                .createdAtMs = createdAt,
+                .isCurrent = isCurr,
+                .bindingHash = bindHash
+            };
+        }
+        return std::nullopt;
+    }
+
+    std::vector<core::review::ApprovalRecord> PromptRepository::getApprovalHistory(const core::SessionId& sessionId) const
+    {
+        Statement stmt(db_.rawHandle(),
+            "SELECT id, session_id, revision_id, snapshot_id, snapshot_hash, "
+            "intent_id, proposal_id, proposal_hash, approved_text, edit_generation, "
+            "created_at_ms, is_current, binding_hash "
+            "FROM approvals WHERE session_id = ?1 "
+            "ORDER BY created_at_ms DESC, rowid DESC;");
+
+        sqlite3_bind_text(stmt.get(), 1, sessionId.value().c_str(), static_cast<int>(sessionId.value().size()), SQLITE_TRANSIENT);
+
+        std::vector<core::review::ApprovalRecord> history;
+        while (sqlite3_step(stmt.get()) == SQLITE_ROW)
+        {
+            const auto* idText = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 0));
+            const auto* sessText = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 1));
+            const auto* revText = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 2));
+            const auto* snapText = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 3));
+            const std::uint64_t snapHash = static_cast<std::uint64_t>(sqlite3_column_int64(stmt.get(), 4));
+            const auto* intText = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 5));
+            const auto* propText = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 6));
+            const std::uint64_t propHash = static_cast<std::uint64_t>(sqlite3_column_int64(stmt.get(), 7));
+            const auto* appText = reinterpret_cast<const char*>(sqlite3_column_text(stmt.get(), 8));
+            const int editGen = sqlite3_column_int(stmt.get(), 9);
+            const std::int64_t createdAt = sqlite3_column_int64(stmt.get(), 10);
+            const bool isCurr = sqlite3_column_int(stmt.get(), 11) != 0;
+            const std::uint64_t bindHash = static_cast<std::uint64_t>(sqlite3_column_int64(stmt.get(), 12));
+
+            history.push_back(core::review::ApprovalRecord{
+                .id = idText ? idText : "",
+                .sessionId = core::SessionId(sessText ? sessText : ""),
+                .revisionId = core::RevisionId(revText ? revText : ""),
+                .snapshotId = snapText ? snapText : "",
+                .snapshotHash = snapHash,
+                .intentId = intText ? intText : "",
+                .proposalId = propText ? propText : "",
+                .proposalHash = propHash,
+                .approvedText = appText ? appText : "",
+                .editGeneration = editGen,
+                .createdAtMs = createdAt,
+                .isCurrent = isCurr,
+                .bindingHash = bindHash
+            });
+        }
+        return history;
     }
 }

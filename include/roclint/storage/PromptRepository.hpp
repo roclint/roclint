@@ -8,6 +8,7 @@
 #include "roclint/core/prompt_state/PromptRevision.hpp"
 #include "roclint/core/prompt_state/RevisionId.hpp"
 #include "roclint/core/prompt_state/SessionId.hpp"
+#include "roclint/review/ApprovalRecord.hpp"
 #include "roclint/storage/Database.hpp"
 
 namespace roclint::storage
@@ -23,7 +24,7 @@ namespace roclint::storage
     class PromptRepository
     {
     public:
-        static constexpr int CURRENT_SCHEMA_VERSION = 2;
+        static constexpr int CURRENT_SCHEMA_VERSION = 3;
 
         explicit PromptRepository(Database& db);
         ~PromptRepository() = default;
@@ -51,6 +52,12 @@ namespace roclint::storage
         [[nodiscard]] std::optional<core::PromptRevision> getRevision(const core::RevisionId& revisionId) const;
         [[nodiscard]] std::vector<core::PromptRevision> getHistory(const core::SessionId& sessionId) const;
         [[nodiscard]] std::optional<core::PromptRevision> getLatestRevision(const core::SessionId& sessionId) const;
+
+        // Approval operations (A11 / C06)
+        void saveApproval(const core::review::ApprovalRecord& approval);
+        void invalidateApproval(const core::SessionId& sessionId);
+        [[nodiscard]] std::optional<core::review::ApprovalRecord> getCurrentApproval(const core::SessionId& sessionId) const;
+        [[nodiscard]] std::vector<core::review::ApprovalRecord> getApprovalHistory(const core::SessionId& sessionId) const;
 
     private:
         Database& db_;

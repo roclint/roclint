@@ -202,8 +202,127 @@ int main(int argc, char* argv[]) {
         std::cout << "  [PASS] Approved text copy-back matches exact supplied string.\n";
     }
 
+    // =========================================================================
+    // 5. Clarification & Dynamic Linter Binding Verification (B06)
+    // =========================================================================
+    std::cout << "\n--- 5. Clarification & Dynamic Linter Binding (B06) ---\n";
+    {
+        HostController controller;
+
+        // Clear prompt test
+        controller.analyzePrompt("Set red background color");
+        ROCLINT_CHECK(!controller.isClarifying());
+        ROCLINT_CHECK(controller.interventionVerdict() == "QUIET");
+        std::cout << "  [PASS] Clear prompt results in QUIET state.\n";
+
+        // Ambiguous prompt test
+        controller.analyzePrompt("Which component should handle connection timeout: FloatingCard or HostController?");
+        std::cout << "Verdict: " << controller.interventionVerdict().toStdString()
+                  << ", Reason: " << controller.interventionReason().toStdString()
+                  << ", Diagnostic: " << controller.diagnosticMessage().toStdString() << std::endl;
+        ROCLINT_CHECK(controller.isClarifying());
+        ROCLINT_CHECK(controller.interventionVerdict() == "CLARIFY");
+        ROCLINT_CHECK(controller.activeAlternatives().size() == 2);
+        ROCLINT_CHECK(controller.roundsCompleted() == 0);
+        ROCLINT_CHECK(controller.remainingBudget() == 3);
+        std::cout << "  [PASS] Ambiguous prompt triggers CLARIFY with 2 alternatives.\n";
+
+        // User confirmation test
+        const QString firstAltId = controller.activeAlternatives()[0].toMap()["id"].toString();
+        controller.confirmChoice(firstAltId);
+        ROCLINT_CHECK(controller.roundsCompleted() == 1);
+        ROCLINT_CHECK(controller.remainingBudget() == 2);
+        ROCLINT_CHECK(controller.interventionVerdict() == "QUIET");
+        std::cout << "  [PASS] User confirmation advances rounds and reaches QUIET state.\n";
+    }
+
+    // =========================================================================
+    // 6. Confirmed Intent Review & Provenance UX (B07 / C05 / C06)
+    // =========================================================================
+    std::cout << "\n--- 6. Confirmed Intent Review & Provenance UX (B07 / C05 / C06) ---\n";
+    {
+        HostController controller;
+        controller.markResident();
+
+        // 1. Initial state: No confirmed intent, rewrite disabled
+        ROCLINT_CHECK(!controller.hasConfirmedIntent());
+        ROCLINT_CHECK(!controller.isIntentStale());
+        ROCLINT_CHECK(!controller.isRewriteEnabled());
+        ROCLINT_CHECK(controller.rewriteProfile() == "GENERIC@1");
+
+        // 2. Commit initial prompt and analyze ambiguous question
+        const QString draft = "Which component should handle connection timeout: FloatingCard or HostController?";
+        controller.commitPrompt(draft);
+        controller.analyzePrompt(draft);
+
+        ROCLINT_CHECK(controller.isClarifying());
+        ROCLINT_CHECK(!controller.isRewriteEnabled());
+
+        // 3. Confirm alternative choice -> produces ConfirmedIntent
+        const QString firstAltId = controller.activeAlternatives()[0].toMap()["id"].toString();
+        controller.confirmChoice(firstAltId);
+
+        ROCLINT_CHECK(controller.interventionVerdict() == "QUIET");
+        ROCLINT_CHECK(controller.hasConfirmedIntent());
+        ROCLINT_CHECK(!controller.isIntentStale());
+        ROCLINT_CHECK(controller.isRewriteEnabled());
+        ROCLINT_CHECK(controller.confirmedItems().size() == 1);
+
+        // Verify payload matches visible confirmed items
+        QVariantMap payload = controller.getConfirmedIntentPayload();
+        ROCLINT_CHECK(!payload["intentId"].toString().isEmpty());
+        ROCLINT_CHECK(payload["baseRevisionId"].toString() == "rev_1");
+        ROCLINT_CHECK(payload["isCurrent"].toBool() == true);
+        ROCLINT_CHECK(payload["rewriteProfile"].toString() == "GENERIC@1");
+        QVariantList items = payload["items"].toList();
+        ROCLINT_CHECK(items.size() == 1);
+        ROCLINT_CHECK(items[0].toMap()["chosenValue"].toString() == firstAltId);
+        std::cout << "  [PASS] Confirmed intent built with accurate item payload and rewrite enabled.\n";
+
+        // 4. Test target profile selection
+        controller.setRewriteProfile("ANTHROPIC_STRUCTURED@1");
+        ROCLINT_CHECK(controller.rewriteProfile() == "ANTHROPIC_STRUCTURED@1");
+        ROCLINT_CHECK(controller.getConfirmedIntentPayload()["rewriteProfile"].toString() == "ANTHROPIC_STRUCTURED@1");
+        std::cout << "  [PASS] Target profile selection updates rewrite configuration.\n";
+
+        // 5. Test prompt edit -> instant stale invalidation (Contract C06)
+        controller.commitPrompt("Modified prompt after confirmation");
+        ROCLINT_CHECK(controller.isIntentStale());
+        ROCLINT_CHECK(!controller.isRewriteEnabled()); // Rewrite must remain disabled!
+        std::cout << "  [PASS] Editing prompt immediately invalidates intent and disables rewrite.\n";
+    }
+
+    // =========================================================================
+    // 7. Granite Prompt Rewrite Synthesis & Validation (B08 / B08P / A10)
+    // =========================================================================
+    std::cout << "\n--- 7. Granite Prompt Rewrite Synthesis & Validation (B08 / B08P / A10) ---\n";
+    {
+        HostController controller;
+        controller.markResident();
+
+        const QString prompt = "Which component should handle connection timeout: FloatingCard or HostController?";
+        controller.commitPrompt(prompt);
+        controller.analyzePrompt(prompt);
+
+        // Confirm first choice
+        const QString firstAltId = controller.activeAlternatives()[0].toMap()["id"].toString();
+        controller.confirmChoice(firstAltId);
+
+        ROCLINT_CHECK(controller.hasConfirmedIntent());
+        ROCLINT_CHECK(controller.isRewriteEnabled());
+
+        // Test synthesizeRewrite
+        QString compiled = controller.synthesizeRewrite();
+        ROCLINT_CHECK(!compiled.isEmpty());
+        ROCLINT_CHECK(controller.hasProposal());
+        ROCLINT_CHECK(!controller.lastDiffText().isEmpty());
+        ROCLINT_CHECK(controller.proposalConstraints().size() >= 2);
+        ROCLINT_CHECK(controller.lastCopiedText() == compiled);
+        std::cout << "  [PASS] Granite rewrite successfully synthesized, verified by A10, and copied to clipboard.\n";
+    }
+
     std::cout << "\n=========================================================\n";
-    std::cout << "  ALL STAGE 01 / I01 / I02 INTEGRATION CHECKS PASSED!\n";
+    std::cout << "  ALL STAGE 01 / I01 / I02 / B06 / B07 / B08 INTEGRATION CHECKS PASSED!\n";
     std::cout << "=========================================================\n";
     return 0;
 }

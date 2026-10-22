@@ -28,6 +28,8 @@ aqtinstall.log
 *.swp
 
 # CMake generated artifacts
+CMakeFiles/
+CMakeCache.txt
 compile_commands.json
 CMakeUserPresets.json
 

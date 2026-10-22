@@ -16,6 +16,18 @@ add_library(roclint_core STATIC
     src/core/prompt_state/RevisionId.cpp
     src/core/prompt_state/PromptRevision.cpp
     src/core/prompt_state/RevisionState.cpp
+    src/analysis/SourceSpan.cpp
+    src/analysis/NormalizedAnalysis.cpp
+    src/analysis/MaterialityPolicy.cpp
+    src/intent/InterventionStateMachine.cpp
+    src/intent/ConfirmedIntent.cpp
+    src/bridge/GraniteAdapter.cpp
+    src/bridge/S1TriageAdapter.cpp
+    src/rewrite/RewriteProfile.cpp
+    src/rewrite/RewriteProposal.cpp
+    src/rewrite/RewriteValidator.cpp
+    src/bridge/GraniteRewriteAdapter.cpp
+    src/review/ApprovalRecord.cpp
 )
 
 
@@ -110,6 +122,7 @@ if(BUILD_DESKTOP)
 
         target_link_libraries(roclint_host_lib PUBLIC
             roclint_core
+            roclint_storage
             Qt6::Core
             Qt6::Gui
             Qt6::Widgets
@@ -158,7 +171,7 @@ endif()
 # -----------------------------------------------------------------------------
 include(CTest)
 if(BUILD_TESTING)
-    # Core smoke test (A00)
+    # Core smoke test
     add_executable(roclint_core_tests
         tests/core/smokeTest.cpp
     )
@@ -176,7 +189,7 @@ if(BUILD_TESTING)
 
     target_compile_features(roclint_core PUBLIC cxx_std_20)
     
-        # Prompt revision test (A01)
+        # Prompt revision test 
     add_executable(roclint_prompt_revision_tests
         tests/core/prompt_state/testPromptRevision.cpp
     )
@@ -185,7 +198,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_prompt_revision_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_prompt_revision COMMAND roclint_prompt_revision_tests)
 
-    # Revision state test (A02)
+    # Revision state test 
     add_executable(roclint_revision_state_tests
         tests/core/prompt_state/testRevisionState.cpp
     )
@@ -194,7 +207,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_revision_state_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_revision_state COMMAND roclint_revision_state_tests)
 
-    # Storage foundation test (A03)
+    # Storage foundation test 
     add_executable(roclint_storage_tests
         tests/storage/test_database.cpp
     )
@@ -203,7 +216,7 @@ if(BUILD_TESTING)
     target_compile_features(roclint_storage_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_storage COMMAND roclint_storage_tests)
 
-    # Prompt repository test (A04)
+    # Prompt
     add_executable(roclint_prompt_repository_tests
         tests/storage/test_prompt_repository.cpp
     )
@@ -212,8 +225,152 @@ if(BUILD_TESTING)
     target_compile_features(roclint_prompt_repository_tests PRIVATE cxx_std_20)
     add_test(NAME roclint_prompt_repository COMMAND roclint_prompt_repository_tests)
 
+    # Literal Evidence & SourceSpan test (A05)
+    add_executable(roclint_source_span_tests
+        tests/analysis/testSourceSpan.cpp
+    )
+    target_link_libraries(roclint_source_span_tests PRIVATE roclint_core)
+    target_include_directories(roclint_source_span_tests PRIVATE tests)
+    target_compile_features(roclint_source_span_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_source_span COMMAND roclint_source_span_tests)
 
-    # ViewModel / Host lifecycle test (B00)
+    # NormalizedAnalysis types test (A06)
+    add_executable(roclint_normalized_analysis_tests
+        tests/analysis/testNormalizedAnalysis.cpp
+    )
+    target_link_libraries(roclint_normalized_analysis_tests PRIVATE roclint_core)
+    target_include_directories(roclint_normalized_analysis_tests PRIVATE tests)
+    target_compile_features(roclint_normalized_analysis_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_normalized_analysis COMMAND roclint_normalized_analysis_tests)
+
+    # Materiality and Semantic Validation Policy test (A07)
+    add_executable(roclint_materiality_policy_tests
+        tests/analysis/testMaterialityPolicy.cpp
+    )
+    target_link_libraries(roclint_materiality_policy_tests PRIVATE roclint_core)
+    target_include_directories(roclint_materiality_policy_tests PRIVATE tests)
+    target_compile_features(roclint_materiality_policy_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_materiality_policy COMMAND roclint_materiality_policy_tests)
+
+    # Local Granite Analysis Adapter test (B04)
+    add_executable(roclint_granite_adapter_tests
+        tests/bridge/test_granite_adapter.cpp
+    )
+    target_link_libraries(roclint_granite_adapter_tests PRIVATE roclint_core)
+    target_include_directories(roclint_granite_adapter_tests PRIVATE tests)
+    target_compile_features(roclint_granite_adapter_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_granite_adapter COMMAND roclint_granite_adapter_tests)
+
+    # S1 Fast Triage & Snapshot Adapter test (B05 / B05J)
+    add_executable(roclint_s1_triage_adapter_tests
+        tests/bridge/test_s1_triage_adapter.cpp
+    )
+    target_link_libraries(roclint_s1_triage_adapter_tests PRIVATE roclint_core)
+    target_include_directories(roclint_s1_triage_adapter_tests PRIVATE tests)
+    target_compile_features(roclint_s1_triage_adapter_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_s1_triage_adapter COMMAND roclint_s1_triage_adapter_tests)
+
+    # Analysis Checkpoint integration test (I04)
+    add_executable(roclint_analysis_checkpoint_tests
+        tests/analysis/test_analysis_checkpoint.cpp
+    )
+    target_link_libraries(roclint_analysis_checkpoint_tests PRIVATE roclint_core)
+    target_include_directories(roclint_analysis_checkpoint_tests PRIVATE tests)
+    target_compile_features(roclint_analysis_checkpoint_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_analysis_checkpoint COMMAND roclint_analysis_checkpoint_tests)
+
+    # Jev Checkpoint integration test (I05)
+    add_executable(roclint_jev_checkpoint_tests
+        tests/analysis/test_jev_checkpoint.cpp
+    )
+    target_link_libraries(roclint_jev_checkpoint_tests PRIVATE roclint_core)
+    target_include_directories(roclint_jev_checkpoint_tests PRIVATE tests)
+    target_compile_features(roclint_jev_checkpoint_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_jev_checkpoint COMMAND roclint_jev_checkpoint_tests)
+
+    # Intervention State Machine test (A08)
+    add_executable(roclint_intervention_state_machine_tests
+        tests/intent/testInterventionStateMachine.cpp
+    )
+    target_link_libraries(roclint_intervention_state_machine_tests PRIVATE roclint_core)
+    target_include_directories(roclint_intervention_state_machine_tests PRIVATE tests)
+    target_compile_features(roclint_intervention_state_machine_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_intervention_state_machine COMMAND roclint_intervention_state_machine_tests)
+
+    # Clarification Checkpoint integration test (I06)
+    add_executable(roclint_clarification_checkpoint_tests
+        tests/intent/test_clarification_checkpoint.cpp
+    )
+    target_link_libraries(roclint_clarification_checkpoint_tests PRIVATE roclint_core)
+    target_include_directories(roclint_clarification_checkpoint_tests PRIVATE tests)
+    target_compile_features(roclint_clarification_checkpoint_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_clarification_checkpoint COMMAND roclint_clarification_checkpoint_tests)
+
+    # ConfirmedIntent & Analysis Provenance test (A09)
+    add_executable(roclint_confirmed_intent_tests
+        tests/intent/testConfirmedIntent.cpp
+    )
+    target_link_libraries(roclint_confirmed_intent_tests PRIVATE roclint_core)
+    target_include_directories(roclint_confirmed_intent_tests PRIVATE tests)
+    target_compile_features(roclint_confirmed_intent_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_confirmed_intent COMMAND roclint_confirmed_intent_tests)
+
+    # Intent Checkpoint integration test (I07)
+    add_executable(roclint_intent_checkpoint_tests
+        tests/intent/test_intent_checkpoint.cpp
+    )
+    target_link_libraries(roclint_intent_checkpoint_tests PRIVATE roclint_core)
+    target_include_directories(roclint_intent_checkpoint_tests PRIVATE tests)
+    target_compile_features(roclint_intent_checkpoint_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_intent_checkpoint COMMAND roclint_intent_checkpoint_tests)
+
+    # Rewrite Proposal & Binding test (A10)
+    add_executable(roclint_rewrite_proposal_tests
+        tests/rewrite/testRewriteProposal.cpp
+    )
+    target_link_libraries(roclint_rewrite_proposal_tests PRIVATE roclint_core)
+    target_include_directories(roclint_rewrite_proposal_tests PRIVATE tests)
+    target_compile_features(roclint_rewrite_proposal_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_rewrite_proposal COMMAND roclint_rewrite_proposal_tests)
+
+    # Rewrite Profiles test (B08P)
+    add_executable(roclint_rewrite_profiles_tests
+        tests/rewrite/testRewriteProfiles.cpp
+    )
+    target_link_libraries(roclint_rewrite_profiles_tests PRIVATE roclint_core)
+    target_include_directories(roclint_rewrite_profiles_tests PRIVATE tests)
+    target_compile_features(roclint_rewrite_profiles_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_rewrite_profiles COMMAND roclint_rewrite_profiles_tests)
+
+    # Rewrite Checkpoint integration test (I08)
+    add_executable(roclint_rewrite_checkpoint_tests
+        tests/rewrite/test_rewrite_checkpoint.cpp
+    )
+    target_link_libraries(roclint_rewrite_checkpoint_tests PRIVATE roclint_core)
+    target_include_directories(roclint_rewrite_checkpoint_tests PRIVATE tests)
+    target_compile_features(roclint_rewrite_checkpoint_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_rewrite_checkpoint COMMAND roclint_rewrite_checkpoint_tests)
+
+    # Approval State & Durable Proof test (A11)
+    add_executable(roclint_approval_record_tests
+        tests/review/testApprovalRecord.cpp
+    )
+    target_link_libraries(roclint_approval_record_tests PRIVATE roclint_core roclint_storage)
+    target_include_directories(roclint_approval_record_tests PRIVATE tests)
+    target_compile_features(roclint_approval_record_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_approval_record COMMAND roclint_approval_record_tests)
+
+    # Approval Checkpoint integration test (I09)
+    add_executable(roclint_approval_checkpoint_tests
+        tests/review/test_approval_checkpoint.cpp
+    )
+    target_link_libraries(roclint_approval_checkpoint_tests PRIVATE roclint_core roclint_storage)
+    target_include_directories(roclint_approval_checkpoint_tests PRIVATE tests)
+    target_compile_features(roclint_approval_checkpoint_tests PRIVATE cxx_std_20)
+    add_test(NAME roclint_approval_checkpoint COMMAND roclint_approval_checkpoint_tests)
+
+
+    # ViewModel 
     if(BUILD_DESKTOP AND Qt6_FOUND)
         add_executable(roclint_viewmodel_tests
             tests/viewmodel/test_host_lifecycle.cpp
@@ -228,7 +385,7 @@ if(BUILD_TESTING)
         target_compile_features(roclint_viewmodel_tests PRIVATE cxx_std_20)
         add_test(NAME roclint_host_lifecycle COMMAND roclint_viewmodel_tests)
 
-        # Invocation & Stage 01 Integration test (B02 / B02H / I01 / I02)
+        # Invocation 
         add_executable(roclint_invocation_tests
             tests/viewmodel/test_invocation_binding.cpp
         )
@@ -243,5 +400,21 @@ if(BUILD_TESTING)
         target_include_directories(roclint_invocation_tests PRIVATE tests app/host)
         target_compile_features(roclint_invocation_tests PRIVATE cxx_std_20)
         add_test(NAME roclint_invocation_binding COMMAND roclint_invocation_tests)
+
+        # Host Persistence
+        add_executable(roclint_persistence_tests
+            tests/viewmodel/test_host_persistence.cpp
+        )
+
+        target_link_libraries(roclint_persistence_tests PRIVATE
+            roclint_host_lib
+            roclint_core
+            roclint_storage
+            Qt6::Core
+        )
+
+        target_include_directories(roclint_persistence_tests PRIVATE tests app/host)
+        target_compile_features(roclint_persistence_tests PRIVATE cxx_std_20)
+        add_test(NAME roclint_host_persistence COMMAND roclint_persistence_tests)
     endif()
 endif()

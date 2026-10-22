@@ -80,7 +80,7 @@ Window {
     property int currentTab: 0
 
     // Settings Model Properties
-    property string graniteQuantization: "Q4_K_M"
+    property string graniteQuantization: "Q8_0"
     property string graniteResidency: "IDLE_MAPPED"
     property int contextLength: 4096
     property string scorerMode: "jev" // "jev" or "julia"
@@ -134,13 +134,24 @@ Window {
         color: dashboardWindow.bgColor
         border.color: dashboardWindow.borderColor
         border.width: 2
-        radius: 16
+        radius: dashboardWindow.visibility === Window.Maximized ? 0 : 16
 
         MouseArea {
             id: windowDragArea
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton
             onPressed: dashboardWindow.startSystemMove()
+            onDoubleClicked: function(mouse) {
+                if (mouse.y <= 48) {
+                    if (dashboardWindow.visibility === Window.Maximized) {
+                        dashboardWindow.showNormal();
+                        dashboardWindow.showToast("WINDOW RESTORED");
+                    } else {
+                        dashboardWindow.showMaximized();
+                        dashboardWindow.showToast("WINDOW MAXIMIZED");
+                    }
+                }
+            }
         }
 
         // =====================================================================
@@ -213,11 +224,11 @@ Window {
         Rectangle {
             id: subBorderInset
             anchors.fill: parent
-            anchors.margins: 10
+            anchors.margins: dashboardWindow.visibility === Window.Maximized ? 6 : 10
             color: dashboardWindow.bgColor
             border.color: dashboardWindow.borderColor
             border.width: 1
-            radius: 10
+            radius: dashboardWindow.visibility === Window.Maximized ? 0 : 10
             clip: true
 
             ColumnLayout {
@@ -272,8 +283,13 @@ Window {
 
                     // Status Badge
                     Rectangle {
+                        id: hostStatusBadge
+                        implicitHeight: 20
+                        implicitWidth: hostStatusLabel.implicitWidth + 12
+                        Layout.preferredHeight: 20
+                        Layout.preferredWidth: implicitWidth
                         height: 20
-                        width: hostStatusLabel.contentWidth + 12
+                        width: implicitWidth
                         color: "transparent"
                         border.color: "#7EE787"
                         border.width: 1
@@ -291,8 +307,13 @@ Window {
 
                     // Window Minimize [-]
                     Rectangle {
+                        id: minButton
                         width: 22
                         height: 20
+                        implicitWidth: 22
+                        implicitHeight: 20
+                        Layout.preferredWidth: 22
+                        Layout.preferredHeight: 20
                         color: minMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
                         border.color: dashboardWindow.borderColor
                         border.width: 1
@@ -313,10 +334,52 @@ Window {
                         }
                     }
 
-                    // Window Close [x]
+                    // Window Maximize / Restore Toggle [+] / [=]
                     Rectangle {
+                        id: maxButton
                         width: 22
                         height: 20
+                        implicitWidth: 22
+                        implicitHeight: 20
+                        Layout.preferredWidth: 22
+                        Layout.preferredHeight: 20
+                        color: maxMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
+                        border.color: dashboardWindow.borderColor
+                        border.width: 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: dashboardWindow.visibility === Window.Maximized ? "[=]" : "[+]"
+                            font.family: dashboardWindow.monoFont
+                            font.pixelSize: 9
+                            color: dashboardWindow.fgColor
+                        }
+                        MouseArea {
+                            id: maxMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (dashboardWindow.visibility === Window.Maximized) {
+                                    dashboardWindow.showNormal();
+                                    dashboardWindow.showToast("WINDOW RESTORED");
+                                } else {
+                                    dashboardWindow.showMaximized();
+                                    dashboardWindow.showToast("WINDOW MAXIMIZED");
+                                }
+                            }
+                        }
+                    }
+
+                    // Window Close [x]
+                    Rectangle {
+                        id: closeButton
+                        width: 22
+                        height: 20
+                        implicitWidth: 22
+                        implicitHeight: 20
+                        Layout.preferredWidth: 22
+                        Layout.preferredHeight: 20
                         color: closeMouse.containsMouse ? "#8B1E1E" : "transparent"
                         border.color: dashboardWindow.borderColor
                         border.width: 1
@@ -566,7 +629,8 @@ Window {
                                                 Repeater {
                                                     model: [
                                                         { id: "Q4_K_M", label: "[ Q4_K_M :: 2.1 GB :: FAST ]" },
-                                                        { id: "Q5_K_M", label: "[ Q5_K_M :: 2.6 GB :: HIGH FIDELITY ]" }
+                                                        { id: "Q5_K_M", label: "[ Q5_K_M :: 2.6 GB :: BALANCED ]" },
+                                                        { id: "Q8_0", label: "[ Q8_0 :: 3.4 GB :: MAXIMUM FIDELITY ]" }
                                                     ]
                                                     delegate: Rectangle {
                                                         width: quantTxt.contentWidth + 16
@@ -1158,10 +1222,12 @@ Window {
                                                 Layout.preferredWidth: 100
                                             }
                                             Text {
-                                                text: "~/Library/Application Support/roclint/roclint.db"
+                                                text: (typeof hostController !== "undefined" && hostController.databasePath.length > 0) ? hostController.databasePath : "~/Library/Application Support/roclint/history.db"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 9
                                                 color: dashboardWindow.fgColor
+                                                elide: Text.ElideMiddle
+                                                Layout.fillWidth: true
                                             }
                                         }
 
@@ -1174,7 +1240,7 @@ Window {
                                                 Layout.preferredWidth: 100
                                             }
                                             Text {
-                                                text: "WAL MODE ENABLED  |  0 SESSIONS  |  0 REVISIONS  |  SCHEMA v1"
+                                                text: (typeof hostController !== "undefined" && hostController.databaseStats.length > 0) ? hostController.databaseStats : "WAL MODE ENABLED  |  0 SESSIONS  |  SCHEMA v2"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 9
                                                 font.bold: true
@@ -1191,7 +1257,7 @@ Window {
                                                 Layout.preferredWidth: 100
                                             }
                                             Text {
-                                                text: "[ 90 DAYS (AUTOMATIC ROLL-OFF) ]"
+                                                text: "[ PERSISTENT LOCAL WAL — ZERO CLOUD LEAKAGE ]"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 9
                                                 color: dashboardWindow.fgColor
@@ -1236,7 +1302,7 @@ Window {
                                                 Text {
                                                     id: vacTxt
                                                     anchors.centerIn: parent
-                                                    text: "[ VACUUM DATABASE ]"
+                                                    text: "[ REFRESH STATS ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 9
                                                     color: dashboardWindow.mutedTextColor
@@ -1246,7 +1312,12 @@ Window {
                                                     anchors.fill: parent
                                                     hoverEnabled: true
                                                     cursorShape: Qt.PointingHandCursor
-                                                    onClicked: dashboardWindow.showToast("DATABASE VACUUMED")
+                                                    onClicked: {
+                                                        if (typeof hostController !== "undefined") {
+                                                            hostController.refreshStorageStats();
+                                                        }
+                                                        dashboardWindow.showToast("STORAGE STATS REFRESHED");
+                                                    }
                                                 }
                                             }
 
@@ -1270,7 +1341,147 @@ Window {
                                                     anchors.fill: parent
                                                     hoverEnabled: true
                                                     cursorShape: Qt.PointingHandCursor
-                                                    onClicked: dashboardWindow.showToast("HISTORY PURGED")
+                                                    onClicked: {
+                                                        if (typeof hostController !== "undefined") {
+                                                            hostController.purgeHistory();
+                                                        }
+                                                        dashboardWindow.showToast("HISTORY PURGED");
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    text: "/* RECENT PROMPT SESSIONS & REVISION LINEAGE */"
+                                    font.family: dashboardWindow.monoFont
+                                    font.pixelSize: 11
+                                    font.bold: true
+                                    color: dashboardWindow.fgColor
+                                }
+
+                                ListView {
+                                    id: sessionListView
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 320
+                                    clip: true
+                                    spacing: 8
+                                    model: (typeof hostController !== "undefined") ? hostController.getRecentSessions() : []
+
+                                    Connections {
+                                        target: typeof hostController !== "undefined" ? hostController : null
+                                        function onSessionListChanged() {
+                                            sessionListView.model = hostController.getRecentSessions();
+                                        }
+                                    }
+
+                                    delegate: Rectangle {
+                                        width: sessionListView.width
+                                        height: 60
+                                        color: dashboardWindow.inputBgColor
+                                        border.color: dashboardWindow.borderColor
+                                        border.width: 1
+
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.margins: 10
+                                            spacing: 12
+
+                                            ColumnLayout {
+                                                Layout.fillWidth: true
+                                                spacing: 4
+
+                                                RowLayout {
+                                                    spacing: 8
+                                                    Text {
+                                                        text: modelData.sessionId
+                                                        font.family: dashboardWindow.monoFont
+                                                        font.pixelSize: 10
+                                                        font.bold: true
+                                                        color: "#58A6FF"
+                                                    }
+                                                    Text {
+                                                        text: "• " + modelData.formattedTime
+                                                        font.family: dashboardWindow.monoFont
+                                                        font.pixelSize: 9
+                                                        color: dashboardWindow.mutedTextColor
+                                                    }
+                                                    Text {
+                                                        text: "[" + modelData.revisionCount + " revs]"
+                                                        font.family: dashboardWindow.monoFont
+                                                        font.pixelSize: 9
+                                                        color: "#7EE787"
+                                                    }
+                                                }
+
+                                                Text {
+                                                    text: modelData.latestPrompt ? (modelData.latestPrompt.length > 70 ? (modelData.latestPrompt.substring(0, 70) + "...") : modelData.latestPrompt) : "(empty)"
+                                                    font.family: dashboardWindow.monoFont
+                                                    font.pixelSize: 9
+                                                    color: dashboardWindow.fgColor
+                                                    elide: Text.ElideRight
+                                                    Layout.fillWidth: true
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                width: 72
+                                                height: 24
+                                                color: restMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
+                                                border.color: "#58A6FF"
+                                                border.width: 1
+
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: "RESTORE"
+                                                    font.family: dashboardWindow.monoFont
+                                                    font.pixelSize: 8
+                                                    font.bold: true
+                                                    color: "#58A6FF"
+                                                }
+
+                                                MouseArea {
+                                                    id: restMouse
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        if (typeof hostController !== "undefined") {
+                                                            hostController.restoreSession(modelData.sessionId);
+                                                            dashboardWindow.showToast("SESSION RESTORED");
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                width: 60
+                                                height: 24
+                                                color: delMouse.containsMouse ? "#8B1E1E" : "transparent"
+                                                border.color: "#EF4444"
+                                                border.width: 1
+
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: "DELETE"
+                                                    font.family: dashboardWindow.monoFont
+                                                    font.pixelSize: 8
+                                                    font.bold: true
+                                                    color: "#EF4444"
+                                                }
+
+                                                MouseArea {
+                                                    id: delMouse
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        if (typeof hostController !== "undefined") {
+                                                            hostController.deleteSession(modelData.sessionId);
+                                                            dashboardWindow.showToast("SESSION DELETED");
+                                                        }
+                                                    }
                                                 }
                                             }
                                         }

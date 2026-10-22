@@ -256,9 +256,9 @@ void testSchemaVersionAndMigration()
     ROCLINT_CHECK(fetched.has_value());
     ROCLINT_CHECK(fetched->text() == "V1 prompt");
 
-    // Idempotent: migrating again does not change version or corrupt data
+    // Idempotent: migrating again advances to latest schema version without corrupting data
     repo.migrate();
-    ROCLINT_CHECK(repo.getSchemaVersion() == 2);
+    ROCLINT_CHECK(repo.getSchemaVersion() == PromptRepository::CURRENT_SCHEMA_VERSION);
 }
 
 void testTransactionRollback()
