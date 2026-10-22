@@ -56,20 +56,14 @@ namespace roclint::storage
 
         if(rc != SQLITE_OK)
         {
-            std::string errorMessage = "Failed to open database: ";
-            if (isOpen()) 
-            {
-                errorMessage += sqlite3_errmsg(db_);
-            } 
-            else 
-            {
-                errorMessage += "Unknown error (database handle was null)";
-            }
+            const std::string errorMessage = "Failed to open database: " + 
+                (db_ ? std::string(sqlite3_errmsg(db_)) : std::string("unknown error (database handle was null)"));
             close();
             throw std::runtime_error(errorMessage);
-            
         }
 
+        sqlite3_exec(db_, "PRAGMA foreign_keys = ON;", nullptr, nullptr, nullptr);
+        sqlite3_exec(db_, "PRAGMA journal_mode = WAL;", nullptr, nullptr, nullptr);
     }
     void Database::close() noexcept
     {
@@ -98,16 +92,16 @@ namespace roclint::storage
 
         const int rc = sqlite3_exec(db_, sql.c_str(), nullptr, nullptr, &errMsg);
         if (rc != SQLITE_OK) {
-        std::string error = "SQLite execution error: ";
-        if (errMsg) {
-            error += errMsg;
-            sqlite3_free(errMsg);
-        } else {
-            error += sqlite3_errmsg(db_);
+            std::string error = "SQLite execution error: ";
+            if (errMsg) {
+                error += errMsg;
+                sqlite3_free(errMsg);
+            } else {
+                error += sqlite3_errmsg(db_);
+            }
+            throw std::runtime_error(error);
         }
-        throw std::runtime_error(error);
     }
-}
 
 void Database::initializeSchema()
 {

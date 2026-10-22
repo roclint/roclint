@@ -625,6 +625,10 @@ QString HostController::synthesizeRewrite(const QString& promptOverride) {
     if (!m_confirmedIntent.has_value()) {
         rebuildConfirmedIntent();
     }
+    if (!m_confirmedIntent.has_value()) {
+        std::cerr << "[HostController] Cannot synthesize rewrite: no confirmed intent\n";
+        return QString();
+    }
 
     const std::string revId = m_revisionState ? m_revisionState->currentRevision().revisionId().value() : "rev_1";
     const std::string sessId = m_revisionState ? m_revisionState->currentRevision().sessionId().value() : "sess_1";
@@ -739,9 +743,10 @@ void HostController::analyzePrompt(const QString& text) {
         }
     }
     if (!hasAnySpan && !promptStr.empty()) {
-        const std::size_t end = std::min(promptStr.size(), promptStr.find(' '));
+        const auto spacePos = promptStr.find(' ');
+        const std::size_t spanEnd = (spacePos != std::string::npos && spacePos > 0) ? spacePos : promptStr.size();
         for (auto& alt : group.alternatives) {
-            alt.evidence.push_back(core::analysis::SourceSpan{0, (end != std::string::npos && end > 0) ? end : promptStr.size()});
+            alt.evidence.push_back(core::analysis::SourceSpan{0, spanEnd});
         }
     }
 

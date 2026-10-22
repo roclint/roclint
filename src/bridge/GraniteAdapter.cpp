@@ -77,7 +77,10 @@ public:
             if (c == '"') {
                 return true;
             }
-            if (c == '\\' && pos_ < src_.size()) {
+            if (c == '\\') {
+                if (pos_ >= src_.size()) {
+                    return false;
+                }
                 char esc = src_[pos_++];
                 switch (esc) {
                     case '"':  out += '"';  break;
@@ -90,9 +93,10 @@ public:
                     case 't':  out += '\t'; break;
                     case 'u':
                         if (pos_ + 4 <= src_.size()) {
-                            // Skip raw hex unicode sequence for simplicity
                             pos_ += 4;
                             out += '?';
+                        } else {
+                            return false;
                         }
                         break;
                     default:   out += esc;  break;
@@ -119,7 +123,7 @@ public:
             while (pos_ < src_.size() && depth > 0) {
                 if (src_[pos_] == '"') {
                     std::string dummy;
-                    parseString(dummy);
+                    if (!parseString(dummy)) return false;
                     continue;
                 }
                 if (src_[pos_] == '{') ++depth;
@@ -134,7 +138,7 @@ public:
             while (pos_ < src_.size() && depth > 0) {
                 if (src_[pos_] == '"') {
                     std::string dummy;
-                    parseString(dummy);
+                    if (!parseString(dummy)) return false;
                     continue;
                 }
                 if (src_[pos_] == '[') ++depth;
@@ -211,8 +215,11 @@ GraniteOptionDiscoveryResponse parseDiscoveryResponse(std::string_view jsonRespo
             foundGroup = true;
             while (parser.peek() != '}' && parser.hasMore()) {
                 std::string gKey;
-                parser.parseString(gKey);
-                parser.expect(':');
+                if (!parser.parseString(gKey) || !parser.expect(':')) {
+                    response.success = false;
+                    response.errorMessage = "Malformed JSON: Expected key-value pair in 'choice_group'";
+                    return response;
+                }
                 if (gKey == "id") {
                     parser.parseString(group.id);
                 } else if (gKey == "dimension") {
@@ -235,8 +242,11 @@ GraniteOptionDiscoveryResponse parseDiscoveryResponse(std::string_view jsonRespo
                         core::analysis::ChoiceAlternative alt;
                         while (parser.peek() != '}' && parser.hasMore()) {
                             std::string aKey;
-                            parser.parseString(aKey);
-                            parser.expect(':');
+                            if (!parser.parseString(aKey) || !parser.expect(':')) {
+                                response.success = false;
+                                response.errorMessage = "Malformed JSON: Expected key-value pair in 'alternative'";
+                                return response;
+                            }
                             if (aKey == "id") {
                                 parser.parseString(alt.id);
                             } else if (aKey == "label" || aKey == "interpretation") {
@@ -318,8 +328,23 @@ GraniteOptionDiscoveryResponse GraniteAdapter::discoverOptions(const GraniteOpti
 
     if (mockHandler_) {
         state_ = GraniteRuntimeState::Busy;
-        std::string rawJson = mockHandler_(req);
-        state_ = GraniteRuntimeState::Ready;
+        std::string rawJson;
+        try {
+            rawJson = mockHandler_(req);
+            state_ = GraniteRuntimeState::Ready;
+        } catch (const std::exception& ex) {
+            state_ = GraniteRuntimeState::Failed;
+            GraniteOptionDiscoveryResponse res;
+            res.success = false;
+            res.errorMessage = std::string("Mock handler exception: ") + ex.what();
+            return res;
+        } catch (...) {
+            state_ = GraniteRuntimeState::Failed;
+            GraniteOptionDiscoveryResponse res;
+            res.success = false;
+            res.errorMessage = "Mock handler threw an unknown exception";
+            return res;
+        }
 
         auto response = parseDiscoveryResponse(rawJson, req.revisionId);
         const auto endTime = std::chrono::steady_clock::now();
