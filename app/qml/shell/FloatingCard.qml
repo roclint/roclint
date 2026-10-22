@@ -1114,7 +1114,12 @@ Window {
                                 }
 
                                 Text {
-                                    text: (rootWindow.targetLocalFile.length > 0 ? rootWindow.targetLocalFile : "Select file...") + " " + (typeof fileDropdown !== "undefined" && fileDropdown.visible ? "▴" : "▾")
+                                    readonly property string displayFileName: {
+                                        if (!rootWindow.targetLocalFile || rootWindow.targetLocalFile.length === 0) return "Select file...";
+                                        var parts = rootWindow.targetLocalFile.split("/");
+                                        return parts[parts.length - 1];
+                                    }
+                                    text: displayFileName + " " + (typeof fileDropdown !== "undefined" && fileDropdown.visible ? "▴" : "▾")
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -2356,7 +2361,7 @@ Window {
                 id: fileDropdown
                 visible: false
                 z: 999
-                width: 320
+                width: 340
                 property string filterText: ""
                 readonly property var filteredFiles: {
                     if (!filterText || filterText.trim() === "") return rootWindow.projectFiles;
@@ -2365,7 +2370,8 @@ Window {
                         return f.toLowerCase().indexOf(ft) !== -1;
                     });
                 }
-                height: fileDropdownContent.implicitHeight
+                // Clamp height to available window space so it never clips or cuts through
+                height: Math.min(280, Math.max(140, subBorderInset.height - y - 12))
 
                 // Hard shadow
                 Rectangle {
@@ -2383,10 +2389,11 @@ Window {
                     border.color: rootWindow.borderColor
                     border.width: 1
                     radius: 4
+                    clip: true
 
                     ColumnLayout {
                         id: fileDropdownContent
-                        width: parent.width
+                        anchors.fill: parent
                         spacing: 0
 
                         // Title Strip
@@ -2400,7 +2407,7 @@ Window {
                                 anchors.leftMargin: 8
                                 anchors.rightMargin: 8
                                 Text {
-                                    text: "SELECT TARGET FILE"
+                                    text: "SELECT TARGET FILE (" + fileDropdown.filteredFiles.length + ")"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -2467,12 +2474,30 @@ Window {
                             }
                         }
 
-                        // File List
-                        Repeater {
+                        // Scrollable File List (Smooth mouse & wheel scroll)
+                        ListView {
+                            id: fileListView
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            clip: true
+                            boundsBehavior: Flickable.StopAtBounds
                             model: fileDropdown.filteredFiles
+
+                            ScrollBar.vertical: ScrollBar {
+                                id: fileScrollBar
+                                active: true
+                                policy: ScrollBar.AsNeeded
+                                width: 8
+                                contentItem: Rectangle {
+                                    implicitWidth: 6
+                                    radius: 3
+                                    color: fileScrollBar.pressed ? "#FFB000" : (fileScrollBar.hovered ? rootWindow.fgColor : rootWindow.borderColor)
+                                }
+                            }
+
                             delegate: Rectangle {
-                                Layout.fillWidth: true
-                                height: 28
+                                width: fileListView.width
+                                height: 32
                                 readonly property string fileName: {
                                     var parts = modelData.split("/");
                                     return parts[parts.length - 1];
@@ -2483,7 +2508,7 @@ Window {
                                 RowLayout {
                                     anchors.fill: parent
                                     anchors.leftMargin: 8
-                                    anchors.rightMargin: 8
+                                    anchors.rightMargin: 12
                                     spacing: 8
 
                                     Text {
@@ -2502,6 +2527,7 @@ Window {
                                             font.bold: isSelected
                                             font.pixelSize: 9
                                             color: isSelected ? "#FFB000" : rootWindow.fgColor
+                                            elide: Text.ElideRight
                                         }
                                         Text {
                                             text: modelData
@@ -2509,7 +2535,7 @@ Window {
                                             font.pixelSize: 7
                                             color: rootWindow.mutedTextColor
                                             elide: Text.ElideMiddle
-                                            Layout.maximumWidth: 260
+                                            Layout.fillWidth: true
                                         }
                                     }
                                 }
@@ -2520,7 +2546,7 @@ Window {
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        rootWindow.targetLocalFile = fileName;
+                                        rootWindow.targetLocalFile = modelData;
                                         rootWindow.showToast("TARGET FILE: " + fileName);
                                         fileDropdown.visible = false;
                                     }
@@ -2532,7 +2558,7 @@ Window {
                         Rectangle {
                             visible: fileDropdown.filteredFiles.length === 0
                             Layout.fillWidth: true
-                            height: 30
+                            Layout.fillHeight: true
                             color: "transparent"
                             Text {
                                 anchors.centerIn: parent
