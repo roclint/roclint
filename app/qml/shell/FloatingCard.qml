@@ -18,21 +18,10 @@ Window {
     readonly property string sansFont: isMac ? "Helvetica Neue" : "Arial"
     readonly property string serifFont: isMac ? "Times New Roman" : "Georgia"
 
-    // Model Hot-Swapping System (Ollama / Unsloth style)
-    property var modelList: [
-        { name: "Llama-3.2-3B-Instruct", quant: "Q8_0" },
-        { name: "DeepSeek-Coder-6.7B", quant: "Q8_0" },
-        { name: "Qwen-2.5-Coder-7B", quant: "Q8_0" },
-        { name: "Mistral-7B-v0.3", quant: "Q8_0" }
-    ]
-    property int currentModelIndex: 0
-    readonly property var activeModel: modelList[currentModelIndex]
-
     // Active Project / Workspace System (Antigravity-aligned)
     property var projectList: [
         { name: "roclint", path: "/Users/jesse/roclint" },
-        { name: "Stardust_v4_2", path: "/Users/jesse/Stardust_v4_2 2" },
-        { name: "cadroc-core", path: "~/code/cadroc-core" }
+        { name: "Stardust_v4_2", path: "/Users/jesse/Stardust_v4_2 2" }
     ]
     property int currentProjectIndex: 0
     readonly property var activeProject: projectList[currentProjectIndex]
@@ -88,7 +77,6 @@ Window {
     onCurrentProjectIndexChanged: {
         refreshProjectFiles();
     }
-    property bool telemetryMaximized: false
     property bool isCompiledPreview: false
     property string originalDraft: ""
 
@@ -168,9 +156,6 @@ Window {
 
     property bool isClarificationActive: false
     property string toastMessage: ""
-    property real liveLatency: 4.8
-    property real liveCpu: 0.02
-    property real liveRam: 40.2
     property int maxTokens: 350
     property bool pinToTop: true
     property bool hasBeenActive: false
@@ -364,7 +349,6 @@ Window {
     function openFileDropdown() {
         activeScope = "local";
         projectDropdown.visible = false;
-        modelDropdown.visible = false;
         if (typeof fileDropdown !== "undefined") {
             fileDropdown.filterText = "";
             if (typeof fileSearchInput !== "undefined") fileSearchInput.text = "";
@@ -400,17 +384,6 @@ Window {
         }
     }
 
-    // Telemetry Jitter Simulation (Matches HTML prototype)
-    Timer {
-        interval: 1400
-        running: true
-        repeat: true
-        onTriggered: {
-            rootWindow.liveRam = Number((39.8 + Math.random() * 0.8).toFixed(1));
-            rootWindow.liveCpu = Number((0.01 + Math.random() * 0.03).toFixed(2));
-            rootWindow.liveLatency = Number((4.6 + Math.random() * 0.5).toFixed(1));
-        }
-    }
 
 
     function classifyIntent(text) {
@@ -449,9 +422,7 @@ Window {
     Shortcut {
         sequence: "Esc"
         onActivated: {
-            if (modelDropdown.visible) {
-                modelDropdown.visible = false;
-            } else if (projectDropdown.visible) {
+            if (projectDropdown.visible) {
                 projectDropdown.visible = false;
             } else if (typeof fileDropdown !== "undefined" && fileDropdown.visible) {
                 fileDropdown.visible = false;
@@ -491,13 +462,6 @@ Window {
         onActivated: rootWindow.commitChoice(3)
     }
 
-    Shortcut {
-        sequences: ["Alt+M", "Ctrl+M"]
-        onActivated: {
-            rootWindow.telemetryMaximized = !rootWindow.telemetryMaximized;
-            rootWindow.showToast(rootWindow.telemetryMaximized ? "PERFORMANCE: EXPANDED" : "PERFORMANCE: MINIMIZED");
-        }
-    }
 
     Shortcut {
         sequences: [StandardKey.Preferences]
@@ -696,7 +660,6 @@ Window {
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
-                                modelDropdown.visible = false;
                                 if (!projectDropdown.visible) {
                                     var pt = projectSelectorButton.mapToItem(subBorderInset, 0, projectSelectorButton.height + 4);
                                     projectDropdown.x = pt.x;
@@ -704,59 +667,6 @@ Window {
                                     projectDropdown.visible = true;
                                 } else {
                                     projectDropdown.visible = false;
-                                }
-                            }
-                        }
-                    }
-
-                    // Model Dropdown Selector Pill
-                    Rectangle {
-                        id: modelSelectorButton
-                        visible: rootWindow.width >= 570
-                        height: 20
-                        width: Math.min(160, modelRow.implicitWidth + 12)
-                        clip: true
-                        color: (modelDropdown.visible || modelMouse.containsMouse) ? rootWindow.dimColor : "transparent"
-                        border.color: modelDropdown.visible ? rootWindow.fgColor : rootWindow.borderColor
-                        border.width: 1
-
-                        RowLayout {
-                            id: modelRow
-                            anchors.centerIn: parent
-                            spacing: 4
-
-                            Text {
-                                text: "MODEL:"
-                                visible: rootWindow.width >= 760
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 8
-                                color: rootWindow.mutedTextColor
-                            }
-                            Text {
-                                text: (rootWindow.width >= 780 ? rootWindow.activeModel.name : "Llama-3.2") + " " + (modelDropdown.visible ? "▴" : "▾")
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 8
-                                color: rootWindow.fgColor
-                                elide: Text.ElideRight
-                                Layout.maximumWidth: 110
-                            }
-                        }
-
-                        MouseArea {
-                            id: modelMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (!modelDropdown.visible) {
-                                    var pt = modelSelectorButton.mapToItem(subBorderInset, 0, modelSelectorButton.height + 4);
-                                    modelDropdown.x = pt.x;
-                                    modelDropdown.y = pt.y;
-                                    modelDropdown.visible = true;
-                                } else {
-                                    modelDropdown.visible = false;
                                 }
                             }
                         }
@@ -1136,7 +1046,6 @@ Window {
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     projectDropdown.visible = false;
-                                    modelDropdown.visible = false;
                                     if (typeof fileDropdown !== "undefined") {
                                         if (!fileDropdown.visible) {
                                             fileDropdown.filterText = "";
@@ -1676,304 +1585,55 @@ Window {
                     }
 
                 // =============================================================
-                // 3. INDUSTRIAL TELEMETRY GAUGES (Minimized / Maximized)
+                // 3. TELEMETRY STRIP (Real System & Compiler Metrics)
                 // =============================================================
-                Item {
-                    id: telemetryContainer
+                Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: rootWindow.telemetryMaximized ? 46 : 22
-                    Layout.maximumHeight: rootWindow.telemetryMaximized ? 48 : 22
-                    Layout.fillHeight: false
-                    clip: true
+                    Layout.preferredHeight: 22
+                    color: "transparent"
+                    border.color: rootWindow.borderColor
+                    border.width: 1
+                    radius: 3
 
-                    Behavior on Layout.preferredHeight {
-                        NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
-                    }
-
-                    // MAXIMIZED VIEW (4 Detailed Gauge Columns)
                     RowLayout {
                         anchors.fill: parent
-                        visible: rootWindow.telemetryMaximized
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 8
                         spacing: 8
 
-                        // Gauge 1: RAM
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 46
-                            Layout.fillHeight: false
-                            color: "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 6
-                                spacing: 1
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Text { text: "RAM:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                    Text { text: rootWindow.liveRam.toFixed(1) + " MB"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 9; color: rootWindow.fgColor }
-                                }
-                                Text {
-                                    text: "[■■□□□□□□□□]"
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 11
-                                    color: rootWindow.fgColor
-                                }
-                            }
+                        Text {
+                            text: (rootWindow.width >= 640 ? "LENGTH: " : "") + Math.ceil(promptInput.text.length / 4) + "/" + rootWindow.maxTokens + " TOKENS"
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 8
+                            color: (Math.ceil(promptInput.text.length / 4) > rootWindow.maxTokens) ? "#FF4D4D" : rootWindow.fgColor
                         }
 
-                        // Gauge 2: Latency
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 46
-                            Layout.fillHeight: false
-                            color: "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
+                        Text { text: "│"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
 
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 6
-                                spacing: 1
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Text { text: "LATENCY:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                    Text { text: "REALTIME"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor }
-                                }
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Text { text: "LATENCY: " + rootWindow.liveLatency.toFixed(1) + " MS"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 10; color: rootWindow.fgColor }
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                    Text { text: "±0.02"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
-                                }
-                            }
+                        Text {
+                            text: "REVISION: v" + (typeof hostController !== "undefined" ? hostController.stateVersion : "0")
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 8
+                            color: rootWindow.fgColor
                         }
 
-                        // Gauge 3: Prompt Size
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 46
-                            Layout.fillHeight: false
-                            color: "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
+                        Text { text: "│"; visible: rootWindow.width >= 620; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
 
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 6
-                                spacing: 1
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Text { text: rootWindow.width >= 640 ? "PROMPT SIZE:" : "SIZE:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                    Text {
-                                        text: (rootWindow.width >= 640 ? (Math.ceil(promptInput.text.length / 4) + " / " + rootWindow.maxTokens + " TOKENS") : (Math.ceil(promptInput.text.length / 4) + "/" + rootWindow.maxTokens))
-                                        font.family: rootWindow.monoFont
-                                        font.bold: true
-                                        font.pixelSize: 8
-                                        color: (Math.ceil(promptInput.text.length / 4) > rootWindow.maxTokens) ? "#FF4D4D" : rootWindow.fgColor
-                                    }
-                                }
-                                Text {
-                                    text: {
-                                        const count = Math.ceil(promptInput.text.length / 4);
-                                        const total = 12;
-                                        const filled = Math.min(total, Math.floor((count / rootWindow.maxTokens) * total));
-                                        let s = "[";
-                                        for (let i = 0; i < total; ++i) {
-                                            s += (i < filled) ? "█" : "░";
-                                        }
-                                        return s + "]";
-                                    }
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 11
-                                    color: (Math.ceil(promptInput.text.length / 4) > rootWindow.maxTokens) ? "#FF4D4D" : rootWindow.fgColor
-                                }
-                            }
+                        Text {
+                            visible: rootWindow.width >= 620
+                            text: "DISPATCH: " + (typeof hostController !== "undefined" && hostController.directInjectionEnabled ? "IN-PLACE" : "CLIPBOARD")
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 8
+                            color: rootWindow.fgColor
                         }
 
-                        // Gauge 4: CPU + Quick Minimize Button
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 46
-                            Layout.fillHeight: false
-                            color: "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
+                        Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 6
-                                spacing: 1
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Text { text: "CPU:"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.75 }
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                    Text { text: rootWindow.liveCpu.toFixed(2) + "%"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 9; color: rootWindow.fgColor }
-                                }
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Text { text: rootWindow.width >= 640 ? "64 THREADS" : "64 TH"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 10; color: rootWindow.fgColor }
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-
-                                    Rectangle {
-                                        height: 12
-                                        width: nomText.contentWidth + 6
-                                        color: rootWindow.fgColor
-                                        Text {
-                                            id: nomText
-                                            anchors.centerIn: parent
-                                            text: "READY"
-                                            font.family: rootWindow.monoFont
-                                            font.bold: true
-                                            font.pixelSize: 7
-                                            color: rootWindow.bgColor
-                                        }
-                                    }
-
-                                    // Minimize Toggle Button
-                                    Rectangle {
-                                        height: 12
-                                        width: minBtnText.contentWidth + 8
-                                        color: minBtnMouse.containsMouse ? rootWindow.dimColor : "transparent"
-                                        border.color: rootWindow.borderColor
-                                        border.width: 1
-                                        radius: 2
-
-                                        Text {
-                                            id: minBtnText
-                                            anchors.centerIn: parent
-                                            text: "▾ MIN"
-                                            font.family: rootWindow.monoFont
-                                            font.bold: true
-                                            font.pixelSize: 7
-                                            color: rootWindow.fgColor
-                                        }
-                                        MouseArea {
-                                            id: minBtnMouse
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: {
-                                                rootWindow.telemetryMaximized = false;
-                                                rootWindow.showToast("PERFORMANCE: MINIMIZED");
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // MINIMIZED VIEW (Compact 1-line Ticker Strip)
-                    Rectangle {
-                        anchors.fill: parent
-                        visible: !rootWindow.telemetryMaximized
-                        color: "transparent"
-                        border.color: rootWindow.borderColor
-                        border.width: 1
-                        radius: 3
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 8
-                            anchors.rightMargin: 8
-                            spacing: 8
-
-                            Text {
-                                text: "PERFORMANCE:"
-                                visible: rootWindow.width >= 680
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 8
-                                color: rootWindow.mutedTextColor
-                            }
-
-                            Text {
-                                text: "RAM: " + rootWindow.liveRam.toFixed(1) + " MB"
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 8
-                                color: rootWindow.fgColor
-                            }
-
-                            Text { text: "│"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
-
-                            Text {
-                                text: "LATENCY: " + rootWindow.liveLatency.toFixed(1) + " MS"
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 8
-                                color: rootWindow.fgColor
-                            }
-
-                            Text { text: "│"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
-
-                            Text {
-                                text: (rootWindow.width >= 720 ? "LENGTH: " : "") + Math.ceil(promptInput.text.length / 4) + "/" + rootWindow.maxTokens + (rootWindow.width >= 720 ? " TOKENS" : "")
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 8
-                                color: (Math.ceil(promptInput.text.length / 4) > rootWindow.maxTokens) ? "#FF4D4D" : rootWindow.fgColor
-                            }
-
-                            Text { text: "│"; visible: rootWindow.width >= 640; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
-
-                            Text {
-                                visible: rootWindow.width >= 640
-                                text: "CPU: " + rootWindow.liveCpu.toFixed(1) + "%" + (rootWindow.width >= 780 ? " (64 THREADS)" : "")
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 8
-                                color: rootWindow.fgColor
-                            }
-
-
-                            Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-
-                            // Expand Button on Ticker
-                            Rectangle {
-                                height: 14
-                                width: maxBtnText.contentWidth + 8
-                                color: maxBtnMouse.containsMouse ? rootWindow.dimColor : "transparent"
-                                border.color: rootWindow.borderColor
-                                border.width: 1
-                                radius: 2
-
-                                Text {
-                                    id: maxBtnText
-                                    anchors.centerIn: parent
-                                    text: "▴ EXPAND"
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 7
-                                    color: rootWindow.fgColor
-                                }
-                                MouseArea {
-                                    id: maxBtnMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        rootWindow.telemetryMaximized = true;
-                                        rootWindow.showToast("PERFORMANCE: EXPANDED");
-                                    }
-                                }
-                            }
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                rootWindow.telemetryMaximized = true;
-                                rootWindow.showToast("PERFORMANCE: EXPANDED");
-                            }
+                        Text {
+                            text: "SESSIONS: " + (typeof hostController !== "undefined" ? hostController.sessionCount : "0")
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 8
+                            color: rootWindow.mutedTextColor
                         }
                     }
                 }
@@ -2176,10 +1836,9 @@ Window {
             MouseArea {
                 id: dropdownBackdrop
                 anchors.fill: parent
-                visible: modelDropdown.visible || projectDropdown.visible || (typeof fileDropdown !== "undefined" && fileDropdown.visible)
+                visible: projectDropdown.visible || (typeof fileDropdown !== "undefined" && fileDropdown.visible)
                 z: 990
                 onClicked: {
-                    modelDropdown.visible = false;
                     projectDropdown.visible = false;
                     if (typeof fileDropdown !== "undefined") fileDropdown.visible = false;
                 }
@@ -2567,196 +2226,6 @@ Window {
                                 font.family: rootWindow.monoFont
                                 font.pixelSize: 8
                                 color: rootWindow.mutedTextColor
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Neo-Brutalist Model Dropdown Menu
-            Item {
-                id: modelDropdown
-                visible: false
-                z: 999
-                width: 320
-                height: dropdownContent.implicitHeight
-
-                // Hard shadow
-                Rectangle {
-                    anchors.fill: parent
-                    anchors.leftMargin: 4
-                    anchors.topMargin: 4
-                    color: rootWindow.shadowColor
-                    radius: 4
-                }
-
-                // Dropdown Card
-                Rectangle {
-                    id: dropdownCard
-                    anchors.fill: parent
-                    color: rootWindow.bgColor
-                    border.color: rootWindow.borderColor
-                    border.width: 1
-                    radius: 4
-
-                    ColumnLayout {
-                        id: dropdownContent
-                        width: parent.width
-                        spacing: 0
-
-                        // Dropdown Title Strip
-                        Rectangle {
-                            Layout.fillWidth: true
-                            height: 22
-                            color: rootWindow.dimColor
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 8
-                                anchors.rightMargin: 8
-                                Text {
-                                    text: "SELECT AI MODEL"
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: rootWindow.fgColor
-                                }
-                                Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-                                Text {
-                                    text: "MODELS"
-                                    font.family: rootWindow.monoFont
-                                    font.pixelSize: 7
-                                    color: rootWindow.fgColor
-                                    opacity: 0.7
-                                }
-                            }
-                        }
-
-                        // Model Item List
-                        Repeater {
-                            model: rootWindow.modelList
-                            delegate: Rectangle {
-                                Layout.fillWidth: true
-                                height: 32
-                                color: (rootWindow.currentModelIndex === index)
-                                       ? (itemMouse.containsMouse ? rootWindow.dimColor : rootWindow.inputBgColor)
-                                       : (itemMouse.containsMouse ? rootWindow.dimColor : "transparent")
-
-                                Rectangle {
-                                    anchors.bottom: parent.bottom
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    height: 1
-                                    color: rootWindow.borderColor
-                                    opacity: 0.2
-                                }
-
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 8
-                                    anchors.rightMargin: 8
-                                    spacing: 8
-
-                                    // Active indicator
-                                    Text {
-                                        text: rootWindow.currentModelIndex === index ? "●" : "○"
-                                        font.family: rootWindow.monoFont
-                                        font.pixelSize: 9
-                                        color: rootWindow.currentModelIndex === index ? rootWindow.fgColor : rootWindow.dimColor
-                                    }
-
-                                    // Model Name
-                                    Text {
-                                        text: modelData.name
-                                        font.family: rootWindow.monoFont
-                                        font.bold: rootWindow.currentModelIndex === index
-                                        font.pixelSize: 9
-                                        color: rootWindow.fgColor
-                                    }
-
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-
-                                    // Quantization Tag
-                                    Rectangle {
-                                        height: 14
-                                        width: quantText.contentWidth + 6
-                                        color: rootWindow.currentModelIndex === index ? rootWindow.fgColor : "transparent"
-                                        border.color: rootWindow.borderColor
-                                        border.width: 1
-
-                                        Text {
-                                            id: quantText
-                                            anchors.centerIn: parent
-                                            text: modelData.quant
-                                            font.family: rootWindow.monoFont
-                                            font.bold: true
-                                            font.pixelSize: 7
-                                            color: rootWindow.currentModelIndex === index ? rootWindow.bgColor : rootWindow.fgColor
-                                        }
-                                    }
-                                }
-
-                                MouseArea {
-                                    id: itemMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        rootWindow.currentModelIndex = index;
-                                        rootWindow.showToast("MODEL: " + modelData.name);
-                                        modelDropdown.visible = false;
-                                    }
-                                }
-                            }
-                        }
-
-                        // Studio / HuggingFace Footer Link
-                        Rectangle {
-                            Layout.fillWidth: true
-                            height: 26
-                            color: hfMouse.containsMouse ? rootWindow.dimColor : "transparent"
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 8
-                                anchors.rightMargin: 8
-                                spacing: 6
-
-                                Text {
-                                    text: "[ + ]"
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: rootWindow.fgColor
-                                }
-
-                                Text {
-                                    text: "DOWNLOAD MORE MODELS..."
-                                    font.family: rootWindow.monoFont
-                                    font.pixelSize: 8
-                                    color: rootWindow.fgColor
-                                    opacity: 0.8
-                                }
-
-                                Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-
-                                Text {
-                                    text: "STUDIO"
-                                    font.family: rootWindow.monoFont
-                                    font.pixelSize: 7
-                                    color: rootWindow.mutedTextColor
-                                }
-                            }
-
-                            MouseArea {
-                                id: hfMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    modelDropdown.visible = false;
-                                    rootWindow.showToast("OPENING DOWNLOAD PAGE...");
-                                }
                             }
                         }
                     }

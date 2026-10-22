@@ -76,19 +76,11 @@ Window {
         return "#3B4252";
     }
 
-    // Active Navigation Tab Index
+    // Active Navigation Tab Index (0: Models & Rewrite, 1: Integration & Theme, 2: SQLite History)
     property int currentTab: 0
 
-    // Settings Model Properties
-    property string graniteQuantization: "Q8_0"
-    property string graniteResidency: "IDLE_MAPPED"
-    property int contextLength: 4096
-    property string scorerMode: (typeof hostController !== "undefined" ? hostController.scorerEngine : "julia") // "julia" (default) or "jev"
-    property string defaultRewriteProfile: "ANTHROPIC_STRUCTURED"
-    property string defaultScopePreference: "global"
-    property bool passiveHostContextEnabled: true
+    property string scorerMode: (typeof hostController !== "undefined" ? hostController.scorerEngine : "julia")
     property string globalShortcutString: isMac ? "Cmd+Shift+L" : "Ctrl+Shift+L"
-    property bool telemetryOptIn: true
     property string toastMessage: ""
 
     function showToast(msg) {
@@ -131,6 +123,7 @@ Window {
     Rectangle {
         id: posterBoard
         anchors.fill: parent
+        anchors.margins: 6
         color: dashboardWindow.bgColor
         border.color: dashboardWindow.borderColor
         border.width: 2
@@ -155,7 +148,7 @@ Window {
         }
 
         // =====================================================================
-        // FRAMELESS WINDOW RESIZE HANDLES (All 4 Edges & Corners)
+        // FRAMELESS WINDOW RESIZE HANDLES
         // =====================================================================
         MouseArea {
             id: resizeBottomRight
@@ -165,43 +158,11 @@ Window {
             onPressed: dashboardWindow.startSystemResize(Qt.RightEdge | Qt.BottomEdge)
         }
         MouseArea {
-            id: resizeRight
-            anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
-            anchors.topMargin: 14; anchors.bottomMargin: 14
-            width: 7; z: 100
-            cursorShape: Qt.SizeHorCursor
-            onPressed: dashboardWindow.startSystemResize(Qt.RightEdge)
-        }
-        MouseArea {
-            id: resizeBottom
-            anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-            anchors.leftMargin: 14; anchors.rightMargin: 14
-            height: 7; z: 100
-            cursorShape: Qt.SizeVerCursor
-            onPressed: dashboardWindow.startSystemResize(Qt.BottomEdge)
-        }
-        MouseArea {
             id: resizeBottomLeft
             anchors.left: parent.left; anchors.bottom: parent.bottom
             width: 14; height: 14; z: 100
             cursorShape: Qt.SizeBDiagCursor
             onPressed: dashboardWindow.startSystemResize(Qt.LeftEdge | Qt.BottomEdge)
-        }
-        MouseArea {
-            id: resizeLeft
-            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-            anchors.topMargin: 14; anchors.bottomMargin: 14
-            width: 7; z: 100
-            cursorShape: Qt.SizeHorCursor
-            onPressed: dashboardWindow.startSystemResize(Qt.LeftEdge)
-        }
-        MouseArea {
-            id: resizeTop
-            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-            anchors.leftMargin: 14; anchors.rightMargin: 14
-            height: 7; z: 100
-            cursorShape: Qt.SizeVerCursor
-            onPressed: dashboardWindow.startSystemResize(Qt.TopEdge)
         }
         MouseArea {
             id: resizeTopRight
@@ -217,19 +178,48 @@ Window {
             cursorShape: Qt.SizeFDiagCursor
             onPressed: dashboardWindow.startSystemResize(Qt.LeftEdge | Qt.TopEdge)
         }
+        MouseArea {
+            id: resizeRight
+            anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
+            anchors.topMargin: 14; anchors.bottomMargin: 14
+            width: 6; z: 100
+            cursorShape: Qt.SizeHorCursor
+            onPressed: dashboardWindow.startSystemResize(Qt.RightEdge)
+        }
+        MouseArea {
+            id: resizeBottom
+            anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+            anchors.leftMargin: 14; anchors.rightMargin: 14
+            height: 6; z: 100
+            cursorShape: Qt.SizeVerCursor
+            onPressed: dashboardWindow.startSystemResize(Qt.BottomEdge)
+        }
+        MouseArea {
+            id: resizeLeft
+            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+            anchors.topMargin: 14; anchors.bottomMargin: 14
+            width: 6; z: 100
+            cursorShape: Qt.SizeHorCursor
+            onPressed: dashboardWindow.startSystemResize(Qt.LeftEdge)
+        }
+        MouseArea {
+            id: resizeTop
+            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+            anchors.leftMargin: 14; anchors.rightMargin: 14
+            height: 6; z: 100
+            cursorShape: Qt.SizeVerCursor
+            onPressed: dashboardWindow.startSystemResize(Qt.TopEdge)
+        }
 
-        // =====================================================================
-        // SUB-BORDER INSET (Double Bounding Frame)
-        // =====================================================================
+        // Drop shadow inset border
         Rectangle {
             id: subBorderInset
             anchors.fill: parent
-            anchors.margins: dashboardWindow.visibility === Window.Maximized ? 6 : 10
-            color: dashboardWindow.bgColor
+            anchors.margins: 5
+            color: "transparent"
             border.color: dashboardWindow.borderColor
             border.width: 1
-            radius: dashboardWindow.visibility === Window.Maximized ? 0 : 10
-            clip: true
+            radius: dashboardWindow.visibility === Window.Maximized ? 0 : 12
 
             ColumnLayout {
                 anchors.fill: parent
@@ -237,14 +227,13 @@ Window {
                 spacing: 10
 
                 // =============================================================
-                // 1. TOP HEADER BAR: System Branding, Status, Window Controls
+                // 1. TOP HEADER BAR
                 // =============================================================
                 RowLayout {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 24
+                    Layout.preferredHeight: 28
                     spacing: 8
 
-                    // Pulsing status dot (green)
                     Rectangle {
                         width: 8
                         height: 8
@@ -260,47 +249,38 @@ Window {
                         text: "ROCLINT"
                         font.family: dashboardWindow.monoFont
                         font.bold: true
-                        font.pixelSize: 10
+                        font.pixelSize: 11
                         font.letterSpacing: 1
                         color: dashboardWindow.fgColor
                     }
 
-                    Rectangle {
-                        width: 1; height: 14
-                        color: dashboardWindow.borderColor
-                    }
+                    Text { text: "│"; font.family: dashboardWindow.monoFont; font.pixelSize: 10; color: dashboardWindow.mutedTextColor }
 
                     Text {
                         text: "CONTROL CENTER & PREFERENCES"
                         font.family: dashboardWindow.monoFont
                         font.bold: true
                         font.pixelSize: 9
-                        font.letterSpacing: 1
                         color: dashboardWindow.mutedTextColor
                     }
 
                     Item { Layout.fillWidth: true }
 
-                    // Status Badge
+                    // Host resident status chip
                     Rectangle {
-                        id: hostStatusBadge
-                        implicitHeight: 20
-                        implicitWidth: hostStatusLabel.implicitWidth + 12
-                        Layout.preferredHeight: 20
-                        Layout.preferredWidth: implicitWidth
                         height: 20
-                        width: implicitWidth
+                        width: resText.contentWidth + 16
                         color: "transparent"
                         border.color: "#7EE787"
                         border.width: 1
 
                         Text {
-                            id: hostStatusLabel
+                            id: resText
                             anchors.centerIn: parent
-                            text: typeof hostController !== "undefined" ? "HOST: " + hostController.hostStateString : "HOST: RESIDENT"
+                            text: "HOST: RESIDENT"
                             font.family: dashboardWindow.monoFont
                             font.bold: true
-                            font.pixelSize: 9
+                            font.pixelSize: 8
                             color: "#7EE787"
                         }
                     }
@@ -310,10 +290,6 @@ Window {
                         id: minButton
                         width: 22
                         height: 20
-                        implicitWidth: 22
-                        implicitHeight: 20
-                        Layout.preferredWidth: 22
-                        Layout.preferredHeight: 20
                         color: minMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
                         border.color: dashboardWindow.borderColor
                         border.width: 1
@@ -334,15 +310,11 @@ Window {
                         }
                     }
 
-                    // Window Maximize / Restore Toggle [+] / [=]
+                    // Window Maximize [+] / [=]
                     Rectangle {
                         id: maxButton
                         width: 22
                         height: 20
-                        implicitWidth: 22
-                        implicitHeight: 20
-                        Layout.preferredWidth: 22
-                        Layout.preferredHeight: 20
                         color: maxMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
                         border.color: dashboardWindow.borderColor
                         border.width: 1
@@ -362,10 +334,8 @@ Window {
                             onClicked: {
                                 if (dashboardWindow.visibility === Window.Maximized) {
                                     dashboardWindow.showNormal();
-                                    dashboardWindow.showToast("WINDOW RESTORED");
                                 } else {
                                     dashboardWindow.showMaximized();
-                                    dashboardWindow.showToast("WINDOW MAXIMIZED");
                                 }
                             }
                         }
@@ -376,10 +346,6 @@ Window {
                         id: closeButton
                         width: 22
                         height: 20
-                        implicitWidth: 22
-                        implicitHeight: 20
-                        Layout.preferredWidth: 22
-                        Layout.preferredHeight: 20
                         color: closeMouse.containsMouse ? "#8B1E1E" : "transparent"
                         border.color: dashboardWindow.borderColor
                         border.width: 1
@@ -401,7 +367,6 @@ Window {
                     }
                 }
 
-                // Divider line
                 Rectangle {
                     Layout.fillWidth: true
                     height: 1
@@ -409,26 +374,20 @@ Window {
                 }
 
                 // =============================================================
-                // 2. MAIN BODY: LEFT SIDEBAR MATRIX + RIGHT CONTENT VIEWPORT
+                // 2. MAIN BODY (Sidebar Navigation Matrix + Content Tabs)
                 // =============================================================
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     spacing: 12
 
-                    // LEFT SIDEBAR TABS (Brutalist Terminal Matrix)
+                    // LEFT SIDEBAR: TAB SELECTION MATRIX
                     Rectangle {
+                        Layout.preferredWidth: 200
                         Layout.fillHeight: true
-                        Layout.preferredWidth: 230
                         color: dashboardWindow.inputBgColor
                         border.color: dashboardWindow.borderColor
                         border.width: 1
-
-                        // Corner crosshairs
-                        Text { text: "+"; font.family: dashboardWindow.monoFont; font.pixelSize: 8; color: dashboardWindow.fgColor; opacity: 0.6; anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 4 }
-                        Text { text: "+"; font.family: dashboardWindow.monoFont; font.pixelSize: 8; color: dashboardWindow.fgColor; opacity: 0.6; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 4 }
-                        Text { text: "+"; font.family: dashboardWindow.monoFont; font.pixelSize: 8; color: dashboardWindow.fgColor; opacity: 0.6; anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 4 }
-                        Text { text: "+"; font.family: dashboardWindow.monoFont; font.pixelSize: 8; color: dashboardWindow.fgColor; opacity: 0.6; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 4 }
 
                         ColumnLayout {
                             anchors.fill: parent
@@ -452,11 +411,9 @@ Window {
 
                             Repeater {
                                 model: [
-                                    { index: 0, tag: "01", label: "MODELS & RUNTIME" },
-                                    { index: 1, tag: "02", label: "WORKSPACES & AST" },
-                                    { index: 2, tag: "03", label: "APPEARANCE & KEYS" },
-                                    { index: 3, tag: "04", label: "PERSISTENCE & SQL" },
-                                    { index: 4, tag: "05", label: "STUDY & TELEMETRY" }
+                                    { index: 0, tag: "01", label: "MODELS & REWRITE" },
+                                    { index: 1, tag: "02", label: "INTEGRATION & THEME" },
+                                    { index: 2, tag: "03", label: "SQLITE HISTORY" }
                                 ]
 
                                 delegate: Rectangle {
@@ -510,7 +467,6 @@ Window {
 
                             Item { Layout.fillHeight: true }
 
-                            // System Info Footer in Sidebar
                             Rectangle {
                                 Layout.fillWidth: true
                                 height: 1
@@ -519,16 +475,15 @@ Window {
 
                             ColumnLayout {
                                 spacing: 2
+                                Layout.fillWidth: true
                                 Text {
-                                    text: "SYSTEM: ROCLINT CORE v0.1.0"
+                                    text: "SYSTEM: ROCLINT CORE"
                                     font.family: dashboardWindow.monoFont
                                     font.pixelSize: 8
                                     color: dashboardWindow.mutedTextColor
                                 }
                                 Text {
-                                    text: typeof hostController !== "undefined"
-                                        ? "REVISION: " + hostController.currentRevisionId + " (v" + hostController.stateVersion + ")"
-                                        : "REVISION: rev_0 (v0)"
+                                    text: "REVISION: v" + (typeof hostController !== "undefined" ? hostController.stateVersion : "0")
                                     font.family: dashboardWindow.monoFont
                                     font.pixelSize: 8
                                     color: dashboardWindow.mutedTextColor
@@ -537,203 +492,47 @@ Window {
                                     text: "BUILD: C++20 / QT 6.11"
                                     font.family: dashboardWindow.monoFont
                                     font.pixelSize: 8
-                                    color: dashboardWindow.commentColor
+                                    color: dashboardWindow.mutedTextColor
                                 }
                             }
                         }
                     }
 
-                    // RIGHT CONTENT VIEWPORT
-                    Rectangle {
+                    // RIGHT CONTENT AREA
+                    ScrollView {
+                        id: rightScrollView
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        color: dashboardWindow.bgColor
-                        border.color: dashboardWindow.borderColor
-                        border.width: 1
+                        clip: true
+                        contentWidth: availableWidth
 
-                        // Corner crosshairs for viewport
-                        Text { text: "+"; font.family: dashboardWindow.monoFont; font.pixelSize: 8; color: dashboardWindow.fgColor; opacity: 0.6; anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 4 }
-                        Text { text: "+"; font.family: dashboardWindow.monoFont; font.pixelSize: 8; color: dashboardWindow.fgColor; opacity: 0.6; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 4 }
-                        Text { text: "+"; font.family: dashboardWindow.monoFont; font.pixelSize: 8; color: dashboardWindow.fgColor; opacity: 0.6; anchors.left: parent.left; anchors.bottom: parent.bottom; anchors.margins: 4 }
-                        Text { text: "+"; font.family: dashboardWindow.monoFont; font.pixelSize: 8; color: dashboardWindow.fgColor; opacity: 0.6; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 4 }
-
-                        ScrollView {
-                            anchors.fill: parent
-                            anchors.margins: 18
-                            clip: true
-                            contentWidth: availableWidth
+                        ColumnLayout {
+                            width: rightScrollView.availableWidth
+                            spacing: 14
 
                             // =================================================
-                            // TAB 0: MODELS & INFERENCE RUNTIME
+                            // TAB 0: MODELS & REWRITE ENGINE
                             // =================================================
                             ColumnLayout {
                                 visible: dashboardWindow.currentTab === 0
-                                width: parent.width
+                                width: rightScrollView.availableWidth
                                 spacing: 14
 
                                 Text {
-                                    text: "/* 01: IBM GRANITE 3B & DECISION INFERENCE RUNTIME */"
+                                    text: "/* 01: INFERENCE RUNTIME & PROMPT COMPILER */"
                                     font.family: dashboardWindow.monoFont
                                     font.pixelSize: 11
                                     font.bold: true
                                     color: dashboardWindow.fgColor
                                 }
 
-                                // Card 1: IBM Granite 3B Local Runtime
-                                Rectangle {
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 180
-                                    color: dashboardWindow.inputBgColor
-                                    border.color: dashboardWindow.borderColor
-                                    border.width: 1
-
-                                    // Corner crosshairs
-                                    Text { text: "+"; font.family: dashboardWindow.monoFont; font.pixelSize: 8; color: dashboardWindow.fgColor; opacity: 0.6; anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 4 }
-                                    Text { text: "+"; font.family: dashboardWindow.monoFont; font.pixelSize: 8; color: dashboardWindow.fgColor; opacity: 0.6; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 4 }
-
-                                    ColumnLayout {
-                                        anchors.fill: parent
-                                        anchors.margins: 14
-                                        spacing: 12
-
-                                        RowLayout {
-                                            Text {
-                                                text: "LOCAL RUNTIME (llama.cpp) :: ibm-granite/granite-4.2-3b-GGUF"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 10
-                                                font.bold: true
-                                                color: dashboardWindow.fgColor
-                                            }
-                                            Item { Layout.fillWidth: true }
-                                            Text {
-                                                text: "[STATUS: READY]"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
-                                                font.bold: true
-                                                color: "#7EE787"
-                                            }
-                                        }
-
-                                        // Quantization Selector
-                                        RowLayout {
-                                            spacing: 12
-                                            Text {
-                                                text: "QUANTIZATION:"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
-                                                color: dashboardWindow.mutedTextColor
-                                                Layout.preferredWidth: 120
-                                            }
-                                            RowLayout {
-                                                spacing: 8
-                                                Repeater {
-                                                    model: [
-                                                        { id: "Q4_K_M", label: "[ Q4_K_M :: 2.1 GB :: FAST ]" },
-                                                        { id: "Q5_K_M", label: "[ Q5_K_M :: 2.6 GB :: BALANCED ]" },
-                                                        { id: "Q8_0", label: "[ Q8_0 :: 3.4 GB :: MAXIMUM FIDELITY ]" }
-                                                    ]
-                                                    delegate: Rectangle {
-                                                        width: quantTxt.contentWidth + 16
-                                                        height: 24
-                                                        color: dashboardWindow.graniteQuantization === modelData.id ? dashboardWindow.fgColor : "transparent"
-                                                        border.color: dashboardWindow.borderColor
-                                                        border.width: 1
-
-                                                        Text {
-                                                            id: quantTxt
-                                                            anchors.centerIn: parent
-                                                            text: modelData.label
-                                                            font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 9
-                                                            font.bold: dashboardWindow.graniteQuantization === modelData.id
-                                                            color: dashboardWindow.graniteQuantization === modelData.id ? dashboardWindow.bgColor : dashboardWindow.fgColor
-                                                        }
-                                                        MouseArea {
-                                                            anchors.fill: parent
-                                                            cursorShape: Qt.PointingHandCursor
-                                                            onClicked: dashboardWindow.graniteQuantization = modelData.id
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        // Residency Policy Selector (B10R)
-                                        RowLayout {
-                                            spacing: 12
-                                            Text {
-                                                text: "RESIDENCY (B10R):"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
-                                                color: dashboardWindow.mutedTextColor
-                                                Layout.preferredWidth: 120
-                                            }
-                                            RowLayout {
-                                                spacing: 8
-                                                Repeater {
-                                                    model: [
-                                                        { id: "IDLE_MAPPED", label: "[ IDLE_MAPPED (MMAP) ]" },
-                                                        { id: "HOT", label: "[ HOT (PINNED RAM) ]" },
-                                                        { id: "UNLOADED", label: "[ UNLOADED ]" }
-                                                    ]
-                                                    delegate: Rectangle {
-                                                        width: resTxt.contentWidth + 14
-                                                        height: 24
-                                                        color: dashboardWindow.graniteResidency === modelData.id ? dashboardWindow.fgColor : "transparent"
-                                                        border.color: dashboardWindow.borderColor
-                                                        border.width: 1
-
-                                                        Text {
-                                                            id: resTxt
-                                                            anchors.centerIn: parent
-                                                            text: modelData.label
-                                                            font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 9
-                                                            font.bold: dashboardWindow.graniteResidency === modelData.id
-                                                            color: dashboardWindow.graniteResidency === modelData.id ? dashboardWindow.bgColor : dashboardWindow.fgColor
-                                                        }
-                                                        MouseArea {
-                                                            anchors.fill: parent
-                                                            cursorShape: Qt.PointingHandCursor
-                                                            onClicked: dashboardWindow.graniteResidency = modelData.id
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        // Rewrite Profile Default (B08P)
-                                        RowLayout {
-                                            spacing: 12
-                                            Text {
-                                                text: "REWRITE PROFILE:"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
-                                                color: dashboardWindow.mutedTextColor
-                                                Layout.preferredWidth: 120
-                                            }
-                                            Text {
-                                                text: "ANTHROPIC_STRUCTURED (Strict XML envelope & scratchpads)"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
-                                                font.bold: true
-                                                color: dashboardWindow.fgColor
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Card 2: Semantic Decision Scorer (C03 / D51)
+                                // Card 1: Semantic Decision Scorer
                                 Rectangle {
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 140
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
                                     border.width: 1
-
-                                    // Corner crosshairs
-                                    Text { text: "+"; font.family: dashboardWindow.monoFont; font.pixelSize: 8; color: dashboardWindow.fgColor; opacity: 0.6; anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 4 }
-                                    Text { text: "+"; font.family: dashboardWindow.monoFont; font.pixelSize: 8; color: dashboardWindow.fgColor; opacity: 0.6; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 4 }
 
                                     ColumnLayout {
                                         anchors.fill: parent
@@ -760,33 +559,6 @@ Window {
                                         RowLayout {
                                             spacing: 10
                                             Rectangle {
-                                                width: jevTxt.contentWidth + 16
-                                                height: 26
-                                                color: dashboardWindow.scorerMode === "jev" ? dashboardWindow.fgColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
-                                                border.width: 1
-
-                                                Text {
-                                                    id: jevTxt
-                                                    anchors.centerIn: parent
-                                                    text: dashboardWindow.scorerMode === "jev" ? "[ ● CLOUD JEV (BASELINE STUDY) ]" : "[ ○ CLOUD JEV (BASELINE STUDY) ]"
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
-                                                    font.bold: dashboardWindow.scorerMode === "jev"
-                                                    color: dashboardWindow.scorerMode === "jev" ? dashboardWindow.bgColor : dashboardWindow.fgColor
-                                                }
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: {
-                                                        dashboardWindow.scorerMode = "jev";
-                                                        if (typeof hostController !== "undefined") hostController.setScorerEngine("jev");
-                                                        dashboardWindow.showToast("S1 SCORER: CLOUD JEV ACTIVATED");
-                                                    }
-                                                }
-                                            }
-
-                                            Rectangle {
                                                 width: juliaTxt.contentWidth + 16
                                                 height: 26
                                                 color: dashboardWindow.scorerMode === "julia" ? dashboardWindow.fgColor : "transparent"
@@ -812,6 +584,33 @@ Window {
                                                     }
                                                 }
                                             }
+
+                                            Rectangle {
+                                                width: jevTxt.contentWidth + 16
+                                                height: 26
+                                                color: dashboardWindow.scorerMode === "jev" ? dashboardWindow.fgColor : "transparent"
+                                                border.color: dashboardWindow.borderColor
+                                                border.width: 1
+
+                                                Text {
+                                                    id: jevTxt
+                                                    anchors.centerIn: parent
+                                                    text: dashboardWindow.scorerMode === "jev" ? "[ ● CLOUD JEV (BASELINE STUDY) ]" : "[ ○ CLOUD JEV (BASELINE STUDY) ]"
+                                                    font.family: dashboardWindow.monoFont
+                                                    font.pixelSize: 9
+                                                    font.bold: dashboardWindow.scorerMode === "jev"
+                                                    color: dashboardWindow.scorerMode === "jev" ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                }
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        dashboardWindow.scorerMode = "jev";
+                                                        if (typeof hostController !== "undefined") hostController.setScorerEngine("jev");
+                                                        dashboardWindow.showToast("S1 SCORER: CLOUD JEV ACTIVATED");
+                                                    }
+                                                }
+                                            }
                                         }
 
                                         Text {
@@ -824,199 +623,86 @@ Window {
                                         }
                                     }
                                 }
-                            }
 
-                            // =================================================
-                            // TAB 1: WORKSPACES & AST SCOPE
-                            // =================================================
-                            ColumnLayout {
-                                visible: dashboardWindow.currentTab === 1
-                                width: parent.width
-                                spacing: 14
-
-                                Text {
-                                    text: "/* 02: WORKSPACES & AST CARTRIDGE SCOPE */"
-                                    font.family: dashboardWindow.monoFont
-                                    font.pixelSize: 11
-                                    font.bold: true
-                                    color: dashboardWindow.fgColor
-                                }
-
+                                // Card 2: Rewrite Profiles (Prompt Compiler)
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 180
+                                    Layout.preferredHeight: 170
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
                                     border.width: 1
-
-                                    Text { text: "+"; font.family: dashboardWindow.monoFont; font.pixelSize: 8; color: dashboardWindow.fgColor; opacity: 0.6; anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 4 }
-                                    Text { text: "+"; font.family: dashboardWindow.monoFont; font.pixelSize: 8; color: dashboardWindow.fgColor; opacity: 0.6; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 4 }
 
                                     ColumnLayout {
                                         anchors.fill: parent
                                         anchors.margins: 14
                                         spacing: 10
 
-                                        Text {
-                                            text: "INDEXED PROJECTS & AST SYMBOLS"
-                                            font.family: dashboardWindow.monoFont
-                                            font.pixelSize: 10
-                                            font.bold: true
-                                            color: dashboardWindow.fgColor
-                                        }
-
-                                        Repeater {
-                                            model: [
-                                                { name: "[ roclint ]", path: "/Users/jesse/roclint", status: "[INDEXED: 7 FILES, 142 SYMBOLS]" },
-                                                { name: "[ Stardust_v4_2 ]", path: "/Users/jesse/Stardust_v4_2 2", status: "[INDEXED: 18 SPECS]" }
-                                            ]
-                                            delegate: RowLayout {
-                                                Layout.fillWidth: true
-                                                Text {
-                                                    text: modelData.name
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
-                                                    font.bold: true
-                                                    color: dashboardWindow.fgColor
-                                                    Layout.preferredWidth: 140
-                                                }
-                                                Text {
-                                                    text: modelData.path
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
-                                                    color: dashboardWindow.mutedTextColor
-                                                    Layout.fillWidth: true
-                                                    elide: Text.ElideMiddle
-                                                }
-                                                Text {
-                                                    text: modelData.status
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
-                                                    color: "#7EE787"
-                                                }
-                                            }
-                                        }
-
-                                        Item { Layout.fillHeight: true }
-
                                         RowLayout {
-                                            spacing: 10
-                                            Rectangle {
-                                                width: addDirTxt.contentWidth + 14
-                                                height: 24
-                                                color: addDirMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
-                                                border.width: 1
-
-                                                Text {
-                                                    id: addDirTxt
-                                                    anchors.centerIn: parent
-                                                    text: "[ + ADD PROJECT FOLDER ]"
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
-                                                    color: dashboardWindow.fgColor
-                                                }
-                                                MouseArea {
-                                                    id: addDirMouse
-                                                    anchors.fill: parent
-                                                    hoverEnabled: true
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: dashboardWindow.showToast("PROJECT SELECTOR OPENED")
-                                                }
+                                            Text {
+                                                text: "REWRITE PROFILES (PROMPT COMPILER ARCHITECTURE)"
+                                                font.family: dashboardWindow.monoFont
+                                                font.pixelSize: 10
+                                                font.bold: true
+                                                color: dashboardWindow.fgColor
                                             }
-                                            Rectangle {
-                                                width: reindexTxt.contentWidth + 14
-                                                height: 24
-                                                color: reindexMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
-                                                border.width: 1
-
-                                                Text {
-                                                    id: reindexTxt
-                                                    anchors.centerIn: parent
-                                                    text: "[ RE-INDEX AST CARTRIDGES ]"
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
-                                                    color: dashboardWindow.mutedTextColor
-                                                }
-                                                MouseArea {
-                                                    id: reindexMouse
-                                                    anchors.fill: parent
-                                                    hoverEnabled: true
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: dashboardWindow.showToast("AST CARTRIDGES RE-INDEXED")
-                                                }
+                                            Item { Layout.fillWidth: true }
+                                            Text {
+                                                text: "[ACTIVE: " + (typeof hostController !== "undefined" ? hostController.rewriteProfile.toUpperCase() : "GENERIC") + "]"
+                                                font.family: dashboardWindow.monoFont
+                                                font.pixelSize: 9
+                                                color: "#7EE787"
                                             }
                                         }
-                                    }
-                                }
 
-                                // Default Scope Behavior
-                                Rectangle {
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 90
-                                    color: dashboardWindow.inputBgColor
-                                    border.color: dashboardWindow.borderColor
-                                    border.width: 1
+                                        ColumnLayout {
+                                            spacing: 6
 
-                                    ColumnLayout {
-                                        anchors.fill: parent
-                                        anchors.margins: 14
-                                        spacing: 8
+                                            Repeater {
+                                                model: [
+                                                    { id: "generic", label: "GENERIC", desc: "Clean markdown envelope with standardized instructions and constraints" },
+                                                    { id: "anthropic_structured", label: "ANTHROPIC_STRUCTURED", desc: "Strict XML tags (<task>, <context>, <constraints>) for Claude 3.5 / 3.7" },
+                                                    { id: "openai_structured", label: "OPENAI_STRUCTURED", desc: "Markdown heading hierarchy (# System / # Goal / # Instructions) for GPT-4o" },
+                                                    { id: "local_compact", label: "LOCAL_COMPACT", desc: "Telegraphic, token-budget optimized encoding for local small models (3B)" }
+                                                ]
 
-                                        Text {
-                                            text: "DEFAULT INVOCATION SCOPE"
-                                            font.family: dashboardWindow.monoFont
-                                            font.pixelSize: 10
-                                            font.bold: true
-                                            color: dashboardWindow.fgColor
-                                        }
+                                                delegate: RowLayout {
+                                                    spacing: 10
 
-                                        RowLayout {
-                                            spacing: 10
-                                            Rectangle {
-                                                width: scopeGlobTxt.contentWidth + 14
-                                                height: 24
-                                                color: dashboardWindow.defaultScopePreference === "global" ? dashboardWindow.fgColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
-                                                border.width: 1
+                                                    Rectangle {
+                                                        width: profBtnTxt.contentWidth + 14
+                                                        height: 22
+                                                        color: (typeof hostController !== "undefined" && hostController.rewriteProfile.toLowerCase().indexOf(modelData.id) !== -1) ? dashboardWindow.fgColor : "transparent"
+                                                        border.color: dashboardWindow.borderColor
+                                                        border.width: 1
 
-                                                Text {
-                                                    id: scopeGlobTxt
-                                                    anchors.centerIn: parent
-                                                    text: "[ 2: ENTIRE CODEBASE (GLOBAL) ]"
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
-                                                    font.bold: dashboardWindow.defaultScopePreference === "global"
-                                                    color: dashboardWindow.defaultScopePreference === "global" ? dashboardWindow.bgColor : dashboardWindow.fgColor
-                                                }
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: dashboardWindow.defaultScopePreference = "global"
-                                                }
-                                            }
+                                                        Text {
+                                                            id: profBtnTxt
+                                                            anchors.centerIn: parent
+                                                            text: (typeof hostController !== "undefined" && hostController.rewriteProfile.toLowerCase().indexOf(modelData.id) !== -1) ? "[ ● " + modelData.label + " ]" : "[ ○ " + modelData.label + " ]"
+                                                            font.family: dashboardWindow.monoFont
+                                                            font.pixelSize: 8
+                                                            font.bold: true
+                                                            color: (typeof hostController !== "undefined" && hostController.rewriteProfile.toLowerCase().indexOf(modelData.id) !== -1) ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                        }
 
-                                            Rectangle {
-                                                width: scopeLocTxt.contentWidth + 14
-                                                height: 24
-                                                color: dashboardWindow.defaultScopePreference === "local" ? dashboardWindow.fgColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
-                                                border.width: 1
+                                                        MouseArea {
+                                                            anchors.fill: parent
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onClicked: {
+                                                                if (typeof hostController !== "undefined") {
+                                                                    hostController.setRewriteProfile(modelData.id);
+                                                                    dashboardWindow.showToast("REWRITE PROFILE: " + modelData.label);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
 
-                                                Text {
-                                                    id: scopeLocTxt
-                                                    anchors.centerIn: parent
-                                                    text: "[ 1: SINGLE TARGET FILE (LOCAL) ]"
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
-                                                    font.bold: dashboardWindow.defaultScopePreference === "local"
-                                                    color: dashboardWindow.defaultScopePreference === "local" ? dashboardWindow.bgColor : dashboardWindow.fgColor
-                                                }
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: dashboardWindow.defaultScopePreference = "local"
+                                                    Text {
+                                                        text: modelData.desc
+                                                        font.family: dashboardWindow.monoFont
+                                                        font.pixelSize: 8
+                                                        color: dashboardWindow.commentColor
+                                                    }
                                                 }
                                             }
                                         }
@@ -1025,25 +711,126 @@ Window {
                             }
 
                             // =================================================
-                            // TAB 2: APPEARANCE & HOTKEYS
+                            // TAB 1: INTEGRATION & THEME
                             // =================================================
                             ColumnLayout {
-                                visible: dashboardWindow.currentTab === 2
-                                width: parent.width
+                                visible: dashboardWindow.currentTab === 1
+                                width: rightScrollView.availableWidth
                                 spacing: 14
 
                                 Text {
-                                    text: "/* 03: COLOR PALETTE & GLOBAL SHORTCUT BINDING */"
+                                    text: "/* 02: EDITOR INTEGRATION & THEME */"
                                     font.family: dashboardWindow.monoFont
                                     font.pixelSize: 11
                                     font.bold: true
                                     color: dashboardWindow.fgColor
                                 }
 
-                                // Theme Selector Card
+                                // Direct Editor Injection
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 130
+                                    Layout.preferredHeight: 140
+                                    color: dashboardWindow.inputBgColor
+                                    border.color: dashboardWindow.borderColor
+                                    border.width: 1
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        anchors.margins: 14
+                                        spacing: 10
+
+                                        RowLayout {
+                                            Text {
+                                                text: "DIRECT IN-PLACE EDITOR INJECTION (ACCESSIBILITY API)"
+                                                font.family: dashboardWindow.monoFont
+                                                font.pixelSize: 10
+                                                font.bold: true
+                                                color: dashboardWindow.fgColor
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                            Text {
+                                                text: (typeof hostController !== "undefined" && hostController.directInjectionEnabled) ? "[STATUS: ENABLED]" : "[STATUS: DISABLED]"
+                                                font.family: dashboardWindow.monoFont
+                                                font.pixelSize: 9
+                                                font.bold: true
+                                                color: (typeof hostController !== "undefined" && hostController.directInjectionEnabled) ? "#7EE787" : dashboardWindow.mutedTextColor
+                                            }
+                                        }
+
+                                        RowLayout {
+                                            spacing: 10
+                                            Rectangle {
+                                                width: injEnTxt.contentWidth + 14
+                                                height: 24
+                                                color: (typeof hostController !== "undefined" && hostController.directInjectionEnabled) ? dashboardWindow.fgColor : "transparent"
+                                                border.color: dashboardWindow.borderColor
+                                                border.width: 1
+
+                                                Text {
+                                                    id: injEnTxt
+                                                    anchors.centerIn: parent
+                                                    text: (typeof hostController !== "undefined" && hostController.directInjectionEnabled) ? "[ ● ENABLED (Direct In-Place) ]" : "[ ○ ENABLED (Direct In-Place) ]"
+                                                    font.family: dashboardWindow.monoFont
+                                                    font.pixelSize: 9
+                                                    font.bold: (typeof hostController !== "undefined" && hostController.directInjectionEnabled)
+                                                    color: (typeof hostController !== "undefined" && hostController.directInjectionEnabled) ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                }
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        if (typeof hostController !== "undefined") {
+                                                            hostController.directInjectionEnabled = true;
+                                                            dashboardWindow.showToast("DIRECT INJECTION: ENABLED");
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                width: injDisTxt.contentWidth + 14
+                                                height: 24
+                                                color: (typeof hostController !== "undefined" && !hostController.directInjectionEnabled) ? dashboardWindow.fgColor : "transparent"
+                                                border.color: dashboardWindow.borderColor
+                                                border.width: 1
+
+                                                Text {
+                                                    id: injDisTxt
+                                                    anchors.centerIn: parent
+                                                    text: (typeof hostController !== "undefined" && !hostController.directInjectionEnabled) ? "[ ● DISABLED (Clipboard Fallback) ]" : "[ ○ DISABLED (Clipboard Fallback) ]"
+                                                    font.family: dashboardWindow.monoFont
+                                                    font.pixelSize: 9
+                                                    font.bold: (typeof hostController !== "undefined" && !hostController.directInjectionEnabled)
+                                                    color: (typeof hostController !== "undefined" && !hostController.directInjectionEnabled) ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                }
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        if (typeof hostController !== "undefined") {
+                                                            hostController.directInjectionEnabled = false;
+                                                            dashboardWindow.showToast("DIRECT INJECTION: DISABLED (CLIPBOARD MODE)");
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Text {
+                                            text: (typeof hostController !== "undefined" && hostController.hasAccessibilityPermission)
+                                                ? "OS Accessibility API permission is granted. Prompts replace selected text directly in the active editor."
+                                                : "When permissions are absent, Roclint cleanly copies enhanced prompts to your clipboard for instant Cmd+V paste."
+                                            font.family: dashboardWindow.monoFont
+                                            font.pixelSize: 9
+                                            color: dashboardWindow.commentColor
+                                        }
+                                    }
+                                }
+
+                                // Color Palette Theme
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 120
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
                                     border.width: 1
@@ -1072,7 +859,7 @@ Window {
                                                 ]
                                                 delegate: Rectangle {
                                                     width: thmTxt.contentWidth + 20
-                                                    height: 38
+                                                    height: 34
                                                     color: modelData.sample
                                                     border.color: dashboardWindow.currentTheme === modelData.id ? dashboardWindow.fgColor : dashboardWindow.borderColor
                                                     border.width: dashboardWindow.currentTheme === modelData.id ? 2 : 1
@@ -1100,10 +887,10 @@ Window {
                                     }
                                 }
 
-                                // Hotkeys & Host Context
+                                // Global Shortcut Card
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 155
+                                    Layout.preferredHeight: 80
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
                                     border.width: 1
@@ -1111,10 +898,10 @@ Window {
                                     ColumnLayout {
                                         anchors.fill: parent
                                         anchors.margins: 14
-                                        spacing: 10
+                                        spacing: 6
 
                                         Text {
-                                            text: "GLOBAL INVOCATION SHORTCUT & PASSIVE CONTEXT (C09)"
+                                            text: "GLOBAL INVOCATION SHORTCUT"
                                             font.family: dashboardWindow.monoFont
                                             font.pixelSize: 10
                                             font.bold: true
@@ -1123,14 +910,8 @@ Window {
 
                                         RowLayout {
                                             spacing: 10
-                                            Text {
-                                                text: "ACTIVE SHORTCUT:"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
-                                                color: dashboardWindow.mutedTextColor
-                                            }
                                             Rectangle {
-                                                width: hkTxt.contentWidth + 12
+                                                width: hkTxt.contentWidth + 14
                                                 height: 22
                                                 color: dashboardWindow.dimColor
                                                 border.color: dashboardWindow.borderColor
@@ -1146,73 +927,10 @@ Window {
                                                 }
                                             }
                                             Text {
-                                                text: "(Anchors floating HUD at active cursor screen coordinates)"
+                                                text: "Registered in OS native event loop. Anchors floating HUD at active cursor screen coordinates."
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 9
                                                 color: dashboardWindow.commentColor
-                                            }
-                                        }
-
-                                        RowLayout {
-                                            spacing: 8
-                                            Rectangle {
-                                                width: 16; height: 16
-                                                color: dashboardWindow.passiveHostContextEnabled ? dashboardWindow.fgColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
-                                                border.width: 1
-                                                Text {
-                                                    anchors.centerIn: parent
-                                                    text: dashboardWindow.passiveHostContextEnabled ? "×" : ""
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 10
-                                                    font.bold: true
-                                                    color: dashboardWindow.bgColor
-                                                }
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: dashboardWindow.passiveHostContextEnabled = !dashboardWindow.passiveHostContextEnabled
-                                                }
-                                            }
-                                            Text {
-                                                text: "Capture one-shot passive frontmost-application context hint (advisory chip, no OS permissions)"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
-                                                color: dashboardWindow.fgColor
-                                            }
-                                        }
-
-                                        RowLayout {
-                                            spacing: 8
-                                            Rectangle {
-                                                width: 16; height: 16
-                                                color: (typeof hostController !== "undefined" && hostController.directInjectionEnabled) ? dashboardWindow.fgColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
-                                                border.width: 1
-                                                Text {
-                                                    anchors.centerIn: parent
-                                                    text: (typeof hostController !== "undefined" && hostController.directInjectionEnabled) ? "×" : ""
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 10
-                                                    font.bold: true
-                                                    color: dashboardWindow.bgColor
-                                                }
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: {
-                                                        if (typeof hostController !== "undefined") {
-                                                            hostController.directInjectionEnabled = !hostController.directInjectionEnabled;
-                                                            dashboardWindow.showToast("DIRECT INJECTION: " + (hostController.directInjectionEnabled ? "ENABLED" : "DISABLED (CLIPBOARD FALLBACK)"));
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            Text {
-                                                text: "Enable Direct Editor Injection (Replaces text in-place via Accessibility API; falls back to clipboard)"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
-                                                color: dashboardWindow.fgColor
                                             }
                                         }
                                     }
@@ -1220,15 +938,15 @@ Window {
                             }
 
                             // =================================================
-                            // TAB 3: HISTORY & SQLITE STORAGE
+                            // TAB 2: SQLITE HISTORY & STORAGE
                             // =================================================
                             ColumnLayout {
-                                visible: dashboardWindow.currentTab === 3
-                                width: parent.width
+                                visible: dashboardWindow.currentTab === 2
+                                width: rightScrollView.availableWidth
                                 spacing: 14
 
                                 Text {
-                                    text: "/* 04: SQLITE PROMPT REVISION STORAGE & LINEAGE */"
+                                    text: "/* 03: SQLITE PROMPT REVISION STORAGE & LINEAGE */"
                                     font.family: dashboardWindow.monoFont
                                     font.pixelSize: 11
                                     font.bold: true
@@ -1237,7 +955,7 @@ Window {
 
                                 Rectangle {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 180
+                                    Layout.preferredHeight: 140
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
                                     border.width: 1
@@ -1245,10 +963,10 @@ Window {
                                     ColumnLayout {
                                         anchors.fill: parent
                                         anchors.margins: 14
-                                        spacing: 10
+                                        spacing: 8
 
                                         Text {
-                                            text: "SQLITE DATABASE STATUS (C02 / A03 / A04)"
+                                            text: "SQLITE DATABASE STATUS (WAL MODE ACID STORAGE)"
                                             font.family: dashboardWindow.monoFont
                                             font.pixelSize: 10
                                             font.bold: true
@@ -1291,49 +1009,7 @@ Window {
                                         }
 
                                         RowLayout {
-                                            Text {
-                                                text: "RETENTION:"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
-                                                color: dashboardWindow.mutedTextColor
-                                                Layout.preferredWidth: 100
-                                            }
-                                            Text {
-                                                text: "[ PERSISTENT LOCAL WAL — ZERO CLOUD LEAKAGE ]"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
-                                                color: dashboardWindow.fgColor
-                                            }
-                                        }
-
-                                        Item { Layout.fillHeight: true }
-
-                                        RowLayout {
                                             spacing: 10
-                                            Rectangle {
-                                                width: expHistTxt.contentWidth + 14
-                                                height: 24
-                                                color: expHistMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
-                                                border.width: 1
-
-                                                Text {
-                                                    id: expHistTxt
-                                                    anchors.centerIn: parent
-                                                    text: "[ EXPORT JSON HISTORY ]"
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
-                                                    color: dashboardWindow.fgColor
-                                                }
-                                                MouseArea {
-                                                    id: expHistMouse
-                                                    anchors.fill: parent
-                                                    hoverEnabled: true
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: dashboardWindow.showToast("HISTORY EXPORTED")
-                                                }
-                                            }
-
                                             Rectangle {
                                                 width: vacTxt.contentWidth + 14
                                                 height: 24
@@ -1347,7 +1023,7 @@ Window {
                                                     text: "[ REFRESH STATS ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 9
-                                                    color: dashboardWindow.mutedTextColor
+                                                    color: dashboardWindow.fgColor
                                                 }
                                                 MouseArea {
                                                     id: vacMouse
@@ -1406,7 +1082,7 @@ Window {
                                 ListView {
                                     id: sessionListView
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 320
+                                    Layout.preferredHeight: 280
                                     clip: true
                                     spacing: 8
                                     model: (typeof hostController !== "undefined") ? hostController.getRecentSessions() : []
@@ -1449,16 +1125,10 @@ Window {
                                                         font.pixelSize: 9
                                                         color: dashboardWindow.mutedTextColor
                                                     }
-                                                    Text {
-                                                        text: "[" + modelData.revisionCount + " revs]"
-                                                        font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 9
-                                                        color: "#7EE787"
-                                                    }
                                                 }
 
                                                 Text {
-                                                    text: modelData.latestPrompt ? (modelData.latestPrompt.length > 70 ? (modelData.latestPrompt.substring(0, 70) + "...") : modelData.latestPrompt) : "(empty)"
+                                                    text: (typeof modelData.latestPrompt !== "undefined" && modelData.latestPrompt.length > 0) ? modelData.latestPrompt : "(empty prompt)"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 9
                                                     color: dashboardWindow.fgColor
@@ -1468,21 +1138,20 @@ Window {
                                             }
 
                                             Rectangle {
-                                                width: 72
-                                                height: 24
+                                                width: restTxt.contentWidth + 12
+                                                height: 22
                                                 color: restMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
-                                                border.color: "#58A6FF"
+                                                border.color: dashboardWindow.borderColor
                                                 border.width: 1
 
                                                 Text {
+                                                    id: restTxt
                                                     anchors.centerIn: parent
-                                                    text: "RESTORE"
+                                                    text: "[ RESTORE ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 8
-                                                    font.bold: true
-                                                    color: "#58A6FF"
+                                                    color: "#7EE787"
                                                 }
-
                                                 MouseArea {
                                                     id: restMouse
                                                     anchors.fill: parent
@@ -1498,23 +1167,22 @@ Window {
                                             }
 
                                             Rectangle {
-                                                width: 60
-                                                height: 24
-                                                color: delMouse.containsMouse ? "#8B1E1E" : "transparent"
-                                                border.color: "#EF4444"
+                                                width: delItemTxt.contentWidth + 12
+                                                height: 22
+                                                color: delItemMouse.containsMouse ? "#8B1E1E" : "transparent"
+                                                border.color: dashboardWindow.borderColor
                                                 border.width: 1
 
                                                 Text {
+                                                    id: delItemTxt
                                                     anchors.centerIn: parent
-                                                    text: "DELETE"
+                                                    text: "[ DELETE ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 8
-                                                    font.bold: true
                                                     color: "#EF4444"
                                                 }
-
                                                 MouseArea {
-                                                    id: delMouse
+                                                    id: delItemMouse
                                                     anchors.fill: parent
                                                     hoverEnabled: true
                                                     cursorShape: Qt.PointingHandCursor
@@ -1530,118 +1198,18 @@ Window {
                                     }
                                 }
                             }
-
-                            // =================================================
-                            // TAB 4: TELEMETRY & STUDY
-                            // =================================================
-                            ColumnLayout {
-                                visible: dashboardWindow.currentTab === 4
-                                width: parent.width
-                                spacing: 14
-
-                                Text {
-                                    text: "/* 05: BENCHMARK STUDY TELEMETRY & HARNESS LOGS */"
-                                    font.family: dashboardWindow.monoFont
-                                    font.pixelSize: 11
-                                    font.bold: true
-                                    color: dashboardWindow.fgColor
-                                }
-
-                                Rectangle {
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 140
-                                    color: dashboardWindow.inputBgColor
-                                    border.color: dashboardWindow.borderColor
-                                    border.width: 1
-
-                                    ColumnLayout {
-                                        anchors.fill: parent
-                                        anchors.margins: 14
-                                        spacing: 10
-
-                                        Text {
-                                            text: "STAGE 10 DOWNSTREAM EVALUATION LOGS (B11)"
-                                            font.family: dashboardWindow.monoFont
-                                            font.pixelSize: 10
-                                            font.bold: true
-                                            color: dashboardWindow.fgColor
-                                        }
-
-                                        RowLayout {
-                                            spacing: 8
-                                            Rectangle {
-                                                width: 16; height: 16
-                                                color: dashboardWindow.telemetryOptIn ? dashboardWindow.fgColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
-                                                border.width: 1
-                                                Text {
-                                                    anchors.centerIn: parent
-                                                    text: dashboardWindow.telemetryOptIn ? "×" : ""
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 10
-                                                    font.bold: true
-                                                    color: dashboardWindow.bgColor
-                                                }
-                                                MouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: dashboardWindow.telemetryOptIn = !dashboardWindow.telemetryOptIn
-                                                }
-                                            }
-                                            Text {
-                                                text: "Record local latency & disambiguation decision metrics for benchmark study"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
-                                                color: dashboardWindow.fgColor
-                                            }
-                                        }
-
-                                        Text {
-                                            text: "Raw prompt text is strictly preserved locally unless consented. Tracks S1 latency, token counts, and accuracy."
-                                            font.family: dashboardWindow.monoFont
-                                            font.pixelSize: 9
-                                            color: dashboardWindow.commentColor
-                                        }
-
-                                        Rectangle {
-                                            width: expCsvTxt.contentWidth + 14
-                                            height: 24
-                                            color: expCsvMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
-                                            border.color: dashboardWindow.borderColor
-                                            border.width: 1
-
-                                            Text {
-                                                id: expCsvTxt
-                                                anchors.centerIn: parent
-                                                text: "[ EXPORT TASKS_COMPLETED.CSV ]"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
-                                                color: dashboardWindow.fgColor
-                                            }
-                                            MouseArea {
-                                                id: expCsvMouse
-                                                anchors.fill: parent
-                                                hoverEnabled: true
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: dashboardWindow.showToast("EXPORTED: tasks_completed.csv")
-                                            }
-                                        }
-                                    }
-                                }
-                            }
                         }
                     }
                 }
 
                 // =============================================================
-                // 3. BOTTOM FOOTER CONTROLS (Matching HUD action bar)
+                // 3. BOTTOM FOOTER CONTROLS
                 // =============================================================
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.preferredHeight: 30
                     spacing: 10
 
-                    // Toast message banner
                     Rectangle {
                         height: 24
                         width: toastTextLabel.contentWidth + 16
@@ -1662,32 +1230,6 @@ Window {
                     }
 
                     Item { Layout.fillWidth: true }
-
-                    // [ SAVE PREFERENCES ]
-                    Rectangle {
-                        width: saveTxt.contentWidth + 18
-                        height: 24
-                        color: saveMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
-                        border.color: dashboardWindow.borderColor
-                        border.width: 1
-
-                        Text {
-                            id: saveTxt
-                            anchors.centerIn: parent
-                            text: "[ SAVE PREFERENCES ]"
-                            font.family: dashboardWindow.monoFont
-                            font.bold: true
-                            font.pixelSize: 9
-                            color: dashboardWindow.fgColor
-                        }
-                        MouseArea {
-                            id: saveMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: dashboardWindow.showToast("PREFERENCES PERSISTED")
-                        }
-                    }
 
                     // [ CLOSE ]
                     Rectangle {
