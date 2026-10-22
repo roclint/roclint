@@ -49,6 +49,45 @@ Window {
         "src/core/prompt_state/PromptRevision.cpp",
         "CMakeLists.txt"
     ]
+
+    function refreshProjectFiles() {
+        if (typeof hostController !== "undefined" && activeProject && activeProject.path) {
+            var scanned = hostController.getProjectFiles(activeProject.path);
+            if (scanned && scanned.length > 0) {
+                projectFiles = scanned;
+                targetLocalFile = scanned[0];
+                return;
+            }
+        }
+        if (activeProject && activeProject.name.indexOf("Stardust") !== -1) {
+            projectFiles = [
+                "ROCLINT_GUIDE.md",
+                "master_architecture.md",
+                "stardust_architecture_spec.md",
+                "evaluation_plan.md",
+                "contracts/C03_analysis_semantics.md",
+                "contracts/C05_desktop_view_model.md",
+                "contracts/C09_invocation_host_context.md",
+                "curriculum/COURSE_MAP.md",
+                "curriculum/PROGRESS_TRACKER.md"
+            ];
+        } else {
+            projectFiles = [
+                "app/qml/shell/FloatingCard.qml",
+                "app/host/HostController.cpp",
+                "app/host/ScreenPlacement.cpp",
+                "app/host/HostContext.cpp",
+                "src/core/prompt_state/RevisionState.cpp",
+                "src/core/prompt_state/PromptRevision.cpp",
+                "CMakeLists.txt"
+            ];
+        }
+        targetLocalFile = projectFiles[0];
+    }
+
+    onCurrentProjectIndexChanged: {
+        refreshProjectFiles();
+    }
     property bool telemetryMaximized: false
     property bool isCompiledPreview: false
     property string originalDraft: ""
@@ -395,6 +434,7 @@ Window {
     Component.onCompleted: {
         x = (Screen.width - width) / 2;
         y = (Screen.height - height) / 2;
+        refreshProjectFiles();
     }
 
     onVisibleChanged: {
@@ -2245,7 +2285,8 @@ Window {
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
                                         rootWindow.currentProjectIndex = index;
-                                        rootWindow.showToast("PROJECT: " + modelData.name);
+                                        rootWindow.refreshProjectFiles();
+                                        rootWindow.showToast("PROJECT: " + modelData.name + " (" + rootWindow.projectFiles.length + " files)");
                                         projectDropdown.visible = false;
                                     }
                                 }
@@ -2275,7 +2316,34 @@ Window {
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     projectDropdown.visible = false;
-                                    rootWindow.showToast("PROJECT FOLDER SELECTED");
+                                    if (typeof hostController !== "undefined") {
+                                        var chosen = hostController.openFolderDialog();
+                                        if (chosen && chosen.length > 0) {
+                                            var segs = chosen.split("/");
+                                            var folderName = segs[segs.length - 1];
+                                            if (!folderName || folderName.length === 0) folderName = chosen;
+
+                                            var foundIdx = -1;
+                                            for (var i = 0; i < rootWindow.projectList.length; ++i) {
+                                                if (rootWindow.projectList[i].path === chosen) {
+                                                    foundIdx = i;
+                                                    break;
+                                                }
+                                            }
+                                            if (foundIdx !== -1) {
+                                                rootWindow.currentProjectIndex = foundIdx;
+                                            } else {
+                                                var updated = rootWindow.projectList.slice(0);
+                                                updated.push({ name: folderName, path: chosen });
+                                                rootWindow.projectList = updated;
+                                                rootWindow.currentProjectIndex = updated.length - 1;
+                                            }
+                                            rootWindow.refreshProjectFiles();
+                                            rootWindow.showToast("OPENED: " + folderName + " (" + rootWindow.projectFiles.length + " files)");
+                                            return;
+                                        }
+                                    }
+                                    rootWindow.showToast("PROJECT FOLDER UNCHANGED");
                                 }
                             }
                         }

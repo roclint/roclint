@@ -6,6 +6,8 @@
 #include <QDateTime>
 #include <QStandardPaths>
 #include <QDir>
+#include <QDirIterator>
+#include <QFileDialog>
 #include <iostream>
 
 namespace roclint::host {
@@ -495,6 +497,58 @@ void HostController::purgeHistory() {
     } catch (const std::exception& e) {
         std::cerr << "[HostController] purgeHistory error: " << e.what() << "\n";
     }
+}
+
+QStringList HostController::getProjectFiles(const QString& projectPath) {
+    QStringList result;
+    if (projectPath.trimmed().isEmpty()) {
+        return result;
+    }
+
+    QString cleanPath = projectPath.trimmed();
+    if (cleanPath.startsWith(QLatin1String("~/"))) {
+        cleanPath = QDir::homePath() + cleanPath.mid(1);
+    }
+
+    QDir dir(cleanPath);
+    if (!dir.exists()) {
+        return result;
+    }
+
+    QDirIterator it(cleanPath, QDir::Files | QDir::NoSymLinks, QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString fullPath = it.next();
+        const QString relPath = dir.relativeFilePath(fullPath);
+
+        // Filter out hidden files, build artifacts, git, node_modules, binaries, etc.
+        if (relPath.startsWith(QLatin1String(".")) ||
+            relPath.contains(QLatin1String("/.")) ||
+            relPath.startsWith(QLatin1String("build/")) ||
+            relPath.startsWith(QLatin1String("build_")) ||
+            relPath.contains(QLatin1String("/build/")) ||
+            relPath.startsWith(QLatin1String("node_modules/")) ||
+            relPath.endsWith(QLatin1String(".o")) ||
+            relPath.endsWith(QLatin1String(".a")) ||
+            relPath.endsWith(QLatin1String(".dylib")) ||
+            relPath.endsWith(QLatin1String(".so")) ||
+            relPath.endsWith(QLatin1String(".db")) ||
+            relPath.endsWith(QLatin1String(".db-wal")) ||
+            relPath.endsWith(QLatin1String(".db-shm")) ||
+            relPath.endsWith(QLatin1String(".DS_Store"))) {
+            continue;
+        }
+
+        result.append(relPath);
+        if (result.size() >= 300) {
+            break;
+        }
+    }
+    result.sort();
+    return result;
+}
+
+QString HostController::openFolderDialog() {
+    return QFileDialog::getExistingDirectory(nullptr, QStringLiteral("Select Project Folder"), QDir::homePath());
 }
 
 bool HostController::setCardVisibility(CardVisibility visibility) {

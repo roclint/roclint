@@ -157,6 +157,9 @@ public slots:
     Q_INVOKABLE void purgeHistory();
     Q_INVOKABLE void refreshStorageStats();
 
+    Q_INVOKABLE QStringList getProjectFiles(const QString& projectPath);
+    Q_INVOKABLE QString openFolderDialog();
+
     Q_INVOKABLE void analyzePrompt(const QString& text);
     Q_INVOKABLE void confirmChoice(const QString& alternativeId);
     Q_INVOKABLE void submitCustomIntent(const QString& customText);
