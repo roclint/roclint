@@ -14,7 +14,9 @@ bool WorkingIntentState::isResolved(const std::string& itemId) const noexcept {
 
 void WorkingIntentState::confirmChoice(const std::string& groupId, const std::string& alternativeId) {
     confirmedAlternatives[groupId] = alternativeId;
-    markResolved(groupId);
+    // isResolved() already covers confirmedAlternatives keys; markResolved() is redundant here
+    // and would silently populate resolvedItemIds with IDs that belong exclusively to the
+    // confirmed-choice domain, blurring the distinction between the two collections.
     ++roundsCompleted;
 }
 
@@ -37,6 +39,11 @@ namespace {
     return 0.0;
 }
 
+// Returns the lowest startByte across all alternatives' evidence spans.
+// Returns SIZE_MAX when no alternative carries any evidence; such groups sort last
+// by byte position (SIZE_MAX < SIZE_MAX is false, so they fall through to the
+// lexicographic tiebreak).  Upstream validation (C03) is expected to enforce
+// kMinAlternatives == 2 with evidence before this comparator is reached.
 [[nodiscard]] std::size_t getEarliestStartByte(const analysis::ChoiceGroup& group) noexcept {
     std::size_t earliest = std::numeric_limits<std::size_t>::max();
     for (const auto& alt : group.alternatives) {
@@ -158,10 +165,13 @@ InterventionDecision InterventionStateMachine::evaluate(
         return decision;
     }
 
+    // Compute the sorted group order once; reused by the Budget Cap gate, Policy Review gate,
+    // and Tier-2 ChoiceGroup dispatch below to avoid a redundant sort+allocation.
+    std::vector<const analysis::ChoiceGroup*> sortedGroups;
     std::string nextCandidateId{};
     if (!unresolvedEligibleGroups.empty()) {
-        auto sorted = orderChoiceGroups(analysis.choiceGroups, snapshotEval);
-        for (const auto* g : sorted) {
+        sortedGroups = orderChoiceGroups(analysis.choiceGroups, snapshotEval);
+        for (const auto* g : sortedGroups) {
             if (g->material && !workingState.isResolved(g->id)) {
                 nextCandidateId = g->id;
                 break;
@@ -191,8 +201,7 @@ InterventionDecision InterventionStateMachine::evaluate(
 
     // ChoiceGroup Priority (Tier 2)
     if (!unresolvedEligibleGroups.empty()) {
-        auto sorted = orderChoiceGroups(analysis.choiceGroups, snapshotEval);
-        for (const auto* g : sorted) {
+        for (const auto* g : sortedGroups) {
             if (g->material && !workingState.isResolved(g->id)) {
                 decision.verdict = InterventionVerdict::Clarify;
                 decision.reason = InterventionReasonCode::UnresolvedChoiceGroup;
