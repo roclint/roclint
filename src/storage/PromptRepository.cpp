@@ -65,6 +65,42 @@ namespace roclint::storage
         private:
             sqlite3_stmt* stmt_{nullptr};
         };
+
+        class TransactionGuard
+        {
+        public:
+            explicit TransactionGuard(Database& db) : db_(db)
+            {
+                db_.execute("BEGIN IMMEDIATE TRANSACTION;");
+            }
+
+            ~TransactionGuard()
+            {
+                if (!committed_)
+                {
+                    try
+                    {
+                        db_.execute("ROLLBACK;");
+                    }
+                    catch (...)
+                    {
+                    }
+                }
+            }
+
+            TransactionGuard(const TransactionGuard&) = delete;
+            TransactionGuard& operator=(const TransactionGuard&) = delete;
+
+            void commit()
+            {
+                db_.execute("COMMIT;");
+                committed_ = true;
+            }
+
+        private:
+            Database& db_;
+            bool committed_{false};
+        };
     } // anonymous namespace
 
     PromptRepository::PromptRepository(Database& db)
@@ -112,55 +148,39 @@ namespace roclint::storage
         // Migration step 1 -> 2: Performance index on prompt_revisions(session_id, created_at_ms)
         if (current < 2 && targetVersion >= 2)
         {
-            db_.execute("BEGIN IMMEDIATE TRANSACTION;");
-            try
-            {
-                db_.execute("CREATE INDEX IF NOT EXISTS idx_prompt_revisions_session "
-                            "ON prompt_revisions(session_id, created_at_ms);");
-                setSchemaVersion(2);
-                db_.execute("COMMIT;");
-            }
-            catch (...)
-            {
-                db_.execute("ROLLBACK;");
-                throw;
-            }
+            TransactionGuard tx(db_);
+            db_.execute("CREATE INDEX IF NOT EXISTS idx_prompt_revisions_session "
+                        "ON prompt_revisions(session_id, created_at_ms);");
+            setSchemaVersion(2);
+            tx.commit();
             current = 2;
         }
 
         // Migration step 2 -> 3: Approvals table and indices (A11 / C06)
         if (current < 3 && targetVersion >= 3)
         {
-            db_.execute("BEGIN IMMEDIATE TRANSACTION;");
-            try
-            {
-                db_.execute("CREATE TABLE IF NOT EXISTS approvals ("
-                            "id TEXT PRIMARY KEY NOT NULL, "
-                            "session_id TEXT NOT NULL, "
-                            "revision_id TEXT NOT NULL, "
-                            "snapshot_id TEXT NOT NULL, "
-                            "snapshot_hash INTEGER NOT NULL, "
-                            "intent_id TEXT NOT NULL, "
-                            "proposal_id TEXT NOT NULL, "
-                            "proposal_hash INTEGER NOT NULL, "
-                            "approved_text TEXT NOT NULL, "
-                            "edit_generation INTEGER NOT NULL DEFAULT 0, "
-                            "created_at_ms INTEGER NOT NULL, "
-                            "is_current INTEGER NOT NULL DEFAULT 1, "
-                            "binding_hash INTEGER NOT NULL, "
-                            "FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE, "
-                            "FOREIGN KEY(revision_id) REFERENCES prompt_revisions(revision_id) ON DELETE CASCADE"
-                            ");");
-                db_.execute("CREATE INDEX IF NOT EXISTS idx_approvals_session ON approvals(session_id, is_current);");
-                db_.execute("CREATE INDEX IF NOT EXISTS idx_approvals_revision ON approvals(revision_id, is_current);");
-                setSchemaVersion(3);
-                db_.execute("COMMIT;");
-            }
-            catch (...)
-            {
-                db_.execute("ROLLBACK;");
-                throw;
-            }
+            TransactionGuard tx(db_);
+            db_.execute("CREATE TABLE IF NOT EXISTS approvals ("
+                        "id TEXT PRIMARY KEY NOT NULL, "
+                        "session_id TEXT NOT NULL, "
+                        "revision_id TEXT NOT NULL, "
+                        "snapshot_id TEXT NOT NULL, "
+                        "snapshot_hash INTEGER NOT NULL, "
+                        "intent_id TEXT NOT NULL, "
+                        "proposal_id TEXT NOT NULL, "
+                        "proposal_hash INTEGER NOT NULL, "
+                        "approved_text TEXT NOT NULL, "
+                        "edit_generation INTEGER NOT NULL DEFAULT 0, "
+                        "created_at_ms INTEGER NOT NULL, "
+                        "is_current INTEGER NOT NULL DEFAULT 1, "
+                        "binding_hash INTEGER NOT NULL, "
+                        "FOREIGN KEY(session_id) REFERENCES sessions(session_id) ON DELETE CASCADE, "
+                        "FOREIGN KEY(revision_id) REFERENCES prompt_revisions(revision_id) ON DELETE CASCADE"
+                        ");");
+            db_.execute("CREATE INDEX IF NOT EXISTS idx_approvals_session ON approvals(session_id, is_current);");
+            db_.execute("CREATE INDEX IF NOT EXISTS idx_approvals_revision ON approvals(revision_id, is_current);");
+            setSchemaVersion(3);
+            tx.commit();
             current = 3;
         }
     }
@@ -213,24 +233,16 @@ namespace roclint::storage
 
     void PromptRepository::deleteSession(const core::SessionId& sessionId)
     {
-        db_.execute("BEGIN IMMEDIATE TRANSACTION;");
-        try
-        {
-            Statement stmt(db_.rawHandle(), "DELETE FROM sessions WHERE session_id = ?1;");
-            sqlite3_bind_text(stmt.get(), 1, sessionId.value().c_str(), static_cast<int>(sessionId.value().size()), SQLITE_TRANSIENT);
+        TransactionGuard tx(db_);
+        Statement stmt(db_.rawHandle(), "DELETE FROM sessions WHERE session_id = ?1;");
+        sqlite3_bind_text(stmt.get(), 1, sessionId.value().c_str(), static_cast<int>(sessionId.value().size()), SQLITE_TRANSIENT);
 
-            const int rc = sqlite3_step(stmt.get());
-            if (rc != SQLITE_DONE)
-            {
-                throw std::runtime_error("Failed to delete session: " + std::string(sqlite3_errmsg(db_.rawHandle())));
-            }
-            db_.execute("COMMIT;");
-        }
-        catch (...)
+        const int rc = sqlite3_step(stmt.get());
+        if (rc != SQLITE_DONE)
         {
-            db_.execute("ROLLBACK;");
-            throw;
+            throw std::runtime_error("Failed to delete session: " + std::string(sqlite3_errmsg(db_.rawHandle())));
         }
+        tx.commit();
     }
 
     void PromptRepository::saveRevision(const core::PromptRevision& revision)
@@ -397,59 +409,52 @@ namespace roclint::storage
 
     void PromptRepository::saveApproval(const core::review::ApprovalRecord& approval)
     {
-        db_.execute("BEGIN IMMEDIATE TRANSACTION;");
-        try
+        TransactionGuard tx(db_);
+
+        // Invalidate any previously current approval for this session
         {
-            // Invalidate any previously current approval for this session
+            Statement invStmt(db_.rawHandle(),
+                "UPDATE approvals SET is_current = 0 WHERE session_id = ?1;");
+            sqlite3_bind_text(invStmt.get(), 1, approval.sessionId.value().c_str(),
+                static_cast<int>(approval.sessionId.value().size()), SQLITE_TRANSIENT);
+            if (sqlite3_step(invStmt.get()) != SQLITE_DONE)
             {
-                Statement invStmt(db_.rawHandle(),
-                    "UPDATE approvals SET is_current = 0 WHERE session_id = ?1;");
-                sqlite3_bind_text(invStmt.get(), 1, approval.sessionId.value().c_str(),
-                    static_cast<int>(approval.sessionId.value().size()), SQLITE_TRANSIENT);
-                if (sqlite3_step(invStmt.get()) != SQLITE_DONE)
-                {
-                    throw std::runtime_error("Failed to invalidate prior approvals: " +
-                        std::string(sqlite3_errmsg(db_.rawHandle())));
-                }
+                throw std::runtime_error("Failed to invalidate prior approvals: " +
+                    std::string(sqlite3_errmsg(db_.rawHandle())));
             }
-
-            // Insert new approval
-            {
-                Statement insStmt(db_.rawHandle(),
-                    "INSERT INTO approvals ("
-                    "id, session_id, revision_id, snapshot_id, snapshot_hash, "
-                    "intent_id, proposal_id, proposal_hash, approved_text, "
-                    "edit_generation, created_at_ms, is_current, binding_hash) "
-                    "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13);");
-
-                sqlite3_bind_text(insStmt.get(), 1, approval.id.c_str(), static_cast<int>(approval.id.size()), SQLITE_TRANSIENT);
-                sqlite3_bind_text(insStmt.get(), 2, approval.sessionId.value().c_str(), static_cast<int>(approval.sessionId.value().size()), SQLITE_TRANSIENT);
-                sqlite3_bind_text(insStmt.get(), 3, approval.revisionId.value().c_str(), static_cast<int>(approval.revisionId.value().size()), SQLITE_TRANSIENT);
-                sqlite3_bind_text(insStmt.get(), 4, approval.snapshotId.c_str(), static_cast<int>(approval.snapshotId.size()), SQLITE_TRANSIENT);
-                sqlite3_bind_int64(insStmt.get(), 5, static_cast<sqlite3_int64>(approval.snapshotHash));
-                sqlite3_bind_text(insStmt.get(), 6, approval.intentId.c_str(), static_cast<int>(approval.intentId.size()), SQLITE_TRANSIENT);
-                sqlite3_bind_text(insStmt.get(), 7, approval.proposalId.c_str(), static_cast<int>(approval.proposalId.size()), SQLITE_TRANSIENT);
-                sqlite3_bind_int64(insStmt.get(), 8, static_cast<sqlite3_int64>(approval.proposalHash));
-                sqlite3_bind_text(insStmt.get(), 9, approval.approvedText.c_str(), static_cast<int>(approval.approvedText.size()), SQLITE_TRANSIENT);
-                sqlite3_bind_int(insStmt.get(), 10, approval.editGeneration);
-                sqlite3_bind_int64(insStmt.get(), 11, approval.createdAtMs);
-                sqlite3_bind_int(insStmt.get(), 12, approval.isCurrent ? 1 : 0);
-                sqlite3_bind_int64(insStmt.get(), 13, static_cast<sqlite3_int64>(approval.bindingHash));
-
-                if (sqlite3_step(insStmt.get()) != SQLITE_DONE)
-                {
-                    throw std::runtime_error("Failed to insert approval: " +
-                        std::string(sqlite3_errmsg(db_.rawHandle())));
-                }
-            }
-
-            db_.execute("COMMIT;");
         }
-        catch (...)
+
+        // Insert new approval
         {
-            db_.execute("ROLLBACK;");
-            throw;
+            Statement insStmt(db_.rawHandle(),
+                "INSERT INTO approvals ("
+                "id, session_id, revision_id, snapshot_id, snapshot_hash, "
+                "intent_id, proposal_id, proposal_hash, approved_text, "
+                "edit_generation, created_at_ms, is_current, binding_hash) "
+                "VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13);");
+
+            sqlite3_bind_text(insStmt.get(), 1, approval.id.c_str(), static_cast<int>(approval.id.size()), SQLITE_TRANSIENT);
+            sqlite3_bind_text(insStmt.get(), 2, approval.sessionId.value().c_str(), static_cast<int>(approval.sessionId.value().size()), SQLITE_TRANSIENT);
+            sqlite3_bind_text(insStmt.get(), 3, approval.revisionId.value().c_str(), static_cast<int>(approval.revisionId.value().size()), SQLITE_TRANSIENT);
+            sqlite3_bind_text(insStmt.get(), 4, approval.snapshotId.c_str(), static_cast<int>(approval.snapshotId.size()), SQLITE_TRANSIENT);
+            sqlite3_bind_int64(insStmt.get(), 5, static_cast<sqlite3_int64>(approval.snapshotHash));
+            sqlite3_bind_text(insStmt.get(), 6, approval.intentId.c_str(), static_cast<int>(approval.intentId.size()), SQLITE_TRANSIENT);
+            sqlite3_bind_text(insStmt.get(), 7, approval.proposalId.c_str(), static_cast<int>(approval.proposalId.size()), SQLITE_TRANSIENT);
+            sqlite3_bind_int64(insStmt.get(), 8, static_cast<sqlite3_int64>(approval.proposalHash));
+            sqlite3_bind_text(insStmt.get(), 9, approval.approvedText.c_str(), static_cast<int>(approval.approvedText.size()), SQLITE_TRANSIENT);
+            sqlite3_bind_int(insStmt.get(), 10, approval.editGeneration);
+            sqlite3_bind_int64(insStmt.get(), 11, approval.createdAtMs);
+            sqlite3_bind_int(insStmt.get(), 12, approval.isCurrent ? 1 : 0);
+            sqlite3_bind_int64(insStmt.get(), 13, static_cast<sqlite3_int64>(approval.bindingHash));
+
+            if (sqlite3_step(insStmt.get()) != SQLITE_DONE)
+            {
+                throw std::runtime_error("Failed to insert approval: " +
+                    std::string(sqlite3_errmsg(db_.rawHandle())));
+            }
         }
+
+        tx.commit();
     }
 
     void PromptRepository::invalidateApproval(const core::SessionId& sessionId)
