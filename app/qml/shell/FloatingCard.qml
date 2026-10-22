@@ -172,7 +172,7 @@ Window {
     property real liveCpu: 0.02
     property real liveRam: 40.2
     property int maxTokens: 350
-    property bool pinToTop: false
+    property bool pinToTop: true
     property bool hasBeenActive: false
 
     onActiveChanged: {
@@ -369,7 +369,7 @@ Window {
             fileDropdown.filterText = "";
             if (typeof fileSearchInput !== "undefined") fileSearchInput.text = "";
             var pt = fileSelectorButton.mapToItem(subBorderInset, 0, fileSelectorButton.height + 4);
-            fileDropdown.x = Math.min(pt.x, subBorderInset.width - fileDropdown.width - 10);
+            fileDropdown.x = Math.max(10, Math.min(pt.x, subBorderInset.width - fileDropdown.width - 10));
             fileDropdown.y = pt.y;
             fileDropdown.visible = true;
         }
@@ -1142,7 +1142,7 @@ Window {
                                             fileDropdown.filterText = "";
                                             if (typeof fileSearchInput !== "undefined") fileSearchInput.text = "";
                                             var pt = fileSelectorButton.mapToItem(subBorderInset, 0, fileSelectorButton.height + 4);
-                                            fileDropdown.x = Math.min(pt.x, subBorderInset.width - fileDropdown.width - 10);
+                                            fileDropdown.x = Math.max(10, Math.min(pt.x, subBorderInset.width - fileDropdown.width - 10));
                                             fileDropdown.y = pt.y;
                                             fileDropdown.visible = true;
                                             if (typeof fileSearchInput !== "undefined") fileSearchInput.forceActiveFocus();
