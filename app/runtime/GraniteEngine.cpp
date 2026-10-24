@@ -167,12 +167,15 @@ public:
             auto params = llama_model_default_params();
             params.n_gpu_layers = manifest_.value(QStringLiteral("gpu_layers")).toInt();
             if (params.n_gpu_layers > 0) {
-                const auto expected = manifest_.value(QStringLiteral("backend")).toString();
+                const auto expected = manifest_.value(QStringLiteral("backend")).toString().toLower();
                 ggml_backend_dev_t selected = nullptr;
                 for (std::size_t index = 0; index < ggml_backend_dev_count(); ++index) {
                     const auto device = ggml_backend_dev_get(index);
                     const auto backend = QString::fromLatin1(ggml_backend_reg_name(ggml_backend_dev_backend_reg(device))).toLower();
-                    if (backend == expected && ggml_backend_dev_type(device) != GGML_BACKEND_DEVICE_TYPE_CPU) { selected = device; break; }
+                    const bool matches = (backend == expected) ||
+                                         (expected == QStringLiteral("metal") && (backend == QStringLiteral("mtl") || backend == QStringLiteral("metal"))) ||
+                                         (expected == QStringLiteral("vulkan") && (backend == QStringLiteral("vk") || backend == QStringLiteral("vulkan")));
+                    if (matches && ggml_backend_dev_type(device) != GGML_BACKEND_DEVICE_TYPE_CPU) { selected = device; break; }
                 }
                 if (!selected) throw GraniteFailure(QStringLiteral("ACCELERATOR_UNAVAILABLE"), "The selected native GPU backend is unavailable; no CPU fallback was substituted.");
                 devices_[0] = selected; devices_[1] = nullptr; params.devices = devices_;

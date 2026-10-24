@@ -591,7 +591,13 @@ Window {
                             color: "transparent"
                             border.color: (typeof hostController !== "undefined" && hostController.isInferring)
                                           ? "#FFB000"
-                                          : ((typeof hostController !== "undefined" && hostController.useLiveWeights) ? "#7EE787" : rootWindow.borderColor)
+                                          : (typeof hostController !== "undefined" && hostController.modelRuntimeState === "FAILED")
+                                            ? "#F85149"
+                                          : (typeof hostController !== "undefined" && hostController.useLiveWeights)
+                                            ? "#7EE787"
+                                          : (typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
+                                            ? "#38BDF8"
+                                          : rootWindow.borderColor
                             border.width: 1
 
                             Text {
@@ -611,6 +617,8 @@ Window {
                                 font.pixelSize: 8
                                 color: (typeof hostController !== "undefined" && hostController.isInferring)
                                        ? "#FFB000"
+                                       : (typeof hostController !== "undefined" && hostController.modelRuntimeState === "FAILED")
+                                         ? "#F85149"
                                        : ((typeof hostController !== "undefined" && hostController.useLiveWeights) ? "#7EE787" : rootWindow.mutedTextColor)
                             }
 
@@ -620,7 +628,6 @@ Window {
                                 onClicked: {
                                     if (typeof hostController !== "undefined") {
                                         hostController.showDashboard();
-
                                     }
                                 }
                             }
