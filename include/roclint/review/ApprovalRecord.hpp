@@ -1,7 +1,10 @@
 #pragma once
 
-#include "roclint/core/prompt_state/RevisionId.hpp"
-#include "roclint/core/prompt_state/SessionId.hpp"
+#include "roclint/analysis/NormalizedAnalysis.hpp"
+#include "roclint/core/Result.hpp"
+#include "roclint/core/prompt_state/RevisionState.hpp"
+#include "roclint/intent/ConfirmedIntent.hpp"
+#include "roclint/rewrite/RewriteProposal.hpp"
 
 #include <cstdint>
 #include <string>
@@ -9,45 +12,57 @@
 
 namespace roclint::core::review {
 
+// C06 approval: "Wording reviewed". Persists explicit proof fields plus a binding hash.
 struct ApprovalRecord {
-    std::string id{};
-    SessionId sessionId{""};
-    RevisionId revisionId{""};
+    std::string id{};             // appr_<bindingHash>
+    std::string sessionId{};
+    std::string revisionId{};
+    std::uint64_t stateVersion{0};
     std::string snapshotId{};
-    std::uint64_t snapshotHash{0};
+    std::string snapshotHash{};
     std::string intentId{};
+    std::string intentHash{};
     std::string proposalId{};
-    std::uint64_t proposalHash{0};
+    std::string proposalHash{};
     std::string approvedText{};
-    int editGeneration{0};
+    std::uint64_t draftEditGeneration{0};
+    std::uint64_t proposalEditGeneration{0};
+    std::string validatorVersion{};
+    std::string policyVersion{};
+    std::string rewriteProfile{};
     std::int64_t createdAtMs{0};
     bool isCurrent{true};
-    std::uint64_t bindingHash{0};
+    std::string bindingHash{};
 
-    [[nodiscard]] std::uint64_t computeBindingHash() const noexcept;
+    [[nodiscard]] std::string computeBindingHash() const;
 
-    bool operator==(const ApprovalRecord&) const noexcept = default;
+    bool operator==(const ApprovalRecord&) const = default;
+};
+
+// Live state an approval is created from and validated against.
+struct ApprovalContext {
+    std::string sessionId{};
+    std::string revisionId{};
+    std::uint64_t stateVersion{0};
+    std::uint64_t draftEditGeneration{0};
+    std::uint64_t proposalEditGeneration{0};
+    RevisionStatus revisionStatus{RevisionStatus::Clean};
+    const analysis::AnalysisSnapshot* analysis{nullptr};
+    const intent::ConfirmedIntent* intent{nullptr};
+    const rewrite::RewriteProposal* proposal{nullptr};
+    std::string validatorVersion{};
+    std::string policyVersion{};
 };
 
 class ApprovalFactory {
 public:
-    [[nodiscard]] static ApprovalRecord createApproval(
-        const SessionId& sessionId,
-        const RevisionId& revisionId,
-        std::string_view snapshotId,
-        std::uint64_t snapshotHash,
-        std::string_view intentId,
-        std::string_view proposalId,
-        std::uint64_t proposalHash,
-        std::string_view approvedText,
-        int editGeneration = 0,
-        std::int64_t nowMs = 0) noexcept;
+    [[nodiscard]] static Result<ApprovalRecord> createApproval(const ApprovalContext& context, std::int64_t nowMs);
 
-    [[nodiscard]] static bool isApprovalValid(
-        const ApprovalRecord& approval,
-        std::string_view currentRevisionId,
-        std::string_view currentProposalId,
-        std::uint64_t currentProposalHash) noexcept;
+    [[nodiscard]] static Status validate(const ApprovalRecord& approval, const ApprovalContext& context);
+
+    [[nodiscard]] static bool isApprovalValid(const ApprovalRecord& approval, const ApprovalContext& context) {
+        return validate(approval, context).ok();
+    }
 };
 
 } // namespace roclint::core::review

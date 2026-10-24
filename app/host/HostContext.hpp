@@ -40,22 +40,20 @@ struct HostContextObservation {
 
 class HostContextDetector {
 public:
-    // Captures the frontmost application one-shot at invocation time
+    // Captures the frontmost application one-shot at invocation time.
     static HostContextObservation captureFrontmost();
 
-    // Pure mapping function from process/bundle ID and display name to coarse category
-    static HostContextCategory mapIdentityToCategory(const QString& id, const QString& name);
+    // Exact, case-insensitive lookup of a macOS bundle identifier or a Windows
+    // executable file name. Identifiers that are not listed map to Unknown.
+    static HostContextCategory mapIdentityToCategory(const QString& identifier);
 
-    // Testing / fixture injection support (B02H step 1)
+    // Shared by the controller and native bridge, before reading any field text.
+    static bool isAmbientEligibleApp(const QString& identifier);
+
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
     static void setMockObservation(std::optional<HostContextObservation> mock);
     static void resetMock();
-
-    // Tier 2: Ambient Direct Editor Injection (macOS Accessibility / AXUIElement)
-    static bool isAccessibilityPermissionGranted() noexcept;
-    static bool performDirectInjection(const QString& text);
-
-private:
-    static std::optional<HostContextObservation> s_mockObservation;
+#endif
 };
 
 } // namespace roclint::host

@@ -32,7 +32,7 @@ void testSessionId()
         SessionId sessionId("");
 
     }
-    catch (const std::invalid_argument& e)
+    catch (const std::invalid_argument&)
         {
             exceptionThrown = true;
         }
@@ -44,7 +44,7 @@ void testSessionId()
         {
             SessionId sessionId("   ");
         }
-        catch (const std::invalid_argument& e)
+        catch (const std::invalid_argument&)
         {
             exceptionThrown = true;
         }
@@ -62,7 +62,7 @@ void testRevisionId()
     {
         RevisionId revisionId("");
     }
-    catch (const std::invalid_argument& e)
+    catch (const std::invalid_argument&)
     {
         exceptionThrown = true;
     }
@@ -74,7 +74,7 @@ void testRevisionId()
     {
         RevisionId revisionId("   ");
     }
-    catch (const std::invalid_argument& e)
+    catch (const std::invalid_argument&)
     {
         exceptionThrown = true;
     }
@@ -165,7 +165,7 @@ void testBouncerInvariants()
             timeStamp
         };
     }
-    catch (const std::invalid_argument& e)
+    catch (const std::invalid_argument&)
     {
        exceptionThrown = true;
     }
@@ -183,7 +183,7 @@ void testBouncerInvariants()
             timeStamp
         };
     }
-    catch (const std::invalid_argument& e)
+    catch (const std::invalid_argument&)
     {
        exceptionThrown = true;
     }
@@ -201,7 +201,7 @@ void testBouncerInvariants()
             invalidTimeStamp // Invalid negative timestamp
         };
     }
-    catch (const std::invalid_argument& e)
+    catch (const std::invalid_argument&)
     {
        exceptionThrown = true;
     }

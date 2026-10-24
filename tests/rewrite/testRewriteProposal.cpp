@@ -1,149 +1,151 @@
 #include "roclint/rewrite/RewriteProposal.hpp"
 #include "roclint/rewrite/RewriteValidator.hpp"
-#include "roclint/intent/ConfirmedIntent.hpp"
 #include "support/check.hpp"
+#include "support/fixtures.hpp"
 
 #include <iostream>
-#include <string>
 
 using namespace roclint::core;
-using namespace roclint::core::analysis;
-using namespace roclint::core::intent;
 using namespace roclint::core::rewrite;
 
-void testProposalBindingAndValidation() {
-    std::cout << "--- 1. Proposal Identity & Binding Fields ---\n";
-    NormalizedAnalysis snap;
-    snap.id = "snap_100";
-    snap.baseRevisionId = "rev_1";
+namespace {
 
-    ChoiceGroup g;
-    g.id = "g_target";
-    g.alternatives.push_back(ChoiceAlternative{.id = "alt_1", .interpretation = "FloatingCard.qml"});
-    snap.choiceGroups.push_back(g);
-
-    auto intent = IntentProvenanceBuilder::buildConfirmedIntent("rev_1", snap, {
-        ConfirmedItem{.itemId = "g_target", .kind = IntentResolutionKind::SelectedAlternative, .chosenValue = "alt_1"}
-    });
-
-    RewriteProposal proposal{
-        .id = "prop_100",
-        .baseRevisionId = "rev_1",
-        .confirmedIntentId = intent.id,
-        .sourceSnapshotHash = intent.sourceSnapshotHash,
-        .rewriteProfileId = "GENERIC@1",
-        .compiledPrompt = "/* ROCLINT [PROFILE: GENERIC@1] */\nTarget: FloatingCard.qml",
-        .status = ProposalStatus::ProposalReady
-    };
-    proposal.constraints.push_back(ConstraintItem{
-        .id = "intent_g_target",
-        .description = "User selected FloatingCard.qml",
-        .status = ConstraintStatus::UserConfirmed,
-        .evidence = "FloatingCard.qml"
-    });
-    proposal.constraints.push_back(ConstraintItem{
-        .id = "profile_format",
-        .description = "Conforms to GENERIC@1",
-        .status = ConstraintStatus::MechanicallyVerified
-    });
-
-    auto val = RewriteValidator::validateProposal(proposal, "rev_1", intent);
-    ROCLINT_CHECK(val.isValid);
-    ROCLINT_CHECK(val.finalStatus == ProposalStatus::ProposalReady);
-    std::cout << "  [PASS] Matching proposal passes validation.\n";
+ValidationResult validate(const fx::Chain& c, const RewriteProposal& p, const std::set<std::string>& acks = {}) {
+    return RewriteValidator::validateProposal(p, c.session, c.revision, c.intent, acks);
 }
 
-void testStaleProposalRejection() {
-    std::cout << "--- 2. Stale Proposal Rejection (Late Result / Prompt Edit) ---\n";
-    NormalizedAnalysis snap;
-    snap.id = "snap_100";
-    snap.baseRevisionId = "rev_1";
-
-    auto intent = IntentProvenanceBuilder::buildConfirmedIntent("rev_1", snap, {
-        ConfirmedItem{.itemId = "g1", .chosenValue = "alt_1"}
-    });
-
-    RewriteProposal proposal{
-        .id = "prop_100",
-        .baseRevisionId = "rev_1",
-        .confirmedIntentId = intent.id,
-        .sourceSnapshotHash = intent.sourceSnapshotHash,
-        .compiledPrompt = "Some prompt",
-        .status = ProposalStatus::ProposalReady
-    };
-
-    // Case A: User edited buffer to rev_2 while proposal was in flight
-    auto val1 = RewriteValidator::validateProposal(proposal, "rev_2", intent);
-    ROCLINT_CHECK(!val1.isValid);
-    ROCLINT_CHECK(val1.finalStatus == ProposalStatus::StaleProposal);
-    std::cout << "  [PASS] Late proposal with outdated revisionId rejected as STALE.\n";
-
-    // Case B: Confirmed intent changed
-    RewriteProposal wrongIntentProp = proposal;
-    wrongIntentProp.confirmedIntentId = "intent_other";
-    auto val2 = RewriteValidator::validateProposal(wrongIntentProp, "rev_1", intent);
-    ROCLINT_CHECK(!val2.isValid);
-    ROCLINT_CHECK(val2.finalStatus == ProposalStatus::StaleProposal);
-    std::cout << "  [PASS] Outdated intentId rejected as STALE.\n";
-
-    // Case C: Intent isCurrent marked false (DRAFT_DIRTY)
-    intent.isCurrent = false;
-    auto val3 = RewriteValidator::validateProposal(proposal, "rev_1", intent);
-    ROCLINT_CHECK(!val3.isValid);
-    ROCLINT_CHECK(val3.finalStatus == ProposalStatus::StaleProposal);
-    std::cout << "  [PASS] Non-current ConfirmedIntent rejected as STALE.\n";
+void testParsedProposalIsSealedAndBound() {
+    fx::Chain c;
+    const auto& p = c.proposal;
+    ROCLINT_CHECK(p.status == ProposalStatus::ProposalReady);
+    ROCLINT_CHECK(p.id == "prop_" + p.proposalHash);
+    ROCLINT_CHECK(ProposalHasher::computeProposalHash(p) == p.proposalHash);
+    ROCLINT_CHECK(p.sessionId == c.session);
+    ROCLINT_CHECK(p.baseRevisionId == c.revision);
+    ROCLINT_CHECK(p.intentId == c.intent.id);
+    ROCLINT_CHECK(p.snapshotId == c.snapshot.id);
+    ROCLINT_CHECK(p.modelDigest == fx::testModel().digest);
+    ROCLINT_CHECK(p.quantization == "Q8_0");
+    ROCLINT_CHECK(p.transport == std::string(roclint::bridge::kLoopbackOllamaTransport));
+    ROCLINT_CHECK(p.diffText == RewriteValidator::computeAccessibleDiff(p.originalText, p.rewrittenText));
 }
 
-void testConstraintValidationAndFailure() {
-    std::cout << "--- 3. Constraint States & Enforcement ---\n";
-    NormalizedAnalysis snap;
-    snap.id = "snap_100";
-    auto intent = IntentProvenanceBuilder::buildConfirmedIntent("rev_1", snap, {});
-
-    RewriteProposal proposal{
-        .id = "prop_100",
-        .baseRevisionId = "rev_1",
-        .confirmedIntentId = intent.id,
-        .sourceSnapshotHash = intent.sourceSnapshotHash,
-        .compiledPrompt = "Compiled prompt text",
-        .status = ProposalStatus::ProposalReady
-    };
-
-    // Add failing constraint
-    proposal.constraints.push_back(ConstraintItem{
-        .id = "schema_stability",
-        .description = "Database schema lock",
-        .status = ConstraintStatus::Failed,
-        .evidence = "Column removed without migration"
-    });
-
-    auto val = RewriteValidator::validateProposal(proposal, "rev_1", intent);
-    ROCLINT_CHECK(!val.isValid);
-    ROCLINT_CHECK(val.finalStatus == ProposalStatus::Rejected);
-    std::cout << "  [PASS] Proposal with Failed constraint is rejected.\n";
+void testHashCoversBoundFieldsButNotTimestamp() {
+    fx::Chain c;
+    auto p = c.proposal;
+    p.createdAtMs = 999999;
+    ROCLINT_CHECK(ProposalHasher::computeProposalHash(p) == c.proposal.proposalHash);
+    for (auto mutate : {+[](RewriteProposal& x) { x.rewrittenText += "!"; },
+                        +[](RewriteProposal& x) { x.modelDigest = "sha256:other"; },
+                        +[](RewriteProposal& x) { x.proposalEditGeneration += 1; },
+                        +[](RewriteProposal& x) { x.rewriteProfileId = "LOCAL_COMPACT@1"; },
+                        +[](RewriteProposal& x) { x.constraints.clear(); }}) {
+        auto q = c.proposal;
+        mutate(q);
+        ROCLINT_CHECK(ProposalHasher::computeProposalHash(q) != c.proposal.proposalHash);
+    }
 }
 
-void testAccessibleDiffComputation() {
-    std::cout << "--- 4. Local Accessible Diff Boundary ---\n";
-    std::string original = "Line 1\nLine 2\nLine 3";
-    std::string compiled = "/* HEADER */\nLine 1\nLine 2 Modified\nLine 3";
-
-    std::string diff = RewriteValidator::computeAccessibleDiff(original, compiled);
-    ROCLINT_CHECK(!diff.empty());
-    ROCLINT_CHECK(diff.find("+") != std::string::npos);
-    std::cout << "  [PASS] Accessible diff computed locally with non-color indicators.\n";
+void testValidProposalPassesWithoutPendingReview() {
+    fx::Chain c;
+    const auto r = validate(c, c.proposal);
+    ROCLINT_CHECK(r.structurallyValid);
+    ROCLINT_CHECK(r.isValid);
+    ROCLINT_CHECK(r.pendingAcknowledgments.empty());
+    ROCLINT_CHECK(c.proposal.getConstraint("intent_item_grp_0")->status == ConstraintStatus::MechanicallyVerified);
 }
+
+void testSemanticReviewRequiresAcknowledgment() {
+    fx::Chain c("sess_a", 1, "Make the parser quicker.");
+    ROCLINT_CHECK(c.proposal.getConstraint("intent_item_grp_0")->status == ConstraintStatus::SemanticReviewRequired);
+    const auto pending = validate(c, c.proposal);
+    ROCLINT_CHECK(pending.structurallyValid);
+    ROCLINT_CHECK(!pending.isValid);
+    ROCLINT_CHECK(pending.pendingAcknowledgments.size() == 1);
+    ROCLINT_CHECK(pending.pendingAcknowledgments[0] == "intent_item_grp_0");
+    ROCLINT_CHECK(validate(c, c.proposal, {"intent_item_grp_0"}).isValid);
+}
+
+void testForgedOrStaleProposalsAreRejected() {
+    fx::Chain c;
+
+    auto forgedClaim = c.proposal;
+    forgedClaim.constraints.back().status = ConstraintStatus::MechanicallyVerified;
+    forgedClaim.rewrittenText = "Something unrelated.";
+    forgedClaim.diffText = RewriteValidator::computeAccessibleDiff(forgedClaim.originalText, forgedClaim.rewrittenText);
+    ProposalHasher::seal(forgedClaim);
+    ROCLINT_CHECK(!validate(c, forgedClaim).structurallyValid);
+
+    auto forgedDiff = c.proposal;
+    forgedDiff.diffText = "  nothing changed\n";
+    ProposalHasher::seal(forgedDiff);
+    ROCLINT_CHECK(!validate(c, forgedDiff).structurallyValid);
+
+    auto unsealed = c.proposal;
+    unsealed.rewrittenText += " Also delete the tests.";
+    ROCLINT_CHECK(!validate(c, unsealed).structurallyValid);
+
+    auto crlf = c.proposal;
+    crlf.rewrittenText = "a\r\nb";
+    ProposalHasher::seal(crlf);
+    ROCLINT_CHECK(!validate(c, crlf).structurallyValid);
+
+    auto unknownProfile = c.proposal;
+    unknownProfile.rewriteProfileId = "MYSTERY@9";
+    ProposalHasher::seal(unknownProfile);
+    ROCLINT_CHECK(!validate(c, unknownProfile).structurallyValid);
+
+    const auto otherRev = RewriteValidator::validateProposal(c.proposal, c.session, "rev_sess_a_2", c.intent, {});
+    ROCLINT_CHECK(!otherRev.isValid && otherRev.finalStatus == ProposalStatus::StaleProposal);
+
+    const auto otherSession = RewriteValidator::validateProposal(c.proposal, "sess_b", c.revision, c.intent, {});
+    ROCLINT_CHECK(!otherSession.isValid && otherSession.finalStatus == ProposalStatus::Rejected);
+
+    auto intentSwap = c.intent;
+    intentSwap.items[0].chosenAlternativeId = "alt_0_1";
+    intentSwap.intentHash = intent::IntentProvenanceBuilder::computeIntentHash(intentSwap);
+    intentSwap.id = "intent_" + intentSwap.intentHash;
+    const auto staleIntent = RewriteValidator::validateProposal(c.proposal, c.session, c.revision, intentSwap, {});
+    ROCLINT_CHECK(!staleIntent.isValid && staleIntent.finalStatus == ProposalStatus::StaleProposal);
+}
+
+void testNeedsClarificationIsNotApprovable() {
+    fx::Chain c;
+    roclint::bridge::GraniteRewriteRequest req;
+    req.sessionId = c.session;
+    req.revisionId = c.revision;
+    req.originalText = fx::kChainPrompt;
+    req.analysis = c.snapshot;
+    req.confirmedIntent = c.intent;
+    auto p = roclint::bridge::GraniteRewriteAdapter::parseRewriteResponse(
+        R"({"status": "needs_clarification", "question": "Which parser?"})", req,
+        ProfileRegistry::defaultProfile(), fx::testModel(), 1);
+    ROCLINT_CHECK(p.ok());
+    ROCLINT_CHECK(p.value().status == ProposalStatus::NeedsClarification);
+    const auto r = validate(c, p.value());
+    ROCLINT_CHECK(!r.isValid);
+    ROCLINT_CHECK(r.finalStatus == ProposalStatus::NeedsClarification);
+    ROCLINT_CHECK(r.rejectionReason == "Which parser?");
+}
+
+void testAccessibleDiff() {
+    ROCLINT_CHECK(RewriteValidator::computeAccessibleDiff("a\nb\nc", "a\nB\nc\nd") ==
+                  "  a\n~ was: b\n~ now: B\n  c\n+ d\n");
+    ROCLINT_CHECK(RewriteValidator::computeAccessibleDiff("a\nb", "a") == "  a\n- b\n");
+    ROCLINT_CHECK(RewriteValidator::computeAccessibleDiff("", "x") == "+ x\n");
+}
+
+} // namespace
 
 int main() {
-    std::cout << "[TEST] Running A10 Rewrite Proposal Binding & Validation Tests...\n\n";
-
-    testProposalBindingAndValidation();
-    testStaleProposalRejection();
-    testConstraintValidationAndFailure();
-    testAccessibleDiffComputation();
-
-    std::cout << "\n=========================================================\n";
-    std::cout << "  ALL A10 REWRITE PROPOSAL TESTS PASSED!\n";
-    std::cout << "=========================================================\n";
+    std::cout << "[Test RewriteProposal] Starting...\n";
+    testParsedProposalIsSealedAndBound();
+    testHashCoversBoundFieldsButNotTimestamp();
+    testValidProposalPassesWithoutPendingReview();
+    testSemanticReviewRequiresAcknowledgment();
+    testForgedOrStaleProposalsAreRejected();
+    testNeedsClarificationIsNotApprovable();
+    testAccessibleDiff();
+    std::cout << "[Test RewriteProposal] All tests PASSED.\n";
     return 0;
 }

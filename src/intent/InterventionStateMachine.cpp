@@ -1,241 +1,333 @@
 #include "roclint/intent/InterventionStateMachine.hpp"
 
+#include "roclint/core/prompt_state/TextNormalization.hpp"
+
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace roclint::core::intent {
 
-bool WorkingIntentState::isResolved(const std::string& itemId) const noexcept {
-    if (confirmedAlternatives.find(itemId) != confirmedAlternatives.end()) {
-        return true;
-    }
-    return std::find(resolvedItemIds.begin(), resolvedItemIds.end(), itemId) != resolvedItemIds.end();
-}
-
-void WorkingIntentState::confirmChoice(const std::string& groupId, const std::string& alternativeId) {
-    confirmedAlternatives[groupId] = alternativeId;
-    // isResolved() already covers confirmedAlternatives keys; markResolved() is redundant here
-    // and would silently populate resolvedItemIds with IDs that belong exclusively to the
-    // confirmed-choice domain, blurring the distinction between the two collections.
-    ++roundsCompleted;
-}
-
-void WorkingIntentState::markResolved(const std::string& itemId) {
-    if (!isResolved(itemId)) {
-        resolvedItemIds.push_back(itemId);
-    }
-}
-
 namespace {
 
-[[nodiscard]] double getS1PriorityScore(
-    const std::string& groupId,
-    const bridge::SnapshotEvaluationResponse& snapshotEval) noexcept {
-    for (const auto& score : snapshotEval.groupScores) {
-        if (score.groupId == groupId) {
-            return score.ambiguityScore;
-        }
-    }
-    return 0.0;
+[[nodiscard]] bool contains(const std::vector<std::string>& v, const std::string& id) {
+    return std::find(v.begin(), v.end(), id) != v.end();
 }
 
-// Returns the lowest startByte across all alternatives' evidence spans.
-// Returns SIZE_MAX when no alternative carries any evidence; such groups sort last
-// by byte position (SIZE_MAX < SIZE_MAX is false, so they fall through to the
-// lexicographic tiebreak).  Upstream validation (C03) is expected to enforce
-// kMinAlternatives == 2 with evidence before this comparator is reached.
-[[nodiscard]] std::size_t getEarliestStartByte(const analysis::ChoiceGroup& group) noexcept {
-    std::size_t earliest = std::numeric_limits<std::size_t>::max();
-    for (const auto& alt : group.alternatives) {
-        for (const auto& span : alt.evidence) {
-            if (span.startByte < earliest) {
-                earliest = span.startByte;
-            }
+[[nodiscard]] const analysis::ChoiceGroup* findGroup(const analysis::NormalizedAnalysis& analysis, std::string_view id) {
+    for (const auto& g : analysis.choiceGroups) {
+        if (g.id == id) {
+            return &g;
         }
     }
-    return earliest;
+    return nullptr;
 }
 
-[[nodiscard]] std::size_t getEarliestAssumptionStartByte(const analysis::Assumption& assumption) noexcept {
-    std::size_t earliest = std::numeric_limits<std::size_t>::max();
-    for (const auto& span : assumption.evidence) {
-        if (span.startByte < earliest) {
-            earliest = span.startByte;
-        }
+[[nodiscard]] std::size_t remainingFor(const WorkingIntentState& state) noexcept {
+    const auto used = std::min(state.roundsCompleted, InterventionStateMachine::kMaxClarificationBudget);
+    return InterventionStateMachine::kMaxClarificationBudget - used;
+}
+
+// Common preconditions for every transition; returns the active item ID on success.
+Result<std::string> requireActive(const analysis::NormalizedAnalysis& analysis,
+                                  const InterventionDecision& decision,
+                                  const WorkingIntentState& state) {
+    if (!decision.activeItemId.has_value() || decision.activeItemId->empty()) {
+        return makeError(ErrorCode::PreconditionFailed, "There is no active item to resolve");
     }
-    return earliest;
+    if (decision.roundsCompleted != state.roundsCompleted) {
+        return makeError(ErrorCode::StaleVersion, "Decision was computed for an earlier clarification round");
+    }
+    if (remainingFor(state) == 0 &&
+        !(decision.verdict == InterventionVerdict::Manual &&
+          decision.reason == InterventionReasonCode::ClarificationBudgetExceeded)) {
+        return makeError(ErrorCode::PreconditionFailed, "Clarification budget is exhausted");
+    }
+    if (classifyItem(analysis, *decision.activeItemId) == ActiveItemKind::None) {
+        return makeError(ErrorCode::InvalidInput, "Active item does not belong to the current analysis");
+    }
+    if (state.isResolved(*decision.activeItemId)) {
+        return makeError(ErrorCode::Conflict, "Item '" + *decision.activeItemId + "' is already resolved");
+    }
+    return *decision.activeItemId;
 }
 
 } // namespace
 
-std::vector<const analysis::ChoiceGroup*> InterventionStateMachine::orderChoiceGroups(
-    const std::vector<analysis::ChoiceGroup>& groups,
-    const bridge::SnapshotEvaluationResponse& snapshotEval) noexcept {
+bool WorkingIntentState::isResolved(const std::string& itemId) const {
+    return confirmedAlternatives.count(itemId) != 0 || customResolutions.count(itemId) != 0 ||
+           assumptionDecisions.count(itemId) != 0 || contains(keptOriginalItemIds, itemId);
+}
 
-    std::vector<const analysis::ChoiceGroup*> ordered;
-    ordered.reserve(groups.size());
-    for (const auto& g : groups) {
-        ordered.push_back(&g);
+bool WorkingIntentState::isSkipped(const std::string& itemId) const {
+    return !isResolved(itemId) && contains(skippedItemIds, itemId);
+}
+
+ActiveItemKind classifyItem(const analysis::NormalizedAnalysis& analysis, std::string_view itemId) {
+    for (const auto& g : analysis.choiceGroups) {
+        if (g.id == itemId) return ActiveItemKind::ChoiceGroup;
     }
+    for (const auto& a : analysis.assumptions) {
+        if (a.id == itemId) return ActiveItemKind::Assumption;
+    }
+    for (const auto& m : analysis.missingDecisions) {
+        if (m.id == itemId) return ActiveItemKind::MissingDecision;
+    }
+    for (const auto& c : analysis.conflicts) {
+        if (c.id == itemId) return ActiveItemKind::Conflict;
+    }
+    return ActiveItemKind::None;
+}
 
-    std::stable_sort(ordered.begin(), ordered.end(), [&](const analysis::ChoiceGroup* a, const analysis::ChoiceGroup* b) {
-        const double scoreA = getS1PriorityScore(a->id, snapshotEval);
-        const double scoreB = getS1PriorityScore(b->id, snapshotEval);
-        if (scoreA != scoreB) {
-            return scoreA > scoreB; // Higher score first
-        }
-
-        const std::size_t spanA = getEarliestStartByte(*a);
-        const std::size_t spanB = getEarliestStartByte(*b);
-        if (spanA != spanB) {
-            return spanA < spanB; // Earlier byte in buffer first
-        }
-
-        return a->id < b->id; // Lexicographical fallback
-    });
-
+std::vector<const analysis::ChoiceGroup*> InterventionStateMachine::orderChoiceGroups(
+    const analysis::NormalizedAnalysis& analysis,
+    const bridge::SnapshotEvaluationResponse& snapshotEval) {
+    std::vector<const analysis::ChoiceGroup*> ordered;
+    for (const auto& presentation : analysis::buildPresentation(analysis, snapshotEval)) {
+        if (const auto* group = findGroup(analysis, presentation.groupId)) ordered.push_back(group);
+    }
     return ordered;
 }
 
-InterventionDecision InterventionStateMachine::evaluate(
-    const analysis::NormalizedAnalysis& analysis,
-    const analysis::OverallPolicyResult& policyResult,
-    const bridge::SnapshotEvaluationResponse& snapshotEval,
-    const WorkingIntentState& workingState) noexcept {
-
+InterventionDecision InterventionStateMachine::evaluate(const analysis::NormalizedAnalysis& analysis,
+                                                        const analysis::OverallPolicyResult& policyResult,
+                                                        const bridge::SnapshotEvaluationResponse& snapshotEval,
+                                                        const WorkingIntentState& state) {
     InterventionDecision decision;
-    decision.roundsCompleted = workingState.roundsCompleted;
-    decision.remainingBudget = (workingState.roundsCompleted < kMaxClarificationBudget)
-                                   ? (kMaxClarificationBudget - workingState.roundsCompleted)
-                                   : 0;
+    decision.roundsCompleted = state.roundsCompleted;
+    decision.remainingBudget = remainingFor(state);
 
-    // Provider Gate
+    auto finish = [&](InterventionVerdict verdict, InterventionReasonCode reason, std::optional<std::string> activeId,
+                      std::string message) {
+        decision.verdict = verdict;
+        decision.reason = reason;
+        decision.activeItemId = std::move(activeId);
+        decision.activeItemKind = decision.activeItemId.has_value() ? classifyItem(analysis, *decision.activeItemId)
+                                                                    : ActiveItemKind::None;
+        decision.diagnosticMessage = std::move(message);
+        return decision;
+    };
+
     if (!snapshotEval.success) {
-        decision.verdict = InterventionVerdict::Manual;
-        decision.reason = InterventionReasonCode::ProviderUnavailable;
-        decision.activeItemId = std::nullopt;
-        decision.diagnosticMessage = "Upstream inference provider failed: " + snapshotEval.errorMessage;
-        return decision;
+        return finish(InterventionVerdict::Manual, InterventionReasonCode::ProviderUnavailable, std::nullopt,
+                      "Ranking provider failed: " + snapshotEval.errorMessage);
     }
-
-    // Structural Gate
+    if (snapshotEval.analysisSnapshotId != analysis.id) {
+        return finish(InterventionVerdict::Manual, InterventionReasonCode::ScoreBindingMismatch, std::nullopt,
+                      "Ranking response does not belong to the current analysis.");
+    }
+    if (state.manualModeRequested) {
+        return finish(InterventionVerdict::Manual, InterventionReasonCode::UserRequestedManual, std::nullopt,
+                      "Manual editing was requested.");
+    }
     if (policyResult.overallVerdict == analysis::PolicyVerdict::Rejected) {
-        decision.verdict = InterventionVerdict::Manual;
-        decision.reason = InterventionReasonCode::InvalidAnalysisStructure;
-        decision.activeItemId = std::nullopt;
-        decision.diagnosticMessage = "Analysis failed structural or materiality validation.";
-        return decision;
+        return finish(InterventionVerdict::Manual, InterventionReasonCode::InvalidAnalysisStructure, std::nullopt,
+                      "Analysis failed structural or materiality validation.");
     }
 
-    // Conflict Priority (Tier 1)
+    // Tier 1: blocking conflicts.
     for (const auto& conflict : analysis.conflicts) {
-        if (!workingState.isResolved(conflict.id)) {
-            decision.verdict = InterventionVerdict::Manual;
-            decision.reason = InterventionReasonCode::BlockingConflictPresent;
-            decision.activeItemId = conflict.id;
-            decision.diagnosticMessage = "Direct conflict requires manual specification: " + conflict.description;
-            return decision;
+        if (conflict.blocking && !state.isResolved(conflict.id) && !state.isSkipped(conflict.id)) {
+            return finish(InterventionVerdict::Manual, InterventionReasonCode::BlockingConflictPresent, conflict.id,
+                          "Conflicting requirements need a manual decision: " + conflict.description);
         }
     }
 
-    std::vector<const analysis::ChoiceGroup*> unresolvedEligibleGroups;
-    for (const auto& group : analysis.choiceGroups) {
-        if (group.material && !workingState.isResolved(group.id)) {
-            unresolvedEligibleGroups.push_back(&group);
+    auto verdictFor = [&](const std::string& groupId) {
+        const auto* g = policyResult.findGroup(groupId);
+        return g == nullptr ? analysis::PolicyVerdict::Rejected : g->verdict;
+    };
+
+    std::vector<const analysis::ChoiceGroup*> eligibleGroups;
+    std::vector<const analysis::ChoiceGroup*> manualGroups;
+    for (const auto* g : orderChoiceGroups(analysis, snapshotEval)) {
+        if (!g->material || state.isResolved(g->id) || state.isSkipped(g->id)) {
+            continue;
+        }
+        switch (verdictFor(g->id)) {
+            case analysis::PolicyVerdict::EligibleForChoice: eligibleGroups.push_back(g); break;
+            case analysis::PolicyVerdict::NeedsManualReview: manualGroups.push_back(g); break;
+            case analysis::PolicyVerdict::Rejected: break;
         }
     }
 
-    std::vector<const analysis::Assumption*> unresolvedMaterialAssumptions;
-    for (const auto& assumption : analysis.assumptions) {
-        if (assumption.material && !workingState.isResolved(assumption.id)) {
-            unresolvedMaterialAssumptions.push_back(&assumption);
+    std::vector<const analysis::MissingDecision*> blockingMissing;
+    for (const auto& md : analysis.missingDecisions) {
+        if (md.blocking && !state.isResolved(md.id) && !state.isSkipped(md.id)) {
+            blockingMissing.push_back(&md);
         }
     }
 
-    const bool hasUnresolvedItems = !unresolvedEligibleGroups.empty() || !unresolvedMaterialAssumptions.empty();
-
-    // Resolution Gate
-    if (!hasUnresolvedItems) {
-        decision.verdict = InterventionVerdict::Quiet;
-        decision.reason = (workingState.roundsCompleted == 0)
-                              ? InterventionReasonCode::PromptAlreadyClear
-                              : InterventionReasonCode::AllMaterialItemsResolved;
-        decision.activeItemId = std::nullopt;
-        decision.diagnosticMessage = "All material decisions have been confirmed; staying quiet.";
-        return decision;
-    }
-
-    // Compute the sorted group order once; reused by the Budget Cap gate, Policy Review gate,
-    // and Tier-2 ChoiceGroup dispatch below to avoid a redundant sort+allocation.
-    std::vector<const analysis::ChoiceGroup*> sortedGroups;
-    std::string nextCandidateId{};
-    if (!unresolvedEligibleGroups.empty()) {
-        sortedGroups = orderChoiceGroups(analysis.choiceGroups, snapshotEval);
-        for (const auto* g : sortedGroups) {
-            if (g->material && !workingState.isResolved(g->id)) {
-                nextCandidateId = g->id;
-                break;
-            }
-        }
-    } else if (!unresolvedMaterialAssumptions.empty()) {
-        nextCandidateId = unresolvedMaterialAssumptions.front()->id;
-    }
-
-    // Budget Cap Gate
-    if (workingState.roundsCompleted >= kMaxClarificationBudget) {
-        decision.verdict = InterventionVerdict::Manual;
-        decision.reason = InterventionReasonCode::ClarificationBudgetExceeded;
-        decision.activeItemId = nextCandidateId.empty() ? std::nullopt : std::optional<std::string>(nextCandidateId);
-        decision.diagnosticMessage = "Clarification round budget exceeded (3 rounds completed); offering manual escape.";
-        return decision;
-    }
-
-    // Policy Review Gate
-    if (policyResult.overallVerdict == analysis::PolicyVerdict::NeedsManualReview) {
-        decision.verdict = InterventionVerdict::Manual;
-        decision.reason = InterventionReasonCode::PolicyRequiresManualReview;
-        decision.activeItemId = nextCandidateId.empty() ? std::nullopt : std::optional<std::string>(nextCandidateId);
-        decision.diagnosticMessage = "Materiality policy requires manual review.";
-        return decision;
-    }
-
-    // ChoiceGroup Priority (Tier 2)
-    if (!unresolvedEligibleGroups.empty()) {
-        for (const auto* g : sortedGroups) {
-            if (g->material && !workingState.isResolved(g->id)) {
-                decision.verdict = InterventionVerdict::Clarify;
-                decision.reason = InterventionReasonCode::UnresolvedChoiceGroup;
-                decision.activeItemId = g->id;
-                decision.diagnosticMessage = "Prompting user for decision on choice group '" + g->id + "'.";
-                return decision;
-            }
+    std::vector<const analysis::Assumption*> materialAssumptions;
+    for (const auto idx : analysis::orderedAssumptionIndices(analysis, snapshotEval)) {
+        const auto& a = analysis.assumptions[idx];
+        if (a.material && !state.isResolved(a.id) && !state.isSkipped(a.id)) {
+            materialAssumptions.push_back(&a);
         }
     }
 
-    // Assumption Priority (Tier 3)
-    if (!unresolvedMaterialAssumptions.empty()) {
-        std::vector<const analysis::Assumption*> sortedAssumptions = unresolvedMaterialAssumptions;
-        std::stable_sort(sortedAssumptions.begin(), sortedAssumptions.end(),
-                         [](const analysis::Assumption* a, const analysis::Assumption* b) {
-                             const std::size_t spanA = getEarliestAssumptionStartByte(*a);
-                             const std::size_t spanB = getEarliestAssumptionStartByte(*b);
-                             if (spanA != spanB) {
-                                 return spanA < spanB;
-                             }
-                             return a->id < b->id;
-                         });
-
-        decision.verdict = InterventionVerdict::Clarify;
-        decision.reason = InterventionReasonCode::UnresolvedMaterialAssumption;
-        decision.activeItemId = sortedAssumptions.front()->id;
-        decision.diagnosticMessage = "Prompting user to confirm material assumption '" + sortedAssumptions.front()->id + "'.";
-        return decision;
+    std::optional<std::string> nextCandidate;
+    if (!eligibleGroups.empty()) {
+        nextCandidate = eligibleGroups.front()->id;
+    } else if (!blockingMissing.empty()) {
+        nextCandidate = blockingMissing.front()->id;
+    } else if (!materialAssumptions.empty()) {
+        nextCandidate = materialAssumptions.front()->id;
+    } else if (!manualGroups.empty()) {
+        nextCandidate = manualGroups.front()->id;
     }
 
-    decision.verdict = InterventionVerdict::Quiet;
-    decision.reason = InterventionReasonCode::AllMaterialItemsResolved;
-    decision.activeItemId = std::nullopt;
-    return decision;
+    if (nextCandidate.has_value() && decision.remainingBudget == 0) {
+        return finish(InterventionVerdict::Manual, InterventionReasonCode::ClarificationBudgetExceeded, nextCandidate,
+                      "All " + std::to_string(kMaxClarificationBudget) +
+                          " clarification rounds are used; edit the prompt directly.");
+    }
+
+    if (policyResult.overallVerdict == analysis::PolicyVerdict::NeedsManualReview &&
+        policyResult.primaryReasonCode != analysis::ReasonCode::DirectConflictPresent) {
+        return finish(InterventionVerdict::Manual, InterventionReasonCode::PolicyRequiresManualReview, nextCandidate,
+                      std::string("Materiality policy requires manual review: ") +
+                          analysis::toString(policyResult.primaryReasonCode));
+    }
+
+    if (!eligibleGroups.empty()) {
+        return finish(InterventionVerdict::Clarify, InterventionReasonCode::UnresolvedChoiceGroup,
+                      eligibleGroups.front()->id, "Choose how to resolve: " + eligibleGroups.front()->question);
+    }
+    if (!blockingMissing.empty()) {
+        return finish(InterventionVerdict::Clarify, InterventionReasonCode::UnresolvedMissingDecision,
+                      blockingMissing.front()->id, "Missing decision: " + blockingMissing.front()->question);
+    }
+    if (!materialAssumptions.empty()) {
+        return finish(InterventionVerdict::Clarify, InterventionReasonCode::UnresolvedMaterialAssumption,
+                      materialAssumptions.front()->id, "Confirm assumption: " + materialAssumptions.front()->statement);
+    }
+    if (!manualGroups.empty()) {
+        return finish(InterventionVerdict::Manual, InterventionReasonCode::PolicyRequiresManualReview,
+                      manualGroups.front()->id, "This question needs manual review: " + manualGroups.front()->question);
+    }
+
+    for (const auto& c : analysis.conflicts) {
+        if (c.blocking && state.isSkipped(c.id)) {
+            return finish(InterventionVerdict::Manual, InterventionReasonCode::BlockingItemDeferred, c.id,
+                          "A blocking conflict was skipped and still needs a decision.");
+        }
+    }
+    for (const auto& md : analysis.missingDecisions) {
+        if (md.blocking && state.isSkipped(md.id)) {
+            return finish(InterventionVerdict::Manual, InterventionReasonCode::BlockingItemDeferred, md.id,
+                          "A blocking decision was skipped and still needs an answer.");
+        }
+    }
+
+    const bool anyDeferred = std::any_of(state.skippedItemIds.begin(), state.skippedItemIds.end(),
+                                         [&](const std::string& id) { return state.isSkipped(id); });
+    if (anyDeferred) {
+        return finish(InterventionVerdict::Quiet, InterventionReasonCode::MaterialItemsDeferred, std::nullopt,
+                      "Remaining questions were skipped and stay unresolved.");
+    }
+
+    return finish(InterventionVerdict::Quiet,
+                  state.roundsCompleted == 0 ? InterventionReasonCode::PromptAlreadyClear
+                                             : InterventionReasonCode::AllMaterialItemsResolved,
+                  std::nullopt, "No open material questions.");
+}
+
+Status InterventionStateMachine::applyChoice(const analysis::NormalizedAnalysis& analysis,
+                                             const InterventionDecision& decision,
+                                             WorkingIntentState& state,
+                                             std::string_view alternativeId) {
+    if (remainingFor(state) == 0) return makeError(ErrorCode::PreconditionFailed, "Clarification budget is exhausted");
+    auto active = requireActive(analysis, decision, state);
+    if (!active.ok()) return active.error();
+    if (decision.verdict != InterventionVerdict::Clarify) {
+        return makeError(ErrorCode::PreconditionFailed, "Choices can only be confirmed on a clarification card");
+    }
+    const auto* group = findGroup(analysis, active.value());
+    if (group == nullptr) {
+        return makeError(ErrorCode::InvalidInput, "The active item is not a choice group");
+    }
+    const bool belongs = std::any_of(group->alternatives.begin(), group->alternatives.end(),
+                                     [&](const analysis::ChoiceAlternative& a) { return a.id == alternativeId; });
+    if (!belongs) {
+        return makeError(ErrorCode::InvalidInput, "Alternative '" + std::string(alternativeId) +
+                                                      "' does not belong to the active group '" + group->id + "'");
+    }
+    state.confirmedAlternatives[group->id] = std::string(alternativeId);
+    ++state.roundsCompleted;
+    return Status::success();
+}
+
+Status InterventionStateMachine::applyCustomText(const analysis::NormalizedAnalysis& analysis,
+                                                 const InterventionDecision& decision,
+                                                 WorkingIntentState& state,
+                                                 std::string_view text) {
+    auto active = requireActive(analysis, decision, state);
+    if (!active.ok()) return active.error();
+    const std::string normalized = normalizeLineEndings(text);
+    const auto first = normalized.find_first_not_of(" \t\n");
+    if (first == std::string::npos) {
+        return makeError(ErrorCode::InvalidInput, "Custom answer cannot be blank");
+    }
+    const auto last = normalized.find_last_not_of(" \t\n");
+    state.customResolutions[active.value()] = normalized.substr(first, last - first + 1);
+    // The automatic question budget never blocks an explicit manual correction. Keep the
+    // counter bounded and preserve the user's exact resolution in confirmed intent.
+    if (remainingFor(state) > 0) ++state.roundsCompleted;
+    return Status::success();
+}
+
+Status InterventionStateMachine::applyKeepOriginal(const analysis::NormalizedAnalysis& analysis,
+                                                   const InterventionDecision& decision,
+                                                   WorkingIntentState& state) {
+    if (remainingFor(state) == 0) return makeError(ErrorCode::PreconditionFailed, "Clarification budget is exhausted");
+    auto active = requireActive(analysis, decision, state);
+    if (!active.ok()) return active.error();
+    if (classifyItem(analysis, active.value()) != ActiveItemKind::ChoiceGroup) {
+        return makeError(ErrorCode::InvalidInput, "Only choice groups can keep the original wording");
+    }
+    state.keptOriginalItemIds.push_back(active.value());
+    ++state.roundsCompleted;
+    return Status::success();
+}
+
+Status InterventionStateMachine::applyAssumptionDecision(const analysis::NormalizedAnalysis& analysis,
+                                                         const InterventionDecision& decision,
+                                                         WorkingIntentState& state,
+                                                         bool accepted) {
+    if (remainingFor(state) == 0) return makeError(ErrorCode::PreconditionFailed, "Clarification budget is exhausted");
+    auto active = requireActive(analysis, decision, state);
+    if (!active.ok()) return active.error();
+    if (decision.verdict != InterventionVerdict::Clarify ||
+        classifyItem(analysis, active.value()) != ActiveItemKind::Assumption) {
+        return makeError(ErrorCode::InvalidInput, "The active item is not an assumption awaiting confirmation");
+    }
+    state.assumptionDecisions[active.value()] = accepted;
+    ++state.roundsCompleted;
+    return Status::success();
+}
+
+Status InterventionStateMachine::applySkip(const analysis::NormalizedAnalysis& analysis,
+                                           const InterventionDecision& decision,
+                                           WorkingIntentState& state) {
+    if (remainingFor(state) == 0) return makeError(ErrorCode::PreconditionFailed, "Clarification budget is exhausted");
+    auto active = requireActive(analysis, decision, state);
+    if (!active.ok()) return active.error();
+    if (!contains(state.skippedItemIds, active.value())) {
+        state.skippedItemIds.push_back(active.value());
+    }
+    ++state.roundsCompleted;
+    return Status::success();
+}
+
+void InterventionStateMachine::applyManualRequest(WorkingIntentState& state) {
+    state.manualModeRequested = true;
+}
+
+void InterventionStateMachine::recordPresented(const InterventionDecision& decision, WorkingIntentState& state) {
+    if (decision.activeItemId.has_value() && !contains(state.presentedItemIds, *decision.activeItemId)) {
+        state.presentedItemIds.push_back(*decision.activeItemId);
+    }
 }
 
 const char* toString(InterventionVerdict verdict) noexcept {
@@ -251,13 +343,29 @@ const char* toString(InterventionReasonCode reason) noexcept {
     switch (reason) {
         case InterventionReasonCode::PromptAlreadyClear: return "PROMPT_ALREADY_CLEAR";
         case InterventionReasonCode::AllMaterialItemsResolved: return "ALL_MATERIAL_ITEMS_RESOLVED";
+        case InterventionReasonCode::MaterialItemsDeferred: return "MATERIAL_ITEMS_DEFERRED";
         case InterventionReasonCode::UnresolvedChoiceGroup: return "UNRESOLVED_CHOICE_GROUP";
+        case InterventionReasonCode::UnresolvedMissingDecision: return "UNRESOLVED_MISSING_DECISION";
         case InterventionReasonCode::UnresolvedMaterialAssumption: return "UNRESOLVED_MATERIAL_ASSUMPTION";
         case InterventionReasonCode::BlockingConflictPresent: return "BLOCKING_CONFLICT_PRESENT";
+        case InterventionReasonCode::BlockingItemDeferred: return "BLOCKING_ITEM_DEFERRED";
         case InterventionReasonCode::ProviderUnavailable: return "PROVIDER_UNAVAILABLE";
+        case InterventionReasonCode::ScoreBindingMismatch: return "SCORE_BINDING_MISMATCH";
         case InterventionReasonCode::InvalidAnalysisStructure: return "INVALID_ANALYSIS_STRUCTURE";
         case InterventionReasonCode::PolicyRequiresManualReview: return "POLICY_REQUIRES_MANUAL_REVIEW";
         case InterventionReasonCode::ClarificationBudgetExceeded: return "CLARIFICATION_BUDGET_EXCEEDED";
+        case InterventionReasonCode::UserRequestedManual: return "USER_REQUESTED_MANUAL";
+    }
+    return "UNKNOWN";
+}
+
+const char* toString(ActiveItemKind kind) noexcept {
+    switch (kind) {
+        case ActiveItemKind::None: return "NONE";
+        case ActiveItemKind::ChoiceGroup: return "CHOICE_GROUP";
+        case ActiveItemKind::Assumption: return "ASSUMPTION";
+        case ActiveItemKind::MissingDecision: return "MISSING_DECISION";
+        case ActiveItemKind::Conflict: return "CONFLICT";
     }
     return "UNKNOWN";
 }

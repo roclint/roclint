@@ -10,7 +10,7 @@ Window {
     minimumWidth: 520
     minimumHeight: 360
     visible: false
-    flags: Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+    flags: Qt.FramelessWindowHint | (pinToTop ? Qt.WindowStaysOnTopHint : 0)
     color: "transparent"
 
     readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
@@ -18,81 +18,44 @@ Window {
     readonly property string sansFont: isMac ? "Helvetica Neue" : "Arial"
     readonly property string serifFont: isMac ? "Times New Roman" : "Georgia"
 
-    // Active Project / Workspace System (Antigravity-aligned)
-    property var projectList: [
-        { name: "roclint", path: "/Users/jesse/roclint" },
-        { name: "Stardust_v4_2", path: "/Users/jesse/Stardust_v4_2 2" }
-    ]
+    readonly property bool hc: typeof hostController !== "undefined" && hostController !== null
+    property var projectList: hc ? hostController.recentProjects() : []
     property int currentProjectIndex: 0
-    readonly property var activeProject: projectList[currentProjectIndex]
-
-    // Scope Governance System (Default: Global Codebase; Local File selectable)
-    property string activeScope: "global" // "global" or "local"
-    property string targetLocalFile: "FloatingCard.qml"
-    property var projectFiles: [
-        "app/qml/shell/FloatingCard.qml",
-        "app/host/HostController.cpp",
-        "app/host/ScreenPlacement.cpp",
-        "app/host/HostContext.cpp",
-        "src/core/prompt_state/RevisionState.cpp",
-        "src/core/prompt_state/PromptRevision.cpp",
-        "CMakeLists.txt"
-    ]
+    readonly property var activeProject: projectList.length > currentProjectIndex ? projectList[currentProjectIndex] : ({name: qsTr("Choose workspace"), path: ""})
+    property string activeScope: "global"
+    property string targetLocalFile: ""
+    property var projectFiles: []
+    property string scopePreamble: ""
+    property bool suppressEditSignal: false
+    readonly property bool isCompiledPreview: hc && hostController.hasProposal
+    readonly property bool hasAmbiguity: hc && hostController.isClarifying
+    readonly property bool needsManualAnswer: hc && hostController.isManual && hostController.interventionReason === "CLARIFICATION_BUDGET_EXCEEDED"
+    readonly property real ambiguityScore: hc ? hostController.ambiguityScore : 0.0
 
     function refreshProjectFiles() {
-        if (typeof hostController !== "undefined" && activeProject && activeProject.path) {
-            var scanned = hostController.getProjectFiles(activeProject.path);
-            if (scanned && scanned.length > 0) {
-                projectFiles = scanned;
-                targetLocalFile = scanned[0];
-                return;
-            }
-        }
-        if (activeProject && activeProject.name.indexOf("Stardust") !== -1) {
-            projectFiles = [
-                "ROCLINT_GUIDE.md",
-                "master_architecture.md",
-                "stardust_architecture_spec.md",
-                "evaluation_plan.md",
-                "contracts/C03_analysis_semantics.md",
-                "contracts/C05_desktop_view_model.md",
-                "contracts/C09_invocation_host_context.md",
-                "curriculum/COURSE_MAP.md",
-                "curriculum/PROGRESS_TRACKER.md"
-            ];
-        } else {
-            projectFiles = [
-                "app/qml/shell/FloatingCard.qml",
-                "app/host/HostController.cpp",
-                "app/host/ScreenPlacement.cpp",
-                "app/host/HostContext.cpp",
-                "src/core/prompt_state/RevisionState.cpp",
-                "src/core/prompt_state/PromptRevision.cpp",
-                "CMakeLists.txt"
-            ];
-        }
-        targetLocalFile = projectFiles[0];
+        projectFiles = hc && activeProject.path ? hostController.getProjectFiles(activeProject.path) : [];
+        if (projectFiles.indexOf(targetLocalFile) < 0) targetLocalFile = "";
     }
+    onCurrentProjectIndexChanged: refreshProjectFiles()
 
-    onCurrentProjectIndexChanged: {
-        refreshProjectFiles();
+    onActiveFocusItemChanged: focusRevealTimer.restart()
+    onWidthChanged: focusRevealTimer.restart()
+    onHeightChanged: focusRevealTimer.restart()
+    Timer {
+        id: focusRevealTimer
+        interval: 50
+        onTriggered: rootWindow.revealFocusedControl()
     }
-    property bool isCompiledPreview: false
-    property string originalDraft: ""
-
-    // Real-Time Linter & Ambiguity State (Contract C03 / B06)
-    readonly property bool hasAmbiguity: {
-        if (isCompiledPreview) return false;
-        if (typeof hostController !== "undefined") {
-            return hostController.isClarifying;
-        }
-        return false;
-    }
-    readonly property real ambiguityScore: {
-        if (typeof hostController !== "undefined") {
-            return hostController.ambiguityScore;
-        }
-        return 0.0;
+    function revealFocusedControl() {
+        const item = rootWindow.activeFocusItem;
+        const view = contentScroll.contentItem;
+        if (!item || !view || typeof view.contentY !== "number") return;
+        let ancestor = item;
+        while (ancestor && ancestor !== mainContent) ancestor = ancestor.parent;
+        if (!ancestor) return;
+        const y = item.mapToItem(mainContent, 0, 0).y;
+        if (y < view.contentY) view.contentY = y;
+        else if (y + item.height > view.contentY + view.height) view.contentY = Math.max(0, y + item.height - view.height);
     }
 
     // Multi-Palette Theme System (Direct from user prototype)
@@ -156,194 +119,84 @@ Window {
 
     property bool isClarificationActive: false
     property string toastMessage: ""
-    property int maxTokens: 350
     property bool pinToTop: true
     property bool hasBeenActive: false
 
     onActiveChanged: {
         if (active) {
             hasBeenActive = true;
-        } else if (hasBeenActive && visible && !pinToTop) {
+        } else if (hasBeenActive && visible && !pinToTop && !(hc && hostController.isAmbientCapture)) {
             hasBeenActive = false;
             dismissCard();
         }
     }
 
     Connections {
-        target: typeof hostController !== "undefined" ? hostController : null
+        target: rootWindow.hc ? hostController : null
+        function onProjectFilesChanged() { rootWindow.refreshProjectFiles(); }
         function onDraftCaptured(text) {
-            if (text && text.trim().length > 0) {
-                if (promptInput.text.trim().length === 0) {
-                    promptInput.text = text.trim();
-                    rootWindow.showToast("PRE-FILLED FROM CLIPBOARD");
-                }
+            if (!promptInput.text.length || promptInput.text === hostController.currentRevisionText) {
+                rootWindow.setEditorText(text);
+                if (hostController.currentRevisionId.length && text !== hostController.currentRevisionText)
+                    hostController.noteDraftEdited(hostController.stateVersion);
+                if (text.length) rootWindow.showToast(qsTr("REVIEW CLIPBOARD DRAFT, THEN ANALYZE"));
             }
         }
-        function onRevisionRestored(text) {
-            if (text && text.trim().length > 0) {
-                promptInput.text = text;
-                rootWindow.showToast("REVISION RESTORED");
-            }
+        function onRevisionRestored(text) { rootWindow.setEditorText(text); rootWindow.scopePreamble = ""; }
+        function onAmbientDraftUpdated(text) {
+            rootWindow.setEditorText(text);
+            rootWindow.scopePreamble = "";
         }
+        // Delivery controls visibility. A clipboard fallback must leave the failed draft open.
+        function onPromptInjected(text, appName) { rootWindow.dismissCard(); }
     }
 
+    function setEditorText(text) {
+        suppressEditSignal = true;
+        promptInput.text = text;
+        suppressEditSignal = false;
+    }
     function dismissCard() {
-        isClarificationActive = false;
         toastMessage = "";
-        if (typeof hostController !== "undefined") {
-            hostController.hideCard();
-        } else {
-            rootWindow.hide();
-        }
+        if (hc) hostController.hideCard(); else rootWindow.hide();
     }
-
     function executeHardBypass() {
-        if (promptInput.text.trim().length === 0) return;
-        showToast("PROMPT SENT AS-IS");
-        if (typeof hostController !== "undefined") {
-            hostController.hardBypass(promptInput.text);
-        }
+        if (hc && promptInput.text.trim().length)
+            hostController.hardBypass(promptInput.text, hostController.stateVersion);
     }
-
-    function revertToDraft() {
-        if (originalDraft && originalDraft.trim().length > 0) {
-            promptInput.text = originalDraft;
-        }
-        isCompiledPreview = false;
-        showToast("REVERTED TO EDITABLE DRAFT");
+    function sendAsTyped() { executeHardBypass(); }
+    function revertToDraft() { if (hc) hostController.discardProposal(hostController.stateVersion); promptInput.forceActiveFocus(); }
+    function analyzeNow() {
+        if (hc && promptInput.text.trim().length) hostController.analyzePrompt(promptInput.text, hostController.stateVersion);
     }
-
+    function approveForCurrentDestination() {
+        if (!hc) return;
+        if (!hostController.isAmbientCapture && hostController.isAmbientActive)
+            hostController.beginInsertionTargetSelection(hostController.stateVersion);
+        else hostController.approveAndCopyRewrite(hostController.stateVersion);
+    }
     function handleEnter() {
-        if (promptInput.text.trim().length === 0) {
-            showToast("PLEASE TYPE A PROMPT FIRST");
-            return;
-        }
-
-        if (isCompiledPreview) {
-            if (typeof hostController !== "undefined") {
-                hostController.commitPrompt(promptInput.text);
-                hostController.copyToClipboard(promptInput.text);
-            }
-            showToast("PROMPT COPIED TO CLIPBOARD");
-            return;
-        }
-
-        if (hasAmbiguity) {
-            commitChoice(1);
-            return;
-        }
-
-        let compiled = "";
-        const fileTarget = (targetLocalFile.trim().length > 0) ? targetLocalFile.trim() : "FloatingCard.qml";
-        const hasCtx = (typeof hostController !== "undefined" && hostController.hasHostContext);
-        const ctxLine = hasCtx ? ("/* HOST CONTEXT: " + hostController.hostContextCategory + " (" + hostController.hostContextDisplayName + ") */\n") : "";
-        const profile = (typeof hostController !== "undefined") ? hostController.rewriteProfile : "GENERIC@1";
-        const hasIntent = (typeof hostController !== "undefined" && hostController.hasConfirmedIntent && !hostController.isIntentStale);
-        const intentHeader = hasIntent ? ("/* TARGET PROFILE: " + profile + " */\n/* " + hostController.confirmedIntentSummary + " */\n") : "";
-
-        if (typeof hostController !== "undefined" && promptInput.text.trim().length > 0) {
-            const synthesized = hostController.synthesizeRewrite(promptInput.text.trim());
-            if (synthesized && synthesized.length > 0) {
-                compiled = synthesized;
-            }
-        }
-
-        if (compiled.length === 0) {
-            if (activeScope === "local") {
-                compiled = "/* ROCLINT [SCOPE: SINGLE FILE] */\n" +
-                           "/* TARGET: " + fileTarget + " */\n" +
-                           intentHeader +
-                           ctxLine +
-                           "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n" +
-                           "/* RULE: STRICT SINGLE-FILE LOCK — DO NOT MODIFY FILES OUTSIDE " + fileTarget + " */\n\n" +
-                           promptInput.text.trim() + "\n\n" +
-                           "/* CONSTRAINTS: KEEP EXISTING PUBLIC APIS UNCHANGED */";
-            } else {
-                compiled = "/* ROCLINT [SCOPE: ENTIRE PROJECT] */\n" +
-                           intentHeader +
-                           ctxLine +
-                           "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n\n" +
-                           promptInput.text.trim() + "\n\n" +
-                           "/* CONSTRAINTS: VERIFY CHANGES ACROSS ALL REFERENCED MODULES */";
-            }
-        }
-
-        originalDraft = promptInput.text;
-        promptInput.text = compiled;
-        isCompiledPreview = true;
-
-        if (typeof hostController !== "undefined") {
-            hostController.commitPrompt(compiled);
-            if (hostController.directInjectionEnabled) {
-                const injected = hostController.performDirectInjection(compiled);
-                if (injected) {
-                    showToast("ENHANCED & INJECTED DIRECTLY IN-PLACE");
-                } else {
-                    showToast("FALLBACK: COPIED TO CLIPBOARD");
-                }
-            } else {
-                hostController.copyToClipboard(compiled);
-                showToast("ENHANCED & COPIED TO CLIPBOARD");
-            }
-        } else {
-            showToast("ENHANCED & COPIED TO CLIPBOARD");
-        }
+        if (!hc) return;
+        if (hostController.isAnalyzing) { hostController.cancelAnalysis(hostController.stateVersion); return; }
+        if (needsManualAnswer && !hostController.isDraftDirty) { reviewFlow.focusClarification(); return; }
+        if (hostController.isDraftDirty || (!hostController.hasConfirmedIntent && !hostController.isClarifying)) analyzeNow();
+        else if (hostController.isOriginalRoute) sendAsTyped();
+        else if (hostController.isClarifying) reviewFlow.focusClarification();
+        else if (hostController.canApprove) rootWindow.approveForCurrentDestination();
+        else if (hostController.isRewriteEnabled && hostController.proposalStatus === "NONE") hostController.synthesizeRewrite(hostController.stateVersion);
+        else if (hostController.hasProposal) reviewFlow.focusReview();
     }
-
-    function commitChoiceById(altId, label) {
-        if (typeof hostController !== "undefined") {
-            hostController.confirmChoice(altId);
-            showToast("INTENT CONFIRMED: " + (label ? label : altId));
-        }
-    }
-
-    function commitChoice(choiceNumber) {
-        if (typeof hostController !== "undefined" && hostController.activeAlternatives.length >= choiceNumber) {
-            const alt = hostController.activeAlternatives[choiceNumber - 1];
-            commitChoiceById(alt.id, alt.label);
-            return;
-        }
-
-        let compiled = "";
-        const opt1Label = "FloatingCard.qml — Responsive action button row";
-        const opt2Label = "ScreenPlacement.cpp — Multi-monitor bounding clamp";
-        const chosenLabel = (choiceNumber === 1) ? opt1Label : opt2Label;
-        const chosenTarget = (choiceNumber === 1) ? "FloatingCard.qml" : "ScreenPlacement.cpp";
-        const hasCtx = (typeof hostController !== "undefined" && hostController.hasHostContext);
-        const ctxLine = hasCtx ? ("/* HOST CONTEXT: " + hostController.hostContextCategory + " (" + hostController.hostContextDisplayName + ") */\n") : "";
-        const baseTask = isCompiledPreview ? originalDraft.trim() : promptInput.text.trim();
-
-        if (activeScope === "local") {
-            compiled = "/* ROCLINT [SCOPE: SINGLE FILE] */\n" +
-                       "/* TARGET: " + chosenTarget + " */\n" +
-                       ctxLine +
-                       "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n" +
-                       "/* RULE: STRICT SINGLE-FILE LOCK — DO NOT MODIFY FILES OUTSIDE " + chosenTarget + " */\n" +
-                       "/* RESOLVED INTENT: Option " + choiceNumber + " (" + chosenLabel + ") */\n\n" +
-                       baseTask + "\n\n" +
-                       "/* CONSTRAINTS: KEEP EXISTING PUBLIC APIS UNCHANGED */";
-        } else {
-            compiled = "/* ROCLINT [SCOPE: ENTIRE PROJECT] */\n" +
-                       "/* PRIMARY FOCUS: " + chosenTarget + " */\n" +
-                       ctxLine +
-                       "/* PROJECT: " + activeProject.name + " (" + activeProject.path + ") */\n" +
-                       "/* RESOLVED INTENT: Option " + choiceNumber + " (" + chosenLabel + ") */\n\n" +
-                       baseTask + "\n\n" +
-                       "/* CONSTRAINTS: VERIFY CHANGES ACROSS ALL REFERENCED MODULES */";
-        }
-
-        if (!isCompiledPreview) {
-            originalDraft = promptInput.text;
-        }
-        promptInput.text = compiled;
-        isCompiledPreview = true;
-
-        if (typeof hostController !== "undefined") {
-            hostController.commitPrompt(compiled);
-            hostController.copyToClipboard(compiled);
-        }
-        showToast("COMPILED & COPIED: OPTION " + choiceNumber);
-        isClarificationActive = false;
+    function enterAction() { handleEnter(); }
+    function commitChoice(choiceNumber) { reviewFlow.chooseAlternative(choiceNumber - 1); }
+    function applyScope() {
+        if (!hc || !activeProject.path) { showToast(qsTr("CHOOSE A WORKSPACE FIRST")); return; }
+        const preamble = hostController.scopePreamble(activeProject.path, activeScope, targetLocalFile);
+        if (!preamble.length) return;
+        let draft = promptInput.text;
+        if (scopePreamble.length && draft.startsWith(scopePreamble)) draft = draft.substring(scopePreamble.length);
+        scopePreamble = preamble;
+        promptInput.text = preamble + draft;
+        showToast(qsTr("SCOPE ADDED TO VISIBLE DRAFT"));
     }
 
     function openFileDropdown() {
@@ -373,16 +226,7 @@ Window {
         }
     }
 
-    Timer {
-        id: analyzeDebounceTimer
-        interval: 180
-        repeat: false
-        onTriggered: {
-            if (typeof hostController !== "undefined" && !rootWindow.isCompiledPreview && typeof promptInput !== "undefined") {
-                hostController.analyzePrompt(promptInput.text);
-            }
-        }
-    }
+
 
 
 
@@ -418,58 +262,57 @@ Window {
         }
     }
 
-    // Keyboard Shortcuts
     Shortcut {
         sequence: "Esc"
-        onActivated: {
-            if (projectDropdown.visible) {
-                projectDropdown.visible = false;
-            } else if (typeof fileDropdown !== "undefined" && fileDropdown.visible) {
-                fileDropdown.visible = false;
-            } else if (rootWindow.isClarificationActive) {
-                rootWindow.isClarificationActive = false;
-            } else {
-                rootWindow.dismissCard();
-            }
-        }
+        onActivated: rootWindow.dismissCard()
     }
-
-    Shortcut {
-        sequences: ["Shift+Return", "Shift+Enter"]
-        onActivated: rootWindow.executeHardBypass()
-    }
-
     Shortcut {
         sequences: rootWindow.isMac ? ["Meta+Return", "Meta+Enter", "Ctrl+Return", "Ctrl+Enter"] : ["Ctrl+Return", "Ctrl+Enter"]
-        onActivated: rootWindow.handleEnter()
+        onActivated: rootWindow.enterAction()
     }
-
     Shortcut {
-        sequences: ["Alt+1", "Ctrl+1"]
-        enabled: rootWindow.isClarificationActive || rootWindow.hasAmbiguity
-        onActivated: rootWindow.commitChoice(1)
+        sequences: ["Shift+Return", "Shift+Enter"]
+        enabled: rootWindow.hc && !promptInput.activeFocus && !reviewFlow.customAnswerHasFocus
+        onActivated: rootWindow.sendAsTyped()
     }
-
     Shortcut {
-        sequences: ["Alt+2", "Ctrl+2"]
-        enabled: rootWindow.isClarificationActive || rootWindow.hasAmbiguity
-        onActivated: rootWindow.commitChoice(2)
+        sequence: "1"
+        enabled: rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
+        onActivated: reviewFlow.chooseAlternative(0)
     }
-
     Shortcut {
-        sequences: ["Alt+3", "Ctrl+3"]
-        enabled: rootWindow.isClarificationActive || rootWindow.hasAmbiguity
-        onActivated: rootWindow.commitChoice(3)
+        sequence: "2"
+        enabled: rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
+        onActivated: reviewFlow.chooseAlternative(1)
     }
-
-
+    Shortcut {
+        sequence: "3"
+        enabled: rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
+        onActivated: reviewFlow.chooseAlternative(2)
+    }
+    Shortcut {
+        sequences: ["Ctrl+Shift+Return", "Ctrl+Shift+Enter"]
+        enabled: rootWindow.hc && hostController.canApprove
+        onActivated: rootWindow.approveForCurrentDestination()
+    }
+    Shortcut {
+        sequence: "Alt+1"
+        enabled: rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
+        onActivated: reviewFlow.chooseAlternative(0)
+    }
+    Shortcut {
+        sequence: "Alt+2"
+        enabled: rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
+        onActivated: reviewFlow.chooseAlternative(1)
+    }
+    Shortcut {
+        sequence: "Alt+3"
+        enabled: rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
+        onActivated: reviewFlow.chooseAlternative(2)
+    }
     Shortcut {
         sequences: [StandardKey.Preferences]
-        onActivated: {
-            if (typeof hostController !== "undefined" && hostController) {
-                hostController.showDashboard();
-            }
-        }
+        onActivated: if (rootWindow.hc) hostController.showDashboard()
     }
 
     // =========================================================================
@@ -595,6 +438,7 @@ Window {
                 // =============================================================
                 RowLayout {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     Layout.preferredHeight: 24
                     spacing: 8
 
@@ -654,7 +498,7 @@ Window {
                             }
                         }
 
-                        MouseArea {
+                        HudMouseArea {
                             id: projectMouse
                             anchors.fill: parent
                             hoverEnabled: true
@@ -714,7 +558,7 @@ Window {
                                     color: rootWindow.mutedTextColor
                                 }
 
-                                MouseArea {
+                                HudMouseArea {
                                     id: clearCtxMouse
                                     anchors.fill: parent
                                     hoverEnabled: true
@@ -752,10 +596,16 @@ Window {
 
                             Text {
                                 id: engineBadgeTxt
+                                objectName: "modelRuntimeLabel"
                                 anchors.centerIn: parent
-                                text: (typeof hostController !== "undefined" && hostController.isInferring)
-                                      ? "[ 🧠 INFERRING... ]"
-                                      : ((typeof hostController !== "undefined" && hostController.useLiveWeights) ? "[ LIVE: GRANITE 3B ]" : "[ NATIVE C++ ]")
+                                text: {
+                                    if (!rootWindow.hc) return "[ MODEL UNAVAILABLE ]";
+                                    if (hostController.isInferring) return "[ 🧠 INFERRING... ]";
+                                    if (hostController.modelRuntimeState === "LOADING") return "[ LOADING MODEL ]";
+                                    if (hostController.useLiveWeights) return "[ LOCAL MODEL ]";
+                                    if (hostController.modelRuntimeState === "FAILED") return "[ MODEL ERROR ]";
+                                    return "[ MODEL NOT LOADED ]";
+                                }
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 8
@@ -764,13 +614,13 @@ Window {
                                        : ((typeof hostController !== "undefined" && hostController.useLiveWeights) ? "#7EE787" : rootWindow.mutedTextColor)
                             }
 
-                            MouseArea {
+                            HudMouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     if (typeof hostController !== "undefined") {
-                                        hostController.setUseLiveWeights(!hostController.useLiveWeights);
-                                        rootWindow.showToast(hostController.useLiveWeights ? "LIVE SLM ENGINE ACTIVATED" : "NATIVE C++ ENGINE ACTIVATED");
+                                        hostController.showDashboard();
+
                                     }
                                 }
                             }
@@ -792,9 +642,8 @@ Window {
                             Text {
                                 id: statusTextLabel
                                 anchors.centerIn: parent
-                                text: rootWindow.hasAmbiguity ?
-                                      (rootWindow.width >= 660 ? "[ NEEDS CLARITY ]" : (rootWindow.width >= 560 ? "[ CLARIFY ]" : "[ ! ]")) :
-                                      (rootWindow.width >= 660 ? "[ STATUS: OK ]" : (rootWindow.width >= 560 ? "[ OK ]" : "[ ✓ ]"))
+                                text: rootWindow.hasAmbiguity ? "[ CLARIFY ]"
+                                      : (rootWindow.hc ? "[ " + hostController.analysisStatus + " ]" : "[ IDLE ]")
                                 font.family: rootWindow.monoFont
                                 font.bold: true
                                 font.pixelSize: 9
@@ -824,7 +673,7 @@ Window {
                                 font.pixelSize: 8
                                 color: rootWindow.pinToTop ? rootWindow.bgColor : rootWindow.fgColor
                             }
-                            MouseArea {
+                            HudMouseArea {
                                 id: pinMouse
                                 anchors.fill: parent
                                 hoverEnabled: true
@@ -858,8 +707,10 @@ Window {
                                 font.pixelSize: 8
                                 color: rootWindow.fgColor
                             }
-                            MouseArea {
+                            HudMouseArea {
                                 id: setMouse
+                                objectName: "openSettingsControl"
+                                controlName: qsTr("Open settings")
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
@@ -891,7 +742,7 @@ Window {
                                 font.pixelSize: 9
                                 color: rootWindow.fgColor
                             }
-                            MouseArea {
+                            HudMouseArea {
                                 id: minMouse
                                 anchors.fill: parent
                                 hoverEnabled: true
@@ -920,7 +771,7 @@ Window {
                                 font.pixelSize: 9
                                 color: rootWindow.fgColor
                             }
-                            MouseArea {
+                            HudMouseArea {
                                 id: closeMouse
                                 anchors.fill: parent
                                 hoverEnabled: true
@@ -934,6 +785,7 @@ Window {
                 // Divider below top bar
                 Rectangle {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     height: 1
                     color: rootWindow.borderColor
                     opacity: 0.3
@@ -944,6 +796,7 @@ Window {
                 // =============================================================
                 Rectangle {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     height: 24
                     color: rootWindow.dimColor
                     border.color: rootWindow.borderColor
@@ -984,14 +837,14 @@ Window {
                                     color: rootWindow.activeScope === "global" ? rootWindow.bgColor : rootWindow.fgColor
                                 }
                                 Text {
-                                    text: rootWindow.width >= 680 ? "ENTIRE PROJECT [DEFAULT]" : "ALL FILES"
+                                    text: rootWindow.width >= 680 ? "ENTIRE PROJECT" : "ALL FILES"
                                     font.family: rootWindow.monoFont
                                     font.bold: rootWindow.activeScope === "global"
                                     font.pixelSize: 8
                                     color: rootWindow.activeScope === "global" ? rootWindow.bgColor : rootWindow.fgColor
                                 }
                             }
-                            MouseArea {
+                            HudMouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
@@ -1028,7 +881,7 @@ Window {
                                     color: rootWindow.activeScope === "local" ? rootWindow.bgColor : rootWindow.fgColor
                                 }
                             }
-                            MouseArea {
+                            HudMouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
@@ -1078,7 +931,7 @@ Window {
                                 }
                             }
 
-                            MouseArea {
+                            HudMouseArea {
                                 id: fileSelectorMouse
                                 anchors.fill: parent
                                 hoverEnabled: true
@@ -1103,6 +956,19 @@ Window {
                         }
 
                         Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+
+                        Rectangle {
+                            implicitWidth: applyScopeText.implicitWidth + 10; height: 18
+                            color: "transparent"; border.color: rootWindow.borderColor; radius: 3
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.Button
+                            Accessible.name: qsTr("Apply selected scope to draft")
+                            Accessible.onPressAction: rootWindow.applyScope()
+                            Keys.onReturnPressed: rootWindow.applyScope()
+                            Keys.onSpacePressed: rootWindow.applyScope()
+                            Text { id: applyScopeText; anchors.centerIn: parent; text: "[ APPLY SCOPE ]"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor }
+                            HudMouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: rootWindow.applyScope() }
+                        }
 
                         // Active Scope Target Tag
                         RowLayout {
@@ -1136,7 +1002,7 @@ Window {
                                     font.pixelSize: 8
                                     color: "#FFB000"
                                 }
-                                MouseArea {
+                                HudMouseArea {
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
@@ -1152,16 +1018,28 @@ Window {
                 // =============================================================
                 // 2. CENTRAL PROMPT INGESTION & INTERACTION MATRIX
                 // =============================================================
-                ColumnLayout {
+                ScrollView {
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    ScrollBar.vertical: HudScrollBar {}
+                    id: contentScroll
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     Layout.fillHeight: true
+                    contentWidth: availableWidth
+                    clip: true
+                ColumnLayout {
+                    id: mainContent
+                    width: contentScroll.availableWidth
+                    height: Math.max(implicitHeight, contentScroll.availableHeight)
                     spacing: 6
 
 
 
                         // Prompt Terminal Canvas (Double Bounded Inset)
                         Rectangle {
+                            Layout.minimumHeight: 150
                             Layout.fillWidth: true
+                            Layout.minimumWidth: 0
                             Layout.fillHeight: true
                             color: rootWindow.inputBgColor
                             border.color: promptInput.activeFocus ? rootWindow.fgColor : rootWindow.borderColor
@@ -1174,12 +1052,20 @@ Window {
                                 spacing: 6
 
                                 ScrollView {
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    ScrollBar.vertical: HudScrollBar {}
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     Layout.fillHeight: true
                                     clip: true
 
                                     TextArea {
                                         id: promptInput
+                                        background: null
+                                        readOnly: false
+                                        objectName: "promptInput"
+                                        Accessible.name: qsTr("Prompt draft")
+                                        activeFocusOnTab: true
                                         placeholderText: qsTr("// Type your prompt here...\n// Example: 'Update SessionManager timeout handling and run tests'")
                                         placeholderTextColor: rootWindow.commentColor
                                         color: rootWindow.fgColor
@@ -1193,42 +1079,12 @@ Window {
                                         topPadding: 6
                                         bottomPadding: 6
                                         onTextChanged: {
-                                            if (typeof hostController !== "undefined" && !rootWindow.isCompiledPreview) {
-                                                hostController.invalidateIntent();
-                                            }
-                                            analyzeDebounceTimer.restart();
+                                            if (rootWindow.hc && !rootWindow.suppressEditSignal)
+                                                hostController.noteDraftEdited(hostController.stateVersion);
                                         }
-
-                                        Keys.onTabPressed: function(event) {
-                                            if (rootWindow.hasAmbiguity) {
-                                                rootWindow.commitChoice(1);
-                                                event.accepted = true;
-                                            } else {
-                                                event.accepted = false;
-                                            }
-                                        }
-
-                                        Keys.onReturnPressed: function(event) {
-                                            if (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)) {
-                                                rootWindow.handleEnter();
-                                                event.accepted = true;
-                                            } else if (event.modifiers & Qt.ShiftModifier) {
-                                                rootWindow.executeHardBypass();
-                                                event.accepted = true;
-                                            } else {
-                                                event.accepted = false; // Normal multiline Return!
-                                            }
-                                        }
-
-                                        Keys.onEnterPressed: function(event) {
-                                            if (event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)) {
-                                                rootWindow.handleEnter();
-                                                event.accepted = true;
-                                            } else if (event.modifiers & Qt.ShiftModifier) {
-                                                rootWindow.executeHardBypass();
-                                                event.accepted = true;
-                                            } else {
-                                                event.accepted = false;
+                                        Keys.onPressed: function(event) {
+                                            if ((event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)) && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
+                                                rootWindow.handleEnter(); event.accepted = true;
                                             }
                                         }
                                     }
@@ -1237,6 +1093,7 @@ Window {
                                 // Canvas Sub-bar
                                 Rectangle {
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     height: 1
                                     color: rootWindow.borderColor
                                     opacity: 0.3
@@ -1244,6 +1101,7 @@ Window {
 
                                 RowLayout {
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     spacing: 8
 
                                     RowLayout {
@@ -1257,7 +1115,8 @@ Window {
                                         }
                                         Text {
                                             text: {
-                                                if (rootWindow.isCompiledPreview) return "COMPILED SPECIFICATION (COPIED)";
+                                                if (rootWindow.isCompiledPreview) return "REWRITE AWAITING REVIEW";
+                                                if (rootWindow.needsManualAnswer) return "ANSWER REMAINING DECISION";
                                                 if (rootWindow.hasAmbiguity) return "NEEDS CLARITY";
                                                 return "READY";
                                             }
@@ -1286,7 +1145,7 @@ Window {
                                         Rectangle {
                                             visible: rootWindow.isCompiledPreview
                                             height: 16
-                                            width: revertDraftText.contentWidth + 10
+                                            implicitWidth: revertDraftText.contentWidth + 10
                                             color: "transparent"
                                             border.color: "#FFB000"
                                             border.width: 1
@@ -1300,7 +1159,7 @@ Window {
                                                 font.pixelSize: 7
                                                 color: "#FFB000"
                                             }
-                                            MouseArea {
+                                            HudMouseArea {
                                                 anchors.fill: parent
                                                 hoverEnabled: true
                                                 cursorShape: Qt.PointingHandCursor
@@ -1319,13 +1178,13 @@ Window {
                                         color: rootWindow.isCompiledPreview ? "#7EE787" : rootWindow.fgColor
                                     }
                                     Text {
-                                        text: rootWindow.isCompiledPreview ? "ENHANCED" : (rootWindow.hasAmbiguity ? "1 SUGGESTION" : "0 ISSUES")
+                                        text: rootWindow.isCompiledPreview ? "REVIEW" : (rootWindow.hasAmbiguity ? "RESOLVE INTENT" : (rootWindow.hc ? hostController.analysisStatus : "IDLE"))
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
                                         color: rootWindow.isCompiledPreview ? "#7EE787" : (rootWindow.hasAmbiguity ? "#FFB000" : rootWindow.fgColor)
                                     }
                                     Text {
-                                        text: rootWindow.isCompiledPreview ? "AMBIGUITY: 0%" : ("AMBIGUITY: " + (rootWindow.ambiguityScore * 100).toFixed(0) + "%")
+                                        text: rootWindow.hc && hostController.isAmbiguityScored ? "AMBIGUITY: " + (rootWindow.ambiguityScore * 100).toFixed(0) + "%" : "UNRANKED"
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
                                         color: rootWindow.isCompiledPreview ? "#7EE787" : rootWindow.fgColor
@@ -1335,299 +1194,32 @@ Window {
                         }
 
                         // =============================================================
-                        // 2b. SLICK LIVE LINTER & TRIAGE STRIP ("Swingly" C with A/B)
-                        // =============================================================
-                        Rectangle {
-                            id: liveLinterStrip
-                            Layout.fillWidth: true
-                            height: (rootWindow.hasAmbiguity || (typeof hostController !== "undefined" && hostController.hasConfirmedIntent)) ? 30 : 22
-                            color: {
-                                if (rootWindow.hasAmbiguity) return "#140D04";
-                                if (typeof hostController !== "undefined" && hostController.hasConfirmedIntent) {
-                                    return hostController.isIntentStale ? "#140D04" : "#08140B";
-                                }
-                                return rootWindow.inputBgColor;
-                            }
-                            border.color: {
-                                if (rootWindow.hasAmbiguity) return "#FFB000";
-                                if (typeof hostController !== "undefined" && hostController.hasConfirmedIntent) {
-                                    return hostController.isIntentStale ? "#F59E0B" : "#22C55E";
-                                }
-                                return rootWindow.borderColor;
-                            }
-                            border.width: 1
-                            radius: 4
-
-                            Behavior on height { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-                            Behavior on color { ColorAnimation { duration: 160 } }
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 8
-                                anchors.rightMargin: 8
-                                spacing: 8
-
-                                // Indicator tag
-                                Text {
-                                    text: {
-                                        if (rootWindow.hasAmbiguity) return "▲ AMBIGUITY:";
-                                        if (typeof hostController !== "undefined" && hostController.hasConfirmedIntent) {
-                                            return hostController.isIntentStale ? "⚠ STALE INTENT:" : "✓ INTENT RESOLVED:";
-                                        }
-                                        return "✦ STATUS:";
-                                    }
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: {
-                                        if (rootWindow.hasAmbiguity) return "#FFB000";
-                                        if (typeof hostController !== "undefined" && hostController.hasConfirmedIntent) {
-                                            return hostController.isIntentStale ? "#F59E0B" : "#7EE787";
-                                        }
-                                        return "#7EE787";
-                                    }
-                                }
-
-                                // Message
-                                Text {
-                                    text: {
-                                        if (rootWindow.hasAmbiguity) {
-                                            return (rootWindow.width >= 700 ? ("Multiple target components in [" + rootWindow.activeProject.name + "]") : "Target choice");
-                                        }
-                                        if (typeof hostController !== "undefined" && hostController.hasConfirmedIntent) {
-                                            if (hostController.isIntentStale) return "PROMPT EDITED ∙ PREVIOUS INTENT INVALIDATED";
-                                            return hostController.confirmedIntentSummary;
-                                        }
-                                        return (rootWindow.width >= 700 ? ("PROMPT CLEAR ∙ SCOPE: " + (rootWindow.activeScope === "global" ? "ENTIRE PROJECT" : "SINGLE FILE (" + rootWindow.targetLocalFile + ")")) : "PROMPT CLEAR");
-                                    }
-                                    font.family: rootWindow.monoFont
-                                    font.bold: !rootWindow.hasAmbiguity
-                                    font.pixelSize: 8
-                                    color: {
-                                        if (rootWindow.hasAmbiguity) return rootWindow.fgColor;
-                                        if (typeof hostController !== "undefined" && hostController.hasConfirmedIntent) {
-                                            return hostController.isIntentStale ? "#F59E0B" : "#7EE787";
-                                        }
-                                        return "#7EE787";
-                                    }
-                                    elide: Text.ElideRight
-                                    Layout.maximumWidth: rootWindow.hasAmbiguity ? (rootWindow.width >= 760 ? 280 : 160) : 400
-                                }
-
-                                Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-
-                                // Stale Intent Recovery Pill (C06 / B07)
-                                RowLayout {
-                                    visible: !rootWindow.hasAmbiguity && typeof hostController !== "undefined" && hostController.hasConfirmedIntent && hostController.isIntentStale
-                                    Layout.alignment: Qt.AlignRight
-                                    spacing: 6
-
-                                    Rectangle {
-                                        height: 18
-                                        width: staleReverifyText.implicitWidth + 12
-                                        color: staleMouseArea.containsMouse ? "#F59E0B" : "transparent"
-                                        border.color: "#F59E0B"
-                                        border.width: 1
-                                        radius: 3
-
-                                        Text {
-                                            id: staleReverifyText
-                                            anchors.centerIn: parent
-                                            text: "[ ↺ RE-VERIFY ]"
-                                            font.family: rootWindow.monoFont
-                                            font.bold: true
-                                            font.pixelSize: 8
-                                            color: staleMouseArea.containsMouse ? "#050505" : "#F59E0B"
-                                        }
-
-                                        MouseArea {
-                                            id: staleMouseArea
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: {
-                                                if (typeof hostController !== "undefined") {
-                                                    hostController.analyzePrompt(promptInput.text);
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Confirmed Intent Control & Target Profile Selector Pills (B07 / B08P)
-                                RowLayout {
-                                    visible: !rootWindow.hasAmbiguity && typeof hostController !== "undefined" && hostController.hasConfirmedIntent && !hostController.isIntentStale
-                                    Layout.alignment: Qt.AlignRight
-                                    spacing: 6
-
-                                    // Profile Selector Button (B08P sticky profile)
-                                    Rectangle {
-                                        height: 18
-                                        width: profilePillText.implicitWidth + 12
-                                        color: profileMouseArea.containsMouse ? rootWindow.fgColor : "transparent"
-                                        border.color: "#7EE787"
-                                        border.width: 1
-                                        radius: 3
-
-                                        Text {
-                                            id: profilePillText
-                                            anchors.centerIn: parent
-                                            text: "[ ⛭ " + (typeof hostController !== "undefined" ? hostController.rewriteProfile : "GENERIC@1") + " ]"
-                                            font.family: rootWindow.monoFont
-                                            font.bold: true
-                                            font.pixelSize: 8
-                                            color: profileMouseArea.containsMouse ? rootWindow.bgColor : "#7EE787"
-                                        }
-
-                                        MouseArea {
-                                            id: profileMouseArea
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: {
-                                                if (typeof hostController !== "undefined") {
-                                                    const profiles = ["GENERIC@1", "ANTHROPIC_STRUCTURED@1", "OPENAI_STRUCTURED@1", "LOCAL_COMPACT@1"];
-                                                    const current = hostController.rewriteProfile;
-                                                    let nextIndex = (profiles.indexOf(current) + 1) % profiles.length;
-                                                    hostController.setRewriteProfile(profiles[nextIndex]);
-                                                    rootWindow.showToast("PROFILE: " + profiles[nextIndex]);
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // Looks Right Button (Explicit confirmation)
-                                    Rectangle {
-                                        height: 18
-                                        width: looksRightText.implicitWidth + 12
-                                        color: looksRightMouseArea.containsMouse ? "#7EE787" : "transparent"
-                                        border.color: "#7EE787"
-                                        border.width: 1
-                                        radius: 3
-
-                                        Text {
-                                            id: looksRightText
-                                            anchors.centerIn: parent
-                                            text: "[ ✓ LOOKS RIGHT ]"
-                                            font.family: rootWindow.monoFont
-                                            font.bold: true
-                                            font.pixelSize: 8
-                                            color: looksRightMouseArea.containsMouse ? "#050505" : "#7EE787"
-                                        }
-
-                                        MouseArea {
-                                            id: looksRightMouseArea
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: {
-                                                if (typeof hostController !== "undefined") {
-                                                    hostController.confirmLooksRight();
-                                                    rootWindow.showToast("INTENT CONFIRMED — READY TO REWRITE");
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // Keep Original Button
-                                    Rectangle {
-                                        height: 18
-                                        width: keepOrigText.implicitWidth + 12
-                                        color: keepOrigMouseArea.containsMouse ? rootWindow.fgColor : "transparent"
-                                        border.color: rootWindow.borderColor
-                                        border.width: 1
-                                        radius: 3
-
-                                        Text {
-                                            id: keepOrigText
-                                            anchors.centerIn: parent
-                                            text: "[ ORIGINAL ]"
-                                            font.family: rootWindow.monoFont
-                                            font.pixelSize: 8
-                                            color: keepOrigMouseArea.containsMouse ? rootWindow.bgColor : rootWindow.fgColor
-                                        }
-
-                                        MouseArea {
-                                            id: keepOrigMouseArea
-                                            anchors.fill: parent
-                                            hoverEnabled: true
-                                            cursorShape: Qt.PointingHandCursor
-                                            onClicked: {
-                                                if (typeof hostController !== "undefined") {
-                                                    hostController.keepOriginalPrompt();
-                                                    rootWindow.showToast("KEEPING ORIGINAL PHRASING");
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Resolution Pills (Rendered when ambiguity detected - B06 dynamic)
-                                RowLayout {
-                                    visible: rootWindow.hasAmbiguity
-                                    Layout.alignment: Qt.AlignRight
-                                    spacing: 6
-
-                                    Text {
-                                        visible: rootWindow.width >= 720 && typeof hostController !== "undefined"
-                                        text: (typeof hostController !== "undefined" && hostController.activeQuestion.length > 0) ?
-                                              hostController.activeQuestion : "RESOLVE TARGET:"
-                                        font.family: rootWindow.monoFont
-                                        font.bold: true
-                                        font.pixelSize: 8
-                                        color: "#FFB000"
-                                    }
-
-                                    Repeater {
-                                        model: (typeof hostController !== "undefined" && hostController.activeAlternatives.length > 0)
-                                               ? hostController.activeAlternatives
-                                               : [
-                                                     { id: "alt_1", label: "FloatingCard.qml" },
-                                                     { id: "alt_2", label: "ScreenPlacement.cpp" }
-                                                 ]
-                                        delegate: Rectangle {
-                                            height: 18
-                                            width: pillText.implicitWidth + 12
-                                            color: pillMouseArea.containsMouse ? rootWindow.fgColor : "transparent"
-                                            border.color: "#FFB000"
-                                            border.width: 1
-                                            radius: 3
-
-                                            Text {
-                                                id: pillText
-                                                anchors.centerIn: parent
-                                                text: "[ " + (index + 1) + ": " + modelData.label + " ]"
-                                                font.family: rootWindow.monoFont
-                                                font.bold: true
-                                                font.pixelSize: 8
-                                                color: pillMouseArea.containsMouse ? rootWindow.bgColor : "#FFB000"
-                                            }
-
-                                            MouseArea {
-                                                id: pillMouseArea
-                                                anchors.fill: parent
-                                                hoverEnabled: true
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: {
-                                                    if (typeof hostController !== "undefined" && hostController.activeAlternatives.length > 0) {
-                                                        rootWindow.commitChoiceById(modelData.id, modelData.label);
-                                                    } else {
-                                                        rootWindow.commitChoice(index + 1);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                Text {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    visible: text.length > 0
+                    text: rootWindow.hc ? [hostController.shortcutWarning, hostController.lastError, hostController.analysisMessage].filter(function(x) { return x.length > 0; }).join("\n") : ""
+                    wrapMode: Text.WordWrap
+                    color: rootWindow.mutedTextColor
+                    font.family: rootWindow.monoFont
+                    font.pixelSize: 10
+                }
+                IntentReviewPanel {
+                    id: reviewFlow
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    currentTheme: rootWindow.currentTheme
+                    viewportHeight: rootWindow.height
+                }
+            }
+                }
 
                 // =============================================================
                 // 3. TELEMETRY STRIP (Real System & Compiler Metrics)
                 // =============================================================
                 Rectangle {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     Layout.preferredHeight: 22
                     color: "transparent"
                     border.color: rootWindow.borderColor
@@ -1641,10 +1233,10 @@ Window {
                         spacing: 8
 
                         Text {
-                            text: (rootWindow.width >= 640 ? "LENGTH: " : "") + Math.ceil(promptInput.text.length / 4) + "/" + rootWindow.maxTokens + " TOKENS"
+                            text: "EST. " + Math.ceil(promptInput.text.length / 4) + " TOKENS"
                             font.family: rootWindow.monoFont
                             font.pixelSize: 8
-                            color: (Math.ceil(promptInput.text.length / 4) > rootWindow.maxTokens) ? "#FF4D4D" : rootWindow.fgColor
+                            color: rootWindow.fgColor
                         }
 
                         Text { text: "│"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
@@ -1660,7 +1252,7 @@ Window {
 
                         Text {
                             visible: rootWindow.width >= 620
-                            text: "DISPATCH: " + (typeof hostController !== "undefined" && hostController.directInjectionEnabled ? "IN-PLACE" : "CLIPBOARD")
+                            text: rootWindow.hc ? hostController.deliveryLabel : "CLIPBOARD"
                             font.family: rootWindow.monoFont
                             font.pixelSize: 8
                             color: rootWindow.fgColor
@@ -1682,6 +1274,7 @@ Window {
                 // =============================================================
                 Rectangle {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     Layout.preferredHeight: 36
                     color: "transparent"
                     border.color: rootWindow.borderColor
@@ -1697,7 +1290,7 @@ Window {
                         Rectangle {
                             visible: rootWindow.width >= 680 && rootWindow.toastMessage.length === 0
                             height: 16
-                            width: cTag.contentWidth + 6
+                            implicitWidth: cTag.contentWidth + 6
                             color: rootWindow.fgColor
                             Text {
                                 id: cTag
@@ -1767,7 +1360,7 @@ Window {
                             Rectangle {
                                 id: bypassBtn
                                 height: 22
-                                width: b1Text.contentWidth + 14
+                                implicitWidth: b1Text.contentWidth + 14
                                 color: bypassMouse.pressed ? rootWindow.dimColor : (bypassMouse.containsMouse ? rootWindow.dimColor : "transparent")
                                 border.color: rootWindow.isCompiledPreview ? "#FFB000" : rootWindow.borderColor
                                 border.width: 1
@@ -1778,14 +1371,16 @@ Window {
                                     anchors.centerIn: parent
                                     text: {
                                         if (rootWindow.isCompiledPreview) return "[ ↺ EDIT DRAFT ]";
-                                        return rootWindow.width >= 720 ? "[ SEND AS-IS ]" : "[ AS-IS ]";
+                                        const insert = rootWindow.hc && hostController.isAmbientCapture;
+                                        return rootWindow.width >= 720 ? (insert ? "[ INSERT AS-IS ]" : "[ COPY AS-IS ]")
+                                                                      : (insert ? "[ INSERT ]" : "[ COPY ]");
                                     }
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
                                     color: rootWindow.isCompiledPreview ? "#FFB000" : rootWindow.fgColor
                                 }
-                                MouseArea {
+                                HudMouseArea {
                                     id: bypassMouse
                                     anchors.fill: parent
                                     hoverEnabled: true
@@ -1804,7 +1399,7 @@ Window {
                             Rectangle {
                                 id: triageBtn
                                 height: 22
-                                width: b2Text.contentWidth + 16
+                                implicitWidth: b2Text.contentWidth + 16
                                 color: {
                                     if (triageMouse.pressed) return rootWindow.dimColor;
                                     if (triageMouse.containsMouse) return "#E2E8F0";
@@ -1817,21 +1412,25 @@ Window {
 
                                 Text {
                                     id: b2Text
+                                    objectName: "analysisActionLabel"
                                     anchors.centerIn: parent
                                     text: {
-                                        if (rootWindow.isCompiledPreview) return "[ ⏎ COPY AGAIN ]";
+                                        if (rootWindow.hc && hostController.isAnalyzing) return "[ CANCEL ANALYSIS ]";
+                                        if (rootWindow.isCompiledPreview) return (hostController.canApprove ? (hostController.isAmbientCapture ? "[ APPROVE & INSERT ]" : (hostController.isAmbientActive ? "[ CONNECT EDITOR ]" : "[ APPROVE & COPY ]")) : "[ REVIEW REWRITE ]");
+                                        if (rootWindow.hc && hostController.isOriginalRoute) return "[ SEND ORIGINAL ]";
                                         if (rootWindow.hasAmbiguity) return rootWindow.width >= 720 ? "[ 1-2: RESOLVE ]" : "[ RESOLVE ]";
                                         if (typeof hostController !== "undefined" && hostController.hasConfirmedIntent && !hostController.isIntentStale) {
                                             return rootWindow.width >= 720 ? "[ ⏎ SYNTHESIZE REWRITE ]" : "[ ⏎ REWRITE ]";
                                         }
-                                        return rootWindow.width >= 720 ? "[ ENHANCE & COPY ]" : "[ ENHANCE ]";
+                                        if (rootWindow.needsManualAnswer) return "[ ANSWER REMAINING ]";
+                                        return rootWindow.width >= 720 ? "[ ANALYZE PROMPT ]" : "[ ANALYZE ]";
                                     }
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
                                     color: triageMouse.pressed ? rootWindow.fgColor : (rootWindow.isCompiledPreview ? "#050505" : rootWindow.bgColor)
                                 }
-                                MouseArea {
+                                HudMouseArea {
                                     id: triageMouse
                                     anchors.fill: parent
                                     hoverEnabled: true
@@ -1844,7 +1443,7 @@ Window {
                             Rectangle {
                                 id: hideBtn
                                 height: 22
-                                width: hideTextLabel.contentWidth + 14
+                                implicitWidth: hideTextLabel.contentWidth + 14
                                 color: hideMouse.pressed ? rootWindow.dimColor : (hideMouse.containsMouse ? rootWindow.dimColor : "transparent")
                                 border.color: rootWindow.borderColor
                                 border.width: 1
@@ -1858,7 +1457,7 @@ Window {
                                     font.pixelSize: 8
                                     color: rootWindow.fgColor
                                 }
-                                MouseArea {
+                                HudMouseArea {
                                     id: hideMouse
                                     anchors.fill: parent
                                     hoverEnabled: true
@@ -1916,6 +1515,7 @@ Window {
                         // Dropdown Title Strip
                         Rectangle {
                             Layout.fillWidth: true
+                            Layout.minimumWidth: 0
                             height: 22
                             color: rootWindow.dimColor
 
@@ -1946,6 +1546,7 @@ Window {
                             model: rootWindow.projectList
                             delegate: Rectangle {
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 0
                                 height: 32
                                 color: pItemMouse.containsMouse ? rootWindow.dimColor : (rootWindow.currentProjectIndex === index ? rootWindow.inputBgColor : "transparent")
 
@@ -1982,7 +1583,7 @@ Window {
                                     }
                                 }
 
-                                MouseArea {
+                                HudMouseArea {
                                     id: pItemMouse
                                     anchors.fill: parent
                                     hoverEnabled: true
@@ -2000,6 +1601,7 @@ Window {
                         // Add Folder Action
                         Rectangle {
                             Layout.fillWidth: true
+                            Layout.minimumWidth: 0
                             height: 26
                             color: addProjMouse.containsMouse ? rootWindow.dimColor : "transparent"
 
@@ -2013,7 +1615,7 @@ Window {
                                 Text { text: "OPEN PROJECT FOLDER..."; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.8 }
                             }
 
-                            MouseArea {
+                            HudMouseArea {
                                 id: addProjMouse
                                 anchors.fill: parent
                                 hoverEnabled: true
@@ -2098,6 +1700,7 @@ Window {
                         // Title Strip
                         Rectangle {
                             Layout.fillWidth: true
+                            Layout.minimumWidth: 0
                             height: 22
                             color: rootWindow.dimColor
 
@@ -2126,6 +1729,7 @@ Window {
                         // Search Filter Input Strip
                         Rectangle {
                             Layout.fillWidth: true
+                            Layout.minimumWidth: 0
                             height: 26
                             color: rootWindow.inputBgColor
                             border.color: fileSearchInput.activeFocus ? "#FFB000" : rootWindow.borderColor
@@ -2148,6 +1752,7 @@ Window {
                                 TextInput {
                                     id: fileSearchInput
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     font.family: rootWindow.monoFont
                                     font.pixelSize: 8
                                     color: rootWindow.fgColor
@@ -2164,7 +1769,7 @@ Window {
                                     font.bold: true
                                     font.pixelSize: 9
                                     color: rootWindow.mutedTextColor
-                                    MouseArea {
+                                    HudMouseArea {
                                         anchors.fill: parent
                                         cursorShape: Qt.PointingHandCursor
                                         onClicked: fileSearchInput.text = ""
@@ -2177,12 +1782,13 @@ Window {
                         ListView {
                             id: fileListView
                             Layout.fillWidth: true
+                            Layout.minimumWidth: 0
                             Layout.fillHeight: true
                             clip: true
                             boundsBehavior: Flickable.StopAtBounds
                             model: fileDropdown.filteredFiles
 
-                            ScrollBar.vertical: ScrollBar {
+                            ScrollBar.vertical: HudScrollBar {
                                 id: fileScrollBar
                                 active: true
                                 policy: ScrollBar.AsNeeded
@@ -2220,6 +1826,7 @@ Window {
                                     ColumnLayout {
                                         spacing: 1
                                         Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
                                         Text {
                                             text: fileName
                                             font.family: rootWindow.monoFont
@@ -2235,11 +1842,12 @@ Window {
                                             color: rootWindow.mutedTextColor
                                             elide: Text.ElideMiddle
                                             Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
                                         }
                                     }
                                 }
 
-                                MouseArea {
+                                HudMouseArea {
                                     id: fItemMouse
                                     anchors.fill: parent
                                     hoverEnabled: true
@@ -2257,6 +1865,7 @@ Window {
                         Rectangle {
                             visible: fileDropdown.filteredFiles.length === 0
                             Layout.fillWidth: true
+                            Layout.minimumWidth: 0
                             Layout.fillHeight: true
                             color: "transparent"
                             Text {

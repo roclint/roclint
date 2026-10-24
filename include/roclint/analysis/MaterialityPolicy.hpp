@@ -22,6 +22,7 @@ enum class ReasonCode {
     ExcessiveAlternatives,
     DuplicateAlternativeLabels,
     UngroundedMateriality,
+    NotMaterial,
     InvalidUtf8SpanBoundary,
     UnsafeSpanOverlap,
     DirectConflictPresent,
@@ -44,29 +45,32 @@ struct OverallPolicyResult {
     PolicyVerdict overallVerdict{PolicyVerdict::Rejected};
     ReasonCode primaryReasonCode{ReasonCode::Ok};
     std::vector<GroupEvaluationResult> groupResults{};
-    
+
     std::size_t assumptionCount{0};
     std::size_t conflictCount{0};
+    std::size_t blockingConflictCount{0};
     bool hasCrossGroupOverlap{false};
 
     [[nodiscard]] bool isEligible() const noexcept {
         return overallVerdict == PolicyVerdict::EligibleForChoice;
     }
+
+    // Returns nullptr when no verdict exists for the group.
+    [[nodiscard]] const GroupEvaluationResult* findGroup(std::string_view groupId) const noexcept;
 };
 
+// Human-authored materiality policy (C03). Changing any rule requires bumping kPolicyVersion.
 class MaterialityPolicyV1 {
 public:
+    static constexpr const char* kPolicyVersion = "materiality_policy_v1";
     static constexpr std::size_t kMaxAssumptionBudget = 3;
     static constexpr std::size_t kMinAlternatives = 2;
     static constexpr std::size_t kMaxAlternatives = 3;
 
-    [[nodiscard]] static GroupEvaluationResult evaluateGroup(
-        const ChoiceGroup& group,
-        std::string_view promptBuffer) noexcept;
+    [[nodiscard]] static GroupEvaluationResult evaluateGroup(const ChoiceGroup& group, std::string_view promptBuffer);
 
-    [[nodiscard]] static OverallPolicyResult evaluatePrompt(
-        const NormalizedAnalysis& analysis,
-        std::string_view promptBuffer) noexcept;
+    [[nodiscard]] static OverallPolicyResult evaluatePrompt(const NormalizedAnalysis& analysis,
+                                                            std::string_view promptBuffer);
 
     [[nodiscard]] static bool spansOverlap(const SourceSpan& a, const SourceSpan& b) noexcept;
 };

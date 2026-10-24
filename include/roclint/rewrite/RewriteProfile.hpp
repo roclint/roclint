@@ -29,10 +29,10 @@ struct RewriteProfileConfig {
 
 class ProfileRegistry {
 public:
-    [[nodiscard]] static std::optional<RewriteProfileConfig> getProfile(std::string_view profileId) noexcept;
+    [[nodiscard]] static std::optional<RewriteProfileConfig> getProfile(std::string_view profileId);
     [[nodiscard]] static const RewriteProfileConfig& defaultProfile() noexcept;
-    [[nodiscard]] static std::vector<RewriteProfileConfig> availableProfiles() noexcept;
-    [[nodiscard]] static bool isKnownProfile(std::string_view profileId) noexcept;
+    [[nodiscard]] static std::vector<RewriteProfileConfig> availableProfiles();
+    [[nodiscard]] static bool isKnownProfile(std::string_view profileId);
 };
 
 [[nodiscard]] const char* toString(ProfileFamily family) noexcept;

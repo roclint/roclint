@@ -20,6 +20,8 @@ public:
     ~TrayManager() override;
 
     bool initTray();
+    // Shows a passive tray notification; does nothing when there is no tray.
+    void notify(const QString& message);
 
 private slots:
     void onTrayIconActivated(int reason);

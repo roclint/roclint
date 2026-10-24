@@ -77,7 +77,16 @@ PlacementResult ScreenPlacement::determineTargetPosition(int cardWidth, int card
         return PlacementResult{100, 100, false};
     }
 
-    return calculateClampedPosition(cursorPos, cardWidth, cardHeight, targetScreen->availableGeometry());
+    const QRect avail = targetScreen->availableGeometry();
+    if (cursorPos.isNull() || !targetScreen->geometry().contains(cursorPos)) {
+        PlacementResult result;
+        result.x = avail.left() + std::max(0, (avail.width() - cardWidth) / 2);
+        result.y = avail.top() + std::max(0, (avail.height() - cardHeight) / 2);
+        result.clamped = false;
+        return result;
+    }
+
+    return calculateClampedPosition(cursorPos, cardWidth, cardHeight, avail);
 }
 
 } // namespace roclint::host

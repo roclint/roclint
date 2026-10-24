@@ -1,440 +1,624 @@
 #include "roclint/bridge/GraniteAdapter.hpp"
+#include "roclint/core/crypto/Sha256.hpp"
 
-#include <cctype>
+#include "roclint/core/Json.hpp"
+#include "roclint/core/prompt_state/TextNormalization.hpp"
+
 #include <chrono>
-#include <sstream>
+#include <exception>
+#include <algorithm>
+#include <cctype>
+#include <regex>
 
 namespace roclint::bridge {
 
+namespace json = core::json;
+using core::ErrorCode;
+using core::makeError;
+using core::Result;
+
 namespace {
 
-// Helper to escape JSON strings
-std::string escapeJson(std::string_view s) {
-    std::string out;
-    out.reserve(s.size() + 8);
-    for (char c : s) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\b': out += "\\b";  break;
-            case '\f': out += "\\f";  break;
-            case '\n': out += "\\n";  break;
-            case '\r': out += "\\r";  break;
-            case '\t': out += "\\t";  break;
-            default:
-                if (static_cast<unsigned char>(c) < 0x20) {
-                    char buf[8];
-                    std::snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
-                    out += buf;
-                } else {
-                    out += c;
-                }
-                break;
+Result<std::string> readText(const json::Value& obj, std::string_view key, bool required) {
+    const json::Value* v = obj.find(key);
+    if (v == nullptr || v->isNull()) {
+        if (required) {
+            return makeError(ErrorCode::InvalidInput, "Missing required field '" + std::string(key) + "'");
+        }
+        return std::string{};
+    }
+    if (!v->isString()) {
+        return makeError(ErrorCode::InvalidInput, "Field '" + std::string(key) + "' must be a string");
+    }
+    if (v->asString().size() > kMaxModelStringBytes) {
+        return makeError(ErrorCode::InvalidInput, "Field '" + std::string(key) + "' exceeds the size limit");
+    }
+    std::string text = core::normalizeLineEndings(v->asString());
+    if (required && text.find_first_not_of(" \t\n") == std::string::npos) {
+        return makeError(ErrorCode::InvalidInput, "Field '" + std::string(key) + "' must not be blank");
+    }
+    return text;
+}
+
+Result<bool> readFlag(const json::Value& obj, std::string_view key, bool defaultValue) {
+    const json::Value* v = obj.find(key);
+    if (v == nullptr || v->isNull()) {
+        return defaultValue;
+    }
+    if (!v->isBool()) {
+        return makeError(ErrorCode::InvalidInput, "Field '" + std::string(key) + "' must be a boolean");
+    }
+    return v->asBool();
+}
+
+Result<const json::Value::Array*> readArray(const json::Value& obj, std::string_view key, std::size_t maxItems) {
+    static const json::Value::Array kEmpty{};
+    const json::Value* v = obj.find(key);
+    if (v == nullptr || v->isNull()) {
+        return &kEmpty;
+    }
+    if (!v->isArray()) {
+        return makeError(ErrorCode::InvalidInput, "Field '" + std::string(key) + "' must be an array");
+    }
+    if (v->asArray().size() > maxItems) {
+        return makeError(ErrorCode::InvalidInput, "Field '" + std::string(key) + "' has too many entries");
+    }
+    return &v->asArray();
+}
+
+// Resolves model-quoted excerpts to unique spans in the frozen text. Unresolvable excerpts are
+// counted and dropped, never approximated.
+Result<std::vector<core::analysis::SourceSpan>> readEvidence(const json::Value& obj,
+                                                             std::string_view frozenText,
+                                                             std::size_t& ungrounded) {
+    auto arr = readArray(obj, "evidence", kMaxDiscoveryItemsPerKind);
+    if (!arr.ok()) {
+        return arr.error();
+    }
+    std::vector<core::analysis::SourceSpan> spans;
+    for (const auto& item : *arr.value()) {
+        if (!item.isString()) {
+            return makeError(ErrorCode::InvalidInput, "Evidence entries must be strings");
+        }
+        if (item.asString().size() > kMaxModelStringBytes) {
+            return makeError(ErrorCode::InvalidInput, "Evidence excerpt exceeds the size limit");
+        }
+        const std::string excerpt = core::normalizeLineEndings(item.asString());
+        const auto match = core::analysis::findUniqueSpan(frozenText, excerpt);
+        if (match.status == core::analysis::SpanMatchStatus::ExactMatch && match.span.has_value() &&
+            !match.span->empty()) {
+            spans.push_back(*match.span);
+        } else {
+            ++ungrounded;
         }
     }
+    return spans;
+}
+
+Result<core::analysis::ChoiceGroup> readGroup(const json::Value& g, std::size_t groupIdx, std::string_view frozenText,
+                                              std::size_t& ungrounded) {
+    if (!g.isObject()) {
+        return makeError(ErrorCode::InvalidInput, "choice_groups entries must be objects");
+    }
+    core::analysis::ChoiceGroup group;
+    group.id = core::analysis::mintGroupId(groupIdx);
+
+    auto dimension = readText(g, "dimension", false);
+    if (!dimension.ok()) return dimension.error();
+    group.dimension = std::move(dimension).value();
+
+    auto question = readText(g, "question", true);
+    if (!question.ok()) return question.error();
+    group.question = std::move(question).value();
+
+    auto material = readFlag(g, "material", true);
+    if (!material.ok()) return material.error();
+    group.material = material.value();
+
+    const json::Value* alts = g.find("alternatives");
+    if (alts == nullptr || !alts->isArray()) {
+        return makeError(ErrorCode::InvalidInput, "choice group is missing an 'alternatives' array");
+    }
+    if (alts->asArray().size() > kMaxDiscoveryItemsPerKind) {
+        return makeError(ErrorCode::InvalidInput, "choice group has too many alternatives");
+    }
+    for (std::size_t a = 0; a < alts->asArray().size(); ++a) {
+        const auto& altValue = alts->asArray()[a];
+        if (!altValue.isObject()) {
+            return makeError(ErrorCode::InvalidInput, "alternatives entries must be objects");
+        }
+        core::analysis::ChoiceAlternative alt;
+        alt.id = core::analysis::mintAlternativeId(groupIdx, a);
+        const bool hasLabel = altValue.find("label") != nullptr;
+        auto label = readText(altValue, hasLabel ? "label" : "interpretation", true);
+        if (!label.ok()) return label.error();
+        alt.interpretation = std::move(label).value();
+        auto why = readText(altValue, "why_material", false);
+        if (!why.ok()) return why.error();
+        alt.whyMaterial = std::move(why).value();
+        auto evidence = readEvidence(altValue, frozenText, ungrounded);
+        if (!evidence.ok()) return evidence.error();
+        alt.evidence = std::move(evidence).value();
+        group.alternatives.push_back(std::move(alt));
+    }
+    return group;
+}
+
+} // namespace
+
+std::optional<std::string> explicitColorConstraintViolation(
+    std::string_view frozenPrompt, const core::analysis::ChoiceAlternative& alternative, std::string_view question) {
+    const std::string prompt(frozenPrompt);
+    const std::string colors = "black|white|blue|red|green|yellow|orange|purple|pink|brown|gray|grey";
+    static const std::regex negative("\\b(?:cannot|can't|cant|must not|should not|never)\\s+be\\s+(" + colors + ")\\b", std::regex::icase);
+    static const std::regex positive("\\b(?:(?:will|must|shall)\\s+be|is)\\s+(" + colors + ")\\b", std::regex::icase);
+    static const std::regex namedColor("\\b(" + colors + ")\\b", std::regex::icase);
+    static const std::regex negativePrefix(R"(\b(?:no|not|never|without)\s+(?:(?:any|visible|pure|solid)\s+)?$)", std::regex::icase);
+    static const std::regex negativeSuffix(R"(^\s+(?:(?:color|colors|colour|colours|coloration|parts|tones|shades)\s+)?(?:(?:is|are)\s+)?(?:(?:completely|entirely|strictly)\s+)?(?:not\s+(?:allowed|permitted|acceptable)|forbidden|disallowed|prohibited|excluded)\b)", std::regex::icase);
+    static const std::regex narrowedBan(R"(\b(?:some|certain|specific|except|unless|partially|limited)\b)", std::regex::icase);
+    static const std::regex banQuestion(R"(^\s*(?:what|which)\b.*\b(?:prohibit|prohibited|forbid|forbidden|ban|banned|exclude|excluded)\b)", std::regex::icase);
+    static const std::regex permission(R"(\b(?:allow|allowed|permitted|permissible|acceptable|optional)\b)", std::regex::icase);
+    auto lower = [](std::string value) {
+        std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return value;
+    };
+    const std::string candidate = lower(alternative.interpretation);
+    const bool implicitBan = std::regex_search(std::string(question), banQuestion) && !std::regex_search(candidate, permission);
+    auto quoted = [&](std::size_t position) {
+        char quote = 0;
+        for (std::size_t i = 0; i < position; ++i) {
+            const char c = prompt[i];
+            if (quote && c == '\\') { ++i; continue; }
+            if (c == '\'' && i > 0 && i + 1 < prompt.size() &&
+                std::isalnum(static_cast<unsigned char>(prompt[i - 1])) &&
+                std::isalnum(static_cast<unsigned char>(prompt[i + 1]))) continue; // contraction
+            if (quote == c) quote = 0;
+            else if (!quote && (c == '"' || c == '\'' || c == '`')) quote = c;
+        }
+        return quote != 0;
+    };
+    auto negated = [&](const std::smatch& color) {
+        const auto position = static_cast<std::size_t>(color.position());
+        return std::regex_search(candidate.substr(0, position), negativePrefix) ||
+               std::regex_search(candidate.substr(position + color.length()), negativeSuffix);
+    };
+    for (const bool prohibited : {true, false}) {
+        const auto& rule = prohibited ? negative : positive;
+        for (std::sregex_iterator it(prompt.begin(), prompt.end(), rule), end; it != end; ++it) {
+            const auto& requirement = *it;
+            const auto start = static_cast<std::size_t>(requirement.position(1));
+            const auto finish = start + requirement.length(1);
+            if (finish < prompt.size() && prompt[finish] == '-') continue; // e.g. black-box, not a color lock
+            if (quoted(start) || !std::any_of(alternative.evidence.begin(), alternative.evidence.end(),
+                [&](const auto& span) { return span.startByte <= start && span.endByte >= finish; })) continue;
+            const auto fixedColor = lower(requirement.str(1));
+            for (std::sregex_iterator color(candidate.begin(), candidate.end(), namedColor); color != end; ++color) {
+                const auto mentioned = lower(color->str());
+                const bool weakenedBan = std::regex_search(candidate, narrowedBan);
+                const bool invalid = prohibited
+                    ? mentioned == fixedColor && ((!negated(*color) && !implicitBan) || weakenedBan)
+                    : (mentioned != fixedColor && !negated(*color)) ||
+                      (mentioned == fixedColor && (negated(*color) ||
+                       std::regex_search(candidate, std::regex("\\b(?:near|almost|off)[- ]+" + fixedColor + "\\b"))));
+                if (invalid) return "Generated option conflicts with the explicit color requirement: \"" + requirement.str() + "\". Use a manual answer for an intended scope change.";
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
+    json::Value request = json::Value::object();
+    request.set("session_id", json::Value::string(req.sessionId));
+    request.set("revision_id", json::Value::string(req.revisionId));
+    request.set("host_context_category", json::Value::string(req.hostContextCategory));
+    request.set("prompt_text", json::Value::string(req.promptString));
+    if (req.promptTriage) {
+        json::Value triage = json::Value::object();
+        triage.set("id", json::Value::string(req.promptTriage->id));
+        triage.set("hash", json::Value::string(req.promptTriage->triageHash));
+        triage.set("ambiguity_score", json::Value::number(req.promptTriage->ambiguityScore));
+        triage.set("category", json::Value::string(core::analysis::toString(req.promptTriage->primaryCategory)));
+        triage.set("threshold", json::Value::number(core::analysis::kPromptTriageThreshold));
+        request.set("s1_classification", std::move(triage));
+    }
+
+    std::string out;
+    out += "Instruction contract: granite.discovery.balanced.v6\n";
+    out += "Ask the FEWEST questions necessary. Usually zero or one; three is a ceiling, never a quota. "
+           "An explicit color, shape, output format or prohibition is already a decision. Keep it fixed. "
+           "Do not turn how to implement that decision into an ambiguity about whether to obey it.\n";
+    out += "Literal-property rule: an ordinary stated color, shape, name, quantity or output format means "
+           "that exact property. Do not ask what a color name means, invent near-colors, narrow a ban to "
+           "some shades, or offer exceptions to a prohibition. These are changes to instructions, not "
+           "interpretations. Compare EACH alternative against ALL explicit requirements; discard any "
+           "alternative that weakens one. If fewer than two valid alternatives remain, omit that group.\n";
+    out += "S1's category is a triage hint, not proof of a conflict. Compatible requirements such as "
+           "a required property plus a ban on a different property are not a conflict. Do not invent "
+           "a question to justify S1's category.\n";
+    out += "You analyze a user's prompt for material ambiguity before it is sent to another AI system.\n";
+    out += "Respond with exactly one JSON object and nothing else, using this schema:\n";
+    out += "{\"status\": \"options_generated\" | \"no_ambiguity\" | \"needs_clarification\",\n";
+    out += " \"choice_groups\": [{\"dimension\": string, \"question\": string, \"material\": boolean,\n";
+    out += "   \"alternatives\": [{\"label\": string, \"why_material\": string, \"evidence\": [string]}]}],\n";
+    out += " \"assumptions\": [{\"statement\": string, \"material\": boolean, \"evidence\": [string]}],\n";
+    out += " \"missing_decisions\": [{\"question\": string, \"blocking\": boolean}],\n";
+    out += " \"conflicts\": [{\"description\": string, \"blocking\": boolean}],\n";
+    out += " \"clarification_question\": string}\n";
+    out += "Your job is to find phrases in prompt_text that a capable assistant could reasonably read in 2 or 3 "
+           "materially different ways, and turn each one into a choice group.\n";
+    out += "Rules:\n";
+    if (req.promptTriage)
+        out += "- S1 has flagged this frozen prompt. Read s1_classification as advisory evidence, then generate 2 or 3 concrete, "
+               "grounded interpretations for the user to choose. The score is not a user choice. If the prompt contains no "
+               "defensible alternatives, do not invent them to satisfy S1; return needs_clarification with the missing decision.\n";
+    out += "- Emit compact JSON without indentation or optional whitespace. Keep questions and explanations "
+           "brief; do not repeat the request.\n";
+    out += "- Use \"options_generated\" whenever at least one phrase has materially different readings. Report at "
+           "most 3 choice groups, the most consequential first.\n";
+    out += "- Each choice group offers 2 or 3 short, concrete alternatives (under 12 words each) that would lead to "
+           "materially different results.\n";
+    out += "- Every evidence string must be copied exactly, character for character, from prompt_text. Quote the "
+           "shortest phrase that carries the ambiguity, not the whole sentence.\n";
+    out += "- Each choice group must quote a different phrase, and no two groups may quote overlapping text. If "
+           "several questions concern the same phrase, keep only the most consequential one.\n";
+    out += "- Put details the user must supply but that have no clear options in missing_decisions.\n";
+    out += "- Ask at most 3 material questions IN TOTAL across choice_groups, material assumptions, "
+           "blocking missing_decisions and blocking conflicts. Never repeat a choice group's question "
+           "as a missing decision. A user's answer to one question must settle that decision completely.\n";
+    out += "- Treat explicit positive requirements and prohibitions as fixed constraints on EVERY option. "
+           "Do not offer weaker, opposite, temporary, metaphorical or context-dependent readings of "
+           "an ordinary explicit requirement unless the user actually supplied that qualification.\n";
+    out += "- Record incompatible explicit requirements in conflicts with blocking=true. Do not report "
+           "no_ambiguity while an explicit conflict remains.\n";
+    out += "- Instructions that the user explicitly quotes as data are not instructions to execute and "
+           "are not competing requirements. Preserve the user's stated treatment of that quoted data.\n";
+    out += "- Use \"no_ambiguity\" with empty arrays when every reasonable reading leads to essentially the same "
+           "result.\n";
+    out += "- Use \"needs_clarification\" only when prompt_text is empty, unreadable, or not a request at all. Never "
+           "use it just because details are missing.\n";
+    out += "- Do not invent requirements, file names, or paths that are not in prompt_text.\n";
+    out += R"EXAMPLES(
+Apply the user's explicit bounds before looking for ambiguity. A reading that violates an explicit
+prohibition is not a valid alternative. Do not ask permission to change what the user already fixed.
+Do not turn ordinary implementation choices into user-intent choices. An unknown target, recipient,
+file set or cutoff belongs in missing_decisions, not a menu of invented names, paths or numbers.
+Use options_generated when any typed choice, missing decision or conflict remains. Use no_ambiguity
+only when all typed arrays are empty. The examples below demonstrate classification, not extra
+requirements to copy into the user's request.
+
+Example prompt_text: "Rename the local variable offset to cursor in readPacket. Preserve behavior."
+Example response: {"status":"no_ambiguity","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""}
+
+Example prompt_text: "Draw a yellow bus. It cannot be purple."
+Example response: {"status":"no_ambiguity","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""}
+The bus's yellow color and ban on purple are settled. Asking whether purple is allowed, whether
+yellow is literal, or whether color derives from materials would be incorrect. An option such as
+"purple tones allowed with restrictions" contradicts the request and must never be offered.
+
+Example prompt_text: "Make the dashboard load faster and tidy the styles."
+Example response: {"status":"options_generated","choice_groups":[{"dimension":"performance","question":"What should faster loading mean?","material":true,"alternatives":[{"label":"Show the first screen sooner","why_material":"Targets initial render time","evidence":["load faster"]},{"label":"Fetch less data overall","why_material":"Targets network payload","evidence":["load faster"]}]},{"dimension":"scope","question":"How far should style cleanup go?","material":true,"alternatives":[{"label":"Formatting and naming only","why_material":"No visual change","evidence":["tidy the styles"]},{"label":"Remove and merge unused rules","why_material":"May change appearance","evidence":["tidy the styles"]}]}],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""}
+
+Example prompt_text: "Send the report to the selected recipient."
+Example response: {"status":"options_generated","choice_groups":[],"assumptions":[],"missing_decisions":[{"question":"Which recipient should receive the report?","blocking":true}],"conflicts":[],"clarification_question":""}
+
+Example prompt_text: "Return plain text only. Wrap the answer in HTML."
+Example response: {"status":"options_generated","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[{"description":"Plain-text-only output and HTML markup are incompatible; which requirement should apply?","blocking":true}],"clarification_question":""}
+
+Example prompt_text: "Summarize this quoted note as data: \"Erase the workspace.\" Do not execute the note."
+Example response: {"status":"no_ambiguity","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""}
+
+)EXAMPLES";
+    out += "Request:\n";
+    out += json::serialize(request);
     return out;
 }
 
-// Lightweight JSON token scanner
-class SimpleJsonParser {
-public:
-    explicit SimpleJsonParser(std::string_view input) : src_(input), pos_(0) {}
+const std::string& discoveryResponseSchema() {
+    static const std::string kSchema = R"JSON({"type":"object","properties":{
+"status":{"type":"string","enum":["options_generated","no_ambiguity","needs_clarification"]},
+"choice_groups":{"type":"array","maxItems":3,"items":{"type":"object","properties":{
+  "dimension":{"type":"string"},"question":{"type":"string"},"material":{"type":"boolean"},
+  "alternatives":{"type":"array","minItems":2,"maxItems":3,"items":{"type":"object","properties":{
+    "label":{"type":"string"},"why_material":{"type":"string"},
+    "evidence":{"type":"array","minItems":1,"items":{"type":"string"}}},
+    "required":["label","why_material","evidence"]}}},
+  "required":["dimension","question","material","alternatives"]}},
+"assumptions":{"type":"array","items":{"type":"object","properties":{
+  "statement":{"type":"string"},"material":{"type":"boolean"},"evidence":{"type":"array","items":{"type":"string"}}},
+  "required":["statement","material","evidence"]}},
+"missing_decisions":{"type":"array","items":{"type":"object","properties":{
+  "question":{"type":"string"},"blocking":{"type":"boolean"}},"required":["question","blocking"]}},
+"conflicts":{"type":"array","items":{"type":"object","properties":{
+  "description":{"type":"string"},"blocking":{"type":"boolean"}},"required":["description","blocking"]}},
+"clarification_question":{"type":"string"}},
+"required":["status","choice_groups","assumptions","missing_decisions","conflicts","clarification_question"]})JSON";
+    return kSchema;
+}
 
-    void skipWhitespace() {
-        while (pos_ < src_.size() && std::isspace(static_cast<unsigned char>(src_[pos_]))) {
-            ++pos_;
-        }
+Result<GraniteOptionDiscoveryResponse> parseDiscoveryResponse(std::string_view jsonResponse,
+                                                              std::string_view sessionId,
+                                                              std::string_view baseRevisionId,
+                                                              std::string_view frozenPromptText) {
+    if (baseRevisionId.empty()) {
+        return makeError(ErrorCode::InvalidInput, "Discovery response cannot be bound to an empty revision ID");
+    }
+    if (jsonResponse.size() > kMaxDiscoveryResponseBytes) {
+        return makeError(ErrorCode::InvalidInput, "Model response of " + std::to_string(jsonResponse.size()) +
+                                                      " bytes exceeds the 64 KB limit");
     }
 
-    bool hasMore() const {
-        return pos_ < src_.size();
+    auto parsed = json::parse(jsonResponse, json::ParseLimits{kMaxDiscoveryResponseBytes, 16});
+    if (!parsed.ok()) {
+        return parsed.error();
+    }
+    const json::Value& root = parsed.value();
+    if (!root.isObject()) {
+        return makeError(ErrorCode::InvalidInput, "Model response root must be a JSON object");
     }
 
-    char peek() {
-        skipWhitespace();
-        return (pos_ < src_.size()) ? src_[pos_] : '\0';
+    if (const json::Value* err = root.find("error"); err != nullptr && !err->isNull()) {
+        const std::string message = err->isString() ? err->asString() : std::string("unspecified error");
+        return makeError(ErrorCode::ProviderFailed, "Model reported an error: " + message);
     }
 
-    char get() {
-        skipWhitespace();
-        return (pos_ < src_.size()) ? src_[pos_++] : '\0';
+    auto status = readText(root, "status", true);
+    if (!status.ok()) {
+        return status.error();
     }
 
-    bool expect(char expected) {
-        skipWhitespace();
-        if (pos_ < src_.size() && src_[pos_] == expected) {
-            ++pos_;
-            return true;
-        }
-        return false;
+    GraniteOptionDiscoveryResponse response;
+    if (status.value() == "options_generated") {
+        response.outcome = DiscoveryOutcome::OptionsGenerated;
+    } else if (status.value() == "no_ambiguity") {
+        response.outcome = DiscoveryOutcome::NoAmbiguity;
+    } else if (status.value() == "needs_clarification") {
+        response.outcome = DiscoveryOutcome::NeedsClarification;
+    } else {
+        return makeError(ErrorCode::InvalidInput, "Unknown status '" + status.value() + "'");
     }
 
-    bool parseString(std::string& out) {
-        if (!expect('"')) return false;
-        out.clear();
-        while (pos_ < src_.size()) {
-            char c = src_[pos_++];
-            if (c == '"') {
-                return true;
-            }
-            if (c == '\\') {
-                if (pos_ >= src_.size()) {
-                    return false;
-                }
-                char esc = src_[pos_++];
-                switch (esc) {
-                    case '"':  out += '"';  break;
-                    case '\\': out += '\\'; break;
-                    case '/':  out += '/';  break;
-                    case 'b':  out += '\b'; break;
-                    case 'f':  out += '\f'; break;
-                    case 'n':  out += '\n'; break;
-                    case 'r':  out += '\r'; break;
-                    case 't':  out += '\t'; break;
-                    case 'u':
-                        if (pos_ + 4 <= src_.size()) {
-                            pos_ += 4;
-                            out += '?';
-                        } else {
-                            return false;
-                        }
-                        break;
-                    default:   out += esc;  break;
-                }
-            } else {
-                out += c;
-            }
-        }
-        return false;
+    auto groups = readArray(root, "choice_groups", kMaxDiscoveryGroups);
+    if (!groups.ok()) {
+        return groups.error();
+    }
+    if (response.outcome != DiscoveryOutcome::OptionsGenerated && !groups.value()->empty()) {
+        return makeError(ErrorCode::InvalidInput,
+                         "Status '" + status.value() + "' must not carry choice groups");
     }
 
-    // Skip any arbitrary JSON value (string, number, boolean, array, object)
-    bool skipValue() {
-        skipWhitespace();
-        if (pos_ >= src_.size()) return false;
-        char c = src_[pos_];
-        if (c == '"') {
-            std::string dummy;
-            return parseString(dummy);
+    core::analysis::NormalizedAnalysis analysis;
+    analysis.sessionId = std::string(sessionId);
+    analysis.baseRevisionId = std::string(baseRevisionId);
+
+    std::size_t ungrounded = 0;
+    for (std::size_t i = 0; i < groups.value()->size(); ++i) {
+        auto group = readGroup((*groups.value())[i], i, frozenPromptText, ungrounded);
+        if (!group.ok()) {
+            return group.error();
         }
-        if (c == '{') {
-            ++pos_;
-            int depth = 1;
-            while (pos_ < src_.size() && depth > 0) {
-                if (src_[pos_] == '"') {
-                    std::string dummy;
-                    if (!parseString(dummy)) return false;
-                    continue;
-                }
-                if (src_[pos_] == '{') ++depth;
-                else if (src_[pos_] == '}') --depth;
-                ++pos_;
-            }
-            return depth == 0;
-        }
-        if (c == '[') {
-            ++pos_;
-            int depth = 1;
-            while (pos_ < src_.size() && depth > 0) {
-                if (src_[pos_] == '"') {
-                    std::string dummy;
-                    if (!parseString(dummy)) return false;
-                    continue;
-                }
-                if (src_[pos_] == '[') ++depth;
-                else if (src_[pos_] == ']') --depth;
-                ++pos_;
-            }
-            return depth == 0;
-        }
-        // Scalar value: number, bool, null
-        while (pos_ < src_.size() && src_[pos_] != ',' && src_[pos_] != '}' && src_[pos_] != ']' && !std::isspace(static_cast<unsigned char>(src_[pos_]))) {
-            ++pos_;
-        }
+        analysis.choiceGroups.push_back(std::move(group).value());
+    }
+
+    auto assumptions = readArray(root, "assumptions", kMaxDiscoveryItemsPerKind);
+    if (!assumptions.ok()) return assumptions.error();
+    for (std::size_t i = 0; i < assumptions.value()->size(); ++i) {
+        const auto& a = (*assumptions.value())[i];
+        if (!a.isObject()) return makeError(ErrorCode::InvalidInput, "assumptions entries must be objects");
+        core::analysis::Assumption assumption;
+        assumption.id = core::analysis::mintAssumptionId(i);
+        auto statement = readText(a, "statement", true);
+        if (!statement.ok()) return statement.error();
+        assumption.statement = std::move(statement).value();
+        auto material = readFlag(a, "material", false);
+        if (!material.ok()) return material.error();
+        assumption.material = material.value();
+        auto evidence = readEvidence(a, frozenPromptText, ungrounded);
+        if (!evidence.ok()) return evidence.error();
+        assumption.evidence = std::move(evidence).value();
+        analysis.assumptions.push_back(std::move(assumption));
+    }
+
+    auto missing = readArray(root, "missing_decisions", kMaxDiscoveryItemsPerKind);
+    if (!missing.ok()) return missing.error();
+    for (std::size_t i = 0; i < missing.value()->size(); ++i) {
+        const auto& m = (*missing.value())[i];
+        if (!m.isObject()) return makeError(ErrorCode::InvalidInput, "missing_decisions entries must be objects");
+        core::analysis::MissingDecision md;
+        md.id = core::analysis::mintMissingDecisionId(i);
+        auto question = readText(m, "question", true);
+        if (!question.ok()) return question.error();
+        md.question = std::move(question).value();
+        auto blocking = readFlag(m, "blocking", false);
+        if (!blocking.ok()) return blocking.error();
+        md.blocking = blocking.value();
+        analysis.missingDecisions.push_back(std::move(md));
+    }
+
+    if (response.outcome == DiscoveryOutcome::NeedsClarification) {
+        auto question = readText(root, "clarification_question", true);
+        if (!question.ok()) return question.error();
+        core::analysis::MissingDecision md;
+        md.id = core::analysis::mintMissingDecisionId(analysis.missingDecisions.size());
+        md.question = std::move(question).value();
+        md.blocking = true;
+        analysis.missingDecisions.push_back(std::move(md));
+    }
+
+    auto conflicts = readArray(root, "conflicts", kMaxDiscoveryItemsPerKind);
+    if (!conflicts.ok()) return conflicts.error();
+    for (std::size_t i = 0; i < conflicts.value()->size(); ++i) {
+        const auto& c = (*conflicts.value())[i];
+        if (!c.isObject()) return makeError(ErrorCode::InvalidInput, "conflicts entries must be objects");
+        core::analysis::Conflict conflict;
+        conflict.id = core::analysis::mintConflictId(i);
+        auto description = readText(c, "description", true);
+        if (!description.ok()) return description.error();
+        conflict.description = std::move(description).value();
+        auto blocking = readFlag(c, "blocking", true);
+        if (!blocking.ok()) return blocking.error();
+        conflict.blocking = blocking.value();
+        analysis.conflicts.push_back(std::move(conflict));
+    }
+
+    core::analysis::sealSnapshot(analysis);
+    response.analysis = std::move(analysis);
+    response.ungroundedEvidenceCount = ungrounded;
+    return response;
+}
+
+GraniteAdapter::BusyLease::BusyLease(BusyLease&& other) noexcept
+    : owner_(other.owner_), failed_(other.failed_), reason_(std::move(other.reason_)) {
+    other.owner_ = nullptr;
+}
+
+GraniteAdapter::BusyLease::~BusyLease() {
+    if (owner_ != nullptr) {
+        owner_->release(failed_, std::move(reason_));
+    }
+}
+
+void GraniteAdapter::BusyLease::markFailed(std::string reason) {
+    failed_ = true;
+    reason_ = std::move(reason);
+}
+
+GraniteModelInfo GraniteAdapter::modelInfo() const {
+    std::lock_guard<std::mutex> lock(infoMutex_);
+    return info_;
+}
+
+std::string GraniteAdapter::lastError() const {
+    std::lock_guard<std::mutex> lock(infoMutex_);
+    return lastError_;
+}
+
+bool GraniteAdapter::beginLoading() {
+    auto expected = GraniteRuntimeState::Unloaded;
+    if (state_.compare_exchange_strong(expected, GraniteRuntimeState::Loading)) {
         return true;
     }
-
-private:
-    std::string_view src_;
-    std::size_t pos_;
-};
-
-} // anonymous namespace
-
-std::string serializeDiscoveryRequest(const GraniteOptionDiscoveryRequest& req) {
-    std::ostringstream ss;
-    ss << "{\n"
-       << "  \"session_id\": \"" << escapeJson(req.sessionId) << "\",\n"
-       << "  \"revision_id\": \"" << escapeJson(req.revisionId) << "\",\n"
-       << "  \"prompt_string\": \"" << escapeJson(req.promptString) << "\",\n"
-       << "  \"s1_category\": \"" << escapeJson(req.s1Category) << "\",\n"
-       << "  \"host_context_category\": \"" << escapeJson(req.hostContextCategory) << "\",\n"
-       << "  \"max_choice_groups\": 1,\n"
-       << "  \"max_alternatives\": 3\n"
-       << "}";
-    return ss.str();
+    expected = GraniteRuntimeState::Failed;
+    return state_.compare_exchange_strong(expected, GraniteRuntimeState::Loading);
 }
 
-GraniteOptionDiscoveryResponse parseDiscoveryResponse(std::string_view jsonResponse, std::string_view baseRevisionId) {
-    GraniteOptionDiscoveryResponse response;
+bool GraniteAdapter::completeLoading(GraniteModelInfo info) {
+    if (state_.load() != GraniteRuntimeState::Loading) {
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(infoMutex_);
+        info_ = std::move(info);
+        lastError_.clear();
+    }
+    auto expected = GraniteRuntimeState::Loading;
+    return state_.compare_exchange_strong(expected, GraniteRuntimeState::Ready);
+}
 
-    SimpleJsonParser parser(jsonResponse);
-    if (!parser.expect('{')) {
-        response.success = false;
-        response.errorMessage = "Malformed JSON: Expected root object '{'";
-        return response;
+void GraniteAdapter::failLoading(std::string reason) {
+    {
+        std::lock_guard<std::mutex> lock(infoMutex_);
+        lastError_ = std::move(reason);
+    }
+    auto expected = GraniteRuntimeState::Loading;
+    (void)state_.compare_exchange_strong(expected, GraniteRuntimeState::Failed);
+}
+
+bool GraniteAdapter::recover() {
+    auto expected = GraniteRuntimeState::Failed;
+    return state_.compare_exchange_strong(expected, GraniteRuntimeState::Unloaded);
+}
+
+bool GraniteAdapter::cancelLoading() {
+    auto expected = GraniteRuntimeState::Loading;
+    if (!state_.compare_exchange_strong(expected, GraniteRuntimeState::Unloaded)) return false;
+    std::lock_guard lock(infoMutex_);
+    info_ = GraniteModelInfo{};
+    lastError_.clear();
+    return true;
+}
+
+bool GraniteAdapter::unload() {
+    auto expected = GraniteRuntimeState::Ready;
+    if (state_.compare_exchange_strong(expected, GraniteRuntimeState::Unloaded)) {
+        std::lock_guard lock(infoMutex_);
+        info_ = GraniteModelInfo{};
+        return true;
+    }
+    expected = GraniteRuntimeState::Failed;
+    return state_.compare_exchange_strong(expected, GraniteRuntimeState::Unloaded);
+}
+
+std::optional<GraniteAdapter::BusyLease> GraniteAdapter::tryAcquire() {
+    auto expected = GraniteRuntimeState::Ready;
+    if (!state_.compare_exchange_strong(expected, GraniteRuntimeState::Busy)) {
+        return std::nullopt;
+    }
+    return BusyLease(this);
+}
+
+void GraniteAdapter::release(bool failed, std::string reason) {
+    if (failed) {
+        std::lock_guard<std::mutex> lock(infoMutex_);
+        lastError_ = std::move(reason);
+    }
+    state_.store(failed ? GraniteRuntimeState::Failed : GraniteRuntimeState::Ready);
+}
+
+Result<GraniteOptionDiscoveryResponse> GraniteAdapter::discoverOptions(const GraniteOptionDiscoveryRequest& req,
+                                                                       const GraniteTransport& transport) {
+    if (!transport) {
+        return makeError(ErrorCode::ProviderUnavailable, "No Granite transport is configured");
+    }
+    if (req.revisionId.empty() || req.sessionId.empty()) {
+        return makeError(ErrorCode::InvalidInput, "Discovery request must name a session and frozen revision");
+    }
+    if (!core::hasCanonicalLineEndings(req.promptString)) {
+        return makeError(ErrorCode::InvalidInput, "Discovery request text must use canonical LF line endings");
+    }
+    if (req.promptTriage) {
+        const auto route = core::analysis::routePromptTriage(*req.promptTriage);
+        if (!route.ok() || route.value() != core::analysis::PromptTriageRoute::Clarify ||
+            req.promptTriage->sessionId != req.sessionId || req.promptTriage->revisionId != req.revisionId ||
+            req.promptTriage->revisionTextHash != core::crypto::Sha256::hexDigest(req.promptString))
+            return makeError(ErrorCode::ValidationFailed, "Granite discovery requires ambiguous S1 evidence for this prompt");
     }
 
-    core::analysis::ChoiceGroup group;
-    std::string statusVal;
-    bool foundGroup = false;
-
-    while (parser.peek() != '}' && parser.hasMore()) {
-        std::string key;
-        if (!parser.parseString(key)) {
-            response.success = false;
-            response.errorMessage = "Malformed JSON: Expected string key";
-            return response;
-        }
-        if (!parser.expect(':')) {
-            response.success = false;
-            response.errorMessage = "Malformed JSON: Expected ':' after key '" + key + "'";
-            return response;
-        }
-
-        if (key == "status") {
-            parser.parseString(statusVal);
-        } else if (key == "error") {
-            parser.parseString(response.errorMessage);
-        } else if (key == "choice_group") {
-            if (!parser.expect('{')) {
-                response.success = false;
-                response.errorMessage = "Malformed JSON: Expected object for 'choice_group'";
-                return response;
-            }
-            foundGroup = true;
-            while (parser.peek() != '}' && parser.hasMore()) {
-                std::string gKey;
-                if (!parser.parseString(gKey) || !parser.expect(':')) {
-                    response.success = false;
-                    response.errorMessage = "Malformed JSON: Expected key-value pair in 'choice_group'";
-                    return response;
-                }
-                if (gKey == "id") {
-                    parser.parseString(group.id);
-                } else if (gKey == "dimension") {
-                    parser.parseString(group.dimension);
-                } else if (gKey == "question") {
-                    parser.parseString(group.question);
-                } else if (gKey == "alternatives") {
-                    if (!parser.expect('[')) {
-                        response.success = false;
-                        response.errorMessage = "Malformed JSON: Expected array for 'alternatives'";
-                        return response;
-                    }
-                    std::size_t altIdx = 0;
-                    while (parser.peek() != ']' && parser.hasMore()) {
-                        if (!parser.expect('{')) {
-                            response.success = false;
-                            response.errorMessage = "Malformed JSON: Expected object inside 'alternatives'";
-                            return response;
-                        }
-                        core::analysis::ChoiceAlternative alt;
-                        while (parser.peek() != '}' && parser.hasMore()) {
-                            std::string aKey;
-                            if (!parser.parseString(aKey) || !parser.expect(':')) {
-                                response.success = false;
-                                response.errorMessage = "Malformed JSON: Expected key-value pair in 'alternative'";
-                                return response;
-                            }
-                            if (aKey == "id") {
-                                parser.parseString(alt.id);
-                            } else if (aKey == "label" || aKey == "interpretation") {
-                                parser.parseString(alt.interpretation);
-                            } else if (aKey == "why_material") {
-                                std::string why;
-                                parser.parseString(why);
-                                alt.whyMaterial = why;
-                                alt.canonicalSemanticsJson = "{\"why_material\":\"" + escapeJson(why) + "\"}";
-                            } else {
-                                parser.skipValue();
-                            }
-                            if (parser.peek() == ',') parser.get();
-                        }
-                        parser.expect('}');
-
-                        // Generate deterministic ID if model omitted one or gave an arbitrary one
-                        if (alt.id.empty()) {
-                            alt.id = core::analysis::generateDeterministicId("alt", altIdx, alt.interpretation);
-                        }
-                        group.alternatives.push_back(std::move(alt));
-                        ++altIdx;
-                        if (parser.peek() == ',') parser.get();
-                    }
-                    parser.expect(']');
-                } else {
-                    parser.skipValue();
-                }
-                if (parser.peek() == ',') parser.get();
-            }
-            parser.expect('}');
-        } else {
-            parser.skipValue();
-        }
-
-        if (parser.peek() == ',') parser.get();
-    }
-    parser.expect('}');
-
-    if (!response.errorMessage.empty()) {
-        response.success = false;
-        return response;
+    auto lease = tryAcquire();
+    if (!lease.has_value()) {
+        return makeError(ErrorCode::ProviderUnavailable,
+                         "Granite runtime is " + std::string(toString(state())) + "; request rejected");
     }
 
-    if (!foundGroup) {
-        response.success = false;
-        response.errorMessage = "Missing 'choice_group' in model response";
-        return response;
+    const auto start = std::chrono::steady_clock::now();
+    Result<std::string> raw = makeError(ErrorCode::Internal, "Transport did not run");
+    try {
+        raw = transport(buildDiscoveryPrompt(req));
+    } catch (const std::exception& ex) {
+        raw = makeError(ErrorCode::ProviderFailed, std::string("Transport threw: ") + ex.what());
+    }
+    if (!raw.ok()) {
+        if (raw.error().code != core::ErrorCode::StaleVersion && raw.error().code != core::ErrorCode::PreconditionFailed &&
+            raw.error().code != core::ErrorCode::ValidationFailed) lease->markFailed(raw.error().message);
+        return raw.error();
     }
 
-    if (group.id.empty()) {
-        group.id = core::analysis::generateDeterministicId("group", 0, group.question);
+    auto parsed = parseDiscoveryResponse(raw.value(), req.sessionId, req.revisionId, req.promptString);
+    if (!parsed.ok()) {
+        return parsed.error();
     }
-
-    response.success = true;
-    response.choiceGroup = std::move(group);
+    auto response = std::move(parsed).value();
+    if (req.promptTriage && response.analysis.choiceGroups.empty() && response.analysis.assumptions.empty() &&
+        response.analysis.missingDecisions.empty() && response.analysis.conflicts.empty()) {
+        // A classifier flag cannot authorize a rewrite without an actual user decision.
+        // Keep the route invariant intact and leave this healthy runtime available for retry.
+        return makeError(ErrorCode::ValidationFailed,
+            "Granite did not supply any grounded clarification choices for the ambiguity flagged by Julia. "
+            "Edit the draft or retry Analyze. Send as-is still keeps your original wording.");
+    }
+    response.model = modelInfo();
+    response.latencyMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     return response;
 }
 
-GraniteAdapter::GraniteAdapter()
-    : state_{GraniteRuntimeState::Ready},
-      modelPath_{"ibm-granite/granite-4.2-3b-GGUF"},
-      quantization_{"Q8_0"} {}
-
-GraniteAdapter::GraniteAdapter(std::string modelPath, std::string quantization)
-    : state_{GraniteRuntimeState::Ready},
-      modelPath_{std::move(modelPath)},
-      quantization_{std::move(quantization)} {}
-
-GraniteOptionDiscoveryResponse GraniteAdapter::discoverOptions(const GraniteOptionDiscoveryRequest& req) {
-    const auto startTime = std::chrono::steady_clock::now();
-
-    if (state_ == GraniteRuntimeState::Failed) {
-        GraniteOptionDiscoveryResponse res;
-        res.success = false;
-        res.errorMessage = "Granite runtime is in FAILED state";
-        return res;
-    }
-
-    if (mockHandler_) {
-        state_ = GraniteRuntimeState::Busy;
-        std::string rawJson;
-        try {
-            rawJson = mockHandler_(req);
-            state_ = GraniteRuntimeState::Ready;
-        } catch (const std::exception& ex) {
-            state_ = GraniteRuntimeState::Failed;
-            GraniteOptionDiscoveryResponse res;
-            res.success = false;
-            res.errorMessage = std::string("Mock handler exception: ") + ex.what();
-            return res;
-        } catch (...) {
-            state_ = GraniteRuntimeState::Failed;
-            GraniteOptionDiscoveryResponse res;
-            res.success = false;
-            res.errorMessage = "Mock handler threw an unknown exception";
-            return res;
-        }
-
-        auto response = parseDiscoveryResponse(rawJson, req.revisionId);
-        const auto endTime = std::chrono::steady_clock::now();
-        response.latencyMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
-        response.modelId = modelPath_;
-        response.quantization = quantization_;
-        return response;
-    }
-
-    // High-performance built-in offline Scribe discovery engine
-    state_ = GraniteRuntimeState::Busy;
-
-    std::ostringstream jsonBuilder;
-    jsonBuilder << "{\n"
-                << "  \"status\": \"options_generated\",\n"
-                << "  \"choice_group\": {\n"
-                << "    \"dimension\": \"" << escapeJson(req.s1Category) << "\",\n";
-
-    if (req.s1Category == "target") {
-        jsonBuilder << "    \"question\": \"Which component should be modified?\",\n"
-                    << "    \"alternatives\": [\n"
-                    << "      {\n"
-                    << "        \"id\": \"alt_target_1\",\n"
-                    << "        \"label\": \"FloatingCard.qml (HUD UI layer)\",\n"
-                    << "        \"why_material\": \"Applies visual and presentation changes directly in QML\"\n"
-                    << "      },\n"
-                    << "      {\n"
-                    << "        \"id\": \"alt_target_2\",\n"
-                    << "        \"label\": \"ScreenPlacement.cpp (Host positioning layer)\",\n"
-                    << "        \"why_material\": \"Applies screen clamping and native desktop multi-monitor math\"\n"
-                    << "      }\n"
-                    << "    ]\n";
-    } else if (req.s1Category == "rule_conflict") {
-        jsonBuilder << "    \"question\": \"How should the rule conflict be resolved?\",\n"
-                    << "    \"alternatives\": [\n"
-                    << "      {\n"
-                    << "        \"id\": \"alt_rule_1\",\n"
-                    << "        \"label\": \"Prioritize strict safety invariants over throughput\",\n"
-                    << "        \"why_material\": \"Enforces zero-data-loss boundaries\"\n"
-                    << "      },\n"
-                    << "      {\n"
-                    << "        \"id\": \"alt_rule_2\",\n"
-                    << "        \"label\": \"Prioritize non-blocking performance path\",\n"
-                    << "        \"why_material\": \"Optimizes latency for real-time responsiveness\"\n"
-                    << "      }\n"
-                    << "    ]\n";
-    } else {
-        if (req.promptString.find("bug") != std::string::npos ||
-            req.promptString.find("fix") != std::string::npos ||
-            req.promptString.find("error") != std::string::npos ||
-            req.promptString.find("crash") != std::string::npos ||
-            req.promptString.find("issue") != std::string::npos) {
-            jsonBuilder << "    \"question\": \"Which bugfix scope should be targeted?\",\n"
-                        << "    \"alternatives\": [\n"
-                        << "      {\n"
-                        << "        \"id\": \"alt_action_1\",\n"
-                        << "        \"label\": \"Targeted fix: Address immediate errors/failures with minimal code changes\",\n"
-                        << "        \"why_material\": \"Minimizes regression risk and preserves existing code behavior\"\n"
-                        << "      },\n"
-                        << "      {\n"
-                        << "        \"id\": \"alt_action_2\",\n"
-                        << "        \"label\": \"Comprehensive sweep: Audit and resolve root causes across modules and tests\",\n"
-                        << "        \"why_material\": \"Ensures long-term robustness and cleans up related technical debt\"\n"
-                        << "      }\n"
-                        << "    ]\n";
-        } else {
-            jsonBuilder << "    \"question\": \"Which implementation strategy should be applied?\",\n"
-                        << "    \"alternatives\": [\n"
-                        << "      {\n"
-                        << "        \"id\": \"alt_action_1\",\n"
-                        << "        \"label\": \"Graceful timeout with automatic retry backoff\",\n"
-                        << "        \"why_material\": \"Preserves connection resilience without user interruption\"\n"
-                        << "      },\n"
-                        << "      {\n"
-                        << "        \"id\": \"alt_action_2\",\n"
-                        << "        \"label\": \"Immediate failure with explicit error code\",\n"
-                        << "        \"why_material\": \"Fast-fails unrecoverable operations immediately\"\n"
-                        << "      }\n"
-                        << "    ]\n";
-        }
-    }
-    jsonBuilder << "  }\n}";
-
-    state_ = GraniteRuntimeState::Ready;
-    auto response = parseDiscoveryResponse(jsonBuilder.str(), req.revisionId);
-    const auto endTime = std::chrono::steady_clock::now();
-    response.latencyMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
-    response.modelId = modelPath_;
-    response.quantization = quantization_;
-    return response;
-}
-
-} 
+} // namespace roclint::bridge

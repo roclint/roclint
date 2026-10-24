@@ -1,0 +1,8 @@
+#pragma once
+
+namespace roclint::runtime {
+// C04/master architecture operation budgets, shared by host and owned helper.
+inline constexpr int kGraniteAnalysisTimeoutMs = 12000;
+inline constexpr int kGraniteRewriteTimeoutMs = 60000;
+inline constexpr const char* kGraniteManifestJson = R"ROCLINT_MANIFEST(@ROCLINT_GRANITE_MANIFEST_JSON@)ROCLINT_MANIFEST";
+}

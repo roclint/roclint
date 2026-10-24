@@ -2,112 +2,113 @@
 #include "support/check.hpp"
 
 #include <QCoreApplication>
-#include <QDateTime>
-#include <filesystem>
+#include <QDir>
+#include <QTemporaryDir>
 #include <iostream>
 
 using roclint::host::HostController;
+namespace storage = roclint::storage;
 
 int main(int argc, char* argv[]) {
     QCoreApplication app(argc, argv);
-    std::cout << "[Roclint Persistence Integration Test (I03)] Starting...\n";
+    std::cout << "[Test Host Persistence] Starting...\n";
 
-    const QString testDbPath = QStringLiteral("./test_host_durability.db");
-    std::filesystem::remove(testDbPath.toStdString());
+    QTemporaryDir dir;
+    ROCLINT_CHECK(dir.isValid());
+    const QString folder = dir.path() + QString::fromUtf8("/donn" "\xC3\xA9" "es");
+    ROCLINT_CHECK(QDir().mkpath(folder));
+    const QString dbPath = folder + QStringLiteral("/history.db");
 
-    QString savedSessionId;
     const QString prompt1 = QStringLiteral("First draft of authentication flow.");
-    const QString prompt2 = QStringLiteral("Refined draft: require OAuth2 PKCE constraint.");
+    const QString prompt2 = QStringLiteral("Refined draft: require OAuth2 PKCE.");
+    QString sessionId;
+    QString firstRevisionId;
 
-    // =========================================================================
-    // 1. Commit Prompts in Session 1 and Persist to SQLite
-    // =========================================================================
     {
-        std::cout << "  -> Stage 1: Creating HostController and committing prompts...\n";
-        HostController controller(testDbPath);
+        HostController c(dbPath);
+        c.setLegacyDiscoveryForTesting(true);
+        ROCLINT_CHECK(c.isStorageAvailable());
+        ROCLINT_CHECK(c.sessionCount() == 0);
+        ROCLINT_CHECK(c.stateVersion() == 0);
 
-        ROCLINT_CHECK(controller.sessionCount() == 0);
-        ROCLINT_CHECK(controller.stateVersion() == 0);
+        ROCLINT_CHECK(c.commitPrompt(prompt1, 0));
+        ROCLINT_CHECK(c.stateVersion() == 1);
+        firstRevisionId = c.currentRevisionId();
+        ROCLINT_CHECK(c.commitPrompt(prompt2, 1));
+        ROCLINT_CHECK(c.stateVersion() == 2);
+        ROCLINT_CHECK(c.sessionCount() == 1);
 
-        // Commit root prompt
-        controller.commitPrompt(prompt1);
-        ROCLINT_CHECK(controller.stateVersion() == 1);
-        ROCLINT_CHECK(controller.sessionCount() == 1);
-
-        // Commit prompt edit
-        controller.commitPrompt(prompt2);
-        ROCLINT_CHECK(controller.stateVersion() == 2);
-        ROCLINT_CHECK(controller.sessionCount() == 1);
-
-        auto sessions = controller.getRecentSessions();
+        const auto sessions = c.getRecentSessions();
         ROCLINT_CHECK(sessions.size() == 1);
-
         const auto first = sessions[0].toMap();
-        savedSessionId = first[QStringLiteral("sessionId")].toString();
-        ROCLINT_CHECK(!savedSessionId.isEmpty());
+        sessionId = first[QStringLiteral("sessionId")].toString();
+        ROCLINT_CHECK(sessionId == c.currentSessionIdString());
         ROCLINT_CHECK(first[QStringLiteral("revisionCount")].toInt() == 2);
         ROCLINT_CHECK(first[QStringLiteral("latestPrompt")].toString() == prompt2);
+        ROCLINT_CHECK(first[QStringLiteral("latestRevisionId")].toString() == c.currentRevisionId());
 
-        std::cout << "  [PASS] Prompts committed and stored in SQLite (sessionId: "
-                  << savedSessionId.toStdString() << ")\n";
+        // Leave a model attempt open, as if the app were killed mid-request.
+        storage::ModelAttemptRecord attempt;
+        attempt.attemptId = "att_orphan";
+        attempt.sessionId = sessionId.toStdString();
+        attempt.revisionId = c.currentRevisionId().toStdString();
+        attempt.stage = "discovery";
+        attempt.transport = "ollama_loopback";
+        attempt.startedAtMs = 1;
+        ROCLINT_CHECK(c.repositoryForTesting()->beginModelAttempt(attempt).ok());
     }
+    std::cout << "  [PASS] Revisions are committed with optimistic versions and persisted.\n";
 
-    // =========================================================================
-    // 2. Reopen New HostController on Same DB: Durability & Lineage Check
-    // =========================================================================
     {
-        std::cout << "  -> Stage 2: Reopening HostController on same SQLite database...\n";
-        HostController controller2(testDbPath);
-
-        ROCLINT_CHECK(controller2.sessionCount() == 1);
-
-        auto sessions = controller2.getRecentSessions();
-        ROCLINT_CHECK(sessions.size() == 1);
-
-        const auto first = sessions[0].toMap();
-        ROCLINT_CHECK(first[QStringLiteral("sessionId")].toString() == savedSessionId);
-        ROCLINT_CHECK(first[QStringLiteral("revisionCount")].toInt() == 2);
-        ROCLINT_CHECK(first[QStringLiteral("latestPrompt")].toString() == prompt2);
-
-        // Inspect revision history for the session
-        auto history = controller2.getSessionHistory(savedSessionId);
+        HostController c(dbPath);
+        c.setLegacyDiscoveryForTesting(true);
+        ROCLINT_CHECK(c.sessionCount() == 1);
+        const auto history = c.getSessionHistory(sessionId);
         ROCLINT_CHECK(history.size() == 2);
-        ROCLINT_CHECK(history[0].toMap()[QStringLiteral("text")].toString() == prompt1);
-        ROCLINT_CHECK(history[1].toMap()[QStringLiteral("text")].toString() == prompt2);
+        const auto h0 = history[0].toMap();
+        const auto h1 = history[1].toMap();
+        ROCLINT_CHECK(h0[QStringLiteral("text")].toString() == prompt1);
+        ROCLINT_CHECK(h0[QStringLiteral("sequence")].toInt() == 1);
+        ROCLINT_CHECK(h0[QStringLiteral("parentRevisionId")].toString().isEmpty());
+        ROCLINT_CHECK(h1[QStringLiteral("text")].toString() == prompt2);
+        ROCLINT_CHECK(h1[QStringLiteral("sequence")].toInt() == 2);
+        ROCLINT_CHECK(h1[QStringLiteral("parentRevisionId")].toString() == firstRevisionId);
 
-        std::cout << "  [PASS] Reopen durability verified: session and revisions survived.\n";
+        // Startup recovery closed the orphaned attempt.
+        auto attempts = c.repositoryForTesting()->getModelAttempts(roclint::core::SessionId(sessionId.toStdString()));
+        ROCLINT_CHECK(attempts.ok() && attempts.value().size() == 1);
+        ROCLINT_CHECK(attempts.value()[0].status == storage::AttemptStatus::Interrupted);
+        ROCLINT_CHECK(attempts.value()[0].completedAtMs.has_value());
+        std::cout << "  [PASS] Reopen keeps lineage and marks orphaned model attempts interrupted.\n";
 
-        // =====================================================================
-        // 3. Test Restore Action (B03 / I03)
-        // =====================================================================
-        std::cout << "  -> Stage 3: Testing session restoration...\n";
         QString restoredText;
-        QObject::connect(&controller2, &HostController::revisionRestored, [&](const QString& text) {
-            restoredText = text;
-        });
-
-        controller2.restoreSession(savedSessionId);
+        QObject::connect(&c, &HostController::revisionRestored, [&](const QString& text) { restoredText = text; });
+        ROCLINT_CHECK(c.restoreSession(sessionId, c.stateVersion()));
         ROCLINT_CHECK(restoredText == prompt2);
-        ROCLINT_CHECK(controller2.stateVersion() > 0);
+        ROCLINT_CHECK(c.stateVersion() == 2);
+        ROCLINT_CHECK(c.currentSessionIdString() == sessionId);
 
-        std::cout << "  [PASS] Session restored into active controller state.\n";
+        // Restoring an older revision appends a new one; nothing is rewritten in place.
+        ROCLINT_CHECK(c.restoreRevision(firstRevisionId, c.stateVersion()));
+        ROCLINT_CHECK(restoredText == prompt1);
+        ROCLINT_CHECK(c.stateVersion() == 3);
+        ROCLINT_CHECK(c.currentRevisionId() == QStringLiteral("rev_") + sessionId + QStringLiteral("_3"));
+        const auto after = c.getSessionHistory(sessionId);
+        ROCLINT_CHECK(after.size() == 3);
+        ROCLINT_CHECK(after[2].toMap()[QStringLiteral("origin")].toString() == "RESTORE");
+        ROCLINT_CHECK(!c.restoreRevision(QStringLiteral("rev_other_1"), c.stateVersion()));
+        std::cout << "  [PASS] Restore rebuilds the session and appends restored revisions.\n";
 
-        // =====================================================================
-        // 4. Test Logical Delete Action (B03 / I03 / C02)
-        // =====================================================================
-        std::cout << "  -> Stage 4: Testing session deletion...\n";
-        controller2.deleteSession(savedSessionId);
-
-        ROCLINT_CHECK(controller2.sessionCount() == 0);
-        ROCLINT_CHECK(controller2.getRecentSessions().isEmpty());
-        ROCLINT_CHECK(controller2.getSessionHistory(savedSessionId).isEmpty());
-
-        std::cout << "  [PASS] Session logically deleted and unreferenced revisions cascaded.\n";
+        ROCLINT_CHECK(c.deleteSession(sessionId));
+        ROCLINT_CHECK(c.sessionCount() == 0);
+        ROCLINT_CHECK(c.getRecentSessions().isEmpty());
+        ROCLINT_CHECK(c.getSessionHistory(sessionId).isEmpty());
+        ROCLINT_CHECK(c.stateVersion() == 0);
+        ROCLINT_CHECK(c.currentSessionIdString().isEmpty());
+        ROCLINT_CHECK(!c.restoreSession(sessionId, c.stateVersion()));
+        std::cout << "  [PASS] Deleting the open session removes it and resets the controller.\n";
     }
 
-    // Clean up test database file
-    std::filesystem::remove(testDbPath.toStdString());
-
-    std::cout << "\n[Roclint Persistence Integration Test (I03)] All checks passed successfully!\n";
+    std::cout << "[Test Host Persistence] All tests PASSED.\n";
     return 0;
 }

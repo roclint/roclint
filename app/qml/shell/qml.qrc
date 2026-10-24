@@ -2,5 +2,11 @@
     <qresource prefix="/shell">
         <file>FloatingCard.qml</file>
         <file>DashboardWindow.qml</file>
+        <file>AmbientBadge.qml</file>
+        <file>IntentReviewPanel.qml</file>
+        <file>JuliaSettings.qml</file>
+        <file>InvocationSettings.qml</file>
+        <file>HudMouseArea.qml</file>
+        <file>HudScrollBar.qml</file>
     </qresource>
 </RCC>

@@ -1,136 +1,84 @@
-#include "roclint/analysis/MaterialityPolicy.hpp"
-#include "roclint/analysis/NormalizedAnalysis.hpp"
 #include "roclint/bridge/GraniteAdapter.hpp"
-#include "roclint/bridge/S1TriageAdapter.hpp"
+#include "roclint/intent/ConfirmedIntent.hpp"
 #include "roclint/intent/InterventionStateMachine.hpp"
 #include "support/check.hpp"
+#include "support/fixtures.hpp"
 
 #include <iostream>
-#include <string>
 
 using namespace roclint::core;
-using namespace roclint::core::analysis;
 using namespace roclint::core::intent;
-using namespace roclint::bridge;
 
-void testScenario1ClearControl() {
-    std::string prompt = "Add a blue border to FloatingCard.qml";
+namespace {
 
-    S1TriageAdapter s1;
-    auto triage = s1.triagePrompt(prompt);
-    ROCLINT_CHECK(!triage.isAmbiguous);
-    ROCLINT_CHECK(triage.fastPathClear);
+// Model output for a prompt with one choice group and one blocking missing decision.
+const std::string kPrompt = "Add caching to the API layer.";
+const char* kModelReply = R"({"status": "options_generated",
+  "choice_groups": [{"dimension": "storage", "question": "Where should the cache live?", "material": true,
+    "alternatives": [
+      {"label": "In process memory", "why_material": "Lost on restart", "evidence": ["caching"]},
+      {"label": "Shared Redis", "why_material": "Shared across instances", "evidence": ["caching"]}]}],
+  "missing_decisions": [{"question": "How long may entries live?", "blocking": true}]})";
 
-    WorkingIntentState state;
-    NormalizedAnalysis emptyAnalysis;
-    OverallPolicyResult policyResult{.overallVerdict = PolicyVerdict::EligibleForChoice};
-    SnapshotEvaluationResponse snapshotEval{.success = true};
+void testClarificationWalkthroughFromModelOutput() {
+    auto parsed = roclint::bridge::parseDiscoveryResponse(kModelReply, "sess_c", "rev_sess_c_1", kPrompt);
+    ROCLINT_CHECK(parsed.ok());
+    fx::Pipeline p(kPrompt, parsed.value().analysis);
 
-    auto decision = InterventionStateMachine::evaluate(emptyAnalysis, policyResult, snapshotEval, state);
-    ROCLINT_CHECK(decision.verdict == InterventionVerdict::Quiet);
-    ROCLINT_CHECK(decision.reason == InterventionReasonCode::PromptAlreadyClear);
-    std::cout << "  [I06 Scenario 1: Clear Control] Reaches Quiet without intervention.\n";
+    // Round 1: the choice group.
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Clarify);
+    ROCLINT_CHECK(p.decision.activeItemKind == ActiveItemKind::ChoiceGroup);
+    ROCLINT_CHECK(InterventionStateMachine::applyChoice(p.analysis, p.decision, p.state, "alt_0_1").ok());
+    p.reevaluate();
+
+    // Round 2: the blocking question, answered in the user's own words.
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Clarify);
+    ROCLINT_CHECK(p.decision.activeItemKind == ActiveItemKind::MissingDecision);
+    ROCLINT_CHECK(p.decision.remainingBudget == 2);
+    ROCLINT_CHECK(!InterventionStateMachine::applyCustomText(p.analysis, p.decision, p.state, "").ok());
+    ROCLINT_CHECK(InterventionStateMachine::applyCustomText(p.analysis, p.decision, p.state, "Five minutes").ok());
+    p.reevaluate();
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Quiet);
+    ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::AllMaterialItemsResolved);
+
+    auto intent = IntentProvenanceBuilder::buildConfirmedIntent(fx::finalSnapshot(p.analysis, p.text, p.eval), p.policy, p.state, 1);
+    ROCLINT_CHECK(intent.ok());
+    ROCLINT_CHECK(intent.value().getDecision("grp_0")->chosenValue == "Shared Redis");
+    ROCLINT_CHECK(intent.value().getDecision("mdc_0")->customText == "Five minutes");
+    ROCLINT_CHECK(IntentProvenanceBuilder::isIntentValid(intent.value(), "rev_sess_c_1", RevisionStatus::Clean,
+                                                         fx::finalSnapshot(p.analysis, p.text, p.eval))
+                      .ok());
 }
 
-void testScenario2MaterialChoiceZeroPreselection() {
-    std::string prompt = "Which component should handle connection timeout: FloatingCard.qml or HostController.cpp?";
-
-    S1TriageAdapter s1(ScorerEngine::JuliaLocal);
-    auto triage = s1.triagePrompt(prompt);
-    ROCLINT_CHECK(triage.isAmbiguous);
-
-    GraniteAdapter granite;
-    auto discovery = granite.discoverOptions({
-        .sessionId = "sess_i06",
-        .revisionId = "rev_i06",
-        .promptString = prompt,
-        .s1Category = triage.dimension
-    });
-    ROCLINT_CHECK(discovery.success && discovery.choiceGroup.has_value());
-
-    NormalizedAnalysis analysis;
-    analysis.id = "snap_i06";
-    analysis.baseRevisionId = "rev_i06";
-
-    auto group = *discovery.choiceGroup;
-    auto match1 = findUniqueSpan(prompt, "FloatingCard.qml");
-    if (match1.span) group.alternatives[0].evidence.push_back(*match1.span);
-    auto match2 = findUniqueSpan(prompt, "HostController.cpp");
-    if (match2.span) group.alternatives[1].evidence.push_back(*match2.span);
-
-    analysis.choiceGroups.push_back(group);
-
-    auto policyResult = MaterialityPolicyV1::evaluatePrompt(analysis, prompt);
-    auto snapshotEval = s1.evaluateSnapshot(analysis);
-
-    WorkingIntentState state;
-    ROCLINT_CHECK(state.confirmedAlternatives.empty()); // Zero preselection
-
-    auto decision = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
-    ROCLINT_CHECK(decision.verdict == InterventionVerdict::Clarify);
-    ROCLINT_CHECK(decision.reason == InterventionReasonCode::UnresolvedChoiceGroup);
-    ROCLINT_CHECK(decision.activeItemId.has_value());
-    ROCLINT_CHECK(*decision.activeItemId == analysis.choiceGroups.front().id);
-    std::cout << "  [I06 Scenario 2: Material Choice] Reaches Clarify with zero preselection.\n";
+void testResolvedItemCannotBeAnsweredTwice() {
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    const auto first = p.decision;
+    ROCLINT_CHECK(InterventionStateMachine::applyChoice(p.analysis, first, p.state, "alt_0_0").ok());
+    // Replaying the same click against the old decision is rejected and does not consume budget.
+    const auto rounds = p.state.roundsCompleted;
+    ROCLINT_CHECK(!InterventionStateMachine::applyChoice(p.analysis, first, p.state, "alt_0_1").ok());
+    ROCLINT_CHECK(p.state.roundsCompleted == rounds);
+    ROCLINT_CHECK(p.state.confirmedAlternatives.at("grp_0") == "alt_0_0");
 }
 
-void testScenario3ThreeRoundCapBehavior() {
-    NormalizedAnalysis analysis;
-    for (int i = 1; i <= 4; ++i) {
-        ChoiceGroup g;
-        g.id = "group_" + std::to_string(i);
-        g.material = true;
-        g.alternatives.push_back(ChoiceAlternative{.id = "alt_" + std::to_string(i) + "a"});
-        g.alternatives.push_back(ChoiceAlternative{.id = "alt_" + std::to_string(i) + "b"});
-        analysis.choiceGroups.push_back(g);
-    }
-
-    OverallPolicyResult policyResult{.overallVerdict = PolicyVerdict::EligibleForChoice};
-    SnapshotEvaluationResponse snapshotEval{.success = true};
-
-    WorkingIntentState state;
-    for (int round = 1; round <= 3; ++round) {
-        auto dec = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
-        ROCLINT_CHECK(dec.verdict == InterventionVerdict::Clarify);
-        ROCLINT_CHECK(dec.roundsCompleted == round - 1);
-        ROCLINT_CHECK(dec.remainingBudget == 4 - round);
-
-        state.confirmChoice("group_" + std::to_string(round), "alt_" + std::to_string(round) + "a");
-    }
-
-    // 4th question is blocked by the 3-round cap
-    auto capDecision = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
-    ROCLINT_CHECK(capDecision.verdict == InterventionVerdict::Manual);
-    ROCLINT_CHECK(capDecision.reason == InterventionReasonCode::ClarificationBudgetExceeded);
-    ROCLINT_CHECK(capDecision.activeItemId == "group_4");
-    std::cout << "  [I06 Scenario 3: Three-Round Cap] Blocks 4th round and offers manual fallback.\n";
+void testCustomTextOnChoiceGroup() {
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    ROCLINT_CHECK(InterventionStateMachine::applyCustomText(p.analysis, p.decision, p.state,
+                                                            "Faster cold start")
+                      .ok());
+    p.reevaluate();
+    ROCLINT_CHECK(*p.decision.activeItemId == "grp_1");
+    auto intent = IntentProvenanceBuilder::buildConfirmedIntent(fx::finalSnapshot(p.analysis, p.text, p.eval), p.policy, p.state, 1).value();
+    ROCLINT_CHECK(intent.getDecision("grp_0")->kind == IntentResolutionKind::CustomText);
 }
 
-void testScenario4ProviderFailure() {
-    NormalizedAnalysis analysis;
-    OverallPolicyResult policyResult{.overallVerdict = PolicyVerdict::EligibleForChoice};
-    SnapshotEvaluationResponse snapshotEval{
-        .success = false,
-        .errorMessage = "Inference server 503 Service Unavailable"
-    };
-
-    WorkingIntentState state;
-    auto decision = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
-    ROCLINT_CHECK(decision.verdict == InterventionVerdict::Manual);
-    ROCLINT_CHECK(decision.reason == InterventionReasonCode::ProviderUnavailable);
-    std::cout << "  [I06 Scenario 4: Provider Failure] Reaches Manual with typed error code.\n";
-}
+} // namespace
 
 int main() {
-    std::cout << "[TEST] Running I06 Clarification Checkpoint Walkthrough...\n";
-
-    testScenario1ClearControl();
-    testScenario2MaterialChoiceZeroPreselection();
-    testScenario3ThreeRoundCapBehavior();
-    testScenario4ProviderFailure();
-
-    std::cout << "\n=========================================================\n";
-    std::cout << "  ALL I06 CLARIFICATION WALKTHROUGH SCENARIOS PASSED!\n";
-    std::cout << "=========================================================\n";
+    std::cout << "[Test Clarification Checkpoint] Starting...\n";
+    testClarificationWalkthroughFromModelOutput();
+    testResolvedItemCannotBeAnsweredTwice();
+    testCustomTextOnChoiceGroup();
+    std::cout << "[Test Clarification Checkpoint] All tests PASSED.\n";
     return 0;
 }

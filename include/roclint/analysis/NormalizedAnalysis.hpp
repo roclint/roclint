@@ -9,21 +9,13 @@
 
 namespace roclint::core::analysis {
 
-// Represents a literal text excerpt validated against a prompt buffer.
-struct LiteralEvidence {
-    SourceSpan span{};
-    std::string excerpt{};
-
-    bool operator==(const LiteralEvidence&) const = default;
-};
-
 // A single concrete option within a ChoiceGroup.
 struct ChoiceAlternative {
-    std::string id{};                     // Deterministic local ID; never provider-owned UUID
-    std::string interpretation{};         // Human-readable title/description
+    std::string id{};                     // Host-minted ID (alt_<groupIdx>_<altIdx>); never provider-owned
+    std::string interpretation{};         // Human-readable label shown to the user
     std::string whyMaterial{};            // Materiality rationale explaining the structural difference
     std::string canonicalSemanticsJson{}; // Optional structured payload
-    std::vector<SourceSpan> evidence{};
+    std::vector<SourceSpan> evidence{};   // Spans validated against the frozen revision text
 
     bool operator==(const ChoiceAlternative&) const = default;
 };
@@ -33,10 +25,10 @@ struct ChoiceGroup {
     static constexpr std::size_t kMinAlternatives = 2;
     static constexpr std::size_t kMaxAlternatives = 3;
 
-    std::string id{};
-    std::string dimension{};              // e.g. "target", "action", "scope", "rule_conflict"
-    std::string question{};               // e.g. "Which component should handle timeouts?"
-    std::vector<ChoiceAlternative> alternatives{}; // Strictly 2 to 3 alternatives
+    std::string id{};                     // Host-minted ID (grp_<idx>)
+    std::string dimension{};
+    std::string question{};
+    std::vector<ChoiceAlternative> alternatives{};
     bool material{true};
 
     bool operator==(const ChoiceGroup&) const = default;
@@ -52,7 +44,7 @@ struct Assumption {
     bool operator==(const Assumption&) const = default;
 };
 
-// A missing architectural or functional specification required before code generation.
+// A missing specification required before rewriting.
 struct MissingDecision {
     std::string id{};
     std::string question{};
@@ -70,10 +62,12 @@ struct Conflict {
     bool operator==(const Conflict&) const = default;
 };
 
-// The canonical container for all semantic items produced for a PromptRevision.
+// Validated pre-score discovery for one frozen PromptRevision. This is not the final AnalysisSnapshot.
 struct NormalizedAnalysis {
-    std::string id{};
+    std::string id{};             // Legacy pre-score identity: snap_<snapshotHash>
+    std::string sessionId{};
     std::string baseRevisionId{};
+    std::string snapshotHash{};   // Canonical SHA-256 over every field except id/snapshotHash
     std::vector<ChoiceGroup> choiceGroups{};
     std::vector<Assumption> assumptions{};
     std::vector<MissingDecision> missingDecisions{};
@@ -82,11 +76,10 @@ struct NormalizedAnalysis {
     bool operator==(const NormalizedAnalysis&) const = default;
 };
 
-// Outcome status of semantic analysis validation 
 enum class AnalysisValidationStatus {
-    Valid,                // Fully compliant with Contract C03.
+    Valid,                // Mechanically valid pre-score structure.
     RequiresManualReview, // Cardinality or structural bounds violate invariants; cannot auto-prompt.
-    Invalid               // Corrupted data, out-of-bounds spans, or missing revision link.
+    Invalid               // Corrupted data, duplicate IDs, out-of-bounds spans, or missing revision link.
 };
 
 struct AnalysisValidationResult {
@@ -102,10 +95,27 @@ struct AnalysisValidationResult {
     }
 };
 
-// Generates a deterministic local ID from item type, index, and content (Contract C03).
-[[nodiscard]] std::string generateDeterministicId(std::string_view prefix, std::size_t index, std::string_view content);
+[[nodiscard]] std::string mintGroupId(std::size_t groupIndex);
+[[nodiscard]] std::string mintAlternativeId(std::size_t groupIndex, std::size_t altIndex);
+[[nodiscard]] std::string mintAssumptionId(std::size_t index);
+[[nodiscard]] std::string mintMissingDecisionId(std::size_t index);
+[[nodiscard]] std::string mintConflictId(std::size_t index);
 
-// Validates an entire NormalizedAnalysis snapshot against its base prompt text and C03 invariants.
-[[nodiscard]] AnalysisValidationResult validateNormalizedAnalysis(const NormalizedAnalysis& analysis, std::string_view promptText) noexcept;
+// Length-prefixed SHA-256 over the session, base revision, and every item field including spans.
+[[nodiscard]] std::string computeSnapshotHash(const NormalizedAnalysis& analysis);
 
-} 
+// Computes snapshotHash and sets id = "snap_" + snapshotHash.
+void sealSnapshot(NormalizedAnalysis& analysis);
+
+// True when id/snapshotHash match a fresh recomputation.
+[[nodiscard]] bool isSnapshotSealed(const NormalizedAnalysis& analysis);
+
+// Indices into analysis.assumptions ordered by first evidence byte (unanchored last), then by ID
+// byte order. Every gate that selects an assumption must use this ordering.
+[[nodiscard]] std::vector<std::size_t> orderedAssumptionIndices(const NormalizedAnalysis& analysis);
+
+// Validates an entire NormalizedAnalysis snapshot against its frozen base prompt text and C03 invariants.
+[[nodiscard]] AnalysisValidationResult validateNormalizedAnalysis(const NormalizedAnalysis& analysis,
+                                                                  std::string_view promptText);
+
+} // namespace roclint::core::analysis

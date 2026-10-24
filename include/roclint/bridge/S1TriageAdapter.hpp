@@ -1,8 +1,8 @@
 #pragma once
 
-#include "roclint/analysis/NormalizedAnalysis.hpp"
+#include "roclint/analysis/AnalysisSnapshot.hpp"
+#include "roclint/core/Result.hpp"
 
-#include <chrono>
 #include <functional>
 #include <optional>
 #include <string>
@@ -11,22 +11,20 @@
 
 namespace roclint::bridge {
 
-enum class ScorerEngine {
-    JevCloud,
-    JuliaLocal
-};
+// Compatibility names for the canonical semantic scoring types.
+using core::analysis::ScorerEngine;
+using core::analysis::ExecutionStatus;
+using core::analysis::AlternativeProbability;
+using core::analysis::GroupEvaluationScore;
+using core::analysis::AssumptionEvaluationScore;
+using core::analysis::SnapshotEvaluationResponse;
+using core::analysis::kS1ConfidenceThreshold;
+using core::analysis::kS1ThresholdVersion;
 
 enum class SemanticAvailability {
     FullRankedCloud,
     FullRankedLocal,
     DegradedUnranked
-};
-
-enum class ExecutionStatus {
-    ExecutedModel,
-    ExecutedMock,
-    DegradedUnranked,
-    Failed
 };
 
 enum class InputValidity {
@@ -35,78 +33,58 @@ enum class InputValidity {
     WhitespaceOnly
 };
 
+// Input validation only. No ambiguity score is ever produced without a scorer run.
 struct S1TriageDecision {
     InputValidity inputValidity{InputValidity::Valid};
-    bool isAmbiguous{false};
-    double ambiguityScore{0.0};
-    std::string dimension{"action"};
+    bool isAmbiguityScored{false};
+    std::optional<double> ambiguityScore{std::nullopt};
+    bool fastPathClear{false};
     std::string rationale{};
     double latencyMs{0.0};
-    ScorerEngine engine{ScorerEngine::JuliaLocal};
-    bool fastPathClear{false};
+    ScorerEngine engine{ScorerEngine::JevCloud};
 
     [[nodiscard]] bool isExecutable() const noexcept {
         return inputValidity == InputValidity::Valid;
     }
 };
 
-struct AlternativeProbability {
-    std::string alternativeId{};
-    double probability{0.0};
-};
-
-struct GroupEvaluationScore {
-    std::string groupId{};
-    std::optional<std::string> winningAlternativeId{std::nullopt};
-    std::vector<AlternativeProbability> probabilities{};
-    double ambiguityScore{0.0};
-    bool noulCertainty{false};
-    bool isScored{false};
-};
-
-struct SnapshotEvaluationResponse {
-    bool success{false};
-    std::string errorMessage{};
-    std::vector<GroupEvaluationScore> groupScores{};
-    double totalLatencyMs{0.0};
-    ScorerEngine engine{ScorerEngine::JuliaLocal};
-    std::optional<ScorerEngine> executedEngine{std::nullopt};
-    ExecutionStatus executionStatus{ExecutionStatus::DegradedUnranked};
-    std::string modelVersion{"none (unscored/degraded)"};
-    bool modelInferenceExecuted{false};
-};
-
 class S1TriageAdapter {
 public:
-    using MockTriageHandler = std::function<S1TriageDecision(std::string_view prompt, ScorerEngine engine)>;
-    using MockSnapshotHandler = std::function<SnapshotEvaluationResponse(const core::analysis::NormalizedAnalysis&, ScorerEngine)>;
+    explicit S1TriageAdapter(ScorerEngine engine = ScorerEngine::JevCloud) : engine_(engine) {}
 
-    explicit S1TriageAdapter(ScorerEngine defaultEngine = ScorerEngine::JuliaLocal);
+    // Accepts Jev and Julia aliases; unknown names are errors.
+    [[nodiscard]] static core::Result<ScorerEngine> parseEngine(std::string_view name);
 
     [[nodiscard]] ScorerEngine engine() const noexcept { return engine_; }
-    [[nodiscard]] ScorerEngine configuredEngine() const noexcept { return engine_; }
     void setEngine(ScorerEngine engine) noexcept { engine_ = engine; }
 
     [[nodiscard]] SemanticAvailability availability() const noexcept;
-    void setCloudAvailable(bool available) noexcept { cloudAvailable_ = available; }
-    [[nodiscard]] bool isCloudAvailable() const noexcept { return cloudAvailable_; }
+    void setLocalModelReady(bool ready) noexcept { localModelReady_ = ready; }
 
-    [[nodiscard]] bool isLocalModelLoaded() const noexcept { return localModelLoaded_; }
-    void setLocalModelLoaded(bool loaded) noexcept { localModelLoaded_ = loaded; }
+    // Validates a real, asynchronously produced Julia result against the exact input snapshot.
+    [[nodiscard]] static SnapshotEvaluationResponse validateLocalEvaluation(
+        const core::analysis::NormalizedAnalysis& analysis, SnapshotEvaluationResponse response);
 
-    [[nodiscard]] S1TriageDecision triagePrompt(std::string_view prompt);
+    [[nodiscard]] S1TriageDecision triagePrompt(std::string_view prompt) const;
 
-    [[nodiscard]] SnapshotEvaluationResponse evaluateSnapshot(const core::analysis::NormalizedAnalysis& analysis);
+    [[nodiscard]] SnapshotEvaluationResponse evaluateSnapshot(const core::analysis::NormalizedAnalysis& analysis) const;
 
-    void setMockTriageHandler(MockTriageHandler handler) { mockTriageHandler_ = std::move(handler); }
-    void setMockSnapshotHandler(MockSnapshotHandler handler) { mockSnapshotHandler_ = std::move(handler); }
+    // Builds the DEGRADED_UNRANKED response for an analysis: every group unscored, no probabilities.
+    [[nodiscard]] static SnapshotEvaluationResponse degradedResponse(const core::analysis::NormalizedAnalysis& analysis,
+                                                                     std::string reason);
+
+#if defined(ROCLINT_ENABLE_TEST_MOCKS)
+    using MockCloudScorer =
+        std::function<core::Result<SnapshotEvaluationResponse>(const core::analysis::NormalizedAnalysis&)>;
+    void setMockCloudScorer(MockCloudScorer scorer) { mockCloudScorer_ = std::move(scorer); }
+#endif
 
 private:
-    ScorerEngine engine_{ScorerEngine::JuliaLocal};
-    bool cloudAvailable_{true};
-    bool localModelLoaded_{false};
-    MockTriageHandler mockTriageHandler_{nullptr};
-    MockSnapshotHandler mockSnapshotHandler_{nullptr};
+    ScorerEngine engine_{ScorerEngine::JevCloud};
+    bool localModelReady_{false};
+#if defined(ROCLINT_ENABLE_TEST_MOCKS)
+    MockCloudScorer mockCloudScorer_{nullptr};
+#endif
 };
 
 [[nodiscard]] constexpr std::string_view toString(ScorerEngine engine) noexcept {
@@ -131,7 +109,7 @@ private:
         case ExecutionStatus::ExecutedModel: return "EXECUTED_MODEL";
         case ExecutionStatus::ExecutedMock: return "EXECUTED_MOCK";
         case ExecutionStatus::DegradedUnranked: return "DEGRADED_UNRANKED";
-        case ExecutionStatus::Failed: return "FAILED";
+        case ExecutionStatus::NotRequested: return "NOT_REQUESTED";
     }
     return "UNKNOWN";
 }

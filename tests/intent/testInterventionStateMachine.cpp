@@ -1,244 +1,322 @@
-#include "roclint/analysis/MaterialityPolicy.hpp"
-#include "roclint/analysis/NormalizedAnalysis.hpp"
-#include "roclint/bridge/S1TriageAdapter.hpp"
 #include "roclint/intent/InterventionStateMachine.hpp"
+#include "support/check.hpp"
+#include "support/fixtures.hpp"
 
-#include <cstdlib>
 #include <iostream>
-#include <string>
+#include <algorithm>
+#include <limits>
 
-#define ROCLINT_CHECK(cond)                                                          \
-    do {                                                                             \
-        if (!(cond)) {                                                               \
-            std::cerr << "Assertion failed at " << __FILE__ << ":" << __LINE__        \
-                      << " -> " << #cond << std::endl;                              \
-            std::exit(1);                                                            \
-        }                                                                            \
-    } while (false)
-
-using namespace roclint::core::analysis;
+using namespace roclint::core;
 using namespace roclint::core::intent;
-using namespace roclint::bridge;
+using roclint::bridge::ExecutionStatus;
+using roclint::bridge::GroupEvaluationScore;
+
+namespace {
+
+void testFixtureGroupsAreEligible() {
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    ROCLINT_CHECK(p.policy.isEligible());
+    for (const auto& g : p.policy.groupResults) {
+        ROCLINT_CHECK(g.isEligible());
+    }
+}
 
 void testClearPromptReachesQuiet() {
-    NormalizedAnalysis analysis;
-    OverallPolicyResult policyResult;
-    policyResult.overallVerdict = PolicyVerdict::EligibleForChoice;
-    SnapshotEvaluationResponse snapshotEval;
-    snapshotEval.success = true;
-
-    WorkingIntentState state;
-    auto decision = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
-
-    ROCLINT_CHECK(decision.verdict == InterventionVerdict::Quiet);
-    ROCLINT_CHECK(decision.reason == InterventionReasonCode::PromptAlreadyClear);
-    ROCLINT_CHECK(!decision.activeItemId.has_value());
-    ROCLINT_CHECK(decision.remainingBudget == 3);
+    const std::string text = "Print hello world in Python.";
+    fx::Pipeline p(text, fx::AnalysisBuilder("sess_a", "rev_sess_a_1", text).build());
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Quiet);
+    ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::PromptAlreadyClear);
+    ROCLINT_CHECK(p.decision.remainingBudget == InterventionStateMachine::kMaxClarificationBudget);
 }
 
-void testMaterialChoiceGroupReachesClarify() {
-    NormalizedAnalysis analysis;
-    ChoiceGroup group;
-    group.id = "group_target";
-    group.material = true;
-    group.alternatives.push_back(ChoiceAlternative{.id = "alt_1", .interpretation = "Frontend"});
-    group.alternatives.push_back(ChoiceAlternative{.id = "alt_2", .interpretation = "Backend"});
-    analysis.choiceGroups.push_back(group);
+void testBudgetAccountingAcrossThreeRounds() {
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Clarify);
+    ROCLINT_CHECK(p.decision.remainingBudget == 3);
+    ROCLINT_CHECK(*p.decision.activeItemId == "grp_0");
 
-    OverallPolicyResult policyResult;
-    policyResult.overallVerdict = PolicyVerdict::EligibleForChoice;
+    ROCLINT_CHECK(InterventionStateMachine::applyChoice(p.analysis, p.decision, p.state, "alt_0_1").ok());
+    p.reevaluate();
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Clarify);
+    ROCLINT_CHECK(p.decision.remainingBudget == 2);
+    ROCLINT_CHECK(*p.decision.activeItemId == "grp_1");
 
-    SnapshotEvaluationResponse snapshotEval;
-    snapshotEval.success = true;
-    snapshotEval.groupScores.push_back(GroupEvaluationScore{
-        .groupId = "group_target",
-        .winningAlternativeId = "alt_1",
-        .ambiguityScore = 0.85
-    });
+    ROCLINT_CHECK(InterventionStateMachine::applyChoice(p.analysis, p.decision, p.state, "alt_1_0").ok());
+    p.reevaluate();
+    // Round 2 complete: one question left.
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Clarify);
+    ROCLINT_CHECK(p.decision.remainingBudget == 1);
+    ROCLINT_CHECK(*p.decision.activeItemId == "grp_2");
 
-    WorkingIntentState state;
-    ROCLINT_CHECK(state.confirmedAlternatives.empty());
-
-    auto decision = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
-    ROCLINT_CHECK(decision.verdict == InterventionVerdict::Clarify);
-    ROCLINT_CHECK(decision.reason == InterventionReasonCode::UnresolvedChoiceGroup);
-    ROCLINT_CHECK(decision.activeItemId == "group_target");
-    ROCLINT_CHECK(decision.requiresUserIntervention());
+    ROCLINT_CHECK(InterventionStateMachine::applyChoice(p.analysis, p.decision, p.state, "alt_2_0").ok());
+    p.reevaluate();
+    ROCLINT_CHECK(p.state.roundsCompleted == 3);
+    ROCLINT_CHECK(p.decision.remainingBudget == 0);
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Quiet);
+    ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::AllMaterialItemsResolved);
 }
 
-void testTotalOrderingChoiceGroups() {
-    NormalizedAnalysis analysis;
-
-    ChoiceGroup g1;
-    g1.id = "group_action";
-    g1.material = true;
-    g1.alternatives.push_back(ChoiceAlternative{
-        .id = "alt_a1",
-        .interpretation = "Fast timeout",
-        .evidence = {SourceSpan{10, 20}}
-    });
-
-    ChoiceGroup g2;
-    g2.id = "group_target";
-    g2.material = true;
-    g2.alternatives.push_back(ChoiceAlternative{
-        .id = "alt_t1",
-        .interpretation = "FloatingCard",
-        .evidence = {SourceSpan{40, 55}}
-    });
-
-    analysis.choiceGroups = {g1, g2};
-
-    OverallPolicyResult policyResult;
-    policyResult.overallVerdict = PolicyVerdict::EligibleForChoice;
-
-    SnapshotEvaluationResponse snapshotEval;
-    snapshotEval.success = true;
-    snapshotEval.groupScores.push_back(GroupEvaluationScore{.groupId = "group_action", .ambiguityScore = 0.80});
-    snapshotEval.groupScores.push_back(GroupEvaluationScore{.groupId = "group_target", .ambiguityScore = 0.95});
-
-    WorkingIntentState state;
-    auto decision = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
-
-    ROCLINT_CHECK(decision.activeItemId == "group_target");
-
-    snapshotEval.groupScores[0].ambiguityScore = 0.90;
-    snapshotEval.groupScores[1].ambiguityScore = 0.90;
-    auto decisionTie = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
-    ROCLINT_CHECK(decisionTie.activeItemId == "group_action");
-}
-
-void testRound3OffByOneTrap() {
-    NormalizedAnalysis analysis;
-    for (int i = 1; i <= 3; ++i) {
-        ChoiceGroup g;
-        g.id = "g" + std::to_string(i);
-        g.material = true;
-        g.alternatives.push_back(ChoiceAlternative{.id = "alt_" + std::to_string(i)});
-        analysis.choiceGroups.push_back(g);
+void testBudgetExhaustionWithItemsLeftGoesManual() {
+    const std::string text = "Make it faster, smaller, safer, and nicer to read.";
+    auto a = fx::AnalysisBuilder("sess_a", "rev_sess_a_1", text)
+                 .group("Faster how?", {"Latency", "Throughput"}, "faster")
+                 .group("Smaller how?", {"Binary size", "Memory use"}, "smaller")
+                 .group("Safer how?", {"Memory safety", "Input validation"}, "safer")
+                 .group("Nicer how?", {"Shorter functions", "Better names"}, "nicer to read")
+                 .build();
+    fx::Pipeline p(text, a);
+    for (int round = 0; round < 3; ++round) {
+        ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Clarify);
+        ROCLINT_CHECK(InterventionStateMachine::applySkip(p.analysis, p.decision, p.state).ok());
+        p.reevaluate();
     }
-
-    OverallPolicyResult policyResult;
-    policyResult.overallVerdict = PolicyVerdict::EligibleForChoice;
-
-    SnapshotEvaluationResponse snapshotEval;
-    snapshotEval.success = true;
-
-    WorkingIntentState state;
-    state.confirmChoice("g1", "alt_1");
-    state.confirmChoice("g2", "alt_2");
-    state.confirmChoice("g3", "alt_3");
-
-    ROCLINT_CHECK(state.roundsCompleted == 3);
-
-    auto decision = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
-    ROCLINT_CHECK(decision.verdict == InterventionVerdict::Quiet);
-    ROCLINT_CHECK(decision.reason == InterventionReasonCode::AllMaterialItemsResolved);
-    ROCLINT_CHECK(!decision.activeItemId.has_value());
-    ROCLINT_CHECK(decision.remainingBudget == 0);
+    ROCLINT_CHECK(p.decision.remainingBudget == 0);
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Manual);
+    ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::ClarificationBudgetExceeded);
+    // No further transition is accepted once the budget is spent.
+    ROCLINT_CHECK(!InterventionStateMachine::applySkip(p.analysis, p.decision, p.state).ok());
 }
 
-void testClarificationBudgetExceeded() {
-    NormalizedAnalysis analysis;
-    for (int i = 1; i <= 4; ++i) {
-        ChoiceGroup g;
-        g.id = "g" + std::to_string(i);
-        g.material = true;
-        g.alternatives.push_back(ChoiceAlternative{.id = "alt_" + std::to_string(i)});
-        analysis.choiceGroups.push_back(g);
+void testSkipsAndAssumptionsConsumeBudget() {
+    const std::string text = "Deploy the service to staging tonight.";
+    auto a = fx::AnalysisBuilder("sess_a", "rev_sess_a_1", text)
+                 .assumption("Staging uses the same database as production", "staging")
+                 .assumption("Tonight means after 18:00 local time", "tonight")
+                 .build();
+    fx::Pipeline p(text, a);
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Clarify);
+    ROCLINT_CHECK(p.decision.activeItemKind == ActiveItemKind::Assumption);
+    ROCLINT_CHECK(*p.decision.activeItemId == "asm_0");
+
+    ROCLINT_CHECK(InterventionStateMachine::applyAssumptionDecision(p.analysis, p.decision, p.state, false).ok());
+    p.reevaluate();
+    ROCLINT_CHECK(p.decision.remainingBudget == 2);
+    ROCLINT_CHECK(*p.decision.activeItemId == "asm_1");
+
+    ROCLINT_CHECK(InterventionStateMachine::applySkip(p.analysis, p.decision, p.state).ok());
+    p.reevaluate();
+    ROCLINT_CHECK(p.state.roundsCompleted == 2);
+    ROCLINT_CHECK(p.decision.remainingBudget == 1);
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Quiet);
+    ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::MaterialItemsDeferred);
+}
+
+void testExplicitManualAnswerAfterThreeChoices() {
+    auto a = fx::threeGroupAnalysis();
+    analysis::MissingDecision missing;
+    missing.id = "mdc_extra";
+    missing.question = "Confirm the final interpretation";
+    missing.blocking = true;
+    a.missingDecisions.push_back(missing);
+    fx::Pipeline p(fx::kThreeGroupPrompt, a);
+    for (int round = 0; round < 3; ++round) {
+        ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Clarify);
+        const auto group = *p.decision.activeItemId;
+        const auto found = std::find_if(p.analysis.choiceGroups.begin(), p.analysis.choiceGroups.end(),
+                                        [&](const auto& g) { return g.id == group; });
+        ROCLINT_CHECK(found != p.analysis.choiceGroups.end());
+        ROCLINT_CHECK(InterventionStateMachine::applyChoice(p.analysis, p.decision, p.state, found->alternatives[0].id).ok());
+        p.reevaluate();
     }
-
-    OverallPolicyResult policyResult;
-    policyResult.overallVerdict = PolicyVerdict::EligibleForChoice;
-
-    SnapshotEvaluationResponse snapshotEval;
-    snapshotEval.success = true;
-
-    WorkingIntentState state;
-    state.confirmChoice("g1", "alt_1");
-    state.confirmChoice("g2", "alt_2");
-    state.confirmChoice("g3", "alt_3");
-
-    // 4th item remains unresolved after 3 rounds completed
-    auto decision = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
-    ROCLINT_CHECK(decision.verdict == InterventionVerdict::Manual);
-    ROCLINT_CHECK(decision.reason == InterventionReasonCode::ClarificationBudgetExceeded);
-    ROCLINT_CHECK(decision.activeItemId == "g4");
+    ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::ClarificationBudgetExceeded);
+    ROCLINT_CHECK(!InterventionStateMachine::applySkip(p.analysis, p.decision, p.state).ok());
+    ROCLINT_CHECK(InterventionStateMachine::applyCustomText(p.analysis, p.decision, p.state,
+                   "Use the choices I confirmed; keep the explicit color constraints.").ok());
+    p.reevaluate();
+    ROCLINT_CHECK(p.state.roundsCompleted == 3);
+    ROCLINT_CHECK(p.state.confirmedAlternatives.size() == 3);
+    ROCLINT_CHECK(p.state.customResolutions.count("mdc_extra") == 1);
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Quiet);
 }
 
-void testBlockingConflictPrioritized() {
-    NormalizedAnalysis analysis;
+void testNonBlockingConflictDoesNotBlock() {
+    const std::string text = "Keep the API stable but feel free to rename things.";
+    auto a = fx::AnalysisBuilder("sess_a", "rev_sess_a_1", text)
+                 .conflict("Renaming may break API stability", false)
+                 .build();
+    fx::Pipeline p(text, a);
+    ROCLINT_CHECK(p.policy.blockingConflictCount == 0);
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Quiet);
+}
 
-    ChoiceGroup g;
-    g.id = "g1";
-    g.material = true;
-    analysis.choiceGroups.push_back(g);
+void testBlockingConflictGoesManual() {
+    const std::string text = "Use only tabs. Use only spaces.";
+    auto a = fx::AnalysisBuilder("sess_a", "rev_sess_a_1", text)
+                 .group("Which indentation?", {"Tabs", "Spaces"}, "only tabs")
+                 .conflict("Tabs and spaces are both required exclusively", true)
+                 .build();
+    fx::Pipeline p(text, a);
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Manual);
+    ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::BlockingConflictPresent);
+    ROCLINT_CHECK(*p.decision.activeItemId == "cfl_0");
+}
 
-    Conflict c;
-    c.id = "conflict_01";
-    c.description = "Stateless vs stateful session contradiction";
-    analysis.conflicts.push_back(c);
+void testBlockingMissingDecisionTriggersIntervention() {
+    const std::string text = "Write a migration script.";
+    auto a = fx::AnalysisBuilder("sess_a", "rev_sess_a_1", text)
+                 .missing("Which database engine is the target?", true)
+                 .missing("Should the script log progress?", false)
+                 .build();
+    fx::Pipeline p(text, a);
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Clarify);
+    ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::UnresolvedMissingDecision);
+    ROCLINT_CHECK(p.decision.activeItemKind == ActiveItemKind::MissingDecision);
+    ROCLINT_CHECK(*p.decision.activeItemId == "mdc_0");
 
-    OverallPolicyResult policyResult;
-    policyResult.overallVerdict = PolicyVerdict::EligibleForChoice;
+    // Skipping a blocking decision leaves it deferred and blocks the rewrite path.
+    ROCLINT_CHECK(InterventionStateMachine::applySkip(p.analysis, p.decision, p.state).ok());
+    p.reevaluate();
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Manual);
+    ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::BlockingItemDeferred);
+}
 
-    SnapshotEvaluationResponse snapshotEval;
-    snapshotEval.success = true;
+void testRejectedGroupIsNeverActive() {
+    const std::string text = "Sort the list and then print it.";
+    auto a = fx::AnalysisBuilder("sess_a", "rev_sess_a_1", text)
+                 // Ungrounded (no evidence): Rejected by policy.
+                 .group("Sort how?", {"Ascending", "Descending"}, "")
+                 // Single alternative: Rejected by policy.
+                 .group("Print where?", {"Stdout"}, "print it")
+                 .build();
+    fx::Pipeline p(text, a);
+    for (const auto& g : p.policy.groupResults) {
+        ROCLINT_CHECK(g.verdict == analysis::PolicyVerdict::Rejected);
+    }
+    ROCLINT_CHECK(!p.decision.activeItemId.has_value() ||
+                  (*p.decision.activeItemId != "grp_0" && *p.decision.activeItemId != "grp_1"));
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Manual);
 
-    WorkingIntentState state;
-    auto decision = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
+    // A rejected group alongside an eligible one: the eligible one is active.
+    const std::string text2 = "Sort the list and then print it to the screen.";
+    auto b = fx::AnalysisBuilder("sess_a", "rev_sess_a_1", text2)
+                 .group("Sort how?", {"Ascending", "Descending"}, "")
+                 .group("Which screen?", {"Terminal", "Log window"}, "the screen")
+                 .build();
+    fx::Pipeline q(text2, b);
+    ROCLINT_CHECK(q.decision.verdict == InterventionVerdict::Clarify);
+    ROCLINT_CHECK(*q.decision.activeItemId == "grp_1");
+    // Choosing an alternative of the rejected group is refused.
+    ROCLINT_CHECK(!InterventionStateMachine::applyChoice(q.analysis, q.decision, q.state, "alt_0_0").ok());
+}
 
-    ROCLINT_CHECK(decision.verdict == InterventionVerdict::Manual);
-    ROCLINT_CHECK(decision.reason == InterventionReasonCode::BlockingConflictPresent);
-    ROCLINT_CHECK(decision.activeItemId == "conflict_01");
+void testConfirmChoiceRejectsForeignAlternative() {
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    const auto before = p.state.roundsCompleted;
+    auto st = InterventionStateMachine::applyChoice(p.analysis, p.decision, p.state, "alt_1_0");
+    ROCLINT_CHECK(!st.ok());
+    ROCLINT_CHECK(st.error().code == ErrorCode::InvalidInput);
+    ROCLINT_CHECK(p.state.roundsCompleted == before);
+    ROCLINT_CHECK(!InterventionStateMachine::applyChoice(p.analysis, p.decision, p.state, "alt_9_9").ok());
+}
+
+void testUnrankedOrderingIsByEarliestByte() {
+    // Groups are declared out of textual order; unranked ordering must follow the prompt.
+    const std::string text = "First alpha, then beta, finally gamma.";
+    auto a = fx::AnalysisBuilder("sess_a", "rev_sess_a_1", text)
+                 .group("Gamma?", {"G1", "G2"}, "gamma")
+                 .group("Alpha?", {"A1", "A2"}, "alpha")
+                 .group("Beta?", {"B1", "B2"}, "beta")
+                 .build();
+    fx::Pipeline p(text, a);
+    ROCLINT_CHECK(!p.eval.isRanked());
+    const auto ordered = InterventionStateMachine::orderChoiceGroups(p.analysis, p.eval);
+    ROCLINT_CHECK(ordered.size() == 3);
+    ROCLINT_CHECK(ordered[0]->question == "Alpha?");
+    ROCLINT_CHECK(ordered[1]->question == "Beta?");
+    ROCLINT_CHECK(ordered[2]->question == "Gamma?");
+    ROCLINT_CHECK(*p.decision.activeItemId == ordered[0]->id);
+}
+
+void testNanSafeRankedOrdering() {
+    const std::string text = "First alpha, then beta, finally gamma.";
+    auto a = fx::AnalysisBuilder("sess_a", "rev_sess_a_1", text)
+                 .group("Alpha?", {"A1", "A2"}, "alpha")
+                 .group("Beta?", {"B1", "B2"}, "beta")
+                 .group("Gamma?", {"G1", "G2"}, "gamma")
+                 .build();
+    auto eval = roclint::bridge::S1TriageAdapter::degradedResponse(a, "");
+    eval.executionStatus = ExecutionStatus::ExecutedMock;
+    eval.success = true;
+    eval.groupScores.clear();
+    auto score = [](std::string id, double s) {
+        GroupEvaluationScore g;
+        g.groupId = std::move(id);
+        g.isScored = true;
+        g.ambiguityScore = s;
+        return g;
+    };
+    eval.groupScores.push_back(score("grp_0", std::numeric_limits<double>::quiet_NaN()));
+    eval.groupScores.push_back(score("grp_1", 0.4));
+    eval.groupScores.push_back(score("grp_2", 0.9));
+
+    const auto ordered = InterventionStateMachine::orderChoiceGroups(a, eval);
+    ROCLINT_CHECK(ordered[0]->id == "grp_2");
+    ROCLINT_CHECK(ordered[1]->id == "grp_1");
+    ROCLINT_CHECK(ordered[2]->id == "grp_0"); // NaN sanitized to 0
+
+    // Scores bound to another snapshot are ignored: byte order applies.
+    eval.analysisSnapshotId = "snap_other";
+    const auto unbound = InterventionStateMachine::orderChoiceGroups(a, eval);
+    ROCLINT_CHECK(unbound[0]->id == "grp_0");
+}
+
+void testScoreBindingMismatchGoesManual() {
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    p.eval.analysisSnapshotId = "snap_other";
+    p.reevaluate();
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Manual);
+    ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::ScoreBindingMismatch);
 }
 
 void testProviderFailureReachesManual() {
-    NormalizedAnalysis analysis;
-    OverallPolicyResult policyResult;
-    policyResult.overallVerdict = PolicyVerdict::EligibleForChoice;
-
-    SnapshotEvaluationResponse snapshotEval;
-    snapshotEval.success = false;
-    snapshotEval.errorMessage = "Jev Cloud API timeout (HTTP 504)";
-
-    WorkingIntentState state;
-    auto decision = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
-
-    ROCLINT_CHECK(decision.verdict == InterventionVerdict::Manual);
-    ROCLINT_CHECK(decision.reason == InterventionReasonCode::ProviderUnavailable);
-    ROCLINT_CHECK(!decision.activeItemId.has_value());
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    p.eval.success = false;
+    p.eval.errorMessage = "scorer crashed";
+    p.reevaluate();
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Manual);
+    ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::ProviderUnavailable);
 }
 
-void testStructuralRejectionReachesManual() {
-    NormalizedAnalysis analysis;
-    OverallPolicyResult policyResult;
-    policyResult.overallVerdict = PolicyVerdict::Rejected;
-    policyResult.primaryReasonCode = ReasonCode::InvalidUtf8SpanBoundary;
-
-    SnapshotEvaluationResponse snapshotEval;
-    snapshotEval.success = true;
-
-    WorkingIntentState state;
-    auto decision = InterventionStateMachine::evaluate(analysis, policyResult, snapshotEval, state);
-
-    ROCLINT_CHECK(decision.verdict == InterventionVerdict::Manual);
-    ROCLINT_CHECK(decision.reason == InterventionReasonCode::InvalidAnalysisStructure);
-    ROCLINT_CHECK(!decision.activeItemId.has_value());
+void testStaleDecisionIsRejected() {
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    const auto old = p.decision;
+    ROCLINT_CHECK(InterventionStateMachine::applyChoice(p.analysis, p.decision, p.state, "alt_0_0").ok());
+    p.reevaluate();
+    // Reusing the round-0 decision after round 1 completed is refused.
+    auto st = InterventionStateMachine::applySkip(p.analysis, old, p.state);
+    ROCLINT_CHECK(!st.ok());
+    ROCLINT_CHECK(st.error().code == ErrorCode::StaleVersion);
 }
+
+void testManualRequest() {
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    InterventionStateMachine::applyManualRequest(p.state);
+    p.reevaluate();
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Manual);
+    ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::UserRequestedManual);
+}
+
+} // namespace
 
 int main() {
-    std::cout << "[TEST] Running InterventionStateMachine Unit Tests..." << std::endl;
-
+    std::cout << "[Test InterventionStateMachine] Starting...\n";
+    testFixtureGroupsAreEligible();
     testClearPromptReachesQuiet();
-    testMaterialChoiceGroupReachesClarify();
-    testTotalOrderingChoiceGroups();
-    testRound3OffByOneTrap();
-    testClarificationBudgetExceeded();
-    testBlockingConflictPrioritized();
+    testBudgetAccountingAcrossThreeRounds();
+    testBudgetExhaustionWithItemsLeftGoesManual();
+    testSkipsAndAssumptionsConsumeBudget();
+    testExplicitManualAnswerAfterThreeChoices();
+    testNonBlockingConflictDoesNotBlock();
+    testBlockingConflictGoesManual();
+    testBlockingMissingDecisionTriggersIntervention();
+    testRejectedGroupIsNeverActive();
+    testConfirmChoiceRejectsForeignAlternative();
+    testUnrankedOrderingIsByEarliestByte();
+    testNanSafeRankedOrdering();
+    testScoreBindingMismatchGoesManual();
     testProviderFailureReachesManual();
-    testStructuralRejectionReachesManual();
-
-    std::cout << "[PASS] All InterventionStateMachine tests passed successfully!" << std::endl;
+    testStaleDecisionIsRejected();
+    testManualRequest();
+    std::cout << "[Test InterventionStateMachine] All tests PASSED.\n";
     return 0;
 }

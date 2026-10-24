@@ -1,0 +1,6 @@
+# Install into an isolated/bundled Python 3.11+ environment, not a global environment.
+torch>=2.6
+transformers==5.0.0
+safetensors>=0.5
+numpy>=1.26
+huggingface_hub>=0.34

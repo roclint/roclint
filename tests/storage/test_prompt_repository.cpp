@@ -1,315 +1,377 @@
-#include "support/check.hpp"
 #include "roclint/storage/Database.hpp"
 #include "roclint/storage/PromptRepository.hpp"
+#include "support/check.hpp"
+#include "support/storage_fixtures.hpp"
+
 #include <filesystem>
 #include <iostream>
-#include <stdexcept>
-#include <string>
+#include <memory>
 
-using roclint::core::PromptRevision;
-using roclint::core::RevisionId;
-using roclint::core::SessionId;
-using roclint::storage::Database;
-using roclint::storage::PromptRepository;
+using namespace roclint::core;
+using namespace roclint::storage;
+namespace fs = std::filesystem;
 
-void testSessionLifecycle()
-{
-    std::cout << "  -> Running testSessionLifecycle...\n";
-    Database db(":memory:");
-    PromptRepository repo(db);
-    repo.migrate();
+namespace {
 
-    const SessionId sess1("sess_lifecycle_01");
-    const SessionId sess2("sess_lifecycle_02");
+struct Store {
+    Database db;
+    std::unique_ptr<PromptRepository> repo;
 
-    ROCLINT_CHECK(!repo.sessionExists(sess1));
-    ROCLINT_CHECK(!repo.sessionExists(sess2));
-
-    repo.createSession(sess1, 1000);
-    repo.createSession(sess2, 2000);
-
-    ROCLINT_CHECK(repo.sessionExists(sess1));
-    ROCLINT_CHECK(repo.sessionExists(sess2));
-    ROCLINT_CHECK(!repo.sessionExists(SessionId("sess_lifecycle_missing")));
-
-    auto sessions = repo.listSessions();
-    ROCLINT_CHECK(sessions.size() == 2);
-    // Ordered by created_at_ms DESC
-    ROCLINT_CHECK(sessions[0].id == sess2);
-    ROCLINT_CHECK(sessions[0].createdAtMs == 2000);
-    ROCLINT_CHECK(sessions[1].id == sess1);
-    ROCLINT_CHECK(sessions[1].createdAtMs == 1000);
-}
-
-void testRevisionPersistenceAndRetrieval()
-{
-    std::cout << "  -> Running testRevisionPersistenceAndRetrieval...\n";
-    Database db(":memory:");
-    PromptRepository repo(db);
-    repo.migrate();
-
-    const SessionId sessId("sess_persist_01");
-    repo.createSession(sessId, 1700000000);
-
-    // 1. Save root revision (no parent)
-    const RevisionId rev1Id("rev_root_01");
-    const PromptRevision rev1(sessId, rev1Id, std::nullopt, "Initial prompt instruction", 1700000010);
-    repo.saveRevision(rev1);
-
-    auto fetched1 = repo.getRevision(rev1Id);
-    ROCLINT_CHECK(fetched1.has_value());
-    ROCLINT_CHECK(fetched1->sessionId() == sessId);
-    ROCLINT_CHECK(fetched1->revisionId() == rev1Id);
-    ROCLINT_CHECK(!fetched1->parentRevisionId().has_value());
-    ROCLINT_CHECK(fetched1->text() == "Initial prompt instruction");
-    ROCLINT_CHECK(fetched1->createdAtMs() == 1700000010);
-
-    // 2. Save child revision
-    const RevisionId rev2Id("rev_child_02");
-    const PromptRevision rev2(sessId, rev2Id, rev1Id, "Refined prompt instruction with constraint", 1700000020);
-    repo.saveRevision(rev2);
-
-    auto fetched2 = repo.getRevision(rev2Id);
-    ROCLINT_CHECK(fetched2.has_value());
-    ROCLINT_CHECK(fetched2->sessionId() == sessId);
-    ROCLINT_CHECK(fetched2->revisionId() == rev2Id);
-    ROCLINT_CHECK(fetched2->parentRevisionId().has_value());
-    ROCLINT_CHECK(fetched2->parentRevisionId().value() == rev1Id);
-    ROCLINT_CHECK(fetched2->text() == "Refined prompt instruction with constraint");
-    ROCLINT_CHECK(fetched2->createdAtMs() == 1700000020);
-
-    // 3. Query non-existent revision
-    auto missing = repo.getRevision(RevisionId("non_existent"));
-    ROCLINT_CHECK(!missing.has_value());
-
-    // 4. Foreign key enforcement: attempt saving revision for nonexistent session must throw
-    bool caughtForeignKeyViolation = false;
-    try
-    {
-        const PromptRevision orphan(SessionId("non_existent_sess"), RevisionId("rev_orphan"),
-                                   std::nullopt, "Should fail", 1700000030);
-        repo.saveRevision(orphan);
+    explicit Store(const fs::path& path = ":memory:") {
+        ROCLINT_CHECK(db.open(path).ok());
+        repo = std::make_unique<PromptRepository>(db);
+        ROCLINT_CHECK(repo->migrate().ok());
     }
-    catch (const std::runtime_error&)
+};
+
+PromptRevision root(const std::string& session, const std::string& text = fx::kChainPrompt) {
+    const SessionId sid(session);
+    return PromptRevision(sid, RevisionState::makeRevisionId(sid, 1), std::nullopt, text, 100);
+}
+
+// Persists session root, analysis, intent, proposal, and approval for the chain.
+review::ApprovalRecord seed(PromptRepository& repo, const fx::Chain& c) {
+    ROCLINT_CHECK(repo.createSessionWithRootRevision(root(c.session), 100).ok());
+    fx::recordSnapshotAttempts(repo, c.snapshot);
+    ROCLINT_CHECK(repo.insertAnalysisSnapshot(c.snapshot, 200).ok());
+    ROCLINT_CHECK(repo.insertIntentVersion(c.intent, 300).ok());
+    ROCLINT_CHECK(repo.insertProposal(c.proposal, 400).ok());
+    auto approval = c.approve(1);
+    ROCLINT_CHECK(repo.insertApproval(approval).ok());
+    return approval;
+}
+
+RevisionWrite nextWrite(const std::string& session, std::uint64_t seq, std::uint64_t expectedVersion,
+                        const std::string& parent, const std::string& text = "next") {
+    const SessionId sid(session);
+    RevisionWrite w{PromptRevision(sid, RevisionState::makeRevisionId(sid, seq), RevisionId(parent), text, 500)};
+    w.sequence = seq;
+    w.expectedStateVersion = expectedVersion;
+    w.newStateVersion = expectedVersion + 1;
+    w.nowMs = 500;
+    return w;
+}
+
+void testRootRevisionsInTwoSessionsDoNotCollide() {
+    Store s;
+    ROCLINT_CHECK(s.repo->createSessionWithRootRevision(root("sess_a"), 1).ok());
+    ROCLINT_CHECK(s.repo->createSessionWithRootRevision(root("sess_b"), 2).ok());
+    ROCLINT_CHECK(s.repo->getLatestRevision(SessionId("sess_a")).value()->revision.revisionId().value() ==
+                  "rev_sess_a_1");
+    ROCLINT_CHECK(s.repo->getLatestRevision(SessionId("sess_b")).value()->revision.revisionId().value() ==
+                  "rev_sess_b_1");
+    ROCLINT_CHECK(s.repo->listSessions().value().size() == 2);
+
+    // A second root for an existing session, or a misnamed root, is refused.
+    ROCLINT_CHECK(!s.repo->createSessionWithRootRevision(root("sess_a"), 3).ok());
+    const SessionId sid("sess_c");
+    ROCLINT_CHECK(!s.repo->createSessionWithRootRevision(PromptRevision(sid, RevisionId("rev_1"), std::nullopt, "x"), 1)
+                       .ok());
+}
+
+void testRevisionWritesUseOptimisticConcurrency() {
+    Store s;
+    ROCLINT_CHECK(s.repo->createSessionWithRootRevision(root("sess_a"), 1).ok());
+    ROCLINT_CHECK(s.repo->insertRevision(nextWrite("sess_a", 2, 1, "rev_sess_a_1")).ok());
+
+    auto stale = s.repo->insertRevision(nextWrite("sess_a", 3, 1, "rev_sess_a_2"));
+    ROCLINT_CHECK(!stale.ok() && stale.error().code == ErrorCode::StaleVersion);
+
+    auto skipped = s.repo->insertRevision(nextWrite("sess_a", 4, 2, "rev_sess_a_2"));
+    ROCLINT_CHECK(!skipped.ok());
+
+    ROCLINT_CHECK(s.repo->insertDraftRevision(nextWrite("sess_a", 3, 2, "rev_sess_a_2", "frozen")).ok());
+    ROCLINT_CHECK(s.repo->insertRestoredRevision(nextWrite("sess_a", 4, 3, "rev_sess_a_1", "restored")).ok());
+
+    const auto history = s.repo->getHistory(SessionId("sess_a")).value();
+    ROCLINT_CHECK(history.size() == 4);
+    ROCLINT_CHECK(history[1].origin == RevisionOrigin::Commit);
+    ROCLINT_CHECK(history[2].origin == RevisionOrigin::DraftFreeze);
+    ROCLINT_CHECK(history[3].origin == RevisionOrigin::Restore);
+    ROCLINT_CHECK(history[3].revision.parentRevisionId()->value() == "rev_sess_a_1");
+    const auto session = s.repo->getSession(SessionId("sess_a")).value();
+    ROCLINT_CHECK(session.stateVersion == 4);
+    ROCLINT_CHECK(session.highestRevisionSeq == 4);
+
+    auto missing = s.repo->insertRevision(nextWrite("sess_zzz", 2, 1, "rev_sess_zzz_1"));
+    ROCLINT_CHECK(!missing.ok() && missing.error().code == ErrorCode::NotFound);
+}
+
+void testCrossSessionReferencesAreRejected(PromptRepository& repo) {
+    fx::Chain a("sess_a");
+    fx::Chain b("sess_b");
+    const auto approvalA = seed(repo, a);
+    seed(repo, b);
+
+    // Parent revision from another session.
+    auto parent = repo.insertRevision(nextWrite("sess_b", 2, 1, "rev_sess_a_1"));
+    ROCLINT_CHECK(!parent.ok());
+    ROCLINT_CHECK(repo.getSession(SessionId("sess_b")).value().stateVersion == 1); // rolled back
+
+    // Analysis claiming session B but bound to session A's revision.
+    auto analysis = a.pipe.analysis;
+    analysis.sessionId = "sess_b";
+    analysis::sealSnapshot(analysis);
+    ROCLINT_CHECK(!repo.insertAnalysisSnapshot(fx::finalSnapshot(analysis, fx::kChainPrompt), 1).ok());
+
+    // Intent for session B pointing at session A's revision and snapshot.
+    auto intent = a.intent;
+    intent.sessionId = "sess_b";
+    intent.intentHash = intent::IntentProvenanceBuilder::computeIntentHash(intent);
+    intent.id = "intent_" + intent.intentHash;
+    ROCLINT_CHECK(!repo.insertIntentVersion(intent, 1).ok());
+
+    // Intent in session B whose snapshot belongs to session A.
+    auto intentB = b.intent;
+    intentB.snapshotId = a.snapshot.id;
+    intentB.intentHash = intent::IntentProvenanceBuilder::computeIntentHash(intentB);
+    intentB.id = "intent_" + intentB.intentHash;
+    ROCLINT_CHECK(!repo.insertIntentVersion(intentB, 1).ok());
+
+    // Proposal in session B bound to session A's intent.
+    auto proposal = b.proposal;
+    proposal.intentId = a.intent.id;
+    rewrite::ProposalHasher::seal(proposal);
+    ROCLINT_CHECK(!repo.insertProposal(proposal, 1).ok());
+
+    // Approval in session B for session A's proposal.
+    auto approval = approvalA;
+    approval.sessionId = "sess_b";
+    approval.revisionId = b.revision;
+    approval.bindingHash = approval.computeBindingHash();
+    approval.id = "appr_" + approval.bindingHash;
+    ROCLINT_CHECK(!repo.insertApproval(approval).ok());
+
+    // Model attempt in session B against session A's revision.
+    ModelAttemptRecord attempt{"att_x", "sess_b", "rev_sess_a_1", "discovery"};
+    attempt.transport = roclint::bridge::kLoopbackOllamaTransport;
+    ROCLINT_CHECK(!repo.beginModelAttempt(attempt).ok());
+
+    // Tampered payloads are refused before SQL.
+    auto unsealedIntent = a.intent;
+    unsealedIntent.items.clear();
+    ROCLINT_CHECK(!repo.insertIntentVersion(unsealedIntent, 1).ok());
+    auto unsealedProposal = a.proposal;
+    unsealedProposal.rewrittenText = "changed";
+    ROCLINT_CHECK(!repo.insertProposal(unsealedProposal, 1).ok());
+    auto unsealedApproval = approvalA;
+    unsealedApproval.approvedText = "changed";
+    ROCLINT_CHECK(!repo.insertApproval(unsealedApproval).ok());
+}
+
+void testCrossSessionRejectionInMemory() {
+    Store s;
+    testCrossSessionReferencesAreRejected(*s.repo);
+}
+
+void testForeignKeysHoldAfterReopenOnNonAsciiPath() {
+    const fs::path dir = fs::temp_directory_path() / fs::path(u8"roclint_repo_\u00fc\u00df_\u4e2d\u6587");
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir);
+    const fs::path path = dir / "history.db";
     {
-        caughtForeignKeyViolation = true;
+        Store s(path);
+        ROCLINT_CHECK(s.repo->createSessionWithRootRevision(root("sess_a"), 1).ok());
     }
-    ROCLINT_CHECK(caughtForeignKeyViolation);
-}
-
-void testLineageAndHistoryOrder()
-{
-    std::cout << "  -> Running testLineageAndHistoryOrder...\n";
-    Database db(":memory:");
-    PromptRepository repo(db);
-    repo.migrate();
-
-    const SessionId sessId("sess_lineage_01");
-    repo.createSession(sessId, 1700000000);
-
-    const RevisionId rev1("rev_1");
-    const RevisionId rev2("rev_2");
-    const RevisionId rev3("rev_3");
-
-    repo.saveRevision(PromptRevision(sessId, rev1, std::nullopt, "Step 1", 100));
-    repo.saveRevision(PromptRevision(sessId, rev2, rev1, "Step 2", 200));
-    repo.saveRevision(PromptRevision(sessId, rev3, rev2, "Step 3", 300));
-
-    auto history = repo.getHistory(sessId);
-    ROCLINT_CHECK(history.size() == 3);
-    ROCLINT_CHECK(history[0].revisionId() == rev1);
-    ROCLINT_CHECK(history[1].revisionId() == rev2);
-    ROCLINT_CHECK(history[2].revisionId() == rev3);
-
-    auto latest = repo.getLatestRevision(sessId);
-    ROCLINT_CHECK(latest.has_value());
-    ROCLINT_CHECK(latest->revisionId() == rev3);
-    ROCLINT_CHECK(latest->text() == "Step 3");
-
-    // Empty session history
-    const SessionId emptySess("sess_empty");
-    repo.createSession(emptySess, 1700000100);
-    ROCLINT_CHECK(repo.getHistory(emptySess).empty());
-    ROCLINT_CHECK(!repo.getLatestRevision(emptySess).has_value());
-}
-
-void testReopenDurability()
-{
-    std::cout << "  -> Running testReopenDurability...\n";
-    const std::filesystem::path dbPath = "./test_prompt_repo_durability.db";
-    std::filesystem::remove(dbPath);
-
-    const SessionId sessId("sess_durable_01");
-    const RevisionId revId("rev_durable_01");
-    const std::string promptText = "Survives process restart across SQLite connections";
-
-    // Scope 1: Write data and close connection
     {
-        Database db(dbPath);
-        PromptRepository repo(db);
-        repo.migrate();
-
-        repo.createSession(sessId, 1700000000);
-        repo.saveRevision(PromptRevision(sessId, revId, std::nullopt, promptText, 1700000010));
+        Store reopened(path);
+        ROCLINT_CHECK(reopened.db.queryText("PRAGMA foreign_keys;").value() == "1");
+        ROCLINT_CHECK(reopened.repo->sessionExists(SessionId("sess_a")).value());
+        ROCLINT_CHECK(reopened.repo->createSessionWithRootRevision(root("sess_b"), 2).ok());
+        ROCLINT_CHECK(!reopened.repo->insertRevision(nextWrite("sess_b", 2, 1, "rev_sess_a_1")).ok());
     }
-
-    // Scope 2: Reopen in a new Database and verify durability
     {
-        Database db(dbPath);
-        PromptRepository repo(db);
-
-        ROCLINT_CHECK(repo.sessionExists(sessId));
-        auto fetched = repo.getRevision(revId);
-        ROCLINT_CHECK(fetched.has_value());
-        ROCLINT_CHECK(fetched->text() == promptText);
-        ROCLINT_CHECK(fetched->createdAtMs() == 1700000010);
-
-        auto history = repo.getHistory(sessId);
-        ROCLINT_CHECK(history.size() == 1);
-        ROCLINT_CHECK(history[0].revisionId() == revId);
+        Store again(path);
+        ROCLINT_CHECK(again.repo->purgeHistory().ok());
+        testCrossSessionReferencesAreRejected(*again.repo);
     }
-
-    std::filesystem::remove(dbPath);
+    fs::remove_all(dir, ec);
 }
 
-void testUnicodeAndSpecialCharacters()
-{
-    std::cout << "  -> Running testUnicodeAndSpecialCharacters...\n";
-    Database db(":memory:");
-    PromptRepository repo(db);
-    repo.migrate();
+void testFailedApprovalKeepsPreviousCurrent() {
+    Store s;
+    fx::Chain c("sess_a");
+    const auto first = seed(*s.repo, c);
+    ROCLINT_CHECK(s.repo->getCurrentApproval(SessionId("sess_a")).value()->id == first.id);
 
-    const SessionId sessId("sess_unicode_01");
-    repo.createSession(sessId, 1700000000);
+    // A new approval whose proposal doesn't exist violates an FK; the transaction rolls back.
+    auto broken = first;
+    broken.proposalId = "prop_missing";
+    broken.stateVersion = 7;
+    broken.bindingHash = broken.computeBindingHash();
+    broken.id = "appr_" + broken.bindingHash;
+    auto st = s.repo->insertApproval(broken);
+    ROCLINT_CHECK(!st.ok());
 
-    // Text containing single quotes, double quotes, LF newlines, emojis, and non-ASCII scripts
-    const std::string complexText =
-        "Review prompt: \"Don't drop tables!\" — O'Connor's request.\n"
-        "Multi-line 🚀 with UTF-8: 漢字, 한국어, Ελληνικά, and symbols: \t \n"
-        "SQL injection attempt: '); DROP TABLE prompt_revisions; --";
+    const auto current = s.repo->getCurrentApproval(SessionId("sess_a")).value();
+    ROCLINT_CHECK(current.has_value());
+    ROCLINT_CHECK(current->id == first.id);
+    ROCLINT_CHECK(current->isCurrent);
+    ROCLINT_CHECK(s.repo->getApprovalHistory(SessionId("sess_a")).value().size() == 1);
 
-    const RevisionId revId("rev_unicode_01");
-    repo.saveRevision(PromptRevision(sessId, revId, std::nullopt, complexText, 1700000050));
+    // A valid second approval supersedes the first.
+    const auto second = c.approve(2);
+    ROCLINT_CHECK(s.repo->insertApproval(second).ok());
+    ROCLINT_CHECK(s.repo->getCurrentApproval(SessionId("sess_a")).value()->id == second.id);
+    const auto history = s.repo->getApprovalHistory(SessionId("sess_a")).value();
+    ROCLINT_CHECK(history.size() == 2);
+    ROCLINT_CHECK(!history[0].isCurrent);
 
-    auto fetched = repo.getRevision(revId);
-    ROCLINT_CHECK(fetched.has_value());
-    ROCLINT_CHECK(fetched->text() == complexText);
-
-    // Verify the tables were NOT dropped by the injection attempt
-    ROCLINT_CHECK(repo.sessionExists(sessId));
+    ROCLINT_CHECK(s.repo->invalidateApprovals(SessionId("sess_a")).ok());
+    ROCLINT_CHECK(!s.repo->getCurrentApproval(SessionId("sess_a")).value().has_value());
 }
 
-void testLogicalCascadeDelete()
-{
-    std::cout << "  -> Running testLogicalCascadeDelete...\n";
-    Database db(":memory:");
-    PromptRepository repo(db);
-    repo.migrate();
+void testRestoreReturnsBoundArtifactsOnly() {
+    Store s;
+    fx::Chain c("sess_a");
+    const auto approval = seed(*s.repo, c);
 
-    const SessionId sessId("sess_to_delete");
-    repo.createSession(sessId, 1700000000);
+    auto restored = s.repo->restoreSession(SessionId("sess_a"));
+    ROCLINT_CHECK(restored.ok());
+    const auto& r = restored.value();
+    ROCLINT_CHECK(r.latestRevision.revision.revisionId().value() == c.revision);
+    ROCLINT_CHECK(r.analysis.has_value() && *r.analysis == c.snapshot);
+    ROCLINT_CHECK(r.intent.has_value() && r.intent->intentHash == c.intent.intentHash);
+    ROCLINT_CHECK(r.intent->items == c.intent.items);
+    ROCLINT_CHECK(r.proposal.has_value() && r.proposal->proposalHash == c.proposal.proposalHash);
+    ROCLINT_CHECK(r.proposal->constraints == c.proposal.constraints);
+    ROCLINT_CHECK(r.approval.has_value() && *r.approval == approval);
 
-    const RevisionId rev1("rev_del_1");
-    const RevisionId rev2("rev_del_2");
+    // After a new revision, nothing downstream is restored for it.
+    ROCLINT_CHECK(s.repo->insertRevision(nextWrite("sess_a", 2, 1, c.revision, "edited")).ok());
+    auto after = s.repo->restoreSession(SessionId("sess_a")).value();
+    ROCLINT_CHECK(after.latestRevision.revision.text() == "edited");
+    ROCLINT_CHECK(!after.analysis.has_value());
+    ROCLINT_CHECK(!after.intent.has_value());
+    ROCLINT_CHECK(!after.proposal.has_value());
+    ROCLINT_CHECK(!after.approval.has_value());
 
-    repo.saveRevision(PromptRevision(sessId, rev1, std::nullopt, "Rev 1 to be deleted", 100));
-    repo.saveRevision(PromptRevision(sessId, rev2, rev1, "Rev 2 to be deleted", 200));
-
-    ROCLINT_CHECK(repo.sessionExists(sessId));
-    ROCLINT_CHECK(repo.getHistory(sessId).size() == 2);
-
-    // Perform logical delete
-    repo.deleteSession(sessId);
-
-    // Verify session and cascade-deleted revisions are gone
-    ROCLINT_CHECK(!repo.sessionExists(sessId));
-    ROCLINT_CHECK(repo.getHistory(sessId).empty());
-    ROCLINT_CHECK(!repo.getRevision(rev1).has_value());
-    ROCLINT_CHECK(!repo.getRevision(rev2).has_value());
+    ROCLINT_CHECK(!s.repo->restoreSession(SessionId("sess_missing")).ok());
 }
 
-void testSchemaVersionAndMigration()
-{
-    std::cout << "  -> Running testSchemaVersionAndMigration...\n";
-    Database db(":memory:");
-    PromptRepository repo(db);
+void testModelAttemptsAndOrphanRecovery() {
+    Store s;
+    ROCLINT_CHECK(s.repo->createSessionWithRootRevision(root("sess_a"), 1).ok());
+    auto attempt = [](const char* id, const char* stage) {
+        ModelAttemptRecord a{id, "sess_a", "rev_sess_a_1", stage};
+        a.transport = roclint::bridge::kLoopbackOllamaTransport;
+        a.startedAtMs = 10;
+        return a;
+    };
+    ModelAttemptRecord noTransport{"att_0", "sess_a", "rev_sess_a_1", "discovery"};
+    ROCLINT_CHECK(!s.repo->beginModelAttempt(noTransport).ok());
 
-    // Fresh DB before migration
-    ROCLINT_CHECK(repo.getSchemaVersion() == 0);
+    ROCLINT_CHECK(s.repo->beginModelAttempt(attempt("att_1", "discovery")).ok());
+    ROCLINT_CHECK(s.repo->beginModelAttempt(attempt("att_2", "rewrite")).ok());
+    ROCLINT_CHECK(s.repo->beginModelAttempt(attempt("att_3", "discovery")).ok());
+    ROCLINT_CHECK(s.repo
+                      ->completeModelAttempt("att_1", AttemptStatus::Succeeded, "granite",
+                                             "digest=sha256:aa; quantization=Q8_0", "", 20)
+                      .ok());
+    ROCLINT_CHECK(s.repo->completeModelAttempt("att_3", AttemptStatus::DiscardedStale, "granite", "", "", 21).ok());
+    ROCLINT_CHECK(!s.repo->completeModelAttempt("att_1", AttemptStatus::Failed, "", "", "again", 22).ok());
+    ROCLINT_CHECK(!s.repo->completeModelAttempt("att_2", AttemptStatus::InProgress, "", "", "", 22).ok());
 
-    // Migrate to V1
-    repo.migrateTo(1);
-    ROCLINT_CHECK(repo.getSchemaVersion() == 1);
+    auto interrupted = s.repo->interruptOrphanedAttemptsOnStartup(99);
+    ROCLINT_CHECK(interrupted.ok() && interrupted.value() == 1);
+    ROCLINT_CHECK(s.repo->interruptOrphanedAttemptsOnStartup(100).value() == 0);
 
-    // Insert data into V1
-    const SessionId sess("sess_mig_01");
-    repo.createSession(sess, 1700000000);
-    const RevisionId rev("rev_mig_01");
-    repo.saveRevision(PromptRevision(sess, rev, std::nullopt, "V1 prompt", 1700000001));
-
-    // Migrate from V1 to V2
-    repo.migrateTo(2);
-    ROCLINT_CHECK(repo.getSchemaVersion() == 2);
-
-    // Verify previously inserted data is preserved
-    auto fetched = repo.getRevision(rev);
-    ROCLINT_CHECK(fetched.has_value());
-    ROCLINT_CHECK(fetched->text() == "V1 prompt");
-
-    // Idempotent: migrating again advances to latest schema version without corrupting data
-    repo.migrate();
-    ROCLINT_CHECK(repo.getSchemaVersion() == PromptRepository::CURRENT_SCHEMA_VERSION);
+    const auto all = s.repo->getModelAttempts(SessionId("sess_a")).value();
+    ROCLINT_CHECK(all.size() == 3);
+    ROCLINT_CHECK(all[0].status == AttemptStatus::Succeeded);
+    ROCLINT_CHECK(all[0].modelDetail.find("quantization=Q8_0") != std::string::npos);
+    ROCLINT_CHECK(all[0].transport == std::string(roclint::bridge::kLoopbackOllamaTransport));
+    ROCLINT_CHECK(all[1].status == AttemptStatus::Interrupted);
+    ROCLINT_CHECK(all[1].completedAtMs.has_value() && *all[1].completedAtMs == 99);
+    ROCLINT_CHECK(all[2].status == AttemptStatus::DiscardedStale);
 }
 
-void testTransactionRollback()
-{
-    std::cout << "  -> Running testTransactionRollback...\n";
-    Database db(":memory:");
-    PromptRepository repo(db);
-    repo.migrate();
-
-    const SessionId sessId("sess_txn_01");
-    repo.createSession(sessId, 1700000000);
-
-    const RevisionId rev1("rev_txn_valid");
-    repo.saveRevision(PromptRevision(sessId, rev1, std::nullopt, "Authoritative state before failure", 100));
-
-    // Transaction that attempts an invalid operation and rolls back
-    db.execute("BEGIN IMMEDIATE TRANSACTION;");
-    bool transactionFailed = false;
-    try
-    {
-        repo.saveRevision(PromptRevision(sessId, RevisionId("rev_txn_2"), std::nullopt, "Valid step in txn", 200));
-        // Force foreign key failure in same transaction
-        repo.saveRevision(PromptRevision(SessionId("non_existent_sess"), RevisionId("rev_fail"), std::nullopt, "Fails", 300));
-    }
-    catch (const std::runtime_error&)
-    {
-        transactionFailed = true;
-        db.execute("ROLLBACK;");
-    }
-    ROCLINT_CHECK(transactionFailed);
-
-    // Authoritative state must be intact: rev1 is present, rev_txn_2 was rolled back
-    auto history = repo.getHistory(sessId);
-    ROCLINT_CHECK(history.size() == 1);
-    ROCLINT_CHECK(history[0].revisionId() == rev1);
-    ROCLINT_CHECK(!repo.getRevision(RevisionId("rev_txn_2")).has_value());
+void testProposalGenerationIsPersistedMonotonically() {
+    Store s;
+    ROCLINT_CHECK(s.repo->createSessionWithRootRevision(root("sess_a"), 1).ok());
+    ROCLINT_CHECK(s.repo->recordProposalGeneration(SessionId("sess_a"), 3, 10).ok());
+    ROCLINT_CHECK(s.repo->getSession(SessionId("sess_a")).value().proposalEditGeneration == 3);
+    ROCLINT_CHECK(s.repo->recordProposalGeneration(SessionId("sess_a"), 2, 11).ok());
+    ROCLINT_CHECK(s.repo->getSession(SessionId("sess_a")).value().proposalEditGeneration == 3);
+    auto missing = s.repo->recordProposalGeneration(SessionId("sess_none"), 1, 12);
+    ROCLINT_CHECK(!missing.ok() && missing.error().code == ErrorCode::NotFound);
 }
 
-int main()
-{
-    std::cout << "[test_prompt_repository] Starting PromptRepository tests (A04)...\n";
+void testDeleteAndPurge() {
+    Store s;
+    fx::Chain a("sess_a");
+    fx::Chain b("sess_b");
+    seed(*s.repo, a);
+    seed(*s.repo, b);
+    ROCLINT_CHECK(s.repo->deleteSession(SessionId("sess_a")).ok());
+    ROCLINT_CHECK(!s.repo->sessionExists(SessionId("sess_a")).value());
+    ROCLINT_CHECK(s.repo->getHistory(SessionId("sess_a")).value().empty());
+    ROCLINT_CHECK(s.repo->getApprovalHistory(SessionId("sess_a")).value().empty());
+    ROCLINT_CHECK(s.repo->getCurrentApproval(SessionId("sess_b")).value().has_value());
+    auto missing = s.repo->deleteSession(SessionId("sess_a"));
+    ROCLINT_CHECK(!missing.ok() && missing.error().code == ErrorCode::NotFound);
 
-    testSessionLifecycle();
-    testRevisionPersistenceAndRetrieval();
-    testLineageAndHistoryOrder();
-    testReopenDurability();
-    testUnicodeAndSpecialCharacters();
-    testLogicalCascadeDelete();
-    testSchemaVersionAndMigration();
-    testTransactionRollback();
+    ROCLINT_CHECK(s.repo->purgeHistory().ok());
+    ROCLINT_CHECK(s.repo->listSessions().value().empty());
+    ROCLINT_CHECK(s.db.queryText("SELECT COUNT(*) FROM approvals;").value() == "0");
+    ROCLINT_CHECK(s.db.queryText("SELECT COUNT(*) FROM analysis_snapshots;").value() == "0");
+}
 
-    std::cout << "[test_prompt_repository] All 8 PromptRepository tests passed successfully!\n";
+void testStateCompareAndSwapAndArtifactFailuresRollBackTogether() {
+    Store store;
+    fx::Chain chain;
+    const auto approval = seed(*store.repo, chain);
+    const SessionId session(chain.session);
+    auto next = RevisionState(root(chain.session));
+    ROCLINT_CHECK(next.noteDraftEdit(1).ok());
+    ROCLINT_CHECK(store.repo->advanceSessionState(next, 1, 500).ok());
+    ROCLINT_CHECK(!store.repo->getCurrentApproval(session).value());
+    const auto before = store.repo->getSession(session).value();
+    ROCLINT_CHECK(!store.repo->advanceSessionState(next, 1, 501).ok());
+    ROCLINT_CHECK(store.repo->getSession(session).value() == before);
+
+    Store rollback;
+    seed(*rollback.repo, chain);
+    const auto original = rollback.repo->getSession(session).value();
+    auto bad = chain.proposal;
+    bad.intentId = "not_a_stored_intent";
+    bad.proposalEditGeneration = 1;
+    rewrite::ProposalHasher::seal(bad);
+    ROCLINT_CHECK(!rollback.repo->insertProposal(bad, 600, 1).ok());
+    ROCLINT_CHECK(rollback.repo->getSession(session).value() == original);
+    ROCLINT_CHECK(rollback.repo->getCurrentApproval(session).value()->id == approval.id);
+    auto badApproval = chain.approve(2);
+    badApproval.proposalId = "not_a_stored_proposal";
+    badApproval.bindingHash = badApproval.computeBindingHash();
+    badApproval.id = "appr_" + badApproval.bindingHash;
+    ROCLINT_CHECK(!rollback.repo->insertApproval(badApproval, 1).ok());
+    ROCLINT_CHECK(rollback.repo->getSession(session).value() == original);
+    ROCLINT_CHECK(rollback.repo->getCurrentApproval(session).value()->id == approval.id);
+    ROCLINT_CHECK(rollback.db.execute("CREATE TEMP TRIGGER reject_intent BEFORE INSERT ON intent_versions BEGIN SELECT RAISE(ABORT, 'test failure'); END;").ok());
+    ROCLINT_CHECK(!rollback.repo->insertIntentVersion(chain.intent, 650, 1).ok());
+    ROCLINT_CHECK(rollback.repo->getSession(session).value() == original);
+    ROCLINT_CHECK(rollback.repo->getCurrentApproval(session).value()->id == approval.id);
+    ROCLINT_CHECK(rollback.db.execute("CREATE TEMP TRIGGER reject_snapshot BEFORE INSERT ON analysis_snapshots BEGIN SELECT RAISE(ABORT, 'test failure'); END;").ok());
+    ROCLINT_CHECK(!rollback.repo->insertAnalysisSnapshot(chain.snapshot, 700, 1).ok());
+    ROCLINT_CHECK(rollback.repo->getSession(session).value() == original);
+    ROCLINT_CHECK(rollback.repo->getCurrentApproval(session).value()->id == approval.id);
+}
+
+} // namespace
+
+int main() {
+    std::cout << "[Test PromptRepository] Starting...\n";
+    testRootRevisionsInTwoSessionsDoNotCollide();
+    testRevisionWritesUseOptimisticConcurrency();
+    testCrossSessionRejectionInMemory();
+    testForeignKeysHoldAfterReopenOnNonAsciiPath();
+    testFailedApprovalKeepsPreviousCurrent();
+    testRestoreReturnsBoundArtifactsOnly();
+    testModelAttemptsAndOrphanRecovery();
+    testProposalGenerationIsPersistedMonotonically();
+    testDeleteAndPurge();
+    testStateCompareAndSwapAndArtifactFailuresRollBackTogether();
+    std::cout << "[Test PromptRepository] All tests PASSED.\n";
     return 0;
 }

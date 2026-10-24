@@ -22,6 +22,12 @@ TrayManager::~TrayManager() {
     }
 }
 
+void TrayManager::notify(const QString& message) {
+    if (m_trayIcon != nullptr && QSystemTrayIcon::supportsMessages()) {
+        m_trayIcon->showMessage(QStringLiteral("Roclint"), message, QSystemTrayIcon::Information, 6000);
+    }
+}
+
 bool TrayManager::initTray() {
     if (m_trayIcon) {
         return true;

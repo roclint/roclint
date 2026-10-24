@@ -1,160 +1,80 @@
-#include "roclint/analysis/MaterialityPolicy.hpp"
-#include "roclint/analysis/NormalizedAnalysis.hpp"
+#include "roclint/bridge/GraniteAdapter.hpp"
+#include "roclint/core/prompt_state/RevisionState.hpp"
 #include "roclint/intent/ConfirmedIntent.hpp"
-#include "roclint/intent/InterventionStateMachine.hpp"
 #include "support/check.hpp"
+#include "support/fixtures.hpp"
 
 #include <iostream>
-#include <string>
 
 using namespace roclint::core;
-using namespace roclint::core::analysis;
 using namespace roclint::core::intent;
 
-void testScenario1MultiItemSnapshotResolution() {
-    std::cout << "--- Scenario 1: Multi-Item Snapshot Resolution ---\n";
-    NormalizedAnalysis snapshot;
-    snapshot.id = "snap_i07_multi";
-    snapshot.baseRevisionId = "rev_1";
+namespace {
 
-    ChoiceGroup g1;
-    g1.id = "group_target";
-    g1.dimension = "target_component";
-    g1.question = "Which component should handle connection timeout?";
-    g1.alternatives.push_back(ChoiceAlternative{.id = "alt_card", .interpretation = "FloatingCard.qml", .whyMaterial = "UI layer"});
-    g1.alternatives.push_back(ChoiceAlternative{.id = "alt_host", .interpretation = "HostController.cpp", .whyMaterial = "Backend controller"});
+void testIntentGoesStaleWhenThePromptChanges() {
+    const SessionId session("sess_i");
+    RevisionState revisions(
+        PromptRevision(session, RevisionState::makeRevisionId(session, 1), std::nullopt, fx::kChainPrompt, 1));
+    const std::string rev1 = revisions.currentRevision().revisionId().value();
 
-    ChoiceGroup g2;
-    g2.id = "group_scope";
-    g2.dimension = "edit_scope";
-    g2.question = "What is the edit scope?";
-    g2.alternatives.push_back(ChoiceAlternative{.id = "alt_local", .interpretation = "Single file", .whyMaterial = "Minimal change"});
-    g2.alternatives.push_back(ChoiceAlternative{.id = "alt_global", .interpretation = "Entire project", .whyMaterial = "Broad refactor"});
+    fx::Pipeline p(fx::kChainPrompt, fx::chainAnalysis(session.value(), rev1));
+    ROCLINT_CHECK(InterventionStateMachine::applyChoice(p.analysis, p.decision, p.state, "alt_0_0").ok());
+    p.reevaluate();
+    const auto intent = IntentProvenanceBuilder::buildConfirmedIntent(fx::finalSnapshot(p.analysis, p.text, p.eval), p.policy, p.state, 2).value();
+    ROCLINT_CHECK(IntentProvenanceBuilder::isIntentValid(intent, rev1, revisions.status(), fx::finalSnapshot(p.analysis, p.text, p.eval)).ok());
 
-    snapshot.choiceGroups = {g1, g2};
+    // Typing marks the draft dirty: the intent can't be used even before a commit.
+    ROCLINT_CHECK(revisions.noteDraftEdit(revisions.stateVersion()).ok());
+    auto dirty = IntentProvenanceBuilder::isIntentValid(intent, rev1, revisions.status(), fx::finalSnapshot(p.analysis, p.text, p.eval));
+    ROCLINT_CHECK(!dirty.ok() && dirty.error().code == ErrorCode::StaleVersion);
 
-    // Explicit user selections
-    std::vector<ConfirmedItem> explicitItems = {
-        ConfirmedItem{
-            .itemId = "group_target",
-            .kind = IntentResolutionKind::SelectedAlternative,
-            .chosenValue = "alt_card",
-            .rationale = "Target FloatingCard presentation layer"
-        },
-        ConfirmedItem{
-            .itemId = "group_scope",
-            .kind = IntentResolutionKind::SelectedAlternative,
-            .chosenValue = "alt_local",
-            .rationale = "Minimal single file edit"
-        }
-    };
-
-    auto intent = IntentProvenanceBuilder::buildConfirmedIntent(
-        "rev_1",
-        snapshot,
-        explicitItems,
-        "Keep styling consistent with dark poster HUD theme"
-    );
-
-    ROCLINT_CHECK(!intent.id.empty());
-    ROCLINT_CHECK(intent.baseRevisionId == "rev_1");
-    ROCLINT_CHECK(intent.sourceSnapshotId == "snap_i07_multi");
-    ROCLINT_CHECK(intent.sourceSnapshotHash != 0);
-    ROCLINT_CHECK(intent.isCurrent);
-    ROCLINT_CHECK(intent.items.size() == 2);
-    ROCLINT_CHECK(intent.hasDecisionFor("group_target"));
-    ROCLINT_CHECK(intent.hasDecisionFor("group_scope"));
-
-    auto dec1 = intent.getDecision("group_target");
-    ROCLINT_CHECK(dec1.has_value() && dec1->chosenValue == "alt_card");
-
-    auto dec2 = intent.getDecision("group_scope");
-    ROCLINT_CHECK(dec2.has_value() && dec2->chosenValue == "alt_local");
-
-    ROCLINT_CHECK(IntentProvenanceBuilder::isIntentValid(intent, "rev_1", snapshot));
-    std::cout << "  [PASS] Multi-item snapshot resolved and confirmed with durable provenance.\n";
+    // Freezing the edit creates a new revision; the old intent and analysis are both stale.
+    auto rev2 = revisions.commitEdit(revisions.stateVersion(), fx::kChainPrompt + " Keep the API.", 3);
+    ROCLINT_CHECK(rev2.ok());
+    auto stale = IntentProvenanceBuilder::isIntentValid(intent, rev2.value().value(), revisions.status(), fx::finalSnapshot(p.analysis, p.text, p.eval));
+    ROCLINT_CHECK(!stale.ok() && stale.error().code == ErrorCode::StaleVersion);
 }
 
-void testScenario2AntiSilentConfirmation() {
-    std::cout << "--- Scenario 2: Anti-Silent Confirmation (Unacted Items) ---\n";
-    NormalizedAnalysis snapshot;
-    snapshot.id = "snap_i07_unacted";
-    snapshot.baseRevisionId = "rev_1";
-
-    ChoiceGroup visibleGroup;
-    visibleGroup.id = "group_visible";
-    visibleGroup.question = "Select target component";
-    visibleGroup.alternatives.push_back(ChoiceAlternative{.id = "alt_vis_a", .interpretation = "FloatingCard.qml"});
-    visibleGroup.alternatives.push_back(ChoiceAlternative{.id = "alt_vis_b", .interpretation = "DashboardWindow.qml"});
-
-    ChoiceGroup collapsedGroup;
-    collapsedGroup.id = "group_collapsed";
-    collapsedGroup.question = "Select secondary style";
-    collapsedGroup.alternatives.push_back(ChoiceAlternative{.id = "alt_col_a", .interpretation = "Minimal"});
-    collapsedGroup.alternatives.push_back(ChoiceAlternative{.id = "alt_col_b", .interpretation = "Verbose"});
-
-    snapshot.choiceGroups = {visibleGroup, collapsedGroup};
-
-    // User only interacted with visibleGroup
-    std::vector<ConfirmedItem> explicitItems = {
-        ConfirmedItem{
-            .itemId = "group_visible",
-            .kind = IntentResolutionKind::SelectedAlternative,
-            .chosenValue = "alt_vis_a",
-            .rationale = "User choice"
-        }
-    };
-
-    auto intent = IntentProvenanceBuilder::buildConfirmedIntent("rev_1", snapshot, explicitItems);
-
-    ROCLINT_CHECK(intent.hasDecisionFor("group_visible"));
-    // CONTRACT C05 / C06: Inferred, hidden, or unacted items MUST NOT be implicitly confirmed!
-    ROCLINT_CHECK(!intent.hasDecisionFor("group_collapsed"));
-    ROCLINT_CHECK(intent.items.size() == 1);
-    std::cout << "  [PASS] Hidden/collapsed items are NOT implicitly confirmed.\n";
+void testNoAmbiguityYieldsEmptyValidIntent() {
+    const std::string text = "Print hello world in Python.";
+    auto parsed = roclint::bridge::parseDiscoveryResponse(R"({"status": "no_ambiguity"})", "sess_i",
+                                                          "rev_sess_i_1", text);
+    ROCLINT_CHECK(parsed.ok());
+    fx::Pipeline p(text, parsed.value().analysis);
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Quiet);
+    ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::PromptAlreadyClear);
+    const auto intent = IntentProvenanceBuilder::buildConfirmedIntent(fx::finalSnapshot(p.analysis, p.text, p.eval), p.policy, p.state, 1).value();
+    ROCLINT_CHECK(intent.items.empty());
+    ROCLINT_CHECK(intent.unresolvedItemIds.empty());
+    ROCLINT_CHECK(IntentProvenanceBuilder::isIntentValid(intent, "rev_sess_i_1", RevisionStatus::Clean, fx::finalSnapshot(p.analysis, p.text, p.eval)).ok());
 }
 
-void testScenario3StaleIntentOnEdit() {
-    std::cout << "--- Scenario 3: Stale Intent on Prompt Edit ---\n";
-    NormalizedAnalysis snapshot;
-    snapshot.id = "snap_i07_edit";
-    snapshot.baseRevisionId = "rev_1";
+void testModelClarificationRequestBlocksIntent() {
+    const std::string text = "Fix it.";
+    auto parsed = roclint::bridge::parseDiscoveryResponse(
+        R"({"status": "needs_clarification", "clarification_question": "What should be fixed?"})", "sess_i",
+        "rev_sess_i_1", text);
+    ROCLINT_CHECK(parsed.ok());
+    fx::Pipeline p(text, parsed.value().analysis);
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Clarify);
+    ROCLINT_CHECK(p.decision.activeItemKind == ActiveItemKind::MissingDecision);
 
-    ChoiceGroup g;
-    g.id = "group_target";
-    g.alternatives.push_back(ChoiceAlternative{.id = "alt_1", .interpretation = "FloatingCard.qml"});
-    g.alternatives.push_back(ChoiceAlternative{.id = "alt_2", .interpretation = "ScreenPlacement.cpp"});
-    snapshot.choiceGroups = {g};
+    // An intent built before the user answers can't pass validation.
+    const auto early = IntentProvenanceBuilder::buildConfirmedIntent(fx::finalSnapshot(p.analysis, p.text, p.eval), p.policy, p.state, 1).value();
+    ROCLINT_CHECK(!IntentProvenanceBuilder::isIntentValid(early, "rev_sess_i_1", RevisionStatus::Clean, fx::finalSnapshot(p.analysis, p.text, p.eval)).ok());
 
-    auto intent = IntentProvenanceBuilder::buildConfirmedIntent("rev_1", snapshot, {
-        ConfirmedItem{.itemId = "group_target", .kind = IntentResolutionKind::SelectedAlternative, .chosenValue = "alt_1"}
-    });
-
-    ROCLINT_CHECK(IntentProvenanceBuilder::isIntentValid(intent, "rev_1", snapshot));
-
-    // 1. User edits prompt buffer -> revision bumps to rev_2
-    ROCLINT_CHECK(!IntentProvenanceBuilder::isIntentValid(intent, "rev_2", snapshot));
-
-    // 2. Snapshot content changes (e.g. underlying buffer text changed)
-    NormalizedAnalysis mutatedSnapshot = snapshot;
-    mutatedSnapshot.choiceGroups[0].alternatives[0].interpretation = "FloatingCardV2.qml";
-    ROCLINT_CHECK(!IntentProvenanceBuilder::isIntentValid(intent, "rev_1", mutatedSnapshot));
-
-    // 3. Mark intent non-current (DRAFT_DIRTY event)
-    intent.isCurrent = false;
-    ROCLINT_CHECK(!IntentProvenanceBuilder::isIntentValid(intent, "rev_1", snapshot));
-    std::cout << "  [PASS] Intent becomes immediately stale upon buffer edit or snapshot mutation.\n";
+    ROCLINT_CHECK(InterventionStateMachine::applyCustomText(p.analysis, p.decision, p.state, "The login crash").ok());
+    const auto answered = IntentProvenanceBuilder::buildConfirmedIntent(fx::finalSnapshot(p.analysis, p.text, p.eval), p.policy, p.state, 2).value();
+    ROCLINT_CHECK(IntentProvenanceBuilder::isIntentValid(answered, "rev_sess_i_1", RevisionStatus::Clean, fx::finalSnapshot(p.analysis, p.text, p.eval)).ok());
 }
+
+} // namespace
 
 int main() {
-    std::cout << "[TEST] Running I07 Intent Checkpoint Walkthrough...\n\n";
-
-    testScenario1MultiItemSnapshotResolution();
-    testScenario2AntiSilentConfirmation();
-    testScenario3StaleIntentOnEdit();
-
-    std::cout << "\n=========================================================\n";
-    std::cout << "  ALL I07 INTENT CHECKPOINT WALKTHROUGH SCENARIOS PASSED!\n";
-    std::cout << "=========================================================\n";
+    std::cout << "[Test Intent Checkpoint] Starting...\n";
+    testIntentGoesStaleWhenThePromptChanges();
+    testNoAmbiguityYieldsEmptyValidIntent();
+    testModelClarificationRequestBlocksIntent();
+    std::cout << "[Test Intent Checkpoint] All tests PASSED.\n";
     return 0;
 }

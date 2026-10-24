@@ -1,144 +1,237 @@
 #include "roclint/bridge/GraniteRewriteAdapter.hpp"
 
-#include <chrono>
-#include <sstream>
+#include "roclint/core/Json.hpp"
+#include "roclint/core/crypto/Sha256.hpp"
+#include "roclint/core/prompt_state/TextNormalization.hpp"
+#include "roclint/rewrite/RewriteValidator.hpp"
+
+#include <exception>
+#include <algorithm>
 
 namespace roclint::bridge {
 
-GraniteRewriteAdapter::GraniteRewriteAdapter(std::string modelPath)
-    : m_modelPath(modelPath.empty() ? "/models/granite-3b-q8_0.gguf" : std::move(modelPath)) {}
+using core::ErrorCode;
+using core::makeError;
+using core::Result;
+namespace json = core::json;
+namespace rw = core::rewrite;
 
-GraniteRewriteResponse GraniteRewriteAdapter::synthesizeRewrite(
-    const GraniteRewriteRequest& request) noexcept {
+namespace {
 
-    auto profileOpt = core::rewrite::ProfileRegistry::getProfile(request.rewriteProfileId);
-    if (!profileOpt.has_value()) {
-        return GraniteRewriteResponse{
-            .success = false,
-            .errorMessage = "UNKNOWN_REWRITE_PROFILE: " + request.rewriteProfileId
-        };
+[[nodiscard]] std::string questionFor(const core::analysis::NormalizedAnalysis& analysis, const std::string& id) {
+    for (const auto& g : analysis.choiceGroups) {
+        if (g.id == id) return g.question;
     }
-    const auto& profile = *profileOpt;
+    for (const auto& a : analysis.assumptions) {
+        if (a.id == id) return a.statement;
+    }
+    for (const auto& m : analysis.missingDecisions) {
+        if (m.id == id) return m.question;
+    }
+    for (const auto& c : analysis.conflicts) {
+        if (c.id == id) return c.description;
+    }
+    return {};
+}
 
-    if (request.confirmedIntent.id.empty()) {
-        return GraniteRewriteResponse{
-            .success = false,
-            .errorMessage = "MISSING_CONFIRMED_INTENT: Rewrite synthesis requires an explicit ConfirmedIntent"
-        };
+} // namespace
+
+std::string xmlEscape(std::string_view text) {
+    std::string out;
+    out.reserve(text.size() + 16);
+    for (const char c : text) {
+        switch (c) {
+            case '&': out += "&amp;"; break;
+            case '<': out += "&lt;"; break;
+            case '>': out += "&gt;"; break;
+            case '"': out += "&quot;"; break;
+            case '\'': out += "&apos;"; break;
+            default: out.push_back(c); break;
+        }
+    }
+    return out;
+}
+
+std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::RewriteProfileConfig& profile) {
+    const auto& intent = request.confirmedIntent;
+    std::string out;
+    out += "<instructions>\n";
+    out += "Instruction contract: granite.rewrite.format.v3\n";
+    out += "Rewrite the user's prompt so another AI system can follow it without guessing.\n";
+    out += "You are editing a prompt, not performing the task described inside it. Missing source code or "
+           "implementation details do not prevent preserving that task in a rewritten prompt.\n";
+    out += "Apply only the user's decisions listed below. Keep everything else the user wrote.\n";
+    out += "Do not add requirements, restrictions, file names, or paths that the user did not write.\n";
+    out += "Keep explicit prohibitions as direct prohibitions. Preserve their original sentences when possible; "
+           "do not replace a ban on changing something with a weaker promise that it will still work.\n";
+    out += "Leave open questions open; do not decide them.\n";
+    out += "Do not request extra requirements merely to improve the task's specificity. Use needs_clarification "
+           "only if editing would otherwise force a choice the user has not made.\n";
+    out += "Use compact JSON without indentation or optional whitespace outside strings.\n";
+    out += "Formatting: " + xmlEscape(profile.structuralInstructions) + "\n";
+    out += "The formatting applies INSIDE the rewritten_prompt JSON string. Use literal structure markers, "
+           "not XML entity spellings. Do not copy the original_prompt, instructions or decisions wrapper tags. "
+           "Do not invent background merely to fill a formatting section.\n";
+    if (profile.formatXmlTags)
+        out += R"EXAMPLE(Format example only: {"status":"rewritten","rewritten_prompt":"<task>Summarize the supplied notes.</task>"}
+)EXAMPLE";
+    else if (profile.formatMarkdownSections)
+        out += R"EXAMPLE(Format example only: {"status":"rewritten","rewritten_prompt":"# Goal\nSummarize the supplied notes."}
+)EXAMPLE";
+    out += "Reply with exactly one JSON object: {\"status\": \"rewritten\", \"rewritten_prompt\": string} "
+           "or {\"status\": \"needs_clarification\", \"question\": string}.\n";
+    out += "</instructions>\n";
+    out += "<original_prompt>" + xmlEscape(request.originalText) + "</original_prompt>\n";
+    out += "<decisions>\n";
+    for (const auto& item : intent.items) {
+        const std::string topic = questionFor(request.analysis.normalized, item.itemId);
+        std::string answer;
+        switch (item.kind) {
+            case core::intent::IntentResolutionKind::SelectedAlternative: answer = item.chosenValue; break;
+            case core::intent::IntentResolutionKind::CustomText: answer = item.customText; break;
+            case core::intent::IntentResolutionKind::UseOriginal: answer = "Keep the user's original wording"; break;
+            case core::intent::IntentResolutionKind::AcceptedAssumption: answer = "Yes, this is correct"; break;
+            case core::intent::IntentResolutionKind::DeclinedAssumption: answer = "No, do not assume this"; break;
+        }
+        out += "<decision><topic>" + xmlEscape(topic) + "</topic><answer>" + xmlEscape(answer) +
+               "</answer></decision>\n";
+    }
+    out += "</decisions>\n";
+    out += "<open_questions>\n";
+    for (const auto& id : intent.unresolvedItemIds) {
+        out += "<question>" + xmlEscape(questionFor(request.analysis.normalized, id)) + "</question>\n";
+    }
+    out += "</open_questions>\n";
+    return out;
+}
+
+const std::string& rewriteResponseSchema() {
+    static const std::string kSchema = R"JSON({"type":"object","properties":{
+"status":{"type":"string","enum":["rewritten","needs_clarification"]},
+"rewritten_prompt":{"type":"string"},"question":{"type":"string"}},"required":["status"]})JSON";
+    return kSchema;
+}
+
+Result<rw::RewriteProposal> GraniteRewriteAdapter::parseRewriteResponse(std::string_view modelOutput,
+                                                                        const GraniteRewriteRequest& request,
+                                                                        const rw::RewriteProfileConfig& profile,
+                                                                        const GraniteModelInfo& model,
+                                                                        std::int64_t nowMs) {
+    if (auto status = core::intent::IntentProvenanceBuilder::isIntentValid(
+            request.confirmedIntent, request.revisionId, core::RevisionStatus::Clean, request.analysis); !status.ok()) return status.error();
+    if (request.analysis.normalized.sessionId != request.sessionId ||
+        request.analysis.revisionTextHash != core::crypto::Sha256::hexDigest(request.originalText) ||
+        core::analysis::validateNormalizedAnalysis(request.analysis.normalized, request.originalText).status == core::analysis::AnalysisValidationStatus::Invalid) {
+        return makeError(ErrorCode::ValidationFailed, "Rewrite input differs from the final analysis revision");
+    }
+    if (modelOutput.size() > kMaxRewriteResponseBytes) {
+        return makeError(ErrorCode::InvalidInput, "Rewrite response exceeds the 64 KB limit");
+    }
+    auto parsed = json::parse(modelOutput, json::ParseLimits{kMaxRewriteResponseBytes, 8});
+    if (!parsed.ok()) {
+        return parsed.error();
+    }
+    const auto& root = parsed.value();
+    if (!root.isObject()) {
+        return makeError(ErrorCode::InvalidInput, "Rewrite response root must be a JSON object");
+    }
+    auto status = json::requireString(root, "status");
+    if (!status.ok()) {
+        return status.error();
     }
 
-    if (request.promptString == "NEEDS_CLARIFICATION_TRIGGER") {
-        core::rewrite::RewriteProposal clarProp{
-            .id = "prop_clar_" + request.revisionId,
-            .baseRevisionId = request.revisionId,
-            .confirmedIntentId = request.confirmedIntent.id,
-            .sourceSnapshotHash = request.confirmedIntent.sourceSnapshotHash,
-            .rewriteProfileId = profile.id,
-            .status = core::rewrite::ProposalStatus::NeedsClarification
-        };
-        return GraniteRewriteResponse{
-            .success = true,
-            .proposal = clarProp
-        };
-    }
+    rw::RewriteProposal proposal;
+    proposal.sessionId = request.sessionId;
+    proposal.baseRevisionId = request.revisionId;
+    proposal.intentId = request.confirmedIntent.id;
+    proposal.intentHash = request.confirmedIntent.intentHash;
+    proposal.snapshotId = request.confirmedIntent.snapshotId;
+    proposal.snapshotHash = request.confirmedIntent.snapshotHash;
+    proposal.rewriteProfileId = profile.id;
+    proposal.modelId = model.modelId;
+    proposal.modelDigest = model.digest;
+    proposal.quantization = model.quantization;
+    proposal.transport = model.transport;
+    proposal.originalText = request.originalText;
+    proposal.proposalEditGeneration = request.proposalEditGeneration;
+    proposal.createdAtMs = nowMs;
 
-    std::string compiled;
-    std::ostringstream oss;
-
-    if (profile.family == core::rewrite::ProfileFamily::AnthropicStructured) {
-        oss << "<task>\n" << request.promptString << "\n</task>\n\n";
-        oss << "<context>\n";
-        for (const auto& item : request.confirmedIntent.items) {
-            oss << "  <resolved_choice item=\"" << item.itemId << "\">" << item.chosenValue << "</resolved_choice>\n";
+    if (status.value() == "needs_clarification") {
+        auto question = json::requireString(root, "question");
+        if (!question.ok() || question.value().empty()) {
+            return makeError(ErrorCode::InvalidInput, "needs_clarification reply must include a question");
         }
-        if (!request.confirmedIntent.customInstructions.empty()) {
-            oss << "  <instructions>" << request.confirmedIntent.customInstructions << "</instructions>\n";
+        proposal.status = rw::ProposalStatus::NeedsClarification;
+        proposal.clarificationQuestion = core::normalizeLineEndings(question.value());
+    } else if (status.value() == "rewritten") {
+        auto text = json::requireString(root, "rewritten_prompt");
+        if (!text.ok()) {
+            return text.error();
         }
-        oss << "</context>\n\n";
-        oss << "<constraints>\n";
-        oss << "  <constraint>Maintain existing public signatures and signals unchanged</constraint>\n";
-        oss << "</constraints>";
-        compiled = oss.str();
-    } else if (profile.family == core::rewrite::ProfileFamily::OpenAiStructured) {
-        oss << "# Goal\n" << request.promptString << "\n\n";
-        oss << "# Resolved Context\n";
-        for (const auto& item : request.confirmedIntent.items) {
-            oss << "- Target " << item.itemId << ": " << item.chosenValue;
-            if (!item.rationale.empty()) oss << " (" << item.rationale << ")";
-            oss << "\n";
+        proposal.rewrittenText = core::normalizeLineEndings(text.value());
+        if (proposal.rewrittenText.find_first_not_of(" \t\n") == std::string::npos) {
+            return makeError(ErrorCode::InvalidInput, "Model returned an empty rewrite");
         }
-        if (!request.confirmedIntent.customInstructions.empty()) {
-            oss << "- Custom Guidance: " << request.confirmedIntent.customInstructions << "\n";
-        }
-        oss << "\n# Constraints\n";
-        oss << "- Do not alter unapproved public interfaces or data schemas\n";
-        oss << "- Verify changes compile with standard C++20 / Qt6 toolchains\n";
-        compiled = oss.str();
-    } else if (profile.family == core::rewrite::ProfileFamily::LocalCompact) {
-        oss << "GOAL: " << request.promptString << "\n";
-        oss << "INTENT: ";
-        bool first = true;
-        for (const auto& item : request.confirmedIntent.items) {
-            if (!first) oss << "; ";
-            oss << item.itemId << "=" << item.chosenValue;
-            first = false;
-        }
-        oss << "\nLOCK: Keep interfaces stable";
-        compiled = oss.str();
+        proposal.status = rw::ProposalStatus::ProposalReady;
+        proposal.diffText = rw::RewriteValidator::computeAccessibleDiff(proposal.originalText, proposal.rewrittenText);
+        proposal.constraints =
+            rw::RewriteValidator::deriveConstraints(request.confirmedIntent, profile, proposal.rewrittenText);
     } else {
-        // Generic profile default
-        oss << "/* ROCLINT [PROFILE: GENERIC@1] */\n";
-        for (const auto& item : request.confirmedIntent.items) {
-            oss << "/* INTENT [" << item.itemId << "]: " << item.chosenValue;
-            if (!item.rationale.empty()) oss << " (" << item.rationale << ")";
-            oss << " */\n";
-        }
-        if (!request.confirmedIntent.customInstructions.empty()) {
-            oss << "/* INSTRUCTION: " << request.confirmedIntent.customInstructions << " */\n";
-        }
-        oss << "\n" << request.promptString << "\n\n";
-        oss << "/* CONSTRAINTS: VERIFY CHANGES ACROSS REFERENCED MODULES */";
-        compiled = oss.str();
+        return makeError(ErrorCode::InvalidInput, "Unknown rewrite status '" + status.value() + "'");
     }
 
-    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
+    rw::ProposalHasher::seal(proposal);
+    return proposal;
+}
 
-    core::rewrite::RewriteProposal proposal{
-        .id = "prop_" + request.revisionId + "_" + std::to_string(now),
-        .baseRevisionId = request.revisionId,
-        .confirmedIntentId = request.confirmedIntent.id,
-        .sourceSnapshotHash = request.confirmedIntent.sourceSnapshotHash,
-        .rewriteProfileId = profile.id,
-        .compiledPrompt = compiled,
-        .diffText = core::rewrite::RewriteValidator::computeAccessibleDiff(request.promptString, compiled),
-        .status = core::rewrite::ProposalStatus::ProposalReady,
-        .createdAtTimestamp = static_cast<std::uint64_t>(now)
-    };
-
-    // Add constraint proof items
-    for (const auto& item : request.confirmedIntent.items) {
-        proposal.constraints.push_back(core::rewrite::ConstraintItem{
-            .id = "intent_" + item.itemId,
-            .description = "User choice for " + item.itemId + " is preserved (" + item.chosenValue + ")",
-            .status = core::rewrite::ConstraintStatus::UserConfirmed,
-            .evidence = item.rationale.empty() ? item.chosenValue : item.rationale
+Result<rw::RewriteProposal> GraniteRewriteAdapter::synthesizeRewrite(const GraniteRewriteRequest& request,
+                                                                     GraniteAdapter& runtime,
+                                                                     const GraniteTransport& transport,
+                                                                     std::int64_t nowMs) {
+    const auto profile = rw::ProfileRegistry::getProfile(request.rewriteProfileId);
+    if (!profile.has_value()) {
+        return makeError(ErrorCode::InvalidInput, "Unknown rewrite profile '" + request.rewriteProfileId + "'");
+    }
+    if (request.confirmedIntent.id.empty() || request.confirmedIntent.baseRevisionId != request.revisionId) {
+        return makeError(ErrorCode::PreconditionFailed, "Rewrite requires a confirmed intent for this revision");
+    }
+    if (request.analysis.payloadVersion == 4) {
+        const auto& triage = request.analysis.promptTriage;
+        const bool chosen = std::any_of(request.confirmedIntent.items.begin(), request.confirmedIntent.items.end(), [](const auto& item) {
+            return item.kind == core::intent::IntentResolutionKind::SelectedAlternative || item.kind == core::intent::IntentResolutionKind::CustomText ||
+                item.kind == core::intent::IntentResolutionKind::AcceptedAssumption || item.kind == core::intent::IntentResolutionKind::DeclinedAssumption;
         });
+        if (!core::analysis::validateAnalysisSnapshot(request.analysis).ok() || !triage ||
+            core::analysis::routePromptTriage(*triage).value() != core::analysis::PromptTriageRoute::Clarify || !chosen)
+            return makeError(ErrorCode::PreconditionFailed, "S1-first rewrite requires ambiguous classifier evidence and a confirmed user choice");
+        if (const auto status = core::intent::IntentProvenanceBuilder::isIntentValid(
+                request.confirmedIntent, request.revisionId, core::RevisionStatus::Clean, request.analysis); !status.ok()) return status.error();
+    }
+    if (!core::hasCanonicalLineEndings(request.originalText)) {
+        return makeError(ErrorCode::InvalidInput, "Rewrite source text must use canonical LF line endings");
+    }
+    if (!transport) {
+        return makeError(ErrorCode::ProviderUnavailable, "No Granite transport is configured");
     }
 
-    proposal.constraints.push_back(core::rewrite::ConstraintItem{
-        .id = "profile_format",
-        .description = "Prompt conforms to " + profile.id + " structural requirements",
-        .status = core::rewrite::ConstraintStatus::MechanicallyVerified,
-        .evidence = profile.structuralInstructions
-    });
+    auto lease = runtime.tryAcquire();
+    if (!lease.has_value()) {
+        return makeError(ErrorCode::ProviderUnavailable,
+                         "Granite runtime is " + std::string(toString(runtime.state())) + "; rewrite rejected");
+    }
 
-    proposal.proposalHash = core::rewrite::ProposalHasher::computeProposalHash(proposal);
-
-    return GraniteRewriteResponse{
-        .success = true,
-        .proposal = proposal
-    };
+    Result<std::string> raw = makeError(ErrorCode::Internal, "Transport did not run");
+    try {
+        raw = transport(buildRewritePrompt(request, *profile));
+    } catch (const std::exception& ex) {
+        raw = makeError(ErrorCode::ProviderFailed, std::string("Transport threw: ") + ex.what());
+    }
+    if (!raw.ok()) {
+        if (raw.error().code != core::ErrorCode::StaleVersion && raw.error().code != core::ErrorCode::PreconditionFailed &&
+            raw.error().code != core::ErrorCode::ValidationFailed) lease->markFailed(raw.error().message);
+        return raw.error();
+    }
+    return parseRewriteResponse(raw.value(), request, *profile, runtime.modelInfo(), nowMs);
 }
 
 } // namespace roclint::bridge

@@ -1,181 +1,138 @@
-#include "roclint/analysis/NormalizedAnalysis.hpp"
+#include "roclint/bridge/GraniteAdapter.hpp"
 #include "roclint/bridge/GraniteRewriteAdapter.hpp"
-#include "roclint/intent/ConfirmedIntent.hpp"
+#include "roclint/core/prompt_state/RevisionState.hpp"
 #include "roclint/review/ApprovalRecord.hpp"
-#include "roclint/rewrite/RewriteProposal.hpp"
 #include "roclint/rewrite/RewriteValidator.hpp"
 #include "roclint/storage/Database.hpp"
 #include "roclint/storage/PromptRepository.hpp"
 #include "support/check.hpp"
+#include "support/storage_fixtures.hpp"
 
 #include <iostream>
-#include <string>
+#include <set>
 
 using namespace roclint::core;
-using namespace roclint::core::analysis;
-using namespace roclint::core::intent;
-using namespace roclint::core::review;
-using namespace roclint::core::rewrite;
-using namespace roclint::storage;
 using namespace roclint::bridge;
+using namespace roclint::storage;
 
-void testScenario1ReviewAndApproveProposal() {
-    std::cout << "--- 1. Review Proposal & Approve Wording ---\n";
-    SessionId sess("sess_i09");
-    RevisionId rev("rev_1");
+namespace {
 
-    NormalizedAnalysis snapshot;
-    snapshot.id = "snap_i09";
-    snapshot.baseRevisionId = "rev_1";
-    ChoiceGroup g;
-    g.id = "target_component";
-    g.alternatives.push_back(ChoiceAlternative{.id = "alt_card", .interpretation = "FloatingCard.qml"});
-    snapshot.choiceGroups.push_back(g);
+// Full flow: commit -> discovery -> clarification -> intent -> rewrite -> review -> approval,
+// persisting each artifact and re-validating after restore.
+void testEndToEndApprovalAndRestore() {
+    Database db;
+    ROCLINT_CHECK(db.open(":memory:").ok());
+    PromptRepository repo(db);
+    ROCLINT_CHECK(repo.migrate().ok());
 
-    auto intent = IntentProvenanceBuilder::buildConfirmedIntent("rev_1", snapshot, {
-        ConfirmedItem{.itemId = "target_component", .chosenValue = "alt_card"}
-    });
+    const SessionId sid("sess_flow");
+    RevisionState revisions(
+        PromptRevision(sid, RevisionState::makeRevisionId(sid, 1), std::nullopt, fx::kChainPrompt, 10));
+    ROCLINT_CHECK(repo.createSessionWithRootRevision(revisions.currentRevision(), 10).ok());
+    const std::string rev = revisions.currentRevision().revisionId().value();
 
-    GraniteRewriteAdapter adapter;
-    auto resp = adapter.synthesizeRewrite({
-        .sessionId = sess.value(),
-        .revisionId = rev.value(),
-        .promptString = "Fix layout overflow",
-        .confirmedIntent = intent,
-        .rewriteProfileId = "GENERIC@1"
-    });
-    ROCLINT_CHECK(resp.success && resp.proposal.has_value());
-    const auto& proposal = *resp.proposal;
+    GraniteAdapter runtime;
+    ROCLINT_CHECK(runtime.beginLoading());
+    ROCLINT_CHECK(runtime.completeLoading(fx::testModel()));
 
-    // Validate with A10
-    auto val = RewriteValidator::validateProposal(proposal, rev.value(), intent);
-    ROCLINT_CHECK(val.isValid);
+    auto discovered = runtime.discoverOptions(
+        GraniteOptionDiscoveryRequest{sid.value(), rev, fx::kChainPrompt, "CODE_EDITOR"},
+        [](std::string_view) -> Result<std::string> {
+            return std::string(R"({"status": "options_generated", "choice_groups": [
+              {"question": "Which kind of speed matters?", "alternatives": [
+                {"label": "Lower latency per call", "why_material": "Optimizes single requests", "evidence": ["runs faster"]},
+                {"label": "Higher batch throughput", "why_material": "Optimizes bulk jobs", "evidence": ["runs faster"]}]}]})");
+        });
+    ROCLINT_CHECK(discovered.ok());
+    fx::Pipeline p(fx::kChainPrompt, discovered.value().analysis);
+    fx::recordSnapshotAttempts(repo, fx::finalSnapshot(p.analysis, p.text, p.eval));
+    ROCLINT_CHECK(repo.insertAnalysisSnapshot(fx::finalSnapshot(p.analysis, p.text, p.eval), 20).ok());
 
-    // Create Approval with explicit proof fields
-    auto approval = ApprovalFactory::createApproval(
-        sess,
-        rev,
-        snapshot.id,
-        intent.sourceSnapshotHash,
-        intent.id,
-        proposal.id,
-        proposal.proposalHash,
-        proposal.compiledPrompt,
-        0
-    );
+    ROCLINT_CHECK(intent::InterventionStateMachine::applyChoice(p.analysis, p.decision, p.state, "alt_0_0").ok());
+    p.reevaluate();
+    ROCLINT_CHECK(p.decision.verdict == intent::InterventionVerdict::Quiet);
+    const auto confirmed = intent::IntentProvenanceBuilder::buildConfirmedIntent(fx::finalSnapshot(p.analysis, p.text, p.eval), p.policy, p.state, 30).value();
+    ROCLINT_CHECK(repo.insertIntentVersion(confirmed, 30).ok());
 
-    ROCLINT_CHECK(approval.isCurrent);
-    ROCLINT_CHECK(ApprovalFactory::isApprovalValid(approval, rev.value(), proposal.id, proposal.proposalHash));
-    std::cout << "  [PASS] Proposal reviewed and approved with durable proof fields.\n";
+    GraniteRewriteRequest req;
+    req.sessionId = sid.value();
+    req.revisionId = rev;
+    req.originalText = fx::kChainPrompt;
+    auto finalAnalysis = fx::finalSnapshot(p.analysis, p.text, p.eval);
+    req.analysis = finalAnalysis;
+    req.confirmedIntent = confirmed;
+    req.rewriteProfileId = "OPENAI_STRUCTURED@1";
+    req.proposalEditGeneration = revisions.proposalEditGeneration();
+    auto proposal = GraniteRewriteAdapter::synthesizeRewrite(
+        req, runtime,
+        [](std::string_view) -> Result<std::string> {
+            return fx::rewriteReply("# Goal\nRefactor the parser for lower latency per call.");
+        },
+        40);
+    ROCLINT_CHECK(proposal.ok());
+    ROCLINT_CHECK(revisions.noteProposalEdit(revisions.stateVersion()).ok());
+    ROCLINT_CHECK(repo.advanceSessionState(revisions, revisions.stateVersion() - 1, 40).ok());
+    ROCLINT_CHECK(repo.insertProposal(proposal.value(), 40).ok());
+
+    const auto validation =
+        rewrite::RewriteValidator::validateProposal(proposal.value(), sid.value(), rev, confirmed, {});
+    ROCLINT_CHECK(validation.isValid);
+
+    review::ApprovalContext ctx;
+    ctx.sessionId = sid.value();
+    ctx.revisionId = rev;
+    ctx.stateVersion = revisions.stateVersion();
+    ctx.draftEditGeneration = revisions.draftEditGeneration();
+    ctx.proposalEditGeneration = proposal.value().proposalEditGeneration;
+    ctx.revisionStatus = revisions.status();
+    ctx.analysis = &finalAnalysis;
+    ctx.intent = &confirmed;
+    ctx.proposal = &proposal.value();
+    ctx.validatorVersion = rewrite::kValidatorVersion;
+    ctx.policyVersion = analysis::MaterialityPolicyV1::kPolicyVersion;
+    auto approval = review::ApprovalFactory::createApproval(ctx, 50);
+    ROCLINT_CHECK(approval.ok());
+    ROCLINT_CHECK(review::ApprovalFactory::isApprovalValid(approval.value(), ctx));
+    ROCLINT_CHECK(repo.insertApproval(approval.value()).ok());
+
+    // Restore and re-validate every link from storage alone.
+    auto restored = repo.restoreSession(sid).value();
+    ROCLINT_CHECK(restored.approval.has_value());
+    review::ApprovalContext again = ctx;
+    again.analysis = &*restored.analysis;
+    again.intent = &*restored.intent;
+    again.proposal = &*restored.proposal;
+    again.stateVersion = restored.session.stateVersion;
+    again.draftEditGeneration = restored.session.draftEditGeneration;
+    ROCLINT_CHECK(intent::IntentProvenanceBuilder::isIntentValid(*restored.intent, rev, RevisionStatus::Clean,
+                                                                 *restored.analysis)
+                      .ok());
+    ROCLINT_CHECK(rewrite::RewriteValidator::validateProposal(*restored.proposal, sid.value(), rev, *restored.intent, {})
+                      .isValid);
+    ROCLINT_CHECK(review::ApprovalFactory::isApprovalValid(*restored.approval, again));
+
+    // Typing in the draft makes the approval unusable immediately.
+    ROCLINT_CHECK(revisions.noteDraftEdit(revisions.stateVersion()).ok());
+    ctx.revisionStatus = revisions.status();
+    ctx.draftEditGeneration = revisions.draftEditGeneration();
+    ROCLINT_CHECK(!review::ApprovalFactory::isApprovalValid(approval.value(), ctx));
+    std::cout << "[Approval Checkpoint] commit -> discovery -> intent -> rewrite -> approval -> restore OK\n";
 }
 
-void testScenario2ProposalEditInvalidatesApproval() {
-    std::cout << "--- 2. Proposal Edit Invalidates Approval (Edit Generation Bumping) ---\n";
-    SessionId sess("sess_i09");
-    RevisionId rev("rev_1");
-
-    auto approval = ApprovalFactory::createApproval(
-        sess,
-        rev,
-        "snap_1",
-        100,
-        "intent_1",
-        "prop_1",
-        200,
-        "Initial approved text",
-        0
-    );
-
-    ROCLINT_CHECK(ApprovalFactory::isApprovalValid(approval, rev.value(), "prop_1", 200));
-
-    // User edits proposal wording -> proposalHash changes and editGeneration bumps!
-    std::string editedText = "Initial approved text with manual tweaks";
-    std::uint64_t newProposalHash = 300; // changed
-
-    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(approval, rev.value(), "prop_1", newProposalHash));
-    std::cout << "  [PASS] Editing proposal invalidates prior approval immediately.\n";
+void testReviewItemsMustBeAcknowledgedBeforeApproval() {
+    fx::Chain c("sess_a", 1, "Make the parser quicker.");
+    const auto pending = rewrite::RewriteValidator::validateProposal(c.proposal, c.session, c.revision, c.intent, {});
+    ROCLINT_CHECK(pending.structurallyValid && !pending.isValid);
+    std::set<std::string> acks(pending.pendingAcknowledgments.begin(), pending.pendingAcknowledgments.end());
+    ROCLINT_CHECK(rewrite::RewriteValidator::validateProposal(c.proposal, c.session, c.revision, c.intent, acks).isValid);
 }
 
-void testScenario3ReapproveAndInspectDurableProof() {
-    std::cout << "--- 3. Re-approve and Inspect Persisted Proof after Reopen ---\n";
-    const std::string dbPath = "/tmp/roclint_test_i09.db";
-    std::remove(dbPath.c_str());
-
-    SessionId sess("sess_reopen");
-    RevisionId rev("rev_1");
-
-    {
-        Database db(dbPath);
-        PromptRepository repo(db);
-        repo.migrate();
-
-        repo.createSession(sess, 100);
-        repo.saveRevision(PromptRevision(sess, rev, std::nullopt, "Draft", 100));
-
-        auto appr = ApprovalFactory::createApproval(
-            sess,
-            rev,
-            "snap_durable",
-            0xFEEDFACEULL,
-            "intent_durable",
-            "prop_durable",
-            0xCAFEBABEULL,
-            "/* ROCLINT [PROFILE: GENERIC@1] */ Final approved text",
-            1, // edit generation 1
-            150
-        );
-        repo.saveApproval(appr);
-    }
-
-    // Reopen database connection to verify durability
-    {
-        Database dbReopen(dbPath);
-        PromptRepository repoReopen(dbReopen);
-
-        auto curr = repoReopen.getCurrentApproval(sess);
-        ROCLINT_CHECK(curr.has_value());
-        ROCLINT_CHECK(curr->sessionId == sess);
-        ROCLINT_CHECK(curr->revisionId == rev);
-        ROCLINT_CHECK(curr->snapshotId == "snap_durable");
-        ROCLINT_CHECK(curr->snapshotHash == 0xFEEDFACEULL);
-        ROCLINT_CHECK(curr->intentId == "intent_durable");
-        ROCLINT_CHECK(curr->proposalId == "prop_durable");
-        ROCLINT_CHECK(curr->proposalHash == 0xCAFEBABEULL);
-        ROCLINT_CHECK(curr->editGeneration == 1);
-        ROCLINT_CHECK(curr->isCurrent);
-        ROCLINT_CHECK(curr->bindingHash == curr->computeBindingHash());
-    }
-
-    std::remove(dbPath.c_str());
-    std::cout << "  [PASS] Persisted proof inspected and validated after database reopen.\n";
-}
-
-void testScenario4DiffAndConstraintLintStatesWithoutColorAlone() {
-    std::cout << "--- 4. Diff and Constraint Lint Non-Color Differentiation ---\n";
-    std::string original = "Handle network timeout";
-    std::string compiled = "/* ROCLINT SPEC */\nHandle network timeout gracefully\n/* CONSTRAINTS */";
-
-    std::string diff = RewriteValidator::computeAccessibleDiff(original, compiled);
-    ROCLINT_CHECK(diff.find("+") != std::string::npos);
-
-    // Verify all 4 typed constraint states have distinct non-color identifiers
-    ROCLINT_CHECK(std::string(toString(ConstraintStatus::MechanicallyVerified)) == "MECHANICALLY_VERIFIED");
-    ROCLINT_CHECK(std::string(toString(ConstraintStatus::UserConfirmed)) == "USER_CONFIRMED");
-    ROCLINT_CHECK(std::string(toString(ConstraintStatus::SemanticReviewRequired)) == "SEMANTIC_REVIEW_REQUIRED");
-    ROCLINT_CHECK(std::string(toString(ConstraintStatus::Failed)) == "FAILED");
-    std::cout << "  [PASS] All 4 constraint states and diff indicators verify non-color accessibility.\n";
-}
+} // namespace
 
 int main() {
-    std::cout << "[TEST] Running I09 Approval Checkpoint Integration Walkthrough...\n\n";
-
-    testScenario1ReviewAndApproveProposal();
-    testScenario2ProposalEditInvalidatesApproval();
-    testScenario3ReapproveAndInspectDurableProof();
-    testScenario4DiffAndConstraintLintStatesWithoutColorAlone();
-
-    std::cout << "\n=========================================================\n";
-    std::cout << "  ALL I09 APPROVAL CHECKPOINT WALKTHROUGH SCENARIOS PASSED!\n";
-    std::cout << "=========================================================\n";
+    std::cout << "[Test Approval Checkpoint] Starting...\n";
+    testEndToEndApprovalAndRestore();
+    testReviewItemsMustBeAcknowledgedBeforeApproval();
+    std::cout << "[Test Approval Checkpoint] All tests PASSED.\n";
     return 0;
 }

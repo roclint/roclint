@@ -1,6 +1,10 @@
 #pragma once
 
-#include "roclint/analysis/NormalizedAnalysis.hpp"
+#include "roclint/analysis/MaterialityPolicy.hpp"
+#include "roclint/analysis/AnalysisSnapshot.hpp"
+#include "roclint/core/Result.hpp"
+#include "roclint/core/prompt_state/RevisionState.hpp"
+#include "roclint/intent/InterventionStateMachine.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -14,49 +18,56 @@ enum class IntentResolutionKind {
     SelectedAlternative,
     CustomText,
     UseOriginal,
-    Withdrawn
+    AcceptedAssumption,
+    DeclinedAssumption
 };
 
 struct ConfirmedItem {
     std::string itemId{};
     IntentResolutionKind kind{IntentResolutionKind::SelectedAlternative};
-    std::string chosenValue{};
+    std::string chosenAlternativeId{}; // SelectedAlternative only
+    std::string chosenValue{};         // Human-readable wording of the decision
+    std::string customText{};          // CustomText only
     std::string rationale{};
 
     bool operator==(const ConfirmedItem&) const = default;
 };
 
+// C06 intent version: bound to one revision and one sealed analysis snapshot.
 struct ConfirmedIntent {
-    std::string id{};
+    std::string id{};          // intent_<intentHash>
+    std::string intentHash{};
+    std::string sessionId{};
     std::string baseRevisionId{};
-    std::string sourceSnapshotId{};
-    std::uint64_t sourceSnapshotHash{0};
+    std::string snapshotId{};
+    std::string snapshotHash{};
+    std::vector<std::string> visibleItemIds{};
     std::vector<ConfirmedItem> items{};
-    std::string customInstructions{};
-    std::uint64_t createdAtTimestamp{0};
-    bool isCurrent{true};
+    std::vector<std::string> unresolvedItemIds{};
+    std::vector<std::string> rejectedItemIds{};
+    std::int64_t createdAtMs{0};
 
-    [[nodiscard]] bool hasDecisionFor(const std::string& itemId) const noexcept;
-    [[nodiscard]] std::optional<ConfirmedItem> getDecision(const std::string& itemId) const noexcept;
+    [[nodiscard]] bool hasDecisionFor(std::string_view itemId) const;
+    [[nodiscard]] std::optional<ConfirmedItem> getDecision(std::string_view itemId) const;
 
     bool operator==(const ConfirmedIntent&) const = default;
 };
 
 class IntentProvenanceBuilder {
 public:
-    [[nodiscard]] static std::uint64_t computeSnapshotHash(
-        const analysis::NormalizedAnalysis& snapshot) noexcept;
+    [[nodiscard]] static std::string computeIntentHash(const ConfirmedIntent& intent);
 
-    [[nodiscard]] static ConfirmedIntent buildConfirmedIntent(
-        std::string_view baseRevisionId,
-        const analysis::NormalizedAnalysis& sourceSnapshot,
-        const std::vector<ConfirmedItem>& explicitItems,
-        std::string_view customInstructions = "") noexcept;
+    // Builds the intent strictly from explicit user actions recorded in the working state.
+    // Material items without an explicit resolution are listed as unresolved, never invented.
+    [[nodiscard]] static Result<ConfirmedIntent> buildConfirmedIntent(const analysis::AnalysisSnapshot& snapshot,
+                                                                      const analysis::OverallPolicyResult& policy,
+                                                                      const WorkingIntentState& state,
+                                                                      std::int64_t createdAtMs);
 
-    [[nodiscard]] static bool isIntentValid(
-        const ConfirmedIntent& intent,
-        std::string_view currentRevisionId,
-        const analysis::NormalizedAnalysis& currentSnapshot) noexcept;
+    [[nodiscard]] static Status isIntentValid(const ConfirmedIntent& intent,
+                                              std::string_view currentRevisionId,
+                                              RevisionStatus revisionStatus,
+                                              const analysis::AnalysisSnapshot& currentSnapshot);
 };
 
 [[nodiscard]] const char* toString(IntentResolutionKind kind) noexcept;

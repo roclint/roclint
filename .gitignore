@@ -4,6 +4,13 @@ build-*/
 cmake-build-*/
 out/
 .venv/
+__pycache__/
+*.pyc
+
+# Model weights belong in the configured application data/model folder.
+*.gguf
+*.safetensors
+*.onnx
 aqtinstall.log
 
 # Compiled Object Files and Libraries
@@ -36,3 +43,7 @@ CMakeUserPresets.json
 # Local diagnostic screenshots
 cadroc_card_render.png
 roclint_card_render.png
+
+# Local agent coordination and root-level CTest run logs; retain locally, exclude from source delivery.
+/.agents/
+/Testing/

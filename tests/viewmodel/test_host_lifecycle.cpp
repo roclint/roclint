@@ -2,8 +2,6 @@
 #include "support/check.hpp"
 
 #include <QTemporaryDir>
-#include <QFile>
-#include <QDir>
 #include <iostream>
 
 using roclint::host::CardVisibility;
@@ -13,7 +11,9 @@ using roclint::host::HostState;
 int main(int /*argc*/, char* /*argv*/[]) {
     std::cout << "[Roclint Host Lifecycle Test] Starting...\n";
 
-    HostController controller;
+    HostController controller(QStringLiteral(":memory:"));
+
+    controller.setLegacyDiscoveryForTesting(true);
 
     int showRequests = 0;
     int hideRequests = 0;
@@ -149,47 +149,38 @@ int main(int /*argc*/, char* /*argv*/[]) {
     ROCLINT_CHECK(!controller.isDashboardVisible());
     std::cout << "  [PASS] requestQuit hides card & dashboard, emits quitRequested once, blocks re-show.\n";
 
-    // 10. Julia-1 Model Detection & S1 Download Invokable
+    // 10. Runtime and scorer status are reported honestly before any model is connected.
     {
-        HostController testController;
-        // Verify default status reflects heuristic mode when not loaded
-        std::cout << "  [INFO] Initial juliaModelStatus: " << testController.juliaModelStatus().toStdString() << "\n";
-        ROCLINT_CHECK(!testController.juliaModelStatus().isEmpty());
+        HostController fresh(QStringLiteral(":memory:"));
+        fresh.setLegacyDiscoveryForTesting(true);
+        ROCLINT_CHECK(fresh.isStorageAvailable());
+        ROCLINT_CHECK(fresh.modelRuntimeState() == "UNLOADED");
+        ROCLINT_CHECK(!fresh.modelEngineStatus().contains(QStringLiteral("Ready")));
+        ROCLINT_CHECK(fresh.scorerEngine() == "JULIA_LOCAL");
+        ROCLINT_CHECK(fresh.scorerStatus().contains(QStringLiteral("unavailable")));
+        ROCLINT_CHECK(!fresh.isAmbiguityScored());
 
-        // Test connected folder scanning
-        QTemporaryDir tempDir;
-        ROCLINT_CHECK(tempDir.isValid());
-        testController.setModelDirectory(tempDir.path());
-        ROCLINT_CHECK(!testController.hasJuliaModel());
+        ROCLINT_CHECK(fresh.setScorerEngine(QStringLiteral("jev")));
+        ROCLINT_CHECK(fresh.lastError().isEmpty());
+        ROCLINT_CHECK(fresh.setScorerEngine(QStringLiteral("julia")));
+        ROCLINT_CHECK(!fresh.setScorerEngine(QStringLiteral("unknown")));
+        ROCLINT_CHECK(!fresh.lastError().isEmpty());
+        ROCLINT_CHECK(fresh.scorerEngine() == "JULIA_LOCAL");
+        std::cout << "  [PASS] No model: runtime UNLOADED, scorer unranked, unknown engines refused.\n";
+    }
 
-        // Create dummy model.onnx in connected folder
-        QDir(tempDir.path()).mkdir(QStringLiteral("julia-1"));
-        QFile dummyOnnx(tempDir.path() + QStringLiteral("/julia-1/model.onnx"));
-        ROCLINT_CHECK(dummyOnnx.open(QIODevice::WriteOnly));
-        dummyOnnx.write(QByteArray(105000, 'x'));
-        dummyOnnx.close();
-
-        testController.refreshAvailableModels();
-        ROCLINT_CHECK(testController.hasJuliaModel());
-        ROCLINT_CHECK(testController.juliaModelStatus().contains(QStringLiteral("READY")));
-
-        // Verify Julia-1 does NOT appear in availableModels (SLM list) to prevent deselecting active Granite SLM
-        bool juliaInSLMList = false;
-        for (const auto& m : testController.availableModels()) {
-            if (m.toMap().value(QStringLiteral("name")).toString() == QStringLiteral("SupersonicLabs/Julia-1")) {
-                juliaInSLMList = true;
-                break;
-            }
-        }
-        ROCLINT_CHECK(!juliaInSLMList);
-
-        // Verify active Granite SLM is preserved and dual-pipeline inference succeeds
-        testController.setActiveModel(QStringLiteral("granite4.2:3b-q8_0"));
-        QString result = testController.testLiveInference(QStringLiteral("refactor auth token handling"));
-        ROCLINT_CHECK(result.contains(QStringLiteral("DUAL")));
-        ROCLINT_CHECK(result.contains(QStringLiteral("Julia-1")));
-        ROCLINT_CHECK(result.contains(QStringLiteral("SLM")));
-        std::cout << "  [PASS] Julia-1 Decision Scorer and Granite SLM dual execution verified.\n";
+    // 11. A storage failure is shown, never silently replaced by an in-memory database.
+    {
+        QTemporaryDir dir;
+        ROCLINT_CHECK(dir.isValid());
+        HostController broken(dir.path() + QStringLiteral("/missing/sub/dir/history.db"));
+        broken.setLegacyDiscoveryForTesting(true);
+        ROCLINT_CHECK(!broken.isStorageAvailable());
+        ROCLINT_CHECK(broken.databaseStats().contains(QStringLiteral("unavailable")));
+        ROCLINT_CHECK(!broken.commitPrompt(QStringLiteral("hello"), 0));
+        ROCLINT_CHECK(!broken.lastError().isEmpty());
+        ROCLINT_CHECK(broken.stateVersion() == 0);
+        std::cout << "  [PASS] Storage failure is explicit; commands refuse to run.\n";
     }
 
     std::cout << "[Roclint Host Lifecycle Test] ALL CHECKS PASSED.\n";

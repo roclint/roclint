@@ -6,21 +6,64 @@
 
 using namespace roclint::core::analysis;
 
-void testDeterministicIdGeneration() {
-    // Deterministic local IDs; identical inputs MUST yield identical IDs
-    std::string id1 = generateDeterministicId("group", 0, "target_component_choice");
-    std::string id2 = generateDeterministicId("group", 0, "target_component_choice");
-    ROCLINT_CHECK(id1 == id2);
-    ROCLINT_CHECK(!id1.empty());
-    ROCLINT_CHECK(id1.rfind("group_0_", 0) == 0); // starts with "group_0_"
+void testHostMintedIds() {
+    ROCLINT_CHECK(mintGroupId(0) == "grp_0");
+    ROCLINT_CHECK(mintAlternativeId(1, 2) == "alt_1_2");
+    ROCLINT_CHECK(mintAssumptionId(3) == "asm_3");
+    ROCLINT_CHECK(mintMissingDecisionId(0) == "mdc_0");
+    ROCLINT_CHECK(mintConflictId(4) == "cfl_4");
+    // Index pairs cannot alias each other.
+    ROCLINT_CHECK(mintAlternativeId(1, 12) != mintAlternativeId(11, 2));
+}
 
-    // Different content yields different ID
-    std::string id3 = generateDeterministicId("group", 0, "other_component_choice");
-    ROCLINT_CHECK(id1 != id3);
+NormalizedAnalysis sealedSample() {
+    NormalizedAnalysis a;
+    a.sessionId = "sess_a";
+    a.baseRevisionId = "rev_sess_a_1";
+    ChoiceGroup g;
+    g.id = mintGroupId(0);
+    g.question = "Which file?";
+    g.alternatives.push_back(ChoiceAlternative{mintAlternativeId(0, 0), "A", "why", "", {SourceSpan{0, 3}}});
+    g.alternatives.push_back(ChoiceAlternative{mintAlternativeId(0, 1), "B", "why", "", {SourceSpan{0, 3}}});
+    a.choiceGroups.push_back(g);
+    sealSnapshot(a);
+    return a;
+}
 
-    // Different index yields different ID
-    std::string id4 = generateDeterministicId("group", 1, "target_component_choice");
-    ROCLINT_CHECK(id1 != id4);
+void testSnapshotSealing() {
+    auto a = sealedSample();
+    ROCLINT_CHECK(isSnapshotSealed(a));
+    ROCLINT_CHECK(a.id == "snap_" + a.snapshotHash);
+    ROCLINT_CHECK(a.snapshotHash.size() == 64);
+    ROCLINT_CHECK(sealedSample().snapshotHash == a.snapshotHash);
+
+    auto tamperedSpan = a;
+    tamperedSpan.choiceGroups[0].alternatives[0].evidence[0].endByte = 2;
+    ROCLINT_CHECK(!isSnapshotSealed(tamperedSpan));
+
+    auto tamperedRevision = a;
+    tamperedRevision.baseRevisionId = "rev_sess_a_2";
+    ROCLINT_CHECK(!isSnapshotSealed(tamperedRevision));
+
+    auto tamperedSession = a;
+    tamperedSession.sessionId = "sess_b";
+    ROCLINT_CHECK(!isSnapshotSealed(tamperedSession));
+
+    auto tamperedFlag = a;
+    tamperedFlag.choiceGroups[0].material = false;
+    ROCLINT_CHECK(!isSnapshotSealed(tamperedFlag));
+}
+
+void testOrderedAssumptionIndices() {
+    NormalizedAnalysis a;
+    a.assumptions.push_back(Assumption{"asm_0", "unanchored", true, {}});
+    a.assumptions.push_back(Assumption{"asm_1", "late", true, {SourceSpan{20, 25}}});
+    a.assumptions.push_back(Assumption{"asm_2", "early", true, {SourceSpan{2, 4}}});
+    const auto order = orderedAssumptionIndices(a);
+    ROCLINT_CHECK(order.size() == 3);
+    ROCLINT_CHECK(order[0] == 2);
+    ROCLINT_CHECK(order[1] == 1);
+    ROCLINT_CHECK(order[2] == 0);
 }
 
 void testValidAnalysisSnapshot() {
@@ -161,7 +204,9 @@ void testMissingBaseRevisionMarksInvalid() {
 
 int main() {
     std::cout << "[Test NormalizedAnalysis] Starting A06 test suite...\n";
-    testDeterministicIdGeneration();
+    testHostMintedIds();
+    testSnapshotSealing();
+    testOrderedAssumptionIndices();
     testValidAnalysisSnapshot();
     testCardinalityViolationRoutesToManualReview();
     testDuplicateAlternativesRouteToManualReview();

@@ -1,13 +1,18 @@
 #include "HostController.hpp"
 #include "TrayManager.hpp"
 #include "GlobalShortcutManager.hpp"
+#include "ScreenPlacement.hpp"
 #include "roclint/core/version.hpp"
 
 #include <QApplication>
+#include <QDir>
+#include <QFileInfo>
+#include <QLockFile>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
 #include <QScreen>
+#include <QStandardPaths>
 #include <QTimer>
 #include <iostream>
 #include <memory>
@@ -18,9 +23,6 @@ int main(int argc, char* argv[]) {
     bool autoShow = false;
     int customWidth = 0;
     int customHeight = 0;
-    int resolveChoice = 0;
-    bool openFileDropdown = false;
-    QString targetScope;
     QString screenshotPath;
     bool autoShowDashboard = false;
     int dashboardTab = 0;
@@ -28,11 +30,20 @@ int main(int argc, char* argv[]) {
     double dashboardScroll = 0.0;
     bool dashboardMaximized = false;
     bool pinCard = false;
+    QString databaseOverride;
+    QString targetScope;
+    QString workspacePath;
+    QString targetFile;
+    int resolveChoice = 0;
+    bool openFileDropdown = false;
     bool autoEnhance = false;
     for (int i = 1; i < argc; ++i) {
         const std::string_view arg(argv[i]);
         if (arg == "--dry-run" || arg == "--smoke-test") {
             dryRun = true;
+        }
+        if (arg == "--db" && i + 1 < argc) {
+            databaseOverride = QString::fromLocal8Bit(argv[++i]);
         }
         if (arg == "--dashboard-maximized") {
             dashboardMaximized = true;
@@ -44,6 +55,12 @@ int main(int argc, char* argv[]) {
         if (arg == "--show") {
             autoShow = true;
         }
+        if (arg == "--scope" && i + 1 < argc) targetScope = QString::fromLocal8Bit(argv[++i]);
+        if (arg == "--workspace" && i + 1 < argc) workspacePath = QString::fromLocal8Bit(argv[++i]);
+        if (arg == "--file" && i + 1 < argc) targetFile = QString::fromLocal8Bit(argv[++i]);
+        if (arg == "--resolve" && i + 1 < argc) { resolveChoice = std::atoi(argv[++i]); autoShow = true; }
+        if (arg == "--open-file-dropdown") { openFileDropdown = true; autoShow = true; }
+        if (arg == "--enhance") { autoEnhance = true; autoShow = true; }
         if (arg == "--dashboard" || arg == "--show-dashboard") {
             autoShowDashboard = true;
         }
@@ -63,49 +80,64 @@ int main(int argc, char* argv[]) {
         if (arg == "--height" && i + 1 < argc) {
             customHeight = std::atoi(argv[++i]);
         }
-        if (arg == "--resolve" && i + 1 < argc) {
-            resolveChoice = std::atoi(argv[++i]);
-        }
-        if (arg == "--open-file-dropdown") {
-            openFileDropdown = true;
-        }
-        if (arg == "--scope" && i + 1 < argc) {
-            targetScope = QString::fromLocal8Bit(argv[++i]);
-        }
         if (arg == "--screenshot" && i + 1 < argc) {
             screenshotPath = QString::fromLocal8Bit(argv[++i]);
             autoShow = true;
         }
-        if (arg == "--enhance") {
-            autoEnhance = true;
-        }
     }
 
-    // 1. Initialize desktop application with GUI and Widget support
+    if (!targetScope.isEmpty() && targetScope != QLatin1String("global") && targetScope != QLatin1String("local")) {
+        std::cerr << "[Roclint Host] --scope must be global or local.\n"; return 2;
+    }
+    if (!workspacePath.isEmpty() && !QFileInfo(workspacePath).isDir()) {
+        std::cerr << "[Roclint Host] --workspace must name an existing directory.\n"; return 2;
+    }
+
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("Roclint"));
-    // Single source of truth: the version CMake injects into roclint_core
     const std::string_view coreVersion = roclint::core::get_version_string();
     app.setApplicationVersion(QString::fromUtf8(coreVersion.data(), static_cast<qsizetype>(coreVersion.size())));
     app.setOrganizationName(QStringLiteral("roclint"));
-
     app.setQuitOnLastWindowClosed(false);
 
-    auto controller = std::make_unique<roclint::host::HostController>();
-    if (!controller->availableModels().isEmpty()) {
-        controller->setUseLiveWeights(true);
+    // One resident host per user: a second instance would fight over the hotkey and the database.
+    std::unique_ptr<QLockFile> instanceLock;
+    if (!dryRun) {
+        const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+        QDir().mkpath(dataDir);
+        instanceLock = std::make_unique<QLockFile>(dataDir + QStringLiteral("/roclint-host.lock"));
+        if (!instanceLock->tryLock(100)) {
+            if (instanceLock->removeStaleLockFile() && instanceLock->tryLock(100)) {
+                std::cout << "[Roclint Host] Recovered stale lock file.\n";
+            } else {
+                std::cerr << "[Roclint Host] Another Roclint instance is already running. Exiting.\n";
+                return 0;
+            }
+        }
     }
+
+    if (dryRun && databaseOverride.isEmpty()) databaseOverride = QStringLiteral(":memory:");
+    auto controller = std::make_unique<roclint::host::HostController>(
+        databaseOverride, dryRun ? roclint::host::createUnavailableAccessibilityBridge()
+                                : roclint::host::createPlatformAccessibilityBridge());
     QObject::connect(controller.get(), &roclint::host::HostController::quitRequested,
                      &app, &QCoreApplication::quit, Qt::QueuedConnection);
 
     auto tray = std::make_unique<roclint::host::TrayManager>(controller.get());
-    if (!tray->initTray()) {
+    if (!dryRun && !tray->initTray()) {
         std::cerr << "[Roclint Host] Warning: System tray is not available on this environment.\n";
     }
+    QObject::connect(controller.get(), &roclint::host::HostController::deliveryFellBack, tray.get(),
+                     [trayPtr = tray.get()](const QString& message) { trayPtr->notify(message); });
+    QObject::connect(controller.get(), &roclint::host::HostController::insertionTargetSelectionRequested, tray.get(),
+                     [trayPtr = tray.get()](const QString& message) { trayPtr->notify(message); });
 
     auto shortcutManager = std::make_unique<roclint::host::GlobalShortcutManager>(controller.get());
-    if (!shortcutManager->registerShortcut()) {
-        std::cerr << "[Roclint Host] Warning: Global shortcut could not be registered.\n";
+    if (!dryRun && !shortcutManager->registerShortcut()) {
+        controller->setShortcutRegistrationFailed(
+            QStringLiteral("The %1 shortcut couldn't be registered (another app may be using it). "
+                           "Open Roclint from the tray icon instead.")
+                .arg(controller->shortcutLabel()));
     }
 
     QQmlApplicationEngine engine;
@@ -113,9 +145,10 @@ int main(int argc, char* argv[]) {
 
     const QUrl cardUrl(QStringLiteral("qrc:/shell/FloatingCard.qml"));
     const QUrl dashboardUrl(QStringLiteral("qrc:/shell/DashboardWindow.qml"));
+    const QUrl badgeUrl(QStringLiteral("qrc:/shell/AmbientBadge.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
-                     &app, [cardUrl, dashboardUrl, controller = controller.get(), autoShow, autoShowDashboard, dryRun, screenshotPath, dashboardScreenshotPath, dashboardScroll, customWidth, customHeight, resolveChoice, openFileDropdown, targetScope, dashboardTab, pinCard, dashboardMaximized, autoEnhance](QObject* obj, const QUrl& objUrl) {
-        if (!obj && (cardUrl == objUrl || dashboardUrl == objUrl)) {
+                     &app, [cardUrl, dashboardUrl, badgeUrl, controller = controller.get(), autoShow, autoShowDashboard, dryRun, screenshotPath, dashboardScreenshotPath, dashboardScroll, customWidth, customHeight, dashboardTab, pinCard, dashboardMaximized, targetScope, workspacePath, targetFile, resolveChoice, openFileDropdown, autoEnhance](QObject* obj, const QUrl& objUrl) {
+        if (!obj && (cardUrl == objUrl || dashboardUrl == objUrl || badgeUrl == objUrl)) {
             std::cerr << "[Roclint Host] Error: Failed to load QML root object from " << objUrl.toString().toStdString() << std::endl;
             QCoreApplication::exit(-1);
             return;
@@ -125,23 +158,16 @@ int main(int argc, char* argv[]) {
         if (!window) return;
 
         if (objUrl == cardUrl) {
-            std::cout << "[Roclint Host] FloatingCard window initialized successfully." << std::endl;
             if (customWidth > 0) {
                 window->setWidth(customWidth);
             }
             if (customHeight > 0) {
                 window->setHeight(customHeight);
             }
-            if (!targetScope.isEmpty()) {
-                window->setProperty("activeScope", targetScope);
-            }
             QObject::connect(controller, &roclint::host::HostController::showCardRequested,
-                             window, [window](int x, int y) {
-                std::cout << "[Roclint Host] Showing floating card window at (" << x << ", " << y << ")..." << std::endl;
-                if (x > 0 || y > 0) {
-                    window->setX(x);
-                    window->setY(y);
-                }
+                             window, [window](int, int) {
+                const auto placement = roclint::host::ScreenPlacement::determineTargetPosition(window->width(), window->height());
+                window->setPosition(placement.x, placement.y);
                 // showNormal() also restores a minimized card; show() keeps the minimized state
                 window->showNormal();
                 window->raise();
@@ -149,10 +175,7 @@ int main(int argc, char* argv[]) {
             });
 
             QObject::connect(controller, &roclint::host::HostController::hideCardRequested,
-                             window, [window]() {
-                std::cout << "[Roclint Host] Hiding floating card window..." << std::endl;
-                window->hide();
-            });
+                             window, [window]() { window->hide(); });
 
             // If closed via window controls or system event, hide instead of quitting
             QObject::connect(window, &QQuickWindow::closing,
@@ -177,32 +200,41 @@ int main(int argc, char* argv[]) {
             }
 
             if (autoShow && !dryRun) {
-                controller->showCard();
+                controller->showCard(); window->showNormal(); window->raise(); window->requestActivate();
+            }
+
+            if (!workspacePath.isEmpty()) {
+                const QFileInfo workspace(workspacePath);
+                window->setProperty("projectList", QVariantList{QVariantMap{{QStringLiteral("name"), workspace.fileName()},
+                    {QStringLiteral("path"), workspace.canonicalFilePath()}}});
+                window->setProperty("currentProjectIndex", 0);
+                QMetaObject::invokeMethod(window, "refreshProjectFiles");
+            }
+            if (!targetScope.isEmpty()) window->setProperty("activeScope", targetScope);
+            if (!targetFile.isEmpty()) window->setProperty("targetLocalFile", targetFile);
+            if (openFileDropdown) QTimer::singleShot(0, window, [window]() { QMetaObject::invokeMethod(window, "openFileDropdown"); });
+            if (!targetScope.isEmpty() && !dryRun)
+                QTimer::singleShot(0, window, [window]() { QMetaObject::invokeMethod(window, "applyScope"); });
+
+            // Retain upstream automation flags with asynchronous, explicit-review semantics.
+            // A CLI choice is applied only after analysis completes, never on a guessed delay.
+            if (!dryRun && (resolveChoice > 0 || autoEnhance)) {
+                const auto resolved = std::make_shared<bool>(false);
+                QObject::connect(controller, &roclint::host::HostController::analysisStatusChanged, window,
+                    [controller, window, resolved, resolveChoice, autoEnhance]() {
+                        if (controller->analysisStatus() != QLatin1String("READY") || *resolved) return;
+                        *resolved = true;
+                        if (resolveChoice > 0 && controller->isClarifying()) {
+                            QMetaObject::invokeMethod(window, "commitChoice", Q_ARG(QVariant, resolveChoice));
+                        }
+                        if (autoEnhance && controller->isRewriteEnabled() && controller->proposalStatus() == QLatin1String("NONE"))
+                            controller->synthesizeRewrite(controller->stateVersion());
+                    });
+                QTimer::singleShot(0, window, [window]() { QMetaObject::invokeMethod(window, "analyzeNow"); });
             }
 
             if (!screenshotPath.isEmpty()) {
-                if (resolveChoice > 0) {
-                    QTimer::singleShot(250, window, [window, resolveChoice]() {
-                        std::cout << "[Roclint Host] Resolving ambiguity with option " << resolveChoice << "..." << std::endl;
-                        QMetaObject::invokeMethod(window, "commitChoice", Q_ARG(QVariant, resolveChoice));
-                    });
-                }
-                if (openFileDropdown) {
-                    QTimer::singleShot(300, window, [window]() {
-                        std::cout << "[Roclint Host] Opening single-file target dropdown..." << std::endl;
-                        QMetaObject::invokeMethod(window, "openFileDropdown");
-                    });
-                }
-                if (autoEnhance) {
-                    const int enhanceDelay = (resolveChoice > 0) ? 500 : 350;
-                    QTimer::singleShot(enhanceDelay, window, [window]() {
-                        std::cout << "[Roclint Host] Invoking handleEnter() to synthesize rewrite..." << std::endl;
-                        QMetaObject::invokeMethod(window, "handleEnter");
-                    });
-                }
-
-                const int captureDelay = autoEnhance ? 6000 : 800;
-                QTimer::singleShot(captureDelay, window, [window, screenshotPath]() {
+                QTimer::singleShot(800, window, [window, screenshotPath]() {
                     const QImage img = window->grabWindow();
                     if (img.save(screenshotPath)) {
                         std::cout << "[Roclint Host] Screenshot saved to " << screenshotPath.toStdString() << std::endl;
@@ -213,13 +245,11 @@ int main(int argc, char* argv[]) {
                 });
             }
         } else if (objUrl == dashboardUrl) {
-            std::cout << "[Roclint Host] Dashboard window initialized successfully." << std::endl;
             if (dashboardTab > 0) {
                 window->setProperty("currentTab", dashboardTab);
             }
             QObject::connect(controller, &roclint::host::HostController::showDashboardRequested,
                              window, [window]() {
-                std::cout << "[Roclint Host] Showing Dashboard window..." << std::endl;
                 if (window->x() <= 0 && window->y() <= 0) {
                     if (const auto* s = window->screen()) {
                         const QRect geom = s->availableGeometry();
@@ -235,10 +265,7 @@ int main(int argc, char* argv[]) {
             });
 
             QObject::connect(controller, &roclint::host::HostController::hideDashboardRequested,
-                             window, [window]() {
-                std::cout << "[Roclint Host] Hiding Dashboard window..." << std::endl;
-                window->hide();
-            });
+                             window, [window]() { window->hide(); });
 
             QObject::connect(window, &QQuickWindow::closing,
                              controller, &roclint::host::HostController::hideDashboard);
@@ -272,13 +299,14 @@ int main(int argc, char* argv[]) {
                 });
             }
         }
-    }, Qt::QueuedConnection);
+    });
 
     engine.load(cardUrl);
     engine.load(dashboardUrl);
+    engine.load(badgeUrl);
 
-    if (engine.rootObjects().isEmpty()) {
-        std::cerr << "[Roclint Host] Error: Failed to load QML root objects" << std::endl;
+    if (engine.rootObjects().size() != 3) {
+        std::cerr << "[Roclint Host] Error: One or more required QML screens failed to load" << std::endl;
         return 1;
     }
 
@@ -291,6 +319,12 @@ int main(int argc, char* argv[]) {
         std::cout << "[Roclint Host] Qt Version: " << qVersion() << std::endl;
         std::cout << "[Roclint Host] Dry-run passed. QML root object verified. Exiting cleanly." << std::endl;
         return 0;
+    }
+
+    // Model discovery runs on a worker thread; the UI is usable while it completes.
+    if (!dryRun) {
+        controller->refreshAvailableModels();
+        controller->refreshJuliaModel();
     }
 
     std::cout << "[Roclint Host] Resident background host started. Use System Tray -> Quit to terminate." << std::endl;

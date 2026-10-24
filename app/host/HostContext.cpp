@@ -1,5 +1,8 @@
 #include "HostContext.hpp"
 
+#include <QHash>
+#include <QSet>
+
 #if defined(Q_OS_WIN)
 #include <windows.h>
 #include <psapi.h>
@@ -7,49 +10,57 @@
 
 namespace roclint::host {
 
-std::optional<HostContextObservation> HostContextDetector::s_mockObservation = std::nullopt;
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+namespace {
+std::optional<HostContextObservation>& mockObservation() {
+    static std::optional<HostContextObservation> value;
+    return value;
+}
+}
 
 void HostContextDetector::setMockObservation(std::optional<HostContextObservation> mock) {
-    s_mockObservation = std::move(mock);
+    mockObservation() = std::move(mock);
 }
 
 void HostContextDetector::resetMock() {
-    s_mockObservation = std::nullopt;
+    mockObservation().reset();
 }
+#endif
 
 #if defined(Q_OS_MAC)
 // Implemented in HostContext_mac.mm
 HostContextObservation captureFrontmostNative();
 #elif defined(Q_OS_WIN)
+namespace {
 HostContextObservation captureFrontmostNative() {
     HWND hwnd = GetForegroundWindow();
     if (!hwnd) {
-        return HostContextObservation{HostContextCategory::Unknown, QString(), QString()};
+        return HostContextObservation{};
     }
 
     DWORD pid = 0;
     GetWindowThreadProcessId(hwnd, &pid);
     if (pid == 0 || pid == GetCurrentProcessId()) {
-        return HostContextObservation{HostContextCategory::Unknown, QString(), QString()};
+        return HostContextObservation{};
     }
 
     HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!hProc) {
-        return HostContextObservation{HostContextCategory::Unknown, QString(), QString()};
+        return HostContextObservation{};
     }
 
     WCHAR exePath[MAX_PATH];
     DWORD size = MAX_PATH;
     QString exeName;
     if (QueryFullProcessImageNameW(hProc, 0, exePath, &size)) {
-        QString fullPath = QString::fromWCharArray(exePath);
-        int lastSlash = fullPath.lastIndexOf(QLatin1Char('\\'));
+        const QString fullPath = QString::fromWCharArray(exePath, static_cast<qsizetype>(size));
+        const qsizetype lastSlash = fullPath.lastIndexOf(QLatin1Char('\\'));
         exeName = (lastSlash >= 0) ? fullPath.mid(lastSlash + 1) : fullPath;
     }
     CloseHandle(hProc);
 
-    if (exeName.isEmpty() || exeName.contains(QStringLiteral("roclint"), Qt::CaseInsensitive)) {
-        return HostContextObservation{HostContextCategory::Unknown, QString(), QString()};
+    if (exeName.isEmpty()) {
+        return HostContextObservation{};
     }
 
     QString displayName = exeName;
@@ -57,104 +68,157 @@ HostContextObservation captureFrontmostNative() {
         displayName.chop(4);
     }
 
-    HostContextCategory cat = HostContextDetector::mapIdentityToCategory(exeName, displayName);
-    return HostContextObservation{cat, displayName, exeName};
+    return HostContextObservation{HostContextDetector::mapIdentityToCategory(exeName), displayName, exeName};
+}
 }
 #else
-static HostContextObservation captureFrontmostNative() {
-    return HostContextObservation{HostContextCategory::Unknown, QString(), QString()};
+namespace {
+HostContextObservation captureFrontmostNative() {
+    return HostContextObservation{};
+}
 }
 #endif
 
 HostContextObservation HostContextDetector::captureFrontmost() {
-    if (s_mockObservation.has_value()) {
-        return *s_mockObservation;
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+    if (mockObservation().has_value()) {
+        return *mockObservation();
     }
+#endif
     return captureFrontmostNative();
 }
 
-HostContextCategory HostContextDetector::mapIdentityToCategory(const QString& id, const QString& name) {
-    if (id.trimmed().isEmpty() && name.trimmed().isEmpty()) {
+namespace {
+const QHash<QString, HostContextCategory>& identityTable() {
+    using C = HostContextCategory;
+    static const QHash<QString, HostContextCategory> table = {
+        // Code editors: Windows executables
+        {QStringLiteral("code.exe"), C::CodeEditor},
+        {QStringLiteral("code - insiders.exe"), C::CodeEditor},
+        {QStringLiteral("cursor.exe"), C::CodeEditor},
+        {QStringLiteral("chatgpt.exe"), C::CodeEditor}, // Codex desktop executable
+        {QStringLiteral("codex.exe"), C::CodeEditor},
+        {QStringLiteral("antigravity.exe"), C::CodeEditor},
+        {QStringLiteral("windsurf.exe"), C::CodeEditor},
+        {QStringLiteral("studio64.exe"), C::CodeEditor},
+        {QStringLiteral("devenv.exe"), C::CodeEditor},
+        {QStringLiteral("sublime_text.exe"), C::CodeEditor},
+        {QStringLiteral("idea64.exe"), C::CodeEditor},
+        {QStringLiteral("clion64.exe"), C::CodeEditor},
+        {QStringLiteral("pycharm64.exe"), C::CodeEditor},
+        {QStringLiteral("webstorm64.exe"), C::CodeEditor},
+        {QStringLiteral("rider64.exe"), C::CodeEditor},
+        {QStringLiteral("goland64.exe"), C::CodeEditor},
+        {QStringLiteral("zed.exe"), C::CodeEditor},
+        {QStringLiteral("notepad++.exe"), C::CodeEditor},
+        // Code editors: macOS bundle identifiers
+        {QStringLiteral("com.microsoft.vscode"), C::CodeEditor},
+        {QStringLiteral("com.microsoft.vscodeinsiders"), C::CodeEditor},
+        {QStringLiteral("com.todesktop.230313mzl4wgnlh"), C::CodeEditor},
+        {QStringLiteral("com.apple.dt.xcode"), C::CodeEditor},
+        {QStringLiteral("com.sublimetext.4"), C::CodeEditor},
+        {QStringLiteral("com.jetbrains.clion"), C::CodeEditor},
+        {QStringLiteral("com.jetbrains.intellij"), C::CodeEditor},
+        {QStringLiteral("com.jetbrains.pycharm"), C::CodeEditor},
+        {QStringLiteral("dev.zed.zed"), C::CodeEditor},
+
+        // Terminals: Windows executables
+        {QStringLiteral("windowsterminal.exe"), C::Terminal},
+        {QStringLiteral("pwsh.exe"), C::Terminal},
+        {QStringLiteral("powershell.exe"), C::Terminal},
+        {QStringLiteral("cmd.exe"), C::Terminal},
+        {QStringLiteral("conhost.exe"), C::Terminal},
+        {QStringLiteral("alacritty.exe"), C::Terminal},
+        {QStringLiteral("wezterm-gui.exe"), C::Terminal},
+        // Terminals: macOS bundle identifiers
+        {QStringLiteral("com.apple.terminal"), C::Terminal},
+        {QStringLiteral("com.googlecode.iterm2"), C::Terminal},
+        {QStringLiteral("io.alacritty"), C::Terminal},
+        {QStringLiteral("dev.warp.warp-stable"), C::Terminal},
+        {QStringLiteral("net.kovidgoyal.kitty"), C::Terminal},
+        {QStringLiteral("com.github.wez.wezterm"), C::Terminal},
+
+        // Browsers: Windows executables
+        {QStringLiteral("msedge.exe"), C::Browser},
+        {QStringLiteral("chrome.exe"), C::Browser},
+        {QStringLiteral("firefox.exe"), C::Browser},
+        {QStringLiteral("brave.exe"), C::Browser},
+        {QStringLiteral("opera.exe"), C::Browser},
+        {QStringLiteral("vivaldi.exe"), C::Browser},
+        {QStringLiteral("arc.exe"), C::Browser},
+        // Browsers: macOS bundle identifiers
+        {QStringLiteral("com.google.chrome"), C::Browser},
+        {QStringLiteral("com.apple.safari"), C::Browser},
+        {QStringLiteral("org.mozilla.firefox"), C::Browser},
+        {QStringLiteral("com.microsoft.edgemac"), C::Browser},
+        {QStringLiteral("com.brave.browser"), C::Browser},
+        {QStringLiteral("company.thebrowser.browser"), C::Browser},
+
+        // Chat: Windows executables
+        {QStringLiteral("slack.exe"), C::Chat},
+        {QStringLiteral("discord.exe"), C::Chat},
+        {QStringLiteral("ms-teams.exe"), C::Chat},
+        {QStringLiteral("teams.exe"), C::Chat},
+        {QStringLiteral("telegram.exe"), C::Chat},
+        {QStringLiteral("signal.exe"), C::Chat},
+        // Chat: macOS bundle identifiers
+        {QStringLiteral("com.tinyspeck.slackmacgap"), C::Chat},
+        {QStringLiteral("com.hnc.discord"), C::Chat},
+        {QStringLiteral("com.microsoft.teams2"), C::Chat},
+        {QStringLiteral("ru.keepcoder.telegram"), C::Chat},
+        {QStringLiteral("org.whispersystems.signal-desktop"), C::Chat},
+        {QStringLiteral("com.apple.mobilesms"), C::Chat},
+
+        // Documents: Windows executables
+        {QStringLiteral("winword.exe"), C::Document},
+        {QStringLiteral("notion.exe"), C::Document},
+        {QStringLiteral("obsidian.exe"), C::Document},
+        {QStringLiteral("notepad.exe"), C::Document},
+        {QStringLiteral("typora.exe"), C::Document},
+        // Documents: macOS bundle identifiers
+        {QStringLiteral("com.microsoft.word"), C::Document},
+        {QStringLiteral("notion.id"), C::Document},
+        {QStringLiteral("md.obsidian"), C::Document},
+        {QStringLiteral("com.apple.iwork.pages"), C::Document},
+        {QStringLiteral("com.apple.notes"), C::Document},
+
+        // Known applications that are not prompt-writing surfaces
+        {QStringLiteral("spotify.exe"), C::Other},
+        {QStringLiteral("explorer.exe"), C::Other},
+        {QStringLiteral("com.spotify.client"), C::Other},
+        {QStringLiteral("com.apple.finder"), C::Other},
+    };
+    return table;
+}
+}
+
+HostContextCategory HostContextDetector::mapIdentityToCategory(const QString& identifier) {
+    const QString key = identifier.trimmed().toLower();
+    if (key.isEmpty()) {
         return HostContextCategory::Unknown;
     }
-
-    const QString lowerId = id.toLower();
-    const QString lowerName = name.toLower();
-
-    // 1. CODE_EDITOR
-    if (lowerId.contains("vscode") || lowerId.contains("cursor") ||
-        lowerId.contains("com.todesktop.230313mzl4wgnlh") ||
-        lowerId.contains("sublime") || lowerId.contains("xcode") ||
-        lowerId.contains("clion") || lowerId.contains("intellij") ||
-        lowerId.contains("pycharm") || lowerId.contains("webstorm") ||
-        lowerId.contains("rider") || lowerId.contains("rubymine") ||
-        lowerId.contains("goland") || lowerId.contains("atom") ||
-        lowerId.contains("zed") || lowerId.contains("textmate") ||
-        lowerId.contains("bbedit") || lowerId.contains("neovim") ||
-        lowerId.contains("emacs") || lowerId.contains("devenv") ||
-        lowerName == "code" || lowerName == "visual studio code" ||
-        lowerName == "cursor" || lowerName == "xcode" ||
-        lowerName == "clion" || lowerName == "sublime text" ||
-        lowerName == "zed" || lowerName == "intellij idea") {
-        return HostContextCategory::CodeEditor;
-    }
-
-    // 2. TERMINAL
-    if (lowerId.contains("terminal") || lowerId.contains("iterm") ||
-        lowerId.contains("alacritty") || lowerId.contains("warp") ||
-        lowerId.contains("kitty") || lowerId.contains("wezterm") ||
-        lowerId.contains("hyper") || lowerId.contains("windowsterminal") ||
-        lowerId.contains("powershell") || lowerId.contains("cmd.exe") ||
-        lowerName == "terminal" || lowerName == "iterm2" ||
-        lowerName == "alacritty" || lowerName == "warp" ||
-        lowerName == "kitty" || lowerName == "wezterm") {
-        return HostContextCategory::Terminal;
-    }
-
-    // 3. BROWSER
-    if (lowerId.contains("chrome") || lowerId.contains("safari") ||
-        lowerId.contains("firefox") || lowerId.contains("edge") ||
-        lowerId.contains("brave") || lowerId.contains("arc") ||
-        lowerId.contains("opera") || lowerId.contains("vivaldi") ||
-        lowerName == "google chrome" || lowerName == "safari" ||
-        lowerName == "firefox" || lowerName == "microsoft edge" ||
-        lowerName == "arc" || lowerName == "brave browser") {
-        return HostContextCategory::Browser;
-    }
-
-    // 4. CHAT
-    if (lowerId.contains("slack") || lowerId.contains("discord") ||
-        lowerId.contains("teams") || lowerId.contains("telegram") ||
-        lowerId.contains("signal") || lowerId.contains("messages") ||
-        lowerId.contains("mattermost") ||
-        lowerName == "slack" || lowerName == "discord" ||
-        lowerName == "microsoft teams" || lowerName == "telegram" ||
-        lowerName == "messages") {
-        return HostContextCategory::Chat;
-    }
-
-    // 5. DOCUMENT
-    if (lowerId.contains("notion") || lowerId.contains("obsidian") ||
-        lowerId.contains("pages") || lowerId.contains("word") ||
-        lowerId.contains("typora") || lowerId.contains("iawriter") ||
-        lowerId.contains("notes") ||
-        lowerName == "notion" || lowerName == "obsidian" ||
-        lowerName == "pages" || lowerName == "microsoft word" ||
-        lowerName == "notes") {
-        return HostContextCategory::Document;
-    }
-
-    return HostContextCategory::Other;
+    const auto& table = identityTable();
+    const auto it = table.constFind(key);
+    return it == table.constEnd() ? HostContextCategory::Unknown : it.value();
 }
 
-#if !defined(Q_OS_MAC)
-bool HostContextDetector::isAccessibilityPermissionGranted() noexcept {
-    return false;
+bool HostContextDetector::isAmbientEligibleApp(const QString& identifier) {
+    static const QSet<QString> identities = {
+        QStringLiteral("chatgpt.exe"), QStringLiteral("codex.exe"),
+        QStringLiteral("cursor.exe"), QStringLiteral("antigravity.exe"),
+        QStringLiteral("windsurf.exe"), QStringLiteral("code.exe"),
+        QStringLiteral("code - insiders.exe"), QStringLiteral("devenv.exe"),
+        QStringLiteral("idea64.exe"), QStringLiteral("clion64.exe"),
+        QStringLiteral("pycharm64.exe"), QStringLiteral("webstorm64.exe"),
+        QStringLiteral("rider64.exe"), QStringLiteral("goland64.exe"),
+        QStringLiteral("studio64.exe"), QStringLiteral("zed.exe"),
+        QStringLiteral("windowsterminal.exe"),
+        QStringLiteral("com.todesktop.230313mzl4wgnlh"), QStringLiteral("com.google.antigravity"),
+        QStringLiteral("com.microsoft.vscode"), QStringLiteral("com.microsoft.vscodeinsiders"),
+        QStringLiteral("com.apple.terminal"), QStringLiteral("com.googlecode.iterm2"),
+        QStringLiteral("com.mitchellh.ghostty"), QStringLiteral("dev.warp.warp-stable"),
+    };
+    return identities.contains(identifier.trimmed().toLower());
 }
-
-bool HostContextDetector::performDirectInjection(const QString&) {
-    return false;
-}
-#endif
 
 } // namespace roclint::host

@@ -1,0 +1,16 @@
+{
+  "source_bundle": "Stardust_v4_2_with_RAG-20261001T213521Z-1-001",
+  "copied_on": "2026-10-22",
+  "files": {
+    "C01_prompt_state.md": "67861789b929bbe0d60e573f41e3cb6720d347abd3c09d4788e888401bf94be7",
+    "C02_storage_repository.md": "d0b8ac956ef46e0375a51c0249dea6d2d682ac833261fc36efb3e61b43ed66e4",
+    "C03_analysis_semantics.md": "d8c26d60381c13300b2532115e5fb4fd9b6ea29c9839ae5c3d919f29aa31625a",
+    "C04_model_bridge.md": "add22a79d44ea1bf46d62b2810f1b34c6dea009bc467bab5a64f91b60a482af6",
+    "C05_desktop_view_model.md": "f3f6546bdda00b532f1515808fbb8d1c0d858a216634cd6100d9b3c64fec0530",
+    "C06_intent_rewrite_approval.md": "1c5559c8ef5193ecbe7ee2fbf5e22f63ed616ab6dc7b1c42fd1b67a16cd6f05f",
+    "C07_telemetry_study.md": "494c316325165f0b57faef1824ef08359616c3b945ac26bb0f4fa353f7f93c09",
+    "C08_runtime_packaging.md": "d251ed0fe30029a3223e0c2d9ff73eb934d4d8c178e025fffbcf9cc5f965eca9",
+    "C09_invocation_host_context.md": "d243493a6a0dcaf80de3754522f13fb8047c50c8234cbff4af4ad4dec10d820d",
+    "C10_codebase_context.md": "6e5e48469fb1baa4837e42cedb74663b4a61dc7ff465e4f2d2c807c1ac6800bb"
+  }
+}

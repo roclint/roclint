@@ -18,6 +18,7 @@ enum class ProposalStatus {
     Rejected
 };
 
+// C05 constraint states. Only deterministic checks may claim MechanicallyVerified.
 enum class ConstraintStatus {
     MechanicallyVerified,
     UserConfirmed,
@@ -34,29 +35,44 @@ struct ConstraintItem {
     bool operator==(const ConstraintItem&) const = default;
 };
 
+// C06 rewrite proposal: bound to an exact revision, intent version, profile, and model identity.
 struct RewriteProposal {
-    std::string id{};
+    std::string id{};             // prop_<proposalHash>
+    std::string proposalHash{};
+    std::string sessionId{};
     std::string baseRevisionId{};
-    std::string confirmedIntentId{};
-    std::uint64_t sourceSnapshotHash{0};
+    std::string intentId{};
+    std::string intentHash{};
+    std::string snapshotId{};
+    std::string snapshotHash{};
     std::string rewriteProfileId{"GENERIC@1"};
-    std::string compiledPrompt{};
+    std::string modelId{};
+    std::string modelDigest{};
+    std::string quantization{};
+    std::string transport{};
+    std::string originalText{};
+    std::string rewrittenText{};
     std::string diffText{};
+    std::string clarificationQuestion{};
     ProposalStatus status{ProposalStatus::ProposalReady};
     std::vector<ConstraintItem> constraints{};
-    std::uint64_t proposalHash{0};
-    std::uint64_t createdAtTimestamp{0};
+    std::uint64_t proposalEditGeneration{0};
+    std::int64_t createdAtMs{0};
 
-    [[nodiscard]] bool hasConstraint(std::string_view constraintId) const noexcept;
-    [[nodiscard]] std::optional<ConstraintItem> getConstraint(std::string_view constraintId) const noexcept;
-    [[nodiscard]] bool allRequiredConstraintsMet() const noexcept;
+    [[nodiscard]] bool hasConstraint(std::string_view constraintId) const;
+    [[nodiscard]] std::optional<ConstraintItem> getConstraint(std::string_view constraintId) const;
+    [[nodiscard]] bool allRequiredConstraintsMet() const;
 
     bool operator==(const RewriteProposal&) const = default;
 };
 
 class ProposalHasher {
 public:
-    [[nodiscard]] static std::uint64_t computeProposalHash(const RewriteProposal& proposal) noexcept;
+    // Canonical SHA-256 over every bound field (createdAtMs and the derived id/hash excluded).
+    [[nodiscard]] static std::string computeProposalHash(const RewriteProposal& proposal);
+
+    // Sets proposalHash and id = "prop_" + proposalHash.
+    static void seal(RewriteProposal& proposal);
 };
 
 [[nodiscard]] const char* toString(ProposalStatus status) noexcept;

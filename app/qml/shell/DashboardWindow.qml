@@ -79,9 +79,10 @@ Window {
     // Active Navigation Tab Index (0: Models & Rewrite, 1: Integration & Theme, 2: SQLite History)
     property int currentTab: 0
 
-    property string scorerMode: (typeof hostController !== "undefined" ? hostController.scorerEngine : "julia")
-    property string globalShortcutString: isMac ? "Cmd+Shift+L" : "Ctrl+Shift+L"
+    readonly property string scorerMode: (typeof hostController !== "undefined" ? (hostController.scorerEngine === "JULIA_LOCAL" ? "julia" : "jev") : "julia")
+    readonly property string globalShortcutString: typeof hostController !== "undefined" ? hostController.shortcutLabel : (isMac ? "Cmd+Shift+L" : "Ctrl+Shift+L")
     property string toastMessage: ""
+    property bool confirmPurge: false
 
     function showToast(msg) {
         toastMessage = msg;
@@ -235,6 +236,7 @@ Window {
                 // =============================================================
                 RowLayout {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     Layout.preferredHeight: 28
                     spacing: 8
 
@@ -273,7 +275,7 @@ Window {
                     // Host resident status chip
                     Rectangle {
                         height: 20
-                        width: resText.contentWidth + 16
+                        implicitWidth: resText.contentWidth + 16
                         color: "transparent"
                         border.color: "#7EE787"
                         border.width: 1
@@ -305,7 +307,7 @@ Window {
                             font.pixelSize: 9
                             color: dashboardWindow.fgColor
                         }
-                        MouseArea {
+                        HudMouseArea {
                             id: minMouse
                             anchors.fill: parent
                             hoverEnabled: true
@@ -330,7 +332,7 @@ Window {
                             font.pixelSize: 9
                             color: dashboardWindow.fgColor
                         }
-                        MouseArea {
+                        HudMouseArea {
                             id: maxMouse
                             anchors.fill: parent
                             hoverEnabled: true
@@ -361,7 +363,7 @@ Window {
                             font.pixelSize: 9
                             color: dashboardWindow.fgColor
                         }
-                        MouseArea {
+                        HudMouseArea {
                             id: closeMouse
                             anchors.fill: parent
                             hoverEnabled: true
@@ -373,6 +375,7 @@ Window {
 
                 Rectangle {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     height: 1
                     color: dashboardWindow.borderColor
                 }
@@ -382,6 +385,7 @@ Window {
                 // =============================================================
                 RowLayout {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     Layout.fillHeight: true
                     spacing: 12
 
@@ -408,6 +412,7 @@ Window {
 
                             Rectangle {
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 0
                                 height: 1
                                 color: dashboardWindow.borderColor
                                 Layout.bottomMargin: 4
@@ -423,6 +428,7 @@ Window {
                                 delegate: Rectangle {
                                     id: navTabBtn
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     Layout.preferredHeight: 34
                                     color: dashboardWindow.currentTab === modelData.index
                                         ? dashboardWindow.fgColor
@@ -448,6 +454,7 @@ Window {
 
                                         Text {
                                             Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
                                             text: modelData.label
                                             font.family: dashboardWindow.monoFont
                                             font.pixelSize: 9
@@ -459,7 +466,7 @@ Window {
                                         }
                                     }
 
-                                    MouseArea {
+                                    HudMouseArea {
                                         id: tabMouse
                                         anchors.fill: parent
                                         hoverEnabled: true
@@ -473,6 +480,7 @@ Window {
 
                             Rectangle {
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 0
                                 height: 1
                                 color: dashboardWindow.borderColor
                             }
@@ -480,6 +488,7 @@ Window {
                             ColumnLayout {
                                 spacing: 2
                                 Layout.fillWidth: true
+                                Layout.minimumWidth: 0
                                 Text {
                                     text: "SYSTEM: ROCLINT CORE"
                                     font.family: dashboardWindow.monoFont
@@ -504,8 +513,11 @@ Window {
 
                     // RIGHT CONTENT AREA
                     ScrollView {
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    ScrollBar.vertical: HudScrollBar {}
                         id: rightScrollView
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                         Layout.fillHeight: true
                         clip: true
                         contentWidth: availableWidth
@@ -533,6 +545,7 @@ Window {
                                 // Card 1: Semantic Decision Scorer
                                 Rectangle {
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     Layout.preferredHeight: 175
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
@@ -545,7 +558,7 @@ Window {
 
                                         RowLayout {
                                             Text {
-                                                text: "SEMANTIC DECISION SCORER :: JEV CLOUD VS LOCAL JULIA-1"
+                                                text: "S1 PROMPT CLASSIFIER :: LOCAL JULIA-1"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 10
                                                 font.bold: true
@@ -553,7 +566,7 @@ Window {
                                             }
                                             Item { Layout.fillWidth: true }
                                             Text {
-                                                text: dashboardWindow.scorerMode === "jev" ? "[MODE: JEV CLOUD]" : "[MODE: LOCAL ONNX]"
+                                                text: dashboardWindow.scorerMode === "jev" ? "[MODE: JEV CLOUD]" : "[MODE: LOCAL JULIA]"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 9
                                                 color: dashboardWindow.mutedTextColor
@@ -563,7 +576,7 @@ Window {
                                         RowLayout {
                                             spacing: 10
                                             Rectangle {
-                                                width: juliaTxt.contentWidth + 16
+                                                implicitWidth: juliaTxt.contentWidth + 16
                                                 height: 26
                                                 color: dashboardWindow.scorerMode === "julia" ? dashboardWindow.fgColor : "transparent"
                                                 border.color: dashboardWindow.borderColor
@@ -572,25 +585,25 @@ Window {
                                                 Text {
                                                     id: juliaTxt
                                                     anchors.centerIn: parent
-                                                    text: dashboardWindow.scorerMode === "julia" ? "[ ● LOCAL JULIA-1 (AIR-GAPPED CPU) ]" : "[ ○ LOCAL JULIA-1 (AIR-GAPPED CPU) ]"
+                                                    text: dashboardWindow.scorerMode === "julia" ? "[ ● LOCAL JULIA-1 (AUTO GPU / CPU) ]" : "[ ○ LOCAL JULIA-1 (AUTO GPU / CPU) ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 9
                                                     font.bold: dashboardWindow.scorerMode === "julia"
                                                     color: dashboardWindow.scorerMode === "julia" ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                 }
-                                                MouseArea {
+                                                HudMouseArea {
                                                     anchors.fill: parent
                                                     cursorShape: Qt.PointingHandCursor
                                                     onClicked: {
-                                                        dashboardWindow.scorerMode = "julia";
-                                                        if (typeof hostController !== "undefined") hostController.setScorerEngine("julia");
-                                                        dashboardWindow.showToast("S1 SCORER: LOCAL JULIA-1 (AIR-GAPPED DEFAULT)");
+
+                                                        if (typeof hostController !== "undefined") { hostController.setScorerEngine("julia"); hostController.refreshJuliaModel(); }
+                                                        dashboardWindow.showToast("S1 CLASSIFIER: LOCAL JULIA-1");
                                                     }
                                                 }
                                             }
 
                                             Rectangle {
-                                                width: jevTxt.contentWidth + 16
+                                                implicitWidth: jevTxt.contentWidth + 16
                                                 height: 26
                                                 color: dashboardWindow.scorerMode === "jev" ? dashboardWindow.fgColor : "transparent"
                                                 border.color: dashboardWindow.borderColor
@@ -605,13 +618,13 @@ Window {
                                                     font.bold: dashboardWindow.scorerMode === "jev"
                                                     color: dashboardWindow.scorerMode === "jev" ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                 }
-                                                MouseArea {
+                                                HudMouseArea {
                                                     anchors.fill: parent
                                                     cursorShape: Qt.PointingHandCursor
                                                     onClicked: {
-                                                        dashboardWindow.scorerMode = "jev";
+
                                                         if (typeof hostController !== "undefined") hostController.setScorerEngine("jev");
-                                                        dashboardWindow.showToast("S1 SCORER: CLOUD JEV ACTIVATED");
+                                                        dashboardWindow.showToast("JEV SELECTED; CLOUD TRANSPORT IS NOT CONFIGURED");
                                                     }
                                                 }
                                             }
@@ -624,7 +637,7 @@ Window {
 
                                             // Status Badge
                                             Rectangle {
-                                                width: juliaStatusTxt.contentWidth + 14
+                                                implicitWidth: juliaStatusTxt.contentWidth + 14
                                                 height: 22
                                                 color: "transparent"
                                                 border.color: (typeof hostController !== "undefined" && hostController.hasJuliaModel) ? "#7EE787" : "#FFB000"
@@ -634,8 +647,8 @@ Window {
                                                     id: juliaStatusTxt
                                                     anchors.centerIn: parent
                                                     text: (typeof hostController !== "undefined" && hostController.hasJuliaModel)
-                                                          ? "[ ● ONNX WEIGHTS LOADED ]"
-                                                          : "[ ○ FAST HEURISTIC MODE ]"
+                                                          ? "[ ● JULIA LOADED ]"
+                                                          : "[ ○ S1 NOT LOADED ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 8
                                                     font.bold: true
@@ -645,8 +658,8 @@ Window {
 
                                             // Download button when weights not yet pulled
                                             Rectangle {
-                                                visible: typeof hostController !== "undefined" && !hostController.hasJuliaModel && !hostController.isDownloadingModel
-                                                width: dlJuliaCard1Txt.contentWidth + 14
+                                                visible: typeof hostController !== "undefined" && !hostController.hasJuliaModel && ["NOT_LOADED", "FAILED"].indexOf(hostController.juliaState) >= 0
+                                                implicitWidth: dlJuliaCard1Txt.contentWidth + 14
                                                 height: 22
                                                 color: dlJuliaCard1Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
                                                 border.color: dashboardWindow.borderColor
@@ -655,14 +668,14 @@ Window {
                                                 Text {
                                                     id: dlJuliaCard1Txt
                                                     anchors.centerIn: parent
-                                                    text: "[ ⬇ PULL JULIA-1 ONNX (552 MB) ]"
+                                                    text: "[ DOWNLOAD JULIA-1 (600 MB) ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 8
                                                     font.bold: true
                                                     color: dlJuliaCard1Mouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                 }
 
-                                                MouseArea {
+                                                HudMouseArea {
                                                     id: dlJuliaCard1Mouse
                                                     anchors.fill: parent
                                                     hoverEnabled: true
@@ -670,7 +683,7 @@ Window {
                                                     onClicked: {
                                                         if (typeof hostController !== "undefined") {
                                                             hostController.downloadJuliaModel();
-                                                            dashboardWindow.showToast("DOWNLOADING JULIA-1 ONNX (552 MB)...");
+                                                            dashboardWindow.showToast("DOWNLOADING AND VERIFYING JULIA-1...");
                                                         }
                                                     }
                                                 }
@@ -678,8 +691,8 @@ Window {
 
                                             // Real-time downloading indicator
                                             Text {
-                                                visible: typeof hostController !== "undefined" && hostController.isDownloadingModel
-                                                text: "DOWNLOADING: " + (typeof hostController !== "undefined" ? hostController.downloadProgress : 0) + "%"
+                                                visible: typeof hostController !== "undefined" && ["LOADING", "DOWNLOADING"].indexOf(hostController.juliaState) >= 0
+                                                text: typeof hostController !== "undefined" ? hostController.juliaState : ""
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 8
                                                 font.bold: true
@@ -689,8 +702,8 @@ Window {
 
                                         Text {
                                             text: dashboardWindow.scorerMode === "jev"
-                                                ? "Cloud credentials stored in OS secure vault (macOS Keychain / WinCred). Satisfies D07."
-                                                : "Local Julia-1 ONNX runs on CPU with <15ms latency. 100% offline air-gapped execution."
+                                                ? "Jev is not configured. The S1-first flow requires local Julia."
+                                                : "Julia classifies first: below 0.70 keeps the original; otherwise Granite supplies choices. Confirm intent explicitly."
                                             font.family: dashboardWindow.monoFont
                                             font.pixelSize: 9
                                             color: dashboardWindow.commentColor
@@ -698,9 +711,16 @@ Window {
                                     }
                                 }
 
+                                JuliaSettings {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    currentTheme: dashboardWindow.currentTheme
+                                }
+
                                 // Card 2: Rewrite Profiles (Prompt Compiler)
                                 Rectangle {
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     Layout.preferredHeight: 170
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
@@ -743,7 +763,7 @@ Window {
                                                     spacing: 10
 
                                                     Rectangle {
-                                                        width: profBtnTxt.contentWidth + 14
+                                                        implicitWidth: profBtnTxt.contentWidth + 14
                                                         height: 22
                                                         color: (typeof hostController !== "undefined" && hostController.rewriteProfile.toLowerCase().indexOf(modelData.id) !== -1) ? dashboardWindow.fgColor : "transparent"
                                                         border.color: dashboardWindow.borderColor
@@ -759,12 +779,12 @@ Window {
                                                             color: (typeof hostController !== "undefined" && hostController.rewriteProfile.toLowerCase().indexOf(modelData.id) !== -1) ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                         }
 
-                                                        MouseArea {
+                                                        HudMouseArea {
                                                             anchors.fill: parent
                                                             cursorShape: Qt.PointingHandCursor
                                                             onClicked: {
                                                                 if (typeof hostController !== "undefined") {
-                                                                    hostController.setRewriteProfile(modelData.id);
+                                                                    hostController.setRewriteProfile(modelData.id, hostController.stateVersion);
                                                                     dashboardWindow.showToast("REWRITE PROFILE: " + modelData.label);
                                                                 }
                                                             }
@@ -786,6 +806,7 @@ Window {
                                 // Card 3: IBM Granite SLM & Non-Invasive Model Repository
                                 Rectangle {
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     implicitHeight: graniteCardCol.implicitHeight + 28
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
@@ -807,7 +828,7 @@ Window {
                                             }
                                             Item { Layout.fillWidth: true }
                                             Text {
-                                                text: (typeof hostController !== "undefined" && hostController.useLiveWeights) ? "[LIVE WEIGHTS]" : "[BUILT-IN NATIVE]"
+                                                text: (typeof hostController !== "undefined" && hostController.useLiveWeights) ? "[LIVE WEIGHTS]" : "[UNAVAILABLE]"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 9
                                                 font.bold: true
@@ -820,7 +841,7 @@ Window {
                                             spacing: 10
 
                                             Rectangle {
-                                                width: nativeBtnTxt.contentWidth + 16
+                                                implicitWidth: nativeBtnTxt.contentWidth + 16
                                                 height: 26
                                                 color: (typeof hostController !== "undefined" && !hostController.useLiveWeights) ? dashboardWindow.fgColor : "transparent"
                                                 border.color: dashboardWindow.borderColor
@@ -830,27 +851,27 @@ Window {
                                                     id: nativeBtnTxt
                                                     anchors.centerIn: parent
                                                     text: (typeof hostController !== "undefined" && !hostController.useLiveWeights)
-                                                          ? "[ ● BUILT-IN NATIVE ENGINE (<15ms, 0MB RAM) ]"
-                                                          : "[ ○ BUILT-IN NATIVE ENGINE (<15ms, 0MB RAM) ]"
+                                                          ? "[ CHECK LOCAL RUNTIME ]"
+                                                          : "[ CHECK LOCAL RUNTIME ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 9
                                                     font.bold: (typeof hostController !== "undefined" && !hostController.useLiveWeights)
                                                     color: (typeof hostController !== "undefined" && !hostController.useLiveWeights) ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                 }
-                                                MouseArea {
+                                                HudMouseArea {
                                                     anchors.fill: parent
                                                     cursorShape: Qt.PointingHandCursor
                                                     onClicked: {
                                                         if (typeof hostController !== "undefined") {
-                                                            hostController.setUseLiveWeights(false);
-                                                            dashboardWindow.showToast("INFERENCE: NATIVE BUILT-IN C++ ENGINE ACTIVATED");
+                                                            hostController.refreshAvailableModels();
+                                                            dashboardWindow.showToast("CHECKING LOCAL RUNTIME");
                                                         }
                                                     }
                                                 }
                                             }
 
                                             Rectangle {
-                                                width: liveBtnTxt.contentWidth + 16
+                                                implicitWidth: liveBtnTxt.contentWidth + 16
                                                 height: 26
                                                 color: (typeof hostController !== "undefined" && hostController.useLiveWeights) ? dashboardWindow.fgColor : "transparent"
                                                 border.color: dashboardWindow.borderColor
@@ -867,13 +888,13 @@ Window {
                                                     font.bold: (typeof hostController !== "undefined" && hostController.useLiveWeights)
                                                     color: (typeof hostController !== "undefined" && hostController.useLiveWeights) ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                 }
-                                                MouseArea {
+                                                HudMouseArea {
                                                     anchors.fill: parent
                                                     cursorShape: Qt.PointingHandCursor
                                                     onClicked: {
                                                         if (typeof hostController !== "undefined") {
-                                                            hostController.setUseLiveWeights(true);
-                                                            dashboardWindow.showToast("INFERENCE: LIVE WEIGHTS ENGINE ACTIVATED");
+                                                            hostController.refreshAvailableModels();
+                                                            dashboardWindow.showToast("CHECKING LOCAL MODEL RUNTIME");
                                                         }
                                                     }
                                                 }
@@ -883,6 +904,7 @@ Window {
                                         // Status bar
                                         Rectangle {
                                             Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
                                             height: 24
                                             color: dashboardWindow.dimColor
                                             border.color: dashboardWindow.borderColor
@@ -901,6 +923,7 @@ Window {
 
                                                 Text {
                                                     Layout.fillWidth: true
+                                                    Layout.minimumWidth: 0
                                                     text: typeof hostController !== "undefined" ? hostController.modelEngineStatus : "LOADING STATUS..."
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 8
@@ -914,6 +937,7 @@ Window {
                                         // Row 2: Non-Invasive Model Folder Connection
                                         ColumnLayout {
                                             Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
                                             spacing: 4
 
                                             Text {
@@ -926,10 +950,12 @@ Window {
 
                                             RowLayout {
                                                 Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
                                                 spacing: 8
 
                                                 Rectangle {
                                                     Layout.fillWidth: true
+                                                    Layout.minimumWidth: 0
                                                     height: 28
                                                     color: dashboardWindow.bgColor
                                                     border.color: dashboardWindow.borderColor
@@ -942,6 +968,7 @@ Window {
 
                                                         Text {
                                                             Layout.fillWidth: true
+                                                            Layout.minimumWidth: 0
                                                             text: (typeof hostController !== "undefined" && hostController.modelDirectory.length > 0)
                                                                   ? hostController.modelDirectory
                                                                   : "No folder connected"
@@ -954,7 +981,7 @@ Window {
                                                 }
 
                                                 Rectangle {
-                                                    width: connBtnTxt.contentWidth + 16
+                                                    implicitWidth: connBtnTxt.contentWidth + 16
                                                     height: 28
                                                     color: connectMouse.containsMouse ? dashboardWindow.fgColor : "transparent"
                                                     border.color: dashboardWindow.borderColor
@@ -970,7 +997,7 @@ Window {
                                                         color: connectMouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                     }
 
-                                                    MouseArea {
+                                                    HudMouseArea {
                                                         id: connectMouse
                                                         anchors.fill: parent
                                                         hoverEnabled: true
@@ -987,7 +1014,7 @@ Window {
                                                 }
 
                                                 Rectangle {
-                                                    width: refreshBtnTxt.contentWidth + 14
+                                                    implicitWidth: refreshBtnTxt.contentWidth + 14
                                                     height: 28
                                                     color: refreshMouse.containsMouse ? dashboardWindow.fgColor : "transparent"
                                                     border.color: dashboardWindow.borderColor
@@ -1003,7 +1030,7 @@ Window {
                                                         color: refreshMouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                     }
 
-                                                    MouseArea {
+                                                    HudMouseArea {
                                                         id: refreshMouse
                                                         anchors.fill: parent
                                                         hoverEnabled: true
@@ -1029,6 +1056,7 @@ Window {
                                         // Row 3: Detected Models
                                         ColumnLayout {
                                             Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
                                             spacing: 6
 
                                             Text {
@@ -1044,6 +1072,7 @@ Window {
 
                                                 delegate: Rectangle {
                                                     Layout.fillWidth: true
+                                                    Layout.minimumWidth: 0
                                                     height: 26
                                                     color: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name)
                                                            ? dashboardWindow.dimColor
@@ -1060,7 +1089,7 @@ Window {
                                                         spacing: 8
 
                                                         Text {
-                                                            text: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name) ? "[ ● ACTIVE ]" : "[ ○ SELECT ]"
+                                                            text: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name) ? "[ ● ACTIVE ]" : (modelData.requiresImport ? "[ IMPORT ]" : "[ ○ SELECT ]")
                                                             font.family: dashboardWindow.monoFont
                                                             font.pixelSize: 8
                                                             font.bold: true
@@ -1085,13 +1114,14 @@ Window {
                                                         Item { Layout.fillWidth: true }
                                                     }
 
-                                                    MouseArea {
+                                                    HudMouseArea {
                                                         anchors.fill: parent
                                                         cursorShape: Qt.PointingHandCursor
                                                         onClicked: {
                                                             if (typeof hostController !== "undefined") {
-                                                                hostController.setActiveModel(modelData.name);
-                                                                dashboardWindow.showToast("ACTIVE MODEL: " + modelData.name);
+                                                                if (modelData.requiresImport) hostController.importLocalModel(modelData.path);
+                                                                else hostController.setActiveModel(modelData.name);
+                                                                dashboardWindow.showToast(modelData.requiresImport ? "IMPORTING LOCAL GGUF..." : "ACTIVE MODEL: " + modelData.name);
                                                             }
                                                         }
                                                     }
@@ -1102,6 +1132,7 @@ Window {
                                             Rectangle {
                                                 visible: (typeof hostController !== "undefined" && hostController.availableModels.length === 0)
                                                 Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
                                                 height: 32
                                                 color: dashboardWindow.dimColor
                                                 border.color: dashboardWindow.borderColor
@@ -1125,6 +1156,7 @@ Window {
                                         // Row 4: Download / Pull Models & Live Test
                                         ColumnLayout {
                                             Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
                                             spacing: 6
 
                                             Text {
@@ -1139,6 +1171,7 @@ Window {
                                             Rectangle {
                                                 visible: typeof hostController !== "undefined" && hostController.isDownloadingModel
                                                 Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
                                                 height: 44
                                                 color: dashboardWindow.dimColor
                                                 border.color: "#FFB000"
@@ -1164,7 +1197,7 @@ Window {
                                                             font.pixelSize: 8
                                                             font.bold: true
                                                             color: dashboardWindow.fgColor
-                                                            MouseArea {
+                                                            HudMouseArea {
                                                                 anchors.fill: parent
                                                                 cursorShape: Qt.PointingHandCursor
                                                                 onClicked: {
@@ -1190,10 +1223,11 @@ Window {
                                             Flow {
                                                 visible: typeof hostController === "undefined" || !hostController.isDownloadingModel
                                                 Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
                                                 spacing: 8
 
                                                 Rectangle {
-                                                    width: dl1Txt.contentWidth + 14
+                                                    implicitWidth: dl1Txt.contentWidth + 14
                                                     height: 24
                                                     color: dl1Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
                                                     border.color: dashboardWindow.borderColor
@@ -1202,21 +1236,21 @@ Window {
                                                     Text {
                                                         id: dl1Txt
                                                         anchors.centerIn: parent
-                                                        text: "[ ⬇ PULL GRANITE 4.2 3B (3.9 GB) ]"
+                                                        text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected) ? "[ ⬇ GRANITE 4.2 Q8_0 (3.62 GiB) ]" : "[ ⬇ PULL GRANITE 4.2 3B (3.9 GB) ]"
                                                         font.family: dashboardWindow.monoFont
                                                         font.pixelSize: 8
                                                         font.bold: true
                                                         color: dl1Mouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                     }
 
-                                                    MouseArea {
+                                                    HudMouseArea {
                                                         id: dl1Mouse
                                                         anchors.fill: parent
                                                         hoverEnabled: true
                                                         cursorShape: Qt.PointingHandCursor
                                                         onClicked: {
                                                             if (typeof hostController !== "undefined") {
-                                                                hostController.downloadModel("granite4.2:3b-q8_0");
+                                                                hostController.downloadModel(hostController.nativeGraniteSelected ? "native-granite:Q8_0" : "granite4.2:3b-q8_0");
                                                                 dashboardWindow.showToast("DOWNLOADING GRANITE 4.2 3B...");
                                                             }
                                                         }
@@ -1224,7 +1258,7 @@ Window {
                                                 }
 
                                                 Rectangle {
-                                                    width: dl2Txt.contentWidth + 14
+                                                    implicitWidth: dl2Txt.contentWidth + 14
                                                     height: 24
                                                     color: dl2Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
                                                     border.color: dashboardWindow.borderColor
@@ -1233,29 +1267,29 @@ Window {
                                                     Text {
                                                         id: dl2Txt
                                                         anchors.centerIn: parent
-                                                        text: "[ ⬇ PULL GRANITE 3.1 2B (1.5 GB) ]"
+                                                        text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected) ? "[ ⬇ GRANITE 4.2 Q5_K_M (2.43 GiB) ]" : "[ ⬇ PULL GRANITE 3.1 2B (1.5 GB) ]"
                                                         font.family: dashboardWindow.monoFont
                                                         font.pixelSize: 8
                                                         font.bold: true
                                                         color: dl2Mouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                     }
 
-                                                    MouseArea {
+                                                    HudMouseArea {
                                                         id: dl2Mouse
                                                         anchors.fill: parent
                                                         hoverEnabled: true
                                                         cursorShape: Qt.PointingHandCursor
                                                         onClicked: {
                                                             if (typeof hostController !== "undefined") {
-                                                                hostController.downloadModel("granite3.1-dense:2b");
-                                                                dashboardWindow.showToast("DOWNLOADING GRANITE 3.1 2B...");
+                                                                hostController.downloadModel(hostController.nativeGraniteSelected ? "native-granite:Q5_K_M" : "granite3.1-dense:2b");
+                                                                dashboardWindow.showToast(hostController.nativeGraniteSelected ? "DOWNLOADING PINNED GRANITE 4.2..." : "DOWNLOADING GRANITE 3.1 2B...");
                                                             }
                                                         }
                                                     }
                                                 }
 
                                                 Rectangle {
-                                                    width: testInfTxt.contentWidth + 14
+                                                    implicitWidth: testInfTxt.contentWidth + 14
                                                     height: 24
                                                     color: testInfMouse.containsMouse ? dashboardWindow.fgColor : "transparent"
                                                     border.color: "#7EE787"
@@ -1264,23 +1298,22 @@ Window {
                                                     Text {
                                                         id: testInfTxt
                                                         anchors.centerIn: parent
-                                                        text: (typeof hostController !== "undefined" && hostController.isInferring) ? "[ INFERRING... ]" : "[ 🔬 TEST LIVE INFERENCE ]"
+                                                        text: (typeof hostController !== "undefined" && hostController.isInferring) ? "[ WORKING... ]" : "[ CHECK & WARM MODEL ]"
                                                         font.family: dashboardWindow.monoFont
                                                         font.pixelSize: 8
                                                         font.bold: true
                                                         color: testInfMouse.containsMouse ? dashboardWindow.bgColor : "#7EE787"
                                                     }
 
-                                                    MouseArea {
+                                                    HudMouseArea {
                                                         id: testInfMouse
                                                         anchors.fill: parent
                                                         hoverEnabled: true
                                                         cursorShape: Qt.PointingHandCursor
                                                         onClicked: {
                                                             if (typeof hostController !== "undefined") {
-                                                                dashboardWindow.showToast("TESTING LIVE INFERENCE...");
-                                                                const result = hostController.testLiveInference("refactor auth token handling");
-                                                                dashboardWindow.showToast(result);
+                                                                dashboardWindow.showToast("CHECKING AND WARMING THE SELECTED MODEL...");
+                                                                hostController.warmSelectedModel();
                                                             }
                                                         }
                                                     }
@@ -1310,6 +1343,7 @@ Window {
                                 // Direct Editor Injection
                                 Rectangle {
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     Layout.preferredHeight: 140
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
@@ -1330,38 +1364,39 @@ Window {
                                             }
                                             Item { Layout.fillWidth: true }
                                             Text {
-                                                text: (typeof hostController !== "undefined" && hostController.directInjectionEnabled) ? "[STATUS: ENABLED]" : "[STATUS: DISABLED]"
+                                                objectName: "ambientCaptureStatus"
+                                                text: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? "[STATUS: ENABLED]" : "[STATUS: DISABLED]"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 9
                                                 font.bold: true
-                                                color: (typeof hostController !== "undefined" && hostController.directInjectionEnabled) ? "#7EE787" : dashboardWindow.mutedTextColor
+                                                color: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? "#7EE787" : dashboardWindow.mutedTextColor
                                             }
                                         }
 
                                         RowLayout {
                                             spacing: 10
                                             Rectangle {
-                                                width: injEnTxt.contentWidth + 14
+                                                implicitWidth: injEnTxt.contentWidth + 14
                                                 height: 24
-                                                color: (typeof hostController !== "undefined" && hostController.directInjectionEnabled) ? dashboardWindow.fgColor : "transparent"
+                                                color: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? dashboardWindow.fgColor : "transparent"
                                                 border.color: dashboardWindow.borderColor
                                                 border.width: 1
 
                                                 Text {
                                                     id: injEnTxt
                                                     anchors.centerIn: parent
-                                                    text: (typeof hostController !== "undefined" && hostController.directInjectionEnabled) ? "[ ● ENABLED (Direct In-Place) ]" : "[ ○ ENABLED (Direct In-Place) ]"
+                                                    text: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? "[ ● ENABLED (Captured Field) ]" : "[ ○ ENABLED (Captured Field) ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 9
-                                                    font.bold: (typeof hostController !== "undefined" && hostController.directInjectionEnabled)
-                                                    color: (typeof hostController !== "undefined" && hostController.directInjectionEnabled) ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                    font.bold: (typeof hostController !== "undefined" && hostController.ambientModeEnabled)
+                                                    color: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                 }
-                                                MouseArea {
+                                                HudMouseArea {
                                                     anchors.fill: parent
                                                     cursorShape: Qt.PointingHandCursor
                                                     onClicked: {
                                                         if (typeof hostController !== "undefined") {
-                                                            hostController.directInjectionEnabled = true;
+                                                            hostController.setAmbientModeEnabled(true);
                                                             dashboardWindow.showToast("DIRECT INJECTION: ENABLED");
                                                         }
                                                     }
@@ -1369,27 +1404,27 @@ Window {
                                             }
 
                                             Rectangle {
-                                                width: injDisTxt.contentWidth + 14
+                                                implicitWidth: injDisTxt.contentWidth + 14
                                                 height: 24
-                                                color: (typeof hostController !== "undefined" && !hostController.directInjectionEnabled) ? dashboardWindow.fgColor : "transparent"
+                                                color: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled) ? dashboardWindow.fgColor : "transparent"
                                                 border.color: dashboardWindow.borderColor
                                                 border.width: 1
 
                                                 Text {
                                                     id: injDisTxt
                                                     anchors.centerIn: parent
-                                                    text: (typeof hostController !== "undefined" && !hostController.directInjectionEnabled) ? "[ ● DISABLED (Clipboard Fallback) ]" : "[ ○ DISABLED (Clipboard Fallback) ]"
+                                                    text: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled) ? "[ ● DISABLED (Clipboard Fallback) ]" : "[ ○ DISABLED (Clipboard Fallback) ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 9
-                                                    font.bold: (typeof hostController !== "undefined" && !hostController.directInjectionEnabled)
-                                                    color: (typeof hostController !== "undefined" && !hostController.directInjectionEnabled) ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                    font.bold: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled)
+                                                    color: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled) ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                 }
-                                                MouseArea {
+                                                HudMouseArea {
                                                     anchors.fill: parent
                                                     cursorShape: Qt.PointingHandCursor
                                                     onClicked: {
                                                         if (typeof hostController !== "undefined") {
-                                                            hostController.directInjectionEnabled = false;
+                                                            hostController.setAmbientModeEnabled(false);
                                                             dashboardWindow.showToast("DIRECT INJECTION: DISABLED (CLIPBOARD MODE)");
                                                         }
                                                     }
@@ -1398,9 +1433,9 @@ Window {
                                         }
 
                                         Text {
-                                            text: (typeof hostController !== "undefined" && hostController.hasAccessibilityPermission)
-                                                ? "OS Accessibility API permission is granted. Prompts replace selected text directly in the active editor."
-                                                : "When permissions are absent, Roclint cleanly copies enhanced prompts to your clipboard for instant Cmd+V paste."
+                                            text: (typeof hostController !== "undefined" && hostController.accessibilityTrusted)
+                                                ? "Live capture watches the focused editable field. Insert replaces that captured draft after approval."
+                                                : "Accessibility is unavailable. Copy the approved prompt, then paste it into your editor."
                                             font.family: dashboardWindow.monoFont
                                             font.pixelSize: 9
                                             color: dashboardWindow.commentColor
@@ -1411,6 +1446,7 @@ Window {
                                 // Color Palette Theme
                                 Rectangle {
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     Layout.preferredHeight: 120
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
@@ -1439,7 +1475,7 @@ Window {
                                                     { id: "light", label: "[ CLEAN LIGHT ]", sample: "#F4F4F4" }
                                                 ]
                                                 delegate: Rectangle {
-                                                    width: thmTxt.contentWidth + 20
+                                                    implicitWidth: thmTxt.contentWidth + 20
                                                     height: 34
                                                     color: modelData.sample
                                                     border.color: dashboardWindow.currentTheme === modelData.id ? dashboardWindow.fgColor : dashboardWindow.borderColor
@@ -1454,7 +1490,7 @@ Window {
                                                         font.bold: true
                                                         color: modelData.id === "light" ? "#050505" : "#C9D1D9"
                                                     }
-                                                    MouseArea {
+                                                    HudMouseArea {
                                                         anchors.fill: parent
                                                         cursorShape: Qt.PointingHandCursor
                                                         onClicked: {
@@ -1469,52 +1505,10 @@ Window {
                                 }
 
                                 // Global Shortcut Card
-                                Rectangle {
+                                InvocationSettings {
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 80
-                                    color: dashboardWindow.inputBgColor
-                                    border.color: dashboardWindow.borderColor
-                                    border.width: 1
-
-                                    ColumnLayout {
-                                        anchors.fill: parent
-                                        anchors.margins: 14
-                                        spacing: 6
-
-                                        Text {
-                                            text: "GLOBAL INVOCATION SHORTCUT"
-                                            font.family: dashboardWindow.monoFont
-                                            font.pixelSize: 10
-                                            font.bold: true
-                                            color: dashboardWindow.fgColor
-                                        }
-
-                                        RowLayout {
-                                            spacing: 10
-                                            Rectangle {
-                                                width: hkTxt.contentWidth + 14
-                                                height: 22
-                                                color: dashboardWindow.dimColor
-                                                border.color: dashboardWindow.borderColor
-                                                border.width: 1
-                                                Text {
-                                                    id: hkTxt
-                                                    anchors.centerIn: parent
-                                                    text: "[ " + dashboardWindow.globalShortcutString + " ]"
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
-                                                    font.bold: true
-                                                    color: dashboardWindow.fgColor
-                                                }
-                                            }
-                                            Text {
-                                                text: "Registered in OS native event loop. Anchors floating HUD at active cursor screen coordinates."
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
-                                                color: dashboardWindow.commentColor
-                                            }
-                                        }
-                                    }
+                                    Layout.minimumWidth: 0
+                                    currentTheme: dashboardWindow.currentTheme
                                 }
                             }
 
@@ -1536,6 +1530,7 @@ Window {
 
                                 Rectangle {
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     Layout.preferredHeight: 140
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
@@ -1563,12 +1558,13 @@ Window {
                                                 Layout.preferredWidth: 100
                                             }
                                             Text {
-                                                text: (typeof hostController !== "undefined" && hostController.databasePath.length > 0) ? hostController.databasePath : "~/Library/Application Support/roclint/history.db"
+                                                text: (typeof hostController !== "undefined" && hostController.databasePath.length > 0) ? hostController.databasePath : "Storage unavailable"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 9
                                                 color: dashboardWindow.fgColor
                                                 elide: Text.ElideMiddle
                                                 Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
                                             }
                                         }
 
@@ -1581,7 +1577,7 @@ Window {
                                                 Layout.preferredWidth: 100
                                             }
                                             Text {
-                                                text: (typeof hostController !== "undefined" && hostController.databaseStats.length > 0) ? hostController.databaseStats : "WAL MODE ENABLED  |  0 SESSIONS  |  SCHEMA v2"
+                                                text: (typeof hostController !== "undefined" && hostController.databaseStats.length > 0) ? hostController.databaseStats : "Storage unavailable"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 9
                                                 font.bold: true
@@ -1592,7 +1588,7 @@ Window {
                                         RowLayout {
                                             spacing: 10
                                             Rectangle {
-                                                width: vacTxt.contentWidth + 14
+                                                implicitWidth: vacTxt.contentWidth + 14
                                                 height: 24
                                                 color: vacMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
                                                 border.color: dashboardWindow.borderColor
@@ -1606,7 +1602,7 @@ Window {
                                                     font.pixelSize: 9
                                                     color: dashboardWindow.fgColor
                                                 }
-                                                MouseArea {
+                                                HudMouseArea {
                                                     id: vacMouse
                                                     anchors.fill: parent
                                                     hoverEnabled: true
@@ -1621,7 +1617,7 @@ Window {
                                             }
 
                                             Rectangle {
-                                                width: delHistTxt.contentWidth + 14
+                                                implicitWidth: delHistTxt.contentWidth + 14
                                                 height: 24
                                                 color: delHistMouse.containsMouse ? "#8B1E1E" : "transparent"
                                                 border.color: "#8B1E1E"
@@ -1635,14 +1631,16 @@ Window {
                                                     font.pixelSize: 9
                                                     color: "#EF4444"
                                                 }
-                                                MouseArea {
+                                                HudMouseArea {
                                                     id: delHistMouse
                                                     anchors.fill: parent
                                                     hoverEnabled: true
                                                     cursorShape: Qt.PointingHandCursor
                                                     onClicked: {
                                                         if (typeof hostController !== "undefined") {
-                                                            hostController.purgeHistory();
+                                                            if (!dashboardWindow.confirmPurge) { dashboardWindow.confirmPurge = true; dashboardWindow.showToast("CLICK PURGE AGAIN TO CONFIRM"); return; }
+                                                            if (!hostController.purgeHistory()) return;
+                                                            dashboardWindow.confirmPurge = false;
                                                         }
                                                         dashboardWindow.showToast("HISTORY PURGED");
                                                     }
@@ -1663,6 +1661,7 @@ Window {
                                 ListView {
                                     id: sessionListView
                                     Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
                                     Layout.preferredHeight: 280
                                     clip: true
                                     spacing: 8
@@ -1689,6 +1688,7 @@ Window {
 
                                             ColumnLayout {
                                                 Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
                                                 spacing: 4
 
                                                 RowLayout {
@@ -1715,11 +1715,12 @@ Window {
                                                     color: dashboardWindow.fgColor
                                                     elide: Text.ElideRight
                                                     Layout.fillWidth: true
+                                                    Layout.minimumWidth: 0
                                                 }
                                             }
 
                                             Rectangle {
-                                                width: restTxt.contentWidth + 12
+                                                implicitWidth: restTxt.contentWidth + 12
                                                 height: 22
                                                 color: restMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
                                                 border.color: dashboardWindow.borderColor
@@ -1733,22 +1734,23 @@ Window {
                                                     font.pixelSize: 8
                                                     color: "#7EE787"
                                                 }
-                                                MouseArea {
+                                                HudMouseArea {
                                                     id: restMouse
                                                     anchors.fill: parent
                                                     hoverEnabled: true
                                                     cursorShape: Qt.PointingHandCursor
                                                     onClicked: {
                                                         if (typeof hostController !== "undefined") {
-                                                            hostController.restoreSession(modelData.sessionId);
-                                                            dashboardWindow.showToast("SESSION RESTORED");
+                                                            if (hostController.restoreSessionForReview(modelData.sessionId, hostController.stateVersion))
+                                                                hostController.hideDashboard();
+                                                            else dashboardWindow.showToast(hostController.lastError);
                                                         }
                                                     }
                                                 }
                                             }
 
                                             Rectangle {
-                                                width: delItemTxt.contentWidth + 12
+                                                implicitWidth: delItemTxt.contentWidth + 12
                                                 height: 22
                                                 color: delItemMouse.containsMouse ? "#8B1E1E" : "transparent"
                                                 border.color: dashboardWindow.borderColor
@@ -1762,7 +1764,7 @@ Window {
                                                     font.pixelSize: 8
                                                     color: "#EF4444"
                                                 }
-                                                MouseArea {
+                                                HudMouseArea {
                                                     id: delItemMouse
                                                     anchors.fill: parent
                                                     hoverEnabled: true
@@ -1788,12 +1790,13 @@ Window {
                 // =============================================================
                 RowLayout {
                     Layout.fillWidth: true
+                    Layout.minimumWidth: 0
                     Layout.preferredHeight: 30
                     spacing: 10
 
                     Rectangle {
                         height: 24
-                        width: toastTextLabel.contentWidth + 16
+                        implicitWidth: toastTextLabel.contentWidth + 16
                         color: dashboardWindow.dimColor
                         border.color: dashboardWindow.borderColor
                         border.width: 1
@@ -1802,7 +1805,7 @@ Window {
                         Text {
                             id: toastTextLabel
                             anchors.centerIn: parent
-                            text: dashboardWindow.toastMessage
+                            text: dashboardWindow.toastMessage.length ? dashboardWindow.toastMessage : (typeof hostController !== "undefined" ? hostController.lastError : "")
                             font.family: dashboardWindow.monoFont
                             font.pixelSize: 9
                             font.bold: true
@@ -1814,7 +1817,7 @@ Window {
 
                     // [ CLOSE ]
                     Rectangle {
-                        width: closeBtnTxt.contentWidth + 18
+                        implicitWidth: closeBtnTxt.contentWidth + 18
                         height: 24
                         color: closeBtnMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
                         border.color: dashboardWindow.borderColor
@@ -1829,7 +1832,7 @@ Window {
                             font.pixelSize: 9
                             color: dashboardWindow.fgColor
                         }
-                        MouseArea {
+                        HudMouseArea {
                             id: closeBtnMouse
                             anchors.fill: parent
                             hoverEnabled: true

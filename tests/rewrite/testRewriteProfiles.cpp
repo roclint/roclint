@@ -1,126 +1,103 @@
-#include "roclint/rewrite/RewriteProfile.hpp"
 #include "roclint/bridge/GraniteRewriteAdapter.hpp"
+#include "roclint/rewrite/RewriteProfile.hpp"
+#include "roclint/rewrite/RewriteValidator.hpp"
 #include "support/check.hpp"
+#include "support/fixtures.hpp"
 
 #include <iostream>
-#include <string>
 
 using namespace roclint::core;
-using namespace roclint::core::analysis;
-using namespace roclint::core::intent;
 using namespace roclint::core::rewrite;
-using namespace roclint::bridge;
 
-void testProfileRegistryDiscovery() {
-    std::cout << "--- 1. Profile Registry Discovery ---\n";
+namespace {
+
+void testRegistry() {
+    const auto all = ProfileRegistry::availableProfiles();
+    ROCLINT_CHECK(all.size() == 4);
+    for (const auto& p : all) {
+        ROCLINT_CHECK(ProfileRegistry::isKnownProfile(p.id));
+        ROCLINT_CHECK(ProfileRegistry::getProfile(p.id)->id == p.id);
+        ROCLINT_CHECK(!p.displayName.empty());
+    }
     ROCLINT_CHECK(ProfileRegistry::defaultProfile().id == "GENERIC@1");
-
-    auto pGeneric = ProfileRegistry::getProfile("GENERIC@1");
-    ROCLINT_CHECK(pGeneric.has_value());
-    ROCLINT_CHECK(pGeneric->family == ProfileFamily::Generic);
-
-    auto pAnthropic = ProfileRegistry::getProfile("ANTHROPIC_STRUCTURED@1");
-    ROCLINT_CHECK(pAnthropic.has_value());
-    ROCLINT_CHECK(pAnthropic->family == ProfileFamily::AnthropicStructured);
-    ROCLINT_CHECK(pAnthropic->formatXmlTags);
-
-    auto pOpenAi = ProfileRegistry::getProfile("OPENAI_STRUCTURED@1");
-    ROCLINT_CHECK(pOpenAi.has_value());
-    ROCLINT_CHECK(pOpenAi->family == ProfileFamily::OpenAiStructured);
-    ROCLINT_CHECK(pOpenAi->formatMarkdownSections);
-
-    auto pLocal = ProfileRegistry::getProfile("LOCAL_COMPACT@1");
-    ROCLINT_CHECK(pLocal.has_value());
-    ROCLINT_CHECK(pLocal->family == ProfileFamily::LocalCompact);
-    ROCLINT_CHECK(pLocal->compactEncoding);
-
-    auto pUnknown = ProfileRegistry::getProfile("UNKNOWN_PROFILE@99");
-    ROCLINT_CHECK(!pUnknown.has_value());
-    ROCLINT_CHECK(!ProfileRegistry::isKnownProfile("INVALID_XYZ"));
-    std::cout << "  [PASS] All 4 versioned profiles discovered and typed.\n";
+    ROCLINT_CHECK(ProfileRegistry::getProfile("ANTHROPIC_STRUCTURED")->id == "ANTHROPIC_STRUCTURED@1");
+    ROCLINT_CHECK(!ProfileRegistry::getProfile("CLAUDE").has_value());
+    ROCLINT_CHECK(!ProfileRegistry::isKnownProfile(""));
 }
 
-void testUnknownProfileTypedRejection() {
-    std::cout << "--- 2. Unknown Profile Typed Rejection (Guard 7) ---\n";
-    GraniteRewriteAdapter adapter;
-
-    NormalizedAnalysis snap;
-    snap.id = "snap_b08p";
-    auto intent = IntentProvenanceBuilder::buildConfirmedIntent("rev_1", snap, {});
-
-    GraniteRewriteRequest req{
-        .sessionId = "sess_1",
-        .revisionId = "rev_1",
-        .promptString = "Refactor connection logic",
-        .confirmedIntent = intent,
-        .rewriteProfileId = "NON_EXISTENT_PROFILE@42"
-    };
-
-    auto resp = adapter.synthesizeRewrite(req);
-    ROCLINT_CHECK(!resp.success);
-    ROCLINT_CHECK(resp.errorMessage.find("UNKNOWN_REWRITE_PROFILE") != std::string::npos);
-    std::cout << "  [PASS] Unknown profile returns typed configuration failure without fallback.\n";
+std::vector<ConstraintItem> derive(const fx::Chain& c, const char* profile, std::string_view text) {
+    return RewriteValidator::deriveConstraints(c.intent, *ProfileRegistry::getProfile(profile), text);
 }
 
-void testStructuralPreservationAcrossProfiles() {
-    std::cout << "--- 3. Structural Formatting vs Semantic Invariance ---\n";
-    GraniteRewriteAdapter adapter;
-
-    NormalizedAnalysis snap;
-    snap.id = "snap_b08p_struct";
-    ChoiceGroup g;
-    g.id = "target_component";
-    g.alternatives.push_back(ChoiceAlternative{.id = "alt_card", .interpretation = "FloatingCard.qml"});
-    snap.choiceGroups.push_back(g);
-
-    auto intent = IntentProvenanceBuilder::buildConfirmedIntent("rev_1", snap, {
-        ConfirmedItem{.itemId = "target_component", .kind = IntentResolutionKind::SelectedAlternative, .chosenValue = "alt_card"}
-    });
-
-    // 1. Generic Profile
-    GraniteRewriteRequest reqGeneric{
-        .sessionId = "sess_1",
-        .revisionId = "rev_1",
-        .promptString = "Add timeout handling",
-        .confirmedIntent = intent,
-        .rewriteProfileId = "GENERIC@1"
-    };
-    auto respGeneric = adapter.synthesizeRewrite(reqGeneric);
-    ROCLINT_CHECK(respGeneric.success && respGeneric.proposal.has_value());
-    const auto& propGeneric = *respGeneric.proposal;
-    ROCLINT_CHECK(propGeneric.compiledPrompt.find("/* ROCLINT [PROFILE: GENERIC@1] */") != std::string::npos);
-    ROCLINT_CHECK(propGeneric.compiledPrompt.find("alt_card") != std::string::npos);
-
-    // 2. Anthropic Structured Profile
-    GraniteRewriteRequest reqAnthropic{
-        .sessionId = "sess_1",
-        .revisionId = "rev_1",
-        .promptString = "Add timeout handling",
-        .confirmedIntent = intent,
-        .rewriteProfileId = "ANTHROPIC_STRUCTURED@1"
-    };
-    auto respAnthropic = adapter.synthesizeRewrite(reqAnthropic);
-    ROCLINT_CHECK(respAnthropic.success && respAnthropic.proposal.has_value());
-    const auto& propAnthropic = *respAnthropic.proposal;
-    ROCLINT_CHECK(propAnthropic.compiledPrompt.find("<task>") != std::string::npos);
-    ROCLINT_CHECK(propAnthropic.compiledPrompt.find("<context>") != std::string::npos);
-    ROCLINT_CHECK(propAnthropic.compiledPrompt.find("alt_card") != std::string::npos);
-
-    // Both preserve exact confirmed intent items and required constraints
-    ROCLINT_CHECK(propGeneric.constraints.size() == propAnthropic.constraints.size());
-    ROCLINT_CHECK(propGeneric.constraints[0].id == propAnthropic.constraints[0].id);
-    std::cout << "  [PASS] Identical ConfirmedIntent produces tailored structures preserving semantics.\n";
+const ConstraintItem* find(const std::vector<ConstraintItem>& v, std::string_view id) {
+    for (const auto& c : v) {
+        if (c.id == id) return &c;
+    }
+    return nullptr;
 }
+
+void testProfileStructureConstraints() {
+    fx::Chain c;
+    const auto xmlOk = derive(c, "ANTHROPIC_STRUCTURED@1", "<task>Lower latency per call</task>");
+    ROCLINT_CHECK(find(xmlOk, "profile_structure")->status == ConstraintStatus::MechanicallyVerified);
+    const auto xmlMissing = derive(c, "ANTHROPIC_STRUCTURED@1", "Lower latency per call");
+    ROCLINT_CHECK(find(xmlMissing, "profile_structure")->status == ConstraintStatus::SemanticReviewRequired);
+
+    const auto mdOk = derive(c, "OPENAI_STRUCTURED@1", "# Goal\nLower latency per call");
+    ROCLINT_CHECK(find(mdOk, "profile_structure")->status == ConstraintStatus::MechanicallyVerified);
+    const auto mdMissing = derive(c, "OPENAI_STRUCTURED@1", "#Goal without a space");
+    ROCLINT_CHECK(find(mdMissing, "profile_structure")->status == ConstraintStatus::SemanticReviewRequired);
+
+    ROCLINT_CHECK(find(derive(c, "GENERIC@1", "x"), "profile_structure") == nullptr);
+    ROCLINT_CHECK(find(derive(c, "LOCAL_COMPACT@1", "x"), "profile_structure") == nullptr);
+}
+
+void testNothingIsVerifiedWithoutProof() {
+    fx::Chain c;
+    const auto blank = derive(c, "GENERIC@1", "   ");
+    ROCLINT_CHECK(find(blank, "rewrite_nonempty")->status == ConstraintStatus::Failed);
+    // Wording that isn't present is never claimed as verified.
+    const auto paraphrase = derive(c, "GENERIC@1", "Make each call return sooner.");
+    ROCLINT_CHECK(find(paraphrase, "intent_item_grp_0")->status == ConstraintStatus::SemanticReviewRequired);
+    for (const auto& item : paraphrase) {
+        ROCLINT_CHECK(item.status != ConstraintStatus::UserConfirmed);
+    }
+}
+
+void testRewritePromptCarriesOnlyUserContent() {
+    fx::Chain c;
+    roclint::bridge::GraniteRewriteRequest req;
+    req.sessionId = c.session;
+    req.revisionId = c.revision;
+    req.originalText = "Use <b> & \"quotes\" here";
+    req.analysis = c.snapshot;
+    req.confirmedIntent = c.intent;
+    for (const auto& profile : ProfileRegistry::availableProfiles()) {
+        const auto prompt = roclint::bridge::buildRewritePrompt(req, profile);
+        ROCLINT_CHECK(prompt.find("Use &lt;b&gt; &amp; &quot;quotes&quot; here") != std::string::npos);
+        ROCLINT_CHECK(prompt.find("<b>") == std::string::npos);
+        ROCLINT_CHECK(prompt.find(fx::kChainAnswer) != std::string::npos);
+        ROCLINT_CHECK(prompt.find("editing a prompt, not performing the task") != std::string::npos);
+        ROCLINT_CHECK(prompt.find("Do not request extra requirements") != std::string::npos);
+        ROCLINT_CHECK(prompt.find("compact JSON") != std::string::npos);
+        ROCLINT_CHECK(prompt.find("direct prohibitions") != std::string::npos);
+        if (profile.formatXmlTags) ROCLINT_CHECK(prompt.find("<task>Summarize the supplied notes.</task>") != std::string::npos);
+        if (profile.formatMarkdownSections) ROCLINT_CHECK(prompt.find("# Goal\\nSummarize the supplied notes.") != std::string::npos);
+        for (const char* forbidden : {"D:\\", "C:\\", "/Users/", "/home/", "scope_lock", "SCOPE LOCK", ".cpp",
+                                      "project_files"}) {
+            ROCLINT_CHECK(prompt.find(forbidden) == std::string::npos);
+        }
+    }
+}
+
+} // namespace
 
 int main() {
-    std::cout << "[TEST] Running B08P Target-Oriented Rewrite Profiles Tests...\n\n";
-
-    testProfileRegistryDiscovery();
-    testUnknownProfileTypedRejection();
-    testStructuralPreservationAcrossProfiles();
-
-    std::cout << "\n=========================================================\n";
-    std::cout << "  ALL B08P REWRITE PROFILES TESTS PASSED!\n";
-    std::cout << "=========================================================\n";
+    std::cout << "[Test RewriteProfiles] Starting...\n";
+    testRegistry();
+    testProfileStructureConstraints();
+    testNothingIsVerifiedWithoutProof();
+    testRewritePromptCarriesOnlyUserContent();
+    std::cout << "[Test RewriteProfiles] All tests PASSED.\n";
     return 0;
 }

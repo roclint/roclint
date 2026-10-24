@@ -1,137 +1,149 @@
 #include "roclint/review/ApprovalRecord.hpp"
-#include "roclint/storage/Database.hpp"
-#include "roclint/storage/PromptRepository.hpp"
 #include "support/check.hpp"
+#include "support/fixtures.hpp"
 
 #include <iostream>
-#include <string>
 
 using namespace roclint::core;
 using namespace roclint::core::review;
-using namespace roclint::storage;
 
-void testApprovalCreationAndBindingHash() {
-    std::cout << "--- 1. Approval Creation & Binding Hash Stability ---\n";
-    SessionId sess("sess_appr_1");
-    RevisionId rev("rev_1");
+namespace {
 
-    auto appr1 = ApprovalFactory::createApproval(
-        sess,
-        rev,
-        "snap_001",
-        0x12345678ULL,
-        "intent_001",
-        "prop_001",
-        0xABCDEF01ULL,
-        "/* ROCLINT COMPILED */\nTarget: FloatingCard.qml",
-        0,
-        1000
-    );
-
-    ROCLINT_CHECK(!appr1.id.empty());
-    ROCLINT_CHECK(appr1.sessionId == sess);
-    ROCLINT_CHECK(appr1.revisionId == rev);
-    ROCLINT_CHECK(appr1.snapshotId == "snap_001");
-    ROCLINT_CHECK(appr1.snapshotHash == 0x12345678ULL);
-    ROCLINT_CHECK(appr1.intentId == "intent_001");
-    ROCLINT_CHECK(appr1.proposalId == "prop_001");
-    ROCLINT_CHECK(appr1.proposalHash == 0xABCDEF01ULL);
-    ROCLINT_CHECK(appr1.editGeneration == 0);
-    ROCLINT_CHECK(appr1.isCurrent);
-    ROCLINT_CHECK(appr1.bindingHash != 0);
-
-    // Verify hash stability
-    ROCLINT_CHECK(appr1.bindingHash == appr1.computeBindingHash());
-
-    // Valid check
-    ROCLINT_CHECK(ApprovalFactory::isApprovalValid(appr1, "rev_1", "prop_001", 0xABCDEF01ULL));
-
-    // Stale proposal hash or ID check
-    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(appr1, "rev_1", "prop_modified", 0xABCDEF01ULL));
-    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(appr1, "rev_2", "prop_001", 0xABCDEF01ULL));
-    std::cout << "  [PASS] Approval proof fields and binding hash verified.\n";
+void testCreateBindsEveryField() {
+    fx::Chain c;
+    const auto ctx = c.context(2, 5);
+    auto created = ApprovalFactory::createApproval(ctx, 1234);
+    ROCLINT_CHECK(created.ok());
+    const auto& a = created.value();
+    ROCLINT_CHECK(a.sessionId == c.session);
+    ROCLINT_CHECK(a.revisionId == c.revision);
+    ROCLINT_CHECK(a.stateVersion == 2);
+    ROCLINT_CHECK(a.draftEditGeneration == 5);
+    ROCLINT_CHECK(a.proposalEditGeneration == c.proposal.proposalEditGeneration);
+    ROCLINT_CHECK(a.snapshotHash == c.snapshot.snapshotHash);
+    ROCLINT_CHECK(a.intentHash == c.intent.intentHash);
+    ROCLINT_CHECK(a.proposalHash == c.proposal.proposalHash);
+    ROCLINT_CHECK(a.approvedText == c.proposal.rewrittenText);
+    ROCLINT_CHECK(a.rewriteProfile == c.proposal.rewriteProfileId);
+    ROCLINT_CHECK(a.validatorVersion == std::string(rewrite::kValidatorVersion));
+    ROCLINT_CHECK(a.isCurrent);
+    ROCLINT_CHECK(a.id == "appr_" + a.bindingHash);
+    ROCLINT_CHECK(a.bindingHash == a.computeBindingHash());
+    ROCLINT_CHECK(ApprovalFactory::isApprovalValid(a, ctx));
 }
 
-void testApprovalPersistenceAndCurrentVsHistorical() {
-    std::cout << "--- 2. Approval Persistence & Historical Archival ---\n";
-    Database db(":memory:");
-    PromptRepository repo(db);
-    repo.migrate();
+void testLiveStateChangesInvalidate() {
+    fx::Chain c;
+    const auto a = c.approve(2);
 
-    SessionId sess("sess_persist_1");
-    RevisionId rev1("rev_1");
-    RevisionId rev2("rev_2");
+    auto draftGen = c.context(2, 1);
+    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(a, draftGen));
 
-    repo.createSession(sess, 100);
-    repo.saveRevision(PromptRevision(sess, rev1, std::nullopt, "Initial prompt", 100));
-    repo.saveRevision(PromptRevision(sess, rev2, rev1, "Second prompt revision", 200));
+    auto version = c.context(3);
+    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(a, version));
 
-    // 1. Save approval for rev1
-    auto appr1 = ApprovalFactory::createApproval(
-        sess,
-        rev1,
-        "snap_1",
-        1111,
-        "intent_1",
-        "prop_1",
-        2222,
-        "Approved wording 1",
-        0,
-        150
-    );
-    repo.saveApproval(appr1);
+    auto dirty = c.context(2);
+    dirty.revisionStatus = RevisionStatus::DraftDirty;
+    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(a, dirty));
 
-    auto curr1 = repo.getCurrentApproval(sess);
-    ROCLINT_CHECK(curr1.has_value());
-    ROCLINT_CHECK(curr1->id == appr1.id);
-    ROCLINT_CHECK(curr1->isCurrent);
-    ROCLINT_CHECK(curr1->approvedText == "Approved wording 1");
+    auto revision = c.context(2);
+    revision.revisionId = "rev_sess_a_2";
+    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(a, revision));
 
-    // 2. Save new approval for rev2 (e.g. after rewrite)
-    auto appr2 = ApprovalFactory::createApproval(
-        sess,
-        rev2,
-        "snap_2",
-        3333,
-        "intent_2",
-        "prop_2",
-        4444,
-        "Approved wording 2",
-        1,
-        250
-    );
-    repo.saveApproval(appr2);
+    auto validator = c.context(2);
+    validator.validatorVersion = "rewrite_validator_v1";
+    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(a, validator));
 
-    // Prior approval is automatically archived (is_current = 0)
-    auto curr2 = repo.getCurrentApproval(sess);
-    ROCLINT_CHECK(curr2.has_value());
-    ROCLINT_CHECK(curr2->id == appr2.id);
-    ROCLINT_CHECK(curr2->approvedText == "Approved wording 2");
-    ROCLINT_CHECK(curr2->editGeneration == 1);
+    auto policy = c.context(2);
+    policy.policyVersion = "materiality_policy_v0";
+    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(a, policy));
 
-    // History contains both
-    auto history = repo.getApprovalHistory(sess);
-    ROCLINT_CHECK(history.size() == 2);
-    ROCLINT_CHECK(history[0].id == appr2.id);
-    ROCLINT_CHECK(history[0].isCurrent == true);
-    ROCLINT_CHECK(history[1].id == appr1.id);
-    ROCLINT_CHECK(history[1].isCurrent == false);
-
-    // 3. User edits proposal/prompt -> invalidate current approval
-    repo.invalidateApproval(sess);
-    auto currAfterInvalidate = repo.getCurrentApproval(sess);
-    ROCLINT_CHECK(!currAfterInvalidate.has_value());
-    std::cout << "  [PASS] Approval persistence, invalidation, and history verified.\n";
+    auto noProposal = c.context(2);
+    noProposal.proposal = nullptr;
+    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(a, noProposal));
 }
+
+void testProposalGenerationChangeInvalidates() {
+    fx::Chain c;
+    const auto a = c.approve(2);
+    // A regenerated proposal (new generation) for the same intent is a different artifact.
+    fx::Chain regenerated("sess_a", 1, "Refactor the parser for lower latency per call.", "GENERIC@1", 1);
+    ROCLINT_CHECK(regenerated.proposal.proposalHash != c.proposal.proposalHash);
+    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(a, regenerated.context(2)));
+
+    auto ctx = c.context(2);
+    ctx.proposalEditGeneration = 1;
+    auto st = ApprovalFactory::validate(a, ctx);
+    ROCLINT_CHECK(!st.ok() && st.error().code == ErrorCode::StaleVersion);
+}
+
+void testApprovedTextChangeInvalidates() {
+    fx::Chain c;
+    auto a = c.approve(2);
+    auto edited = a;
+    edited.approvedText += " (edited)";
+    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(edited, c.context(2)));
+
+    // Re-sealing the edited record still fails: the text no longer matches the proposal.
+    edited.bindingHash = edited.computeBindingHash();
+    edited.id = "appr_" + edited.bindingHash;
+    auto st = ApprovalFactory::validate(edited, c.context(2));
+    ROCLINT_CHECK(!st.ok() && st.error().code == ErrorCode::StaleVersion);
+
+    // A different rewrite of the same intent can't reuse the approval.
+    fx::Chain other("sess_a", 1, "Refactor the parser: lower latency per call matters most.");
+    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(a, other.context(2)));
+}
+
+void testInvalidatedApprovalIsRejected() {
+    fx::Chain c;
+    auto a = c.approve(2);
+    a.isCurrent = false;
+    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(a, c.context(2)));
+}
+
+void testCrossSessionRecordsAreRejected() {
+    fx::Chain a("sess_a");
+    fx::Chain b("sess_b");
+    const auto approvalA = a.approve(2);
+    ROCLINT_CHECK(!ApprovalFactory::isApprovalValid(approvalA, b.context(2)));
+
+    // Mixed inputs: session B's proposal with session A's intent and analysis.
+    auto mixed = a.context(2);
+    mixed.proposal = &b.proposal;
+    ROCLINT_CHECK(!ApprovalFactory::createApproval(mixed, 1).ok());
+
+    auto otherSession = a.context(2);
+    otherSession.sessionId = "sess_b";
+    ROCLINT_CHECK(!ApprovalFactory::createApproval(otherSession, 1).ok());
+}
+
+void testOnlyReadyProposalsCanBeApproved() {
+    fx::Chain c;
+    auto proposal = c.proposal;
+    proposal.status = rewrite::ProposalStatus::NeedsClarification;
+    rewrite::ProposalHasher::seal(proposal);
+    auto ctx = c.context(2);
+    ctx.proposal = &proposal;
+    ROCLINT_CHECK(!ApprovalFactory::createApproval(ctx, 1).ok());
+
+    auto tampered = c.proposal;
+    tampered.rewrittenText = "unsealed edit";
+    ctx.proposal = &tampered;
+    ROCLINT_CHECK(!ApprovalFactory::createApproval(ctx, 1).ok());
+}
+
+} // namespace
 
 int main() {
-    std::cout << "[TEST] Running A11 Approval State & Durable Proof Tests...\n\n";
-
-    testApprovalCreationAndBindingHash();
-    testApprovalPersistenceAndCurrentVsHistorical();
-
-    std::cout << "\n=========================================================\n";
-    std::cout << "  ALL A11 APPROVAL STATE TESTS PASSED!\n";
-    std::cout << "=========================================================\n";
+    std::cout << "[Test ApprovalRecord] Starting...\n";
+    testCreateBindsEveryField();
+    testLiveStateChangesInvalidate();
+    testProposalGenerationChangeInvalidates();
+    testApprovedTextChangeInvalidates();
+    testInvalidatedApprovalIsRejected();
+    testCrossSessionRecordsAreRejected();
+    testOnlyReadyProposalsCanBeApproved();
+    std::cout << "[Test ApprovalRecord] All tests PASSED.\n";
     return 0;
 }
