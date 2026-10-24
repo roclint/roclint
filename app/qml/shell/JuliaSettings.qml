@@ -103,6 +103,26 @@ ColumnLayout {
     }
                         SectionCard {
                             visible: dashboardWindow.currentTab === 0
+                            heading: qsTr("Model storage")
+                            Body {
+                                text: dashboardWindow.hc
+                                    ? qsTr("Base folder: %1\nDownloads are stored in /s1 (Julia classifier) and /s2 (Granite models). You can also select custom folders below to bring your own models.").arg(hostController.modelsBaseDirectory)
+                                    : ""
+                                wrapMode: Text.WrapAnywhere
+                            }
+                            Flow {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                spacing: 8
+                                ActionButton {
+                                    label: qsTr("Models root folder…")
+                                    active: dashboardWindow.hc && !hostController.isInferring && !hostController.isDownloadingModel
+                                    onClicked: hostController.chooseModelsBaseDirectory()
+                                }
+                            }
+                        }
+                        SectionCard {
+                            visible: dashboardWindow.currentTab === 0
                             heading: qsTr("Analysis and rewrite runtime")
                             Flow {
                                 Layout.fillWidth: true
@@ -128,7 +148,7 @@ ColumnLayout {
                             }
                             Body {
                                 visible: dashboardWindow.hc && hostController.nativeGraniteSelected
-                                text: dashboardWindow.hc ? qsTr("Model folder: %1\nResource state: %2").arg(hostController.nativeGraniteDirectory).arg(hostController.nativeGraniteResidency) : ""
+                                text: dashboardWindow.hc ? qsTr("Model folder (S2): %1\nResource state: %2").arg(hostController.nativeGraniteDirectory).arg(hostController.nativeGraniteResidency) : ""
                                 wrapMode: Text.WrapAnywhere
                             }
                             Flow {
@@ -169,7 +189,7 @@ ColumnLayout {
                             Body {
                                 visible: dashboardWindow.hc && hostController.nativeGraniteSelected
                                 text: !dashboardWindow.hc ? "" : hostController.graniteResidencyPreset === "KEEP_WARM"
-                                    ? qsTr("Keep a recently loaded model ready. Windows may release it when memory is low.")
+                                    ? qsTr("Keep a recently loaded model ready. The operating system may release it when memory is low.")
                                     : hostController.graniteResidencyPreset === "LOW_MEMORY"
                                     ? qsTr("Release an unused model after 30 seconds. The next request warms it again.")
                                     : qsTr("After 5 idle minutes, release GPU weights or retain reclaimable CPU mappings. Release remaining mappings after 30 minutes. The next request may take longer to warm.")
@@ -212,7 +232,7 @@ ColumnLayout {
                             }
                             Body {
                                 visible: dashboardWindow.hc && hostController.scorerEngine === "JULIA_LOCAL"
-                                text: dashboardWindow.hc ? qsTr("Model folder: %1\nPython: %2").arg(hostController.juliaModelDirectory).arg(hostController.juliaPython || qsTr("Not found")) : ""
+                                text: dashboardWindow.hc ? qsTr("Model folder (S1): %1\nPython: %2").arg(hostController.juliaModelDirectory).arg(hostController.juliaPython || qsTr("Not found")) : ""
                                 wrapMode: Text.WrapAnywhere
                             }
                             Flow {

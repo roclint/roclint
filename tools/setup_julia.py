@@ -21,9 +21,13 @@ def main():
         venv.EnvBuilder(with_pip=True, system_site_packages=args.reuse_system_packages).create(environment)
     python = environment / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python3")
     subprocess.run([str(python), "-m", "pip", "install", "--upgrade", "pip"], check=True)
-    # CPU wheels avoid an unnecessary GPU toolkit download for this CPU-only scorer.
-    subprocess.run([str(python), "-m", "pip", "install", "torch>=2.6", "--index-url",
-                    "https://download.pytorch.org/whl/cpu"], check=True)
+    # On macOS, standard wheels include Apple Metal (MPS) support out of the box.
+    if sys.platform == "darwin":
+        subprocess.run([str(python), "-m", "pip", "install", "torch>=2.6"], check=True)
+    else:
+        # CPU wheels avoid an unnecessary GPU toolkit download for this CPU-only scorer.
+        subprocess.run([str(python), "-m", "pip", "install", "torch>=2.6", "--index-url",
+                        "https://download.pytorch.org/whl/cpu"], check=True)
     subprocess.run([str(python), "-m", "pip", "install", "-r",
                     str(root / "app/runtime/julia-requirements.txt")], check=True)
     print(f"Julia Python environment: {python}")

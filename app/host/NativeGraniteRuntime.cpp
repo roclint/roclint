@@ -70,7 +70,12 @@ struct NativeGraniteRuntime::Mailbox {
 
 QJsonObject NativeGraniteRuntime::manifest() { return QJsonDocument::fromJson(QByteArray(runtime::kGraniteManifestJson)).object(); }
 QString NativeGraniteRuntime::defaultDirectory() {
-    return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + QStringLiteral("/models/granite-4.2-3b");
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + QStringLiteral("/models");
+    const QString s2 = base + QStringLiteral("/s2");
+    if (QFileInfo(s2).isDir()) return s2;
+    const QString legacy = base + QStringLiteral("/granite-4.2-3b");
+    if (QFileInfo(legacy).isDir()) return legacy;
+    return s2;
 }
 QString NativeGraniteRuntime::modelTag(const QString& quantization) { return QStringLiteral("native-granite:") + quantization; }
 QString NativeGraniteRuntime::quantizationForTag(const QString& tag) {

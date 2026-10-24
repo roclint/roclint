@@ -109,19 +109,48 @@ def load(root):
         raise ValueError("JULIA_CPU_THREADS must be between 1 and 256")
     torch.set_num_threads(threads)
     sys.path.insert(0, str(root))
+    try:
+        from julia.router.engine import FastEngine
+        _orig_pack = FastEngine._pack
+
+        def _mps_pack(self, encoded):
+            batch = _orig_pack(self, encoded)
+            if self.device.type == "mps":
+                for k, v in batch.items():
+                    if isinstance(v, torch.Tensor) and v.device.type != "mps":
+                        batch[k] = v.to(self.device)
+            return batch
+
+        FastEngine._pack = _mps_pack
+    except Exception:
+        pass
     from julia import load_model
 
     return create_engine(load_model, torch, root, threads, os.environ.get("JULIA_DEVICE"))
 
 
 def create_engine(load_model, torch, root, threads, override=None):
-    """The pinned SDK uses BF16 autocast on CUDA; unsupported devices use CPU FP32."""
-    if override not in (None, "auto", "cpu", "cuda"):
-        raise ValueError("JULIA_DEVICE must be auto, cpu or cuda")
-    gpu_supported = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
-    if override == "cuda" and not gpu_supported:
+    """The pinned SDK uses BF16 autocast on CUDA and FP16 on Apple MPS; unsupported devices use CPU FP32."""
+    if override not in (None, "auto", "cpu", "cuda", "mps"):
+        raise ValueError("JULIA_DEVICE must be auto, cpu, cuda or mps")
+    cuda_supported = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    mps_supported = hasattr(torch, "backends") and hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+    if override == "cuda" and not cuda_supported:
         raise ValueError("Explicit CUDA requires BF16 support in the pinned Julia runtime")
-    devices = ["cuda", "cpu"] if gpu_supported and override in (None, "auto") else ["cuda"] if override == "cuda" else ["cpu"]
+    if override == "mps" and not mps_supported:
+        raise ValueError("Explicit MPS requires Apple Metal support in the pinned Julia runtime")
+    if override == "cuda":
+        devices = ["cuda"]
+    elif override == "mps":
+        devices = ["mps"]
+    elif override == "cpu":
+        devices = ["cpu"]
+    elif cuda_supported:
+        devices = ["cuda", "cpu"]
+    elif mps_supported:
+        devices = ["mps", "cpu"]
+    else:
+        devices = ["cpu"]
     for device in devices:
         engine = None
         try:
@@ -133,16 +162,33 @@ def create_engine(load_model, torch, root, threads, override=None):
                 raise RuntimeError("Julia loaded on an unexpected device")
             if device == "cpu" and next(engine.model.parameters()).dtype != torch.float32:
                 raise RuntimeError("Julia CPU execution requires FP32 weights")
-            engine.roclint_runtime = {"configuration_id": "julia.cuda.bf16.v2" if device == "cuda" else "julia.cpu.fp32.v2",
-                "device": device, "compute_dtype": "bfloat16" if device == "cuda" else "float32", "cpu_threads": threads}
+            config_id = (
+                "julia.cuda.bf16.v2" if device == "cuda"
+                else "julia.mps.fp16.v2" if device == "mps"
+                else "julia.cpu.fp32.v2"
+            )
+            compute_dtype = (
+                "bfloat16" if device == "cuda"
+                else "float16" if device == "mps"
+                else "float32"
+            )
+            engine.roclint_runtime = {
+                "configuration_id": config_id,
+                "device": device,
+                "compute_dtype": compute_dtype,
+                "cpu_threads": threads
+            }
             return engine
         except (RuntimeError, MemoryError):
-            if device != "cuda" or len(devices) == 1:
+            if device not in ("cuda", "mps") or len(devices) == 1:
                 raise
             del engine
         # Leave the exception handler first so its traceback cannot retain the failed model.
-        # Releases only this process's unused CUDA allocations; never touches other processes.
-        torch.cuda.empty_cache()
+        # Releases only this process's unused accelerator allocations; never touches other processes.
+        if device == "cuda" and hasattr(torch, "cuda") and hasattr(torch.cuda, "empty_cache"):
+            torch.cuda.empty_cache()
+        elif device == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+            torch.mps.empty_cache()
     raise RuntimeError("Julia could not load an execution profile")
 
 

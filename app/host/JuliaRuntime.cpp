@@ -50,7 +50,12 @@ JuliaRuntime::~JuliaRuntime() {
 }
 
 QString JuliaRuntime::defaultModelDirectory() {
-    return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + QStringLiteral("/models/julia-1");
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + QStringLiteral("/models");
+    const QString s1 = base + QStringLiteral("/s1");
+    if (QFileInfo(s1).isDir()) return s1;
+    const QString legacy = base + QStringLiteral("/julia-1");
+    if (QFileInfo(legacy).isDir()) return legacy;
+    return s1;
 }
 
 QString JuliaRuntime::defaultPython() {
@@ -62,7 +67,12 @@ QString JuliaRuntime::defaultPython() {
 #else
     const QStringList candidates = {app.filePath(QStringLiteral("python/bin/python3")),
         app.filePath(QStringLiteral("runtime/julia-python/bin/python3")),
-        app.filePath(QStringLiteral("../runtime/julia-python/bin/python3"))};
+        app.filePath(QStringLiteral("../runtime/julia-python/bin/python3")),
+        QStringLiteral("/opt/homebrew/bin/python3.13"),
+        QStringLiteral("/opt/homebrew/bin/python3.12"),
+        QStringLiteral("/opt/homebrew/bin/python3.11"),
+        QStringLiteral("/usr/local/bin/python3.13"),
+        QStringLiteral("/usr/local/bin/python3.12")};
 #endif
     for (const auto& candidate : candidates) {
         if (QFileInfo(candidate).isExecutable()) return QFileInfo(candidate).absoluteFilePath();
@@ -460,7 +470,10 @@ void JuliaRuntime::receive(const QJsonObject& object) {
             configuration == QLatin1String("julia.cpu.fp32.v2");
         const bool cuda = device == QLatin1String("cuda") && precision == QLatin1String("bfloat16") &&
             configuration == QLatin1String("julia.cuda.bf16.v2");
-        if ((!cpu && !cuda) || !threads.isDouble() || threads.toDouble() != threads.toInt(-1) || threads.toInt() < 1 || threads.toInt() > 256) {
+        const bool mps = device == QLatin1String("mps") &&
+            (precision == QLatin1String("float16") || precision == QLatin1String("bfloat16")) &&
+            configuration == QLatin1String("julia.mps.fp16.v2");
+        if ((!cpu && !cuda && !mps) || !threads.isDouble() || threads.toDouble() != threads.toInt(-1) || threads.toInt() < 1 || threads.toInt() > 256) {
             fail(QStringLiteral("Julia did not report a supported execution device, precision and thread count.")); return;
         }
         executionConfigurationId_ = configuration; executionDevice_ = device; executionPrecision_ = precision;

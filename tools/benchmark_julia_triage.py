@@ -87,10 +87,16 @@ def run_benchmark(device="cuda", model_dir=DEFAULT_MODEL_DIR, repeats=5):
         req = {"triage_plan_version": 2, "prompt": case["prompt"]}
         case_latencies = []
         for _ in range(repeats):
-            if device == "cuda": torch.cuda.synchronize()
+            if device == "cuda":
+                torch.cuda.synchronize()
+            elif device == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+                torch.mps.synchronize()
             t0 = time.perf_counter()
             triage_res = worker.triage(engine, req)
-            if device == "cuda": torch.cuda.synchronize()
+            if device == "cuda":
+                torch.cuda.synchronize()
+            elif device == "mps" and hasattr(torch, "mps") and hasattr(torch.mps, "synchronize"):
+                torch.mps.synchronize()
             case_latencies.append((time.perf_counter() - t0) * 1000)
         latencies.extend(case_latencies)
         latency = sum(case_latencies) / len(case_latencies)
@@ -166,7 +172,7 @@ def run_benchmark(device="cuda", model_dir=DEFAULT_MODEL_DIR, repeats=5):
         "corpus_sha256": hashlib.sha256(json.dumps(cases, ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
         "scope": "Twelve reused development/tuning cases; not a held-out accuracy estimate or certified uncontended measurement",
         "semantic_acceptance": all(item["passed"] for item in results),
-        "latency_acceptance": p50 <= (60 if device == "cuda" else 165),
+        "latency_acceptance": p50 <= (60 if device in ("cuda", "mps") else 165),
     }
     return summary
 
@@ -189,7 +195,7 @@ def run_long_prompt_test(engine, worker):
 def main():
     parser = argparse.ArgumentParser(description="Julia Prompt Triage Benchmark Harness")
     parser.add_argument("--model-dir", default=str(DEFAULT_MODEL_DIR), help="Path to Julia-1 model")
-    parser.add_argument("--device", choices=["cuda", "cpu", "all"], default="all", help="Device to evaluate")
+    parser.add_argument("--device", choices=["cuda", "mps", "cpu", "all"], default="all", help="Device to evaluate")
     parser.add_argument("--json-out", action="store_true", help="Output summary as JSON line")
     parser.add_argument("--repeats", type=int, default=5, help="Timed repetitions per case after warm-up")
     args = parser.parse_args()
@@ -217,7 +223,7 @@ def main():
         print(f"  Ambig Margin (> 0.70):  FN violations = {summary['ambig_fns']}/7 (all ambig > 0.70: {summary['ambig_fns'] == 0})")
         print(f"Latency: p50 = {summary['p50_latency_ms']:.1f} ms, p95 = {summary['p95_latency_ms']:.1f} ms")
 
-    if args.device in ("cuda", "cpu"):
+    if args.device in ("cuda", "mps", "cpu"):
         summary = run_benchmark(args.device, model_dir, args.repeats)
         if args.json_out:
             print(json.dumps(summary))

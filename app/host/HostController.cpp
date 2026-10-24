@@ -112,7 +112,64 @@ core::Error modelReplyError(const core::Error& error) {
                        "rephrase the prompt. (Detail: " + error.message + ")"};
 }
 
+static QString resolveJuliaDirectory(const QString& configuredDir, const QString& baseDir) {
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+    if (!configuredDir.contains(QLatin1Char('/')) && !configuredDir.contains(QLatin1Char('\\')) && !configuredDir.isEmpty()) {
+        return configuredDir;
+    }
+#endif
+    auto hasJulia = [](const QString& dirPath) {
+        if (dirPath.isEmpty()) return false;
+        const QDir d(dirPath);
+        return d.exists(QStringLiteral("model.safetensors")) || d.exists(QStringLiteral("roclint-julia.json"));
+    };
+    if (hasJulia(configuredDir)) return QDir::cleanPath(configuredDir);
+    if (hasJulia(configuredDir + QStringLiteral("/s1"))) return QDir::cleanPath(configuredDir + QStringLiteral("/s1"));
+    const QDir parent(configuredDir);
+    if (hasJulia(parent.filePath(QStringLiteral("../s1")))) return QDir::cleanPath(parent.filePath(QStringLiteral("../s1")));
+    if (hasJulia(baseDir + QStringLiteral("/s1"))) return QDir::cleanPath(baseDir + QStringLiteral("/s1"));
+    if (hasJulia(baseDir)) return QDir::cleanPath(baseDir);
+    const QString userHomeModels = QDir::homePath() + QStringLiteral("/models");
+    if (hasJulia(userHomeModels + QStringLiteral("/s1"))) return QDir::cleanPath(userHomeModels + QStringLiteral("/s1"));
+    if (hasJulia(JuliaRuntime::defaultModelDirectory())) return JuliaRuntime::defaultModelDirectory();
+    return configuredDir.isEmpty() ? (baseDir + QStringLiteral("/s1")) : QDir::cleanPath(configuredDir);
+}
+
+static QString resolveNativeGraniteDirectory(const QString& configuredDir, const QString& baseDir) {
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+    if (!configuredDir.contains(QLatin1Char('/')) && !configuredDir.contains(QLatin1Char('\\')) && !configuredDir.isEmpty()) {
+        return configuredDir;
+    }
+#endif
+    auto hasGranite = [](const QString& dirPath) {
+        if (dirPath.isEmpty()) return false;
+        const QDir d(dirPath);
+        for (const auto& entry : NativeGraniteRuntime::manifest().value(QStringLiteral("candidates")).toArray()) {
+            if (d.exists(entry.toObject().value(QStringLiteral("filename")).toString())) return true;
+        }
+        return false;
+    };
+    if (hasGranite(configuredDir)) return QDir::cleanPath(configuredDir);
+    if (hasGranite(configuredDir + QStringLiteral("/s2"))) return QDir::cleanPath(configuredDir + QStringLiteral("/s2"));
+    const QDir parent(configuredDir);
+    if (hasGranite(parent.filePath(QStringLiteral("../s2")))) return QDir::cleanPath(parent.filePath(QStringLiteral("../s2")));
+    if (hasGranite(baseDir + QStringLiteral("/s2"))) return QDir::cleanPath(baseDir + QStringLiteral("/s2"));
+    if (hasGranite(baseDir)) return QDir::cleanPath(baseDir);
+    const QString userHomeModels = QDir::homePath() + QStringLiteral("/models");
+    if (hasGranite(userHomeModels + QStringLiteral("/s2"))) return QDir::cleanPath(userHomeModels + QStringLiteral("/s2"));
+    if (hasGranite(NativeGraniteRuntime::defaultDirectory())) return NativeGraniteRuntime::defaultDirectory();
+    return configuredDir.isEmpty() ? (baseDir + QStringLiteral("/s2")) : QDir::cleanPath(configuredDir);
+}
+
 } // namespace
+
+QString HostController::defaultModelsBaseDirectory() {
+    const QString userModels = QDir::homePath() + QStringLiteral("/models");
+    if (QFileInfo(userModels + QStringLiteral("/s1")).isDir() || QFileInfo(userModels + QStringLiteral("/s2")).isDir()) {
+        return userModels;
+    }
+    return QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + QStringLiteral("/models");
+}
 
 // ----------------------------------------------------------------------------------------------
 // Construction and storage
@@ -134,6 +191,7 @@ HostController::HostController(const QString& dbPathOverride,
       m_julia(std::make_unique<JuliaRuntime>()),
       m_native(std::make_unique<NativeGraniteRuntime>()),
       m_nativeInstaller(std::make_unique<GraniteModelInstaller>()),
+      m_modelsBaseDirectory(defaultModelsBaseDirectory()),
       m_nativeDirectory(NativeGraniteRuntime::defaultDirectory()),
       m_juliaModelDirectory(JuliaRuntime::defaultModelDirectory()),
       m_juliaPython(JuliaRuntime::defaultPython()),
@@ -146,11 +204,12 @@ HostController::HostController(const QString& dbPathOverride,
         QSettings settings;
         const auto scorer = bridge::S1TriageAdapter::parseEngine(ss(settings.value(QStringLiteral("scoring/engine"), QStringLiteral("julia")).toString()));
         if (scorer.ok()) m_s1Adapter.setEngine(scorer.value());
-        m_juliaModelDirectory = settings.value(QStringLiteral("scoring/juliaDirectory"), m_juliaModelDirectory).toString();
+        m_modelsBaseDirectory = settings.value(QStringLiteral("models/baseDirectory"), m_modelsBaseDirectory).toString();
+        m_juliaModelDirectory = settings.value(QStringLiteral("scoring/juliaDirectory"), m_modelsBaseDirectory + QStringLiteral("/s1")).toString();
         m_juliaPython = settings.value(QStringLiteral("scoring/juliaPython"), m_juliaPython).toString();
         m_activeModel = settings.value(QStringLiteral("models/active"), m_activeModel).toString();
         m_modelDirectory = settings.value(QStringLiteral("models/directory")).toString();
-        m_nativeDirectory = settings.value(QStringLiteral("models/nativeDirectory"), m_nativeDirectory).toString();
+        m_nativeDirectory = settings.value(QStringLiteral("models/nativeDirectory"), m_modelsBaseDirectory + QStringLiteral("/s2")).toString();
         m_ambientModeEnabled = settings.value(QStringLiteral("ambient/enabled"), false).toBool();
         m_hostContextEnabled = settings.value(QStringLiteral("invocation/hostContextEnabled"), true).toBool();
         m_invocationShortcut = settings.value(QStringLiteral("invocation/shortcut"), m_invocationShortcut).toString();
@@ -158,6 +217,13 @@ HostController::HostController(const QString& dbPathOverride,
         if (const auto profile = rewrite::ProfileRegistry::getProfile(ss(savedProfile)); profile.has_value()) {
             m_rewriteProfile = qs(profile->id);
         }
+    }
+    if (dbPathOverride.isEmpty()) {
+        QDir().mkpath(m_modelsBaseDirectory);
+        QDir().mkpath(m_modelsBaseDirectory + QStringLiteral("/s1"));
+        QDir().mkpath(m_modelsBaseDirectory + QStringLiteral("/s2"));
+        m_juliaModelDirectory = resolveJuliaDirectory(m_juliaModelDirectory, m_modelsBaseDirectory);
+        m_nativeDirectory = resolveNativeGraniteDirectory(m_nativeDirectory, m_modelsBaseDirectory);
     }
     initStorage(dbPathOverride);
 
@@ -2647,16 +2713,28 @@ void HostController::refreshJuliaModel() {
 
 void HostController::downloadJuliaModel() {
     invalidateScorerConfiguration();
+    if (m_juliaModelDirectory.isEmpty()) {
+        m_juliaModelDirectory = m_modelsBaseDirectory + QStringLiteral("/s1");
+    }
+    QDir().mkpath(m_juliaModelDirectory);
     m_julia->load(m_juliaModelDirectory, m_juliaPython, true);
 }
 
 void HostController::chooseJuliaModelDirectory() {
     const auto directory = QFileDialog::getExistingDirectory(nullptr, QStringLiteral("Choose Julia-1 model folder"), m_juliaModelDirectory);
     if (directory.isEmpty()) return;
-    m_juliaModelDirectory = directory;
+    QString resolved = directory;
+    const QDir d(directory);
+    if (!d.exists(QStringLiteral("model.safetensors")) && !d.exists(QStringLiteral("roclint-julia.json"))) {
+        if (QDir(d.filePath(QStringLiteral("s1"))).exists(QStringLiteral("model.safetensors")) ||
+            QDir(d.filePath(QStringLiteral("s1"))).exists(QStringLiteral("roclint-julia.json"))) {
+            resolved = d.filePath(QStringLiteral("s1"));
+        }
+    }
+    m_juliaModelDirectory = QDir::cleanPath(resolved);
     if (!QCoreApplication::organizationName().isEmpty()) {
         QSettings settings;
-        settings.setValue(QStringLiteral("scoring/juliaDirectory"), directory);
+        settings.setValue(QStringLiteral("scoring/juliaDirectory"), m_juliaModelDirectory);
     }
     refreshJuliaModel();
     emit scorerEngineChanged();
@@ -2694,15 +2772,52 @@ void HostController::warmSelectedModel() {
     else refreshAvailableModels();
 }
 
+void HostController::chooseModelsBaseDirectory() {
+    const auto directory = QFileDialog::getExistingDirectory(nullptr, QStringLiteral("Choose models base folder"), m_modelsBaseDirectory);
+    if (directory.isEmpty()) return;
+    m_modelsBaseDirectory = QDir::cleanPath(directory);
+    QDir().mkpath(m_modelsBaseDirectory + QStringLiteral("/s1"));
+    QDir().mkpath(m_modelsBaseDirectory + QStringLiteral("/s2"));
+    m_juliaModelDirectory = m_modelsBaseDirectory + QStringLiteral("/s1");
+    m_nativeDirectory = m_modelsBaseDirectory + QStringLiteral("/s2");
+    if (!QCoreApplication::organizationName().isEmpty()) {
+        QSettings settings;
+        settings.setValue(QStringLiteral("models/baseDirectory"), m_modelsBaseDirectory);
+        settings.setValue(QStringLiteral("scoring/juliaDirectory"), m_juliaModelDirectory);
+        settings.setValue(QStringLiteral("models/nativeDirectory"), m_nativeDirectory);
+    }
+    emit modelsBaseDirectoryChanged();
+    emit scorerEngineChanged();
+    invalidateDownstreamPipeline();
+    m_native->stop();
+    refreshJuliaModel();
+    static_cast<void>(m_graniteAdapter->unload());
+    refreshAvailableModels();
+    emit modelEngineStatusChanged();
+}
+
 void HostController::chooseNativeModelDirectory() {
     const auto directory = QFileDialog::getExistingDirectory(nullptr, QStringLiteral("Choose pinned native Granite model folder"), m_nativeDirectory);
-    if (directory.isEmpty() || directory == m_nativeDirectory) return;
+    if (directory.isEmpty()) return;
+    QString resolved = directory;
+    auto hasGraniteCandidate = [](const QString& path) {
+        const QDir dir(path);
+        for (const auto& entry : NativeGraniteRuntime::manifest().value(QStringLiteral("candidates")).toArray()) {
+            if (dir.exists(entry.toObject().value(QStringLiteral("filename")).toString())) return true;
+        }
+        return false;
+    };
+    const QDir d(directory);
+    if (!hasGraniteCandidate(directory) && hasGraniteCandidate(d.filePath(QStringLiteral("s2")))) {
+        resolved = d.filePath(QStringLiteral("s2"));
+    }
+    if (resolved == m_nativeDirectory) return;
     ++m_configurationGeneration;
     invalidateDownstreamPipeline();
     m_native->stop();
-    m_nativeDirectory = directory;
+    m_nativeDirectory = QDir::cleanPath(resolved);
     if (!QCoreApplication::organizationName().isEmpty()) {
-        QSettings settings; settings.setValue(QStringLiteral("models/nativeDirectory"), directory);
+        QSettings settings; settings.setValue(QStringLiteral("models/nativeDirectory"), m_nativeDirectory);
     }
     static_cast<void>(m_graniteAdapter->unload());
     refreshAvailableModels();
@@ -3092,6 +3207,10 @@ void HostController::startPendingNativeDownload() {
         QTimer::singleShot(25, this, &HostController::startPendingNativeDownload);
         return;
     }
+    if (m_nativeDirectory.isEmpty()) {
+        m_nativeDirectory = m_modelsBaseDirectory + QStringLiteral("/s2");
+    }
+    QDir().mkpath(m_nativeDirectory);
     const auto candidate = std::exchange(m_pendingNativeDownload, std::nullopt);
     m_nativeInstaller->start(NativeGraniteRuntime::manifest(), *candidate, m_nativeDirectory);
 }

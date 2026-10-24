@@ -179,6 +179,7 @@ class HostController : public QObject {
     Q_PROPERTY(bool useLiveWeights READ usesLiveModel NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(bool isInferring READ isInferring NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(bool directInjectionEnabled READ isAmbientModeEnabled WRITE setAmbientModeEnabled NOTIFY ambientModeEnabledChanged)
+    Q_PROPERTY(QString modelsBaseDirectory READ modelsBaseDirectory NOTIFY modelsBaseDirectoryChanged)
     Q_PROPERTY(QString modelDirectory READ modelDirectory NOTIFY modelDirectoryChanged)
 
     Q_PROPERTY(QString modelRuntimeState READ modelRuntimeState NOTIFY modelEngineStatusChanged)
@@ -312,6 +313,8 @@ public:
     }
     [[nodiscard]] bool usesLiveModel() const { return m_graniteAdapter->state() == bridge::GraniteRuntimeState::Ready || isInferring(); }
     [[nodiscard]] bool isInferring() const { return m_graniteAdapter->state() == bridge::GraniteRuntimeState::Busy; }
+    [[nodiscard]] static QString defaultModelsBaseDirectory();
+    [[nodiscard]] QString modelsBaseDirectory() const { return m_modelsBaseDirectory; }
     [[nodiscard]] QString modelDirectory() const { return m_modelDirectory; }
     [[nodiscard]] bool nativeGraniteSelected() const { return NativeGraniteRuntime::isNativeModel(m_activeModel); }
     [[nodiscard]] QString graniteResidencyPreset() const { return m_graniteResidencyPreset; }
@@ -434,6 +437,7 @@ public slots:
     Q_INVOKABLE void setModelRuntimeSource(bool native);
     Q_INVOKABLE bool setGraniteResidencyPreset(const QString& preset);
     Q_INVOKABLE void warmSelectedModel();
+    Q_INVOKABLE void chooseModelsBaseDirectory();
     Q_INVOKABLE void chooseNativeModelDirectory();
     Q_INVOKABLE void downloadJuliaModel();
     Q_INVOKABLE void chooseJuliaModelDirectory();
@@ -484,6 +488,7 @@ signals:
     void insertionTargetSelectionRequested(const QString& message);
     void scorerEngineChanged();
     void projectFilesChanged();
+    void modelsBaseDirectoryChanged();
     void modelDirectoryChanged();
     void availableModelsChanged();
     void activeModelChanged();
@@ -691,6 +696,7 @@ private:
     std::unique_ptr<JuliaRuntime> m_julia;
     std::unique_ptr<NativeGraniteRuntime> m_native;
     std::unique_ptr<GraniteModelInstaller> m_nativeInstaller;
+    QString m_modelsBaseDirectory;
     QString m_nativeDirectory;
     QTimer m_residencyTimer;
     QElapsedTimer m_nativeLastUse;

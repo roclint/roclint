@@ -77,14 +77,18 @@ class JuliaPromptTriageTests(unittest.TestCase):
 
 
 class JuliaDeviceTests(unittest.TestCase):
-    def runtime(self, available=True, bf16=True, fail_gpu=False, override=None):
+    def runtime(self, available=True, bf16=True, fail_gpu=False, override=None, mps_available=False, fail_mps=False):
         calls, released = [], []
-        torch = SimpleNamespace(float32="float32", cuda=SimpleNamespace(
-            is_available=lambda: available, is_bf16_supported=lambda: bf16,
-            empty_cache=lambda: released.append(True)))
+        torch = SimpleNamespace(float32="float32",
+            cuda=SimpleNamespace(
+                is_available=lambda: available, is_bf16_supported=lambda: bf16,
+                empty_cache=lambda: released.append("cuda")),
+            backends=SimpleNamespace(mps=SimpleNamespace(is_available=lambda: mps_available)),
+            mps=SimpleNamespace(empty_cache=lambda: released.append("mps")))
         def loader(root, **kwargs):
             device = kwargs["device"]; calls.append(device)
             if device == "cuda" and fail_gpu: raise RuntimeError("GPU unavailable during warm-up")
+            if device == "mps" and fail_mps: raise RuntimeError("MPS unavailable during warm-up")
             engine = Engine()
             engine.device = SimpleNamespace(type=device)
             engine.model = SimpleNamespace(parameters=lambda: iter([SimpleNamespace(dtype="float32")]))
@@ -104,7 +108,19 @@ class JuliaDeviceTests(unittest.TestCase):
     def test_auto_falls_back_to_cpu_after_gpu_failure(self):
         engine, calls, released = self.runtime(fail_gpu=True)
         self.assertEqual(calls, ["cuda", "cpu"])
-        self.assertEqual(released, [True])
+        self.assertEqual(released, ["cuda"])
+        self.assertEqual(engine.roclint_runtime["configuration_id"], "julia.cpu.fp32.v2")
+
+    def test_auto_uses_supported_mps_and_reports_its_profile(self):
+        engine, calls, _ = self.runtime(available=False, mps_available=True)
+        self.assertEqual(calls, ["mps"])
+        self.assertEqual(engine.roclint_runtime["configuration_id"], "julia.mps.fp16.v2")
+        self.assertEqual(engine.roclint_runtime["compute_dtype"], "float16")
+
+    def test_auto_falls_back_to_cpu_after_mps_failure(self):
+        engine, calls, released = self.runtime(available=False, mps_available=True, fail_mps=True)
+        self.assertEqual(calls, ["mps", "cpu"])
+        self.assertEqual(released, ["mps"])
         self.assertEqual(engine.roclint_runtime["configuration_id"], "julia.cpu.fp32.v2")
 
     def test_explicit_device_never_misreports_a_fallback(self):
@@ -113,6 +129,14 @@ class JuliaDeviceTests(unittest.TestCase):
         self.assertEqual(engine.roclint_runtime["device"], "cpu")
         with self.assertRaises(ValueError): self.runtime(bf16=False, override="cuda")
         with self.assertRaises(RuntimeError): self.runtime(fail_gpu=True, override="cuda")
+        with self.assertRaises(ValueError): self.runtime(available=False, mps_available=False, override="mps")
+        with self.assertRaises(RuntimeError): self.runtime(available=False, mps_available=True, fail_mps=True, override="mps")
+
+    def test_explicit_mps_device(self):
+        engine, calls, _ = self.runtime(available=False, mps_available=True, override="mps")
+        self.assertEqual(calls, ["mps"])
+        self.assertEqual(engine.roclint_runtime["device"], "mps")
+        self.assertEqual(engine.roclint_runtime["compute_dtype"], "float16")
 
 
 class BenchmarkAcceptanceTests(unittest.TestCase):
