@@ -106,7 +106,12 @@ ColumnLayout {
                             heading: qsTr("Model storage")
                             Body {
                                 text: dashboardWindow.hc
-                                    ? qsTr("Base folder: %1\nDownloads are stored in /s1 (Julia classifier) and /s2 (Granite models). You can also select custom folders below to bring your own models.").arg(hostController.modelsBaseDirectory)
+                                    ? qsTr("Base folder: %1\n\n• S1 Classifier (/s1): %2\n  %3\n\n• S2 Granite 3B (/s2): %4\n  %5\n\nDownloads are stored in /s1 and /s2 automatically. You can also select custom folders below to bring your own models from any directory.")
+                                        .arg(hostController.modelsBaseDirectory)
+                                        .arg(hostController.juliaModelDirectory)
+                                        .arg(hostController.juliaDiskStatus)
+                                        .arg(hostController.nativeGraniteDirectory)
+                                        .arg(hostController.nativeGraniteDiskStatus)
                                     : ""
                                 wrapMode: Text.WrapAnywhere
                             }
@@ -148,8 +153,17 @@ ColumnLayout {
                             }
                             Body {
                                 visible: dashboardWindow.hc && hostController.nativeGraniteSelected
-                                text: dashboardWindow.hc ? qsTr("Model folder (S2): %1\nResource state: %2").arg(hostController.nativeGraniteDirectory).arg(hostController.nativeGraniteResidency) : ""
+                                text: dashboardWindow.hc
+                                    ? qsTr("Model folder (S2): %1\nDisk status: %2\nMemory status: %3")
+                                        .arg(hostController.nativeGraniteDirectory)
+                                        .arg(hostController.nativeGraniteDiskStatus)
+                                        .arg(hostController.nativeGraniteMemoryStatus)
+                                    : ""
                                 wrapMode: Text.WrapAnywhere
+                            }
+                            Body {
+                                visible: dashboardWindow.hc && hostController.nativeGraniteSelected
+                                text: qsTr("Note: 'Unloaded' means the model is safely stored and verified on disk, and will automatically warm into Apple Metal GPU memory on your first prompt (or when clicking 'Load model' below). Unloading frees system RAM while Roclint is idle.")
                             }
                             Flow {
                                 visible: dashboardWindow.hc && hostController.nativeGraniteSelected
@@ -232,8 +246,18 @@ ColumnLayout {
                             }
                             Body {
                                 visible: dashboardWindow.hc && hostController.scorerEngine === "JULIA_LOCAL"
-                                text: dashboardWindow.hc ? qsTr("Model folder (S1): %1\nPython: %2").arg(hostController.juliaModelDirectory).arg(hostController.juliaPython || qsTr("Not found")) : ""
+                                text: dashboardWindow.hc
+                                    ? qsTr("Model folder (S1): %1\nDisk status: %2\nRuntime status: %3\nPython: %4")
+                                        .arg(hostController.juliaModelDirectory)
+                                        .arg(hostController.juliaDiskStatus)
+                                        .arg(hostController.juliaMemoryStatus)
+                                        .arg(hostController.juliaPython || qsTr("Not found"))
+                                    : ""
                                 wrapMode: Text.WrapAnywhere
+                            }
+                            Body {
+                                visible: dashboardWindow.hc && hostController.scorerEngine === "JULIA_LOCAL"
+                                text: qsTr("Note: If the Julia classifier is installed on disk, click 'Load Julia' or submit a prompt to warm it into Apple Metal GPU memory. If missing, click 'Download / repair' or click 'Model folder…' to bring your own.")
                             }
                             Flow {
                                 visible: dashboardWindow.hc && hostController.scorerEngine === "JULIA_LOCAL"

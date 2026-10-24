@@ -173,14 +173,23 @@ class HostController : public QObject {
     Q_PROPERTY(QString graniteResidencyPreset READ graniteResidencyPreset NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(QString graniteResidencyStatus READ graniteResidencyStatus NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(QString nativeGraniteDirectory READ nativeGraniteDirectory NOTIFY modelEngineStatusChanged)
+    Q_PROPERTY(bool isNativeGraniteInstalled READ isNativeGraniteInstalled NOTIFY modelEngineStatusChanged)
+    Q_PROPERTY(bool isNativeGraniteQ8Installed READ isNativeGraniteQ8Installed NOTIFY modelEngineStatusChanged)
+    Q_PROPERTY(bool isNativeGraniteQ5Installed READ isNativeGraniteQ5Installed NOTIFY modelEngineStatusChanged)
+    Q_PROPERTY(QString nativeGraniteDiskStatus READ nativeGraniteDiskStatus NOTIFY modelEngineStatusChanged)
+    Q_PROPERTY(QString nativeGraniteMemoryStatus READ nativeGraniteMemoryStatus NOTIFY modelEngineStatusChanged)
     // Upstream HUD/dashboard bindings retained over the corrected runtime services.
     Q_PROPERTY(bool hasJuliaModel READ hasJuliaModel NOTIFY scorerEngineChanged)
+    Q_PROPERTY(bool isJuliaModelInstalled READ isJuliaModelInstalled NOTIFY scorerEngineChanged)
+    Q_PROPERTY(QString juliaDiskStatus READ juliaDiskStatus NOTIFY scorerEngineChanged)
+    Q_PROPERTY(QString juliaMemoryStatus READ juliaMemoryStatus NOTIFY scorerEngineChanged)
     Q_PROPERTY(bool isOriginalRoute READ isOriginalRoute NOTIFY analysisStatusChanged)
     Q_PROPERTY(bool useLiveWeights READ usesLiveModel NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(bool isInferring READ isInferring NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(bool directInjectionEnabled READ isAmbientModeEnabled WRITE setAmbientModeEnabled NOTIFY ambientModeEnabledChanged)
     Q_PROPERTY(QString modelsBaseDirectory READ modelsBaseDirectory NOTIFY modelsBaseDirectoryChanged)
     Q_PROPERTY(QString modelDirectory READ modelDirectory NOTIFY modelDirectoryChanged)
+    Q_PROPERTY(QString effectiveModelDirectory READ effectiveModelDirectory NOTIFY modelDirectoryChanged)
 
     Q_PROPERTY(QString modelRuntimeState READ modelRuntimeState NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(QString modelEngineStatus READ modelEngineStatus NOTIFY modelEngineStatusChanged)
@@ -303,10 +312,13 @@ public:
     [[nodiscard]] QString scorerEngine() const;
     [[nodiscard]] QString scorerStatus() const;
     [[nodiscard]] QString juliaState() const { return m_julia->state(); }
-    [[nodiscard]] QString juliaStatus() const { return m_julia->detail(); }
+    [[nodiscard]] QString juliaStatus() const;
     [[nodiscard]] QString juliaModelDirectory() const { return m_juliaModelDirectory; }
     [[nodiscard]] QString juliaPython() const { return m_juliaPython; }
     [[nodiscard]] bool hasJuliaModel() const { return m_julia->isReady(); }
+    [[nodiscard]] bool isJuliaModelInstalled() const;
+    [[nodiscard]] QString juliaDiskStatus() const;
+    [[nodiscard]] QString juliaMemoryStatus() const;
     [[nodiscard]] bool isOriginalRoute() const {
         return m_currentSnapshot && m_currentSnapshot->promptTriage && m_revisionState && !m_revisionState->isDraftDirty() &&
             m_currentSnapshot->promptTriage->ambiguityScore < core::analysis::kPromptTriageThreshold;
@@ -315,8 +327,17 @@ public:
     [[nodiscard]] bool isInferring() const { return m_graniteAdapter->state() == bridge::GraniteRuntimeState::Busy; }
     [[nodiscard]] static QString defaultModelsBaseDirectory();
     [[nodiscard]] QString modelsBaseDirectory() const { return m_modelsBaseDirectory; }
-    [[nodiscard]] QString modelDirectory() const { return m_modelDirectory; }
+    [[nodiscard]] QString modelDirectory() const {
+        if (nativeGraniteSelected() && !m_nativeDirectory.isEmpty()) return m_nativeDirectory;
+        return m_modelDirectory;
+    }
+    [[nodiscard]] QString effectiveModelDirectory() const { return modelDirectory(); }
     [[nodiscard]] bool nativeGraniteSelected() const { return NativeGraniteRuntime::isNativeModel(m_activeModel); }
+    [[nodiscard]] bool isNativeGraniteInstalled() const;
+    [[nodiscard]] bool isNativeGraniteQ8Installed() const;
+    [[nodiscard]] bool isNativeGraniteQ5Installed() const;
+    [[nodiscard]] QString nativeGraniteDiskStatus() const;
+    [[nodiscard]] QString nativeGraniteMemoryStatus() const;
     [[nodiscard]] QString graniteResidencyPreset() const { return m_graniteResidencyPreset; }
     [[nodiscard]] QString graniteResidencyStatus() const { return m_graniteResidencyStatus; }
     [[nodiscard]] QString nativeGraniteResidency() const { return m_native->residency(); }

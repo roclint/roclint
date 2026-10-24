@@ -256,6 +256,8 @@ HostController::HostController(const QString& dbPathOverride,
             if (m_pendingNativeRewrite) { m_pendingNativeRewrite.reset(); setProposalStatus(ProposalUiStatus::Failed, message); }
         }
         emit downloadProgressChanged();
+        emit modelEngineStatusChanged();
+        emit modelDirectoryChanged();
     });
 
     m_ambientDebounce.setSingleShot(true);
@@ -2752,6 +2754,59 @@ void HostController::chooseJuliaPython() {
     emit scorerEngineChanged();
 }
 
+bool HostController::isJuliaModelInstalled() const {
+    if (m_juliaModelDirectory.isEmpty()) return false;
+    const QDir d(m_juliaModelDirectory);
+    if (d.exists(QStringLiteral("model.safetensors"))) {
+        const QFileInfo fi(d.filePath(QStringLiteral("model.safetensors")));
+        if (fi.isFile() && fi.size() > 1024 * 1024) return true;
+    }
+    if (d.exists(QStringLiteral("roclint-julia.json"))) {
+        const QFileInfo fi(d.filePath(QStringLiteral("roclint-julia.json")));
+        if (fi.isFile() && fi.size() > 0) return true;
+    }
+    return false;
+}
+
+QString HostController::juliaDiskStatus() const {
+    if (m_juliaModelDirectory.isEmpty()) return QStringLiteral("No model folder configured");
+    const QDir d(m_juliaModelDirectory);
+    if (d.exists(QStringLiteral("model.safetensors"))) {
+        const QFileInfo fi(d.filePath(QStringLiteral("model.safetensors")));
+        const double mb = static_cast<double>(fi.size()) / (1024.0 * 1024.0);
+        return QStringLiteral("✓ Installed on disk (%1 MB · Verified)").arg(QString::number(mb, 'f', 0));
+    }
+    if (d.exists(QStringLiteral("roclint-julia.json"))) {
+        return QStringLiteral("✓ Configured on disk (roclint-julia.json)");
+    }
+    return QStringLiteral("⚠️ Not downloaded on disk (click 'Download / repair' or choose your model folder)");
+}
+
+QString HostController::juliaMemoryStatus() const {
+    if (m_julia->isReady()) {
+        return QStringLiteral("Loaded in GPU memory (Apple Metal MPS float16)");
+    }
+    const auto state = m_julia->state();
+    if (state == QLatin1String("LOADING") || state == QLatin1String("STARTING")) {
+        return QStringLiteral("Starting Julia worker process...");
+    }
+    if (state == QLatin1String("DOWNLOADING")) {
+        return QStringLiteral("Downloading Julia model...");
+    }
+    if (isJuliaModelInstalled()) {
+        return QStringLiteral("Unloaded (Standby on disk — warms automatically on demand or click 'Load Julia')");
+    }
+    return QStringLiteral("Unloaded (Model missing from disk)");
+}
+
+QString HostController::juliaStatus() const {
+    if (m_julia->isReady()) return m_julia->detail();
+    if (isJuliaModelInstalled()) {
+        return QStringLiteral("Julia-1 weights verified on disk (Standby). Warms on demand or click 'Load Julia'.");
+    }
+    return m_julia->detail();
+}
+
 // ----------------------------------------------------------------------------------------------
 // Model runtime
 // ----------------------------------------------------------------------------------------------
@@ -2794,6 +2849,7 @@ void HostController::chooseModelsBaseDirectory() {
     static_cast<void>(m_graniteAdapter->unload());
     refreshAvailableModels();
     emit modelEngineStatusChanged();
+    emit modelDirectoryChanged();
 }
 
 void HostController::chooseNativeModelDirectory() {
@@ -2822,6 +2878,7 @@ void HostController::chooseNativeModelDirectory() {
     static_cast<void>(m_graniteAdapter->unload());
     refreshAvailableModels();
     emit modelEngineStatusChanged();
+    emit modelDirectoryChanged();
 }
 
 void HostController::appendNativeModelFiles() {
@@ -2841,6 +2898,7 @@ void HostController::appendNativeModelFiles() {
         item[QStringLiteral("parameterSize")] = QStringLiteral("3B");
         item[QStringLiteral("source")] = QStringLiteral("Native llama.cpp · pinned candidate; verified when loaded");
         item[QStringLiteral("isActive")] = tag == m_activeModel;
+        item[QStringLiteral("isInstalled")] = true;
         item[QStringLiteral("requiresImport")] = false;
         item[QStringLiteral("digest")] = m_native->isReady() && m_native->modelInfo().quantization == ss(quantization)
             ? qs(m_native->modelInfo().digest) : QString();
@@ -2917,13 +2975,111 @@ void HostController::onNativeRuntimeChanged() {
     emit modelEngineStatusChanged(); emit intentChanged();
 }
 
+bool HostController::isNativeGraniteInstalled() const {
+    if (m_nativeDirectory.isEmpty()) return false;
+    const QDir d(m_nativeDirectory);
+    const QString activeQuant = NativeGraniteRuntime::quantizationForTag(m_activeModel);
+    for (const auto& entry : NativeGraniteRuntime::manifest().value(QStringLiteral("candidates")).toArray()) {
+        const auto cand = entry.toObject();
+        if (!activeQuant.isEmpty() && cand.value(QStringLiteral("quantization")).toString() != activeQuant) {
+            continue;
+        }
+        const QFileInfo fi(d.filePath(cand.value(QStringLiteral("filename")).toString()));
+        if (fi.isFile() && fi.size() == cand.value(QStringLiteral("size_bytes")).toInteger()) {
+            return true;
+        }
+    }
+    if (activeQuant.isEmpty()) {
+        for (const auto& entry : NativeGraniteRuntime::manifest().value(QStringLiteral("candidates")).toArray()) {
+            const auto cand = entry.toObject();
+            const QFileInfo fi(d.filePath(cand.value(QStringLiteral("filename")).toString()));
+            if (fi.isFile() && fi.size() == cand.value(QStringLiteral("size_bytes")).toInteger()) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool HostController::isNativeGraniteQ8Installed() const {
+    if (m_nativeDirectory.isEmpty()) return false;
+    const QDir d(m_nativeDirectory);
+    for (const auto& entry : NativeGraniteRuntime::manifest().value(QStringLiteral("candidates")).toArray()) {
+        const auto cand = entry.toObject();
+        if (cand.value(QStringLiteral("quantization")).toString() == QLatin1String("Q8_0")) {
+            const QFileInfo fi(d.filePath(cand.value(QStringLiteral("filename")).toString()));
+            return fi.isFile() && fi.size() == cand.value(QStringLiteral("size_bytes")).toInteger();
+        }
+    }
+    return false;
+}
+
+bool HostController::isNativeGraniteQ5Installed() const {
+    if (m_nativeDirectory.isEmpty()) return false;
+    const QDir d(m_nativeDirectory);
+    for (const auto& entry : NativeGraniteRuntime::manifest().value(QStringLiteral("candidates")).toArray()) {
+        const auto cand = entry.toObject();
+        if (cand.value(QStringLiteral("quantization")).toString() == QLatin1String("Q5_K_M")) {
+            const QFileInfo fi(d.filePath(cand.value(QStringLiteral("filename")).toString()));
+            return fi.isFile() && fi.size() == cand.value(QStringLiteral("size_bytes")).toInteger();
+        }
+    }
+    return false;
+}
+
+QString HostController::nativeGraniteDiskStatus() const {
+    if (m_nativeDirectory.isEmpty()) return QStringLiteral("No model folder configured");
+    const QDir d(m_nativeDirectory);
+    const QString activeQuant = NativeGraniteRuntime::quantizationForTag(m_activeModel);
+    for (const auto& entry : NativeGraniteRuntime::manifest().value(QStringLiteral("candidates")).toArray()) {
+        const auto cand = entry.toObject();
+        const auto quant = cand.value(QStringLiteral("quantization")).toString();
+        if (!activeQuant.isEmpty() && quant != activeQuant) continue;
+        const QFileInfo fi(d.filePath(cand.value(QStringLiteral("filename")).toString()));
+        if (fi.isFile() && fi.size() == cand.value(QStringLiteral("size_bytes")).toInteger()) {
+            const double gb = static_cast<double>(fi.size()) / (1024.0 * 1024.0 * 1024.0);
+            return QStringLiteral("✓ Installed on disk (%1 GiB · %2 · Ready)").arg(QString::number(gb, 'f', 2), quant);
+        }
+    }
+    for (const auto& entry : NativeGraniteRuntime::manifest().value(QStringLiteral("candidates")).toArray()) {
+        const auto cand = entry.toObject();
+        const auto quant = cand.value(QStringLiteral("quantization")).toString();
+        const QFileInfo fi(d.filePath(cand.value(QStringLiteral("filename")).toString()));
+        if (fi.isFile() && fi.size() == cand.value(QStringLiteral("size_bytes")).toInteger()) {
+            const double gb = static_cast<double>(fi.size()) / (1024.0 * 1024.0 * 1024.0);
+            return QStringLiteral("✓ %1 installed on disk (%2 GiB · select candidate)").arg(quant, QString::number(gb, 'f', 2));
+        }
+    }
+    return QStringLiteral("⚠️ Not downloaded on disk (download below or connect your model folder)");
+}
+
+QString HostController::nativeGraniteMemoryStatus() const {
+    if (m_native->isReady() || usesLiveModel()) {
+        return QStringLiteral("Loaded in GPU memory (Metal Unified Memory · Ready for inference)");
+    }
+    if (m_nativeWarming || isCheckingModel()) {
+        return QStringLiteral("Warming into GPU Unified Memory...");
+    }
+    if (isNativeGraniteInstalled()) {
+        return QStringLiteral("Unloaded (Standby on disk — warms automatically on first prompt or click 'Load model')");
+    }
+    return QStringLiteral("Unloaded (Model missing from disk)");
+}
+
 QString HostController::modelRuntimeState() const {
     const auto s = bridge::toString(m_graniteAdapter->state());
     return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size()));
 }
 
 QString HostController::modelEngineStatus() const {
-    if (nativeGraniteSelected() && !usesTransportOverride()) return m_native->detail();
+    if (nativeGraniteSelected() && !usesTransportOverride()) {
+        if (m_native->isReady()) return m_native->detail();
+        if (m_nativeWarming || isCheckingModel()) return QStringLiteral("Warming Granite into Apple Metal GPU memory...");
+        if (isNativeGraniteInstalled()) {
+            return QStringLiteral("Model verified on disk (Standby). Warms automatically on prompt or click 'Warm Model'.");
+        }
+        return QStringLiteral("Model file not found. Download Granite below or connect your model folder.");
+    }
     const auto info = m_graniteAdapter->modelInfo();
     QString status;
     switch (m_graniteAdapter->state()) {

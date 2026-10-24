@@ -640,39 +640,51 @@ Window {
                                                 implicitWidth: juliaStatusTxt.contentWidth + 14
                                                 height: 22
                                                 color: "transparent"
-                                                border.color: (typeof hostController !== "undefined" && hostController.hasJuliaModel) ? "#7EE787" : "#FFB000"
+                                                border.color: (typeof hostController !== "undefined" && hostController.hasJuliaModel)
+                                                              ? "#7EE787"
+                                                              : (typeof hostController !== "undefined" && hostController.isJuliaModelInstalled)
+                                                                ? "#38BDF8"
+                                                                : "#FFB000"
                                                 border.width: 1
 
                                                 Text {
                                                     id: juliaStatusTxt
                                                     anchors.centerIn: parent
                                                     text: (typeof hostController !== "undefined" && hostController.hasJuliaModel)
-                                                          ? "[ ● JULIA LOADED ]"
-                                                          : "[ ○ S1 NOT LOADED ]"
+                                                          ? "[ ● JULIA LOADED (MPS) ]"
+                                                          : (typeof hostController !== "undefined" && hostController.isJuliaModelInstalled)
+                                                            ? "[ ⏸ S1 READY ON DISK ]"
+                                                            : "[ ○ S1 NOT DOWNLOADED ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 8
                                                     font.bold: true
-                                                    color: (typeof hostController !== "undefined" && hostController.hasJuliaModel) ? "#7EE787" : "#FFB000"
+                                                    color: (typeof hostController !== "undefined" && hostController.hasJuliaModel)
+                                                           ? "#7EE787"
+                                                           : (typeof hostController !== "undefined" && hostController.isJuliaModelInstalled)
+                                                             ? "#38BDF8"
+                                                             : "#FFB000"
                                                 }
                                             }
 
-                                            // Download button when weights not yet pulled
+                                            // Action button: If installed on disk, load it; if missing, download it
                                             Rectangle {
                                                 visible: typeof hostController !== "undefined" && !hostController.hasJuliaModel && ["NOT_LOADED", "FAILED"].indexOf(hostController.juliaState) >= 0
                                                 implicitWidth: dlJuliaCard1Txt.contentWidth + 14
                                                 height: 22
                                                 color: dlJuliaCard1Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
+                                                border.color: (typeof hostController !== "undefined" && hostController.isJuliaModelInstalled) ? "#38BDF8" : dashboardWindow.borderColor
                                                 border.width: 1
 
                                                 Text {
                                                     id: dlJuliaCard1Txt
                                                     anchors.centerIn: parent
-                                                    text: "[ DOWNLOAD JULIA-1 (600 MB) ]"
+                                                    text: (typeof hostController !== "undefined" && hostController.isJuliaModelInstalled)
+                                                          ? "[ ⟳ LOAD JULIA-1 INTO GPU ]"
+                                                          : "[ ⬇ DOWNLOAD JULIA-1 (600 MB) ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 8
                                                     font.bold: true
-                                                    color: dlJuliaCard1Mouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                    color: dlJuliaCard1Mouse.containsMouse ? dashboardWindow.bgColor : ((typeof hostController !== "undefined" && hostController.isJuliaModelInstalled) ? "#38BDF8" : dashboardWindow.fgColor)
                                                 }
 
                                                 HudMouseArea {
@@ -682,8 +694,13 @@ Window {
                                                     cursorShape: Qt.PointingHandCursor
                                                     onClicked: {
                                                         if (typeof hostController !== "undefined") {
-                                                            hostController.downloadJuliaModel();
-                                                            dashboardWindow.showToast("DOWNLOADING AND VERIFYING JULIA-1...");
+                                                            if (hostController.isJuliaModelInstalled) {
+                                                                hostController.refreshJuliaModel();
+                                                                dashboardWindow.showToast("LOADING JULIA-1 INTO GPU MEMORY...");
+                                                            } else {
+                                                                hostController.downloadJuliaModel();
+                                                                dashboardWindow.showToast("DOWNLOADING AND VERIFYING JULIA-1...");
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -828,11 +845,21 @@ Window {
                                             }
                                             Item { Layout.fillWidth: true }
                                             Text {
-                                                text: (typeof hostController !== "undefined" && hostController.useLiveWeights) ? "[LIVE WEIGHTS]" : "[UNAVAILABLE]"
+                                                text: (typeof hostController !== "undefined" && hostController.useLiveWeights)
+                                                      ? "[LIVE WEIGHTS IN GPU]"
+                                                      : (typeof hostController !== "undefined" && hostController.isCheckingModel)
+                                                        ? "[WARMING INTO GPU...]"
+                                                        : (typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
+                                                          ? "[STANDBY ON DISK · READY]"
+                                                          : "[NOT DOWNLOADED]"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 9
                                                 font.bold: true
-                                                color: (typeof hostController !== "undefined" && hostController.useLiveWeights) ? "#7EE787" : dashboardWindow.mutedTextColor
+                                                color: (typeof hostController !== "undefined" && hostController.useLiveWeights)
+                                                       ? "#7EE787"
+                                                       : (typeof hostController !== "undefined" && (hostController.isCheckingModel || hostController.isNativeGraniteInstalled))
+                                                         ? "#38BDF8"
+                                                         : dashboardWindow.mutedTextColor
                                             }
                                         }
 
@@ -843,20 +870,18 @@ Window {
                                             Rectangle {
                                                 implicitWidth: nativeBtnTxt.contentWidth + 16
                                                 height: 26
-                                                color: (typeof hostController !== "undefined" && !hostController.useLiveWeights) ? dashboardWindow.fgColor : "transparent"
+                                                color: "transparent"
                                                 border.color: dashboardWindow.borderColor
                                                 border.width: 1
 
                                                 Text {
                                                     id: nativeBtnTxt
                                                     anchors.centerIn: parent
-                                                    text: (typeof hostController !== "undefined" && !hostController.useLiveWeights)
-                                                          ? "[ CHECK LOCAL RUNTIME ]"
-                                                          : "[ CHECK LOCAL RUNTIME ]"
+                                                    text: "[ ⟳ RESCAN RUNTIME ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 9
-                                                    font.bold: (typeof hostController !== "undefined" && !hostController.useLiveWeights)
-                                                    color: (typeof hostController !== "undefined" && !hostController.useLiveWeights) ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                    font.bold: true
+                                                    color: dashboardWindow.fgColor
                                                 }
                                                 HudMouseArea {
                                                     anchors.fill: parent
@@ -864,7 +889,7 @@ Window {
                                                     onClicked: {
                                                         if (typeof hostController !== "undefined") {
                                                             hostController.refreshAvailableModels();
-                                                            dashboardWindow.showToast("CHECKING LOCAL RUNTIME");
+                                                            dashboardWindow.showToast("RESCANNED LOCAL MODEL DIRECTORY");
                                                         }
                                                     }
                                                 }
@@ -874,27 +899,40 @@ Window {
                                                 implicitWidth: liveBtnTxt.contentWidth + 16
                                                 height: 26
                                                 color: (typeof hostController !== "undefined" && hostController.useLiveWeights) ? dashboardWindow.fgColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
+                                                border.color: (typeof hostController !== "undefined" && (hostController.useLiveWeights || hostController.isNativeGraniteInstalled)) ? "#7EE787" : dashboardWindow.borderColor
                                                 border.width: 1
 
                                                 Text {
                                                     id: liveBtnTxt
                                                     anchors.centerIn: parent
                                                     text: (typeof hostController !== "undefined" && hostController.useLiveWeights)
-                                                          ? "[ ● LIVE MODEL WEIGHTS (OLLAMA / LOCAL GGUF) ]"
-                                                          : "[ ○ LIVE MODEL WEIGHTS (OLLAMA / LOCAL GGUF) ]"
+                                                          ? "[ ● WEIGHTS LOADED IN GPU (READY) ]"
+                                                          : (typeof hostController !== "undefined" && hostController.isCheckingModel)
+                                                            ? "[ ⟳ WARMING INTO GPU MEMORY... ]"
+                                                            : (typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
+                                                              ? "[ ⏸ WEIGHTS ON DISK (CLICK TO WARM) ]"
+                                                              : "[ ○ NO WEIGHTS ON DISK (DOWNLOAD BELOW) ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 9
-                                                    font.bold: (typeof hostController !== "undefined" && hostController.useLiveWeights)
-                                                    color: (typeof hostController !== "undefined" && hostController.useLiveWeights) ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                    font.bold: (typeof hostController !== "undefined" && (hostController.useLiveWeights || hostController.isNativeGraniteInstalled))
+                                                    color: (typeof hostController !== "undefined" && hostController.useLiveWeights)
+                                                           ? dashboardWindow.bgColor
+                                                           : (typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
+                                                             ? "#7EE787"
+                                                             : dashboardWindow.fgColor
                                                 }
                                                 HudMouseArea {
                                                     anchors.fill: parent
                                                     cursorShape: Qt.PointingHandCursor
                                                     onClicked: {
                                                         if (typeof hostController !== "undefined") {
-                                                            hostController.refreshAvailableModels();
-                                                            dashboardWindow.showToast("CHECKING LOCAL MODEL RUNTIME");
+                                                            if (hostController.isNativeGraniteInstalled && !hostController.useLiveWeights) {
+                                                                hostController.warmSelectedModel();
+                                                                dashboardWindow.showToast("WARMING MODEL INTO GPU MEMORY...");
+                                                            } else {
+                                                                hostController.refreshAvailableModels();
+                                                                dashboardWindow.showToast("CHECKING LOCAL MODEL RUNTIME");
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -941,7 +979,9 @@ Window {
                                             spacing: 4
 
                                             Text {
-                                                text: "CONNECTED MODEL FOLDER (NON-INVASIVE ACCESS):"
+                                                text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
+                                                      ? "CONNECTED MODEL FOLDER (S2 GRANITE MODELS):"
+                                                      : "CONNECTED MODEL FOLDER (NON-INVASIVE ACCESS):"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 8
                                                 font.bold: true
@@ -969,8 +1009,8 @@ Window {
                                                         Text {
                                                             Layout.fillWidth: true
                                                             Layout.minimumWidth: 0
-                                                            text: (typeof hostController !== "undefined" && hostController.modelDirectory.length > 0)
-                                                                  ? hostController.modelDirectory
+                                                            text: (typeof hostController !== "undefined" && hostController.effectiveModelDirectory.length > 0)
+                                                                  ? hostController.effectiveModelDirectory
                                                                   : "No folder connected"
                                                             font.family: dashboardWindow.monoFont
                                                             font.pixelSize: 9
@@ -1046,10 +1086,16 @@ Window {
                                             }
 
                                             Text {
-                                                text: "* Non-invasive isolation: Roclint only reads models inside this specific folder. Your hard drive and personal files are never searched."
+                                                text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
+                                                      ? (hostController.isNativeGraniteInstalled
+                                                         ? "✓ Model weights verified on disk in this folder. Ready to load into Apple Metal GPU."
+                                                         : "⚠️ No model weights found in this folder. Download Granite below or click '[ 📂 CONNECT FOLDER... ]' to point to your existing models.")
+                                                      : "* Non-invasive isolation: Roclint only reads models inside this specific folder. Your hard drive and personal files are never searched."
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 8
-                                                color: dashboardWindow.commentColor
+                                                color: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
+                                                       ? (hostController.isNativeGraniteInstalled ? "#7EE787" : "#FFB000")
+                                                       : dashboardWindow.commentColor
                                             }
                                         }
 
@@ -1089,11 +1135,15 @@ Window {
                                                         spacing: 8
 
                                                         Text {
-                                                            text: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name) ? "[ ● ACTIVE ]" : (modelData.requiresImport ? "[ IMPORT ]" : "[ ○ SELECT ]")
+                                                            text: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name)
+                                                                  ? (hostController.useLiveWeights ? "[ ● LOADED IN GPU ]" : "[ ★ SELECTED (STANDBY) ]")
+                                                                  : (modelData.requiresImport ? "[ IMPORT ]" : "[ ○ SELECT ]")
                                                             font.family: dashboardWindow.monoFont
                                                             font.pixelSize: 8
                                                             font.bold: true
-                                                            color: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name) ? "#7EE787" : dashboardWindow.mutedTextColor
+                                                            color: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name)
+                                                                   ? (hostController.useLiveWeights ? "#7EE787" : "#38BDF8")
+                                                                   : dashboardWindow.mutedTextColor
                                                         }
 
                                                         Text {
@@ -1105,7 +1155,7 @@ Window {
                                                         }
 
                                                         Text {
-                                                            text: "(" + modelData.size + ", " + modelData.source + ", " + modelData.quantization + ")"
+                                                            text: "(" + modelData.size + ", " + modelData.source + ", " + modelData.quantization + ") · [✓ Verified on disk]"
                                                             font.family: dashboardWindow.monoFont
                                                             font.pixelSize: 8
                                                             color: dashboardWindow.commentColor
@@ -1230,17 +1280,21 @@ Window {
                                                     implicitWidth: dl1Txt.contentWidth + 14
                                                     height: 24
                                                     color: dl1Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
-                                                    border.color: dashboardWindow.borderColor
+                                                    border.color: (typeof hostController !== "undefined" && hostController.isNativeGraniteQ8Installed) ? "#7EE787" : dashboardWindow.borderColor
                                                     border.width: 1
 
                                                     Text {
                                                         id: dl1Txt
                                                         anchors.centerIn: parent
-                                                        text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected) ? "[ ⬇ GRANITE 4.2 Q8_0 (3.62 GiB) ]" : "[ ⬇ PULL GRANITE 4.2 3B (3.9 GB) ]"
+                                                        text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
+                                                              ? (hostController.isNativeGraniteQ8Installed
+                                                                 ? "[ ✓ Q8_0 INSTALLED (3.89 GiB) · RE-DOWNLOAD ]"
+                                                                 : "[ ⬇ DOWNLOAD GRANITE 4.2 Q8_0 (3.62 GiB) ]")
+                                                              : "[ ⬇ PULL GRANITE 4.2 3B (3.9 GB) ]"
                                                         font.family: dashboardWindow.monoFont
                                                         font.pixelSize: 8
                                                         font.bold: true
-                                                        color: dl1Mouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                        color: dl1Mouse.containsMouse ? dashboardWindow.bgColor : ((typeof hostController !== "undefined" && hostController.isNativeGraniteQ8Installed) ? "#7EE787" : dashboardWindow.fgColor)
                                                     }
 
                                                     HudMouseArea {
@@ -1251,7 +1305,7 @@ Window {
                                                         onClicked: {
                                                             if (typeof hostController !== "undefined") {
                                                                 hostController.downloadModel(hostController.nativeGraniteSelected ? "native-granite:Q8_0" : "granite4.2:3b-q8_0");
-                                                                dashboardWindow.showToast("DOWNLOADING GRANITE 4.2 3B...");
+                                                                dashboardWindow.showToast("DOWNLOADING GRANITE 4.2 3B (Q8_0)...");
                                                             }
                                                         }
                                                     }
@@ -1261,17 +1315,21 @@ Window {
                                                     implicitWidth: dl2Txt.contentWidth + 14
                                                     height: 24
                                                     color: dl2Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
-                                                    border.color: dashboardWindow.borderColor
+                                                    border.color: (typeof hostController !== "undefined" && hostController.isNativeGraniteQ5Installed) ? "#7EE787" : dashboardWindow.borderColor
                                                     border.width: 1
 
                                                     Text {
                                                         id: dl2Txt
                                                         anchors.centerIn: parent
-                                                        text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected) ? "[ ⬇ GRANITE 4.2 Q5_K_M (2.43 GiB) ]" : "[ ⬇ PULL GRANITE 3.1 2B (1.5 GB) ]"
+                                                        text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
+                                                              ? (hostController.isNativeGraniteQ5Installed
+                                                                 ? "[ ✓ Q5_K_M INSTALLED (2.43 GiB) · RE-DOWNLOAD ]"
+                                                                 : "[ ⬇ DOWNLOAD GRANITE 4.2 Q5_K_M (2.43 GiB) ]")
+                                                              : "[ ⬇ PULL GRANITE 3.1 2B (1.5 GB) ]"
                                                         font.family: dashboardWindow.monoFont
                                                         font.pixelSize: 8
                                                         font.bold: true
-                                                        color: dl2Mouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                        color: dl2Mouse.containsMouse ? dashboardWindow.bgColor : ((typeof hostController !== "undefined" && hostController.isNativeGraniteQ5Installed) ? "#7EE787" : dashboardWindow.fgColor)
                                                     }
 
                                                     HudMouseArea {
@@ -1282,7 +1340,7 @@ Window {
                                                         onClicked: {
                                                             if (typeof hostController !== "undefined") {
                                                                 hostController.downloadModel(hostController.nativeGraniteSelected ? "native-granite:Q5_K_M" : "granite3.1-dense:2b");
-                                                                dashboardWindow.showToast(hostController.nativeGraniteSelected ? "DOWNLOADING PINNED GRANITE 4.2..." : "DOWNLOADING GRANITE 3.1 2B...");
+                                                                dashboardWindow.showToast(hostController.nativeGraniteSelected ? "DOWNLOADING PINNED GRANITE 4.2 (Q5_K_M)..." : "DOWNLOADING GRANITE 3.1 2B...");
                                                             }
                                                         }
                                                     }
@@ -1298,7 +1356,11 @@ Window {
                                                     Text {
                                                         id: testInfTxt
                                                         anchors.centerIn: parent
-                                                        text: (typeof hostController !== "undefined" && hostController.isInferring) ? "[ WORKING... ]" : "[ CHECK & WARM MODEL ]"
+                                                        text: (typeof hostController !== "undefined" && hostController.isInferring)
+                                                              ? "[ WORKING... ]"
+                                                              : (typeof hostController !== "undefined" && hostController.useLiveWeights)
+                                                                ? "[ ● MODEL READY (GPU) ]"
+                                                                : "[ CHECK & WARM MODEL ]"
                                                         font.family: dashboardWindow.monoFont
                                                         font.pixelSize: 8
                                                         font.bold: true
@@ -1318,6 +1380,14 @@ Window {
                                                         }
                                                     }
                                                 }
+                                            }
+
+                                            Text {
+                                                text: "Storage: Models are stored in your configured folder (S1 in /s1, S2 in /s2). Click '[ 📂 CONNECT FOLDER... ]' above to use existing models from any directory."
+                                                font.family: dashboardWindow.monoFont
+                                                font.pixelSize: 8
+                                                color: dashboardWindow.commentColor
+                                                wrapMode: Text.WordWrap
                                             }
                                         }
                                     }

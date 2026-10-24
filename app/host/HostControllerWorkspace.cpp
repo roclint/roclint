@@ -117,6 +117,10 @@ QString HostController::scopePreamble(const QString& projectPath, const QString&
 }
 
 QString HostController::openModelFolderDialog() {
+    if (nativeGraniteSelected()) {
+        chooseNativeModelDirectory();
+        return m_nativeDirectory;
+    }
     const auto directory = QFileDialog::getExistingDirectory(nullptr, QStringLiteral("Select local GGUF model folder"), m_modelDirectory);
     if (directory.isEmpty()) return {};
     m_modelDirectory = QFileInfo(directory).canonicalFilePath();
