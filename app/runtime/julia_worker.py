@@ -469,6 +469,7 @@ def serve(root, stream, send=emit, loader=load, installer=install, evaluator=eva
             raise ValueError("Handshake required")
         send(response_for(first, {"protocol_version": PROTOCOL_VERSION, "operations":
             ["load", "install", "triage", "evaluate", "runtime_status", "cancel", "shutdown"],
+            "triage_plan_versions": [TRIAGE_PLAN_VERSION],
             "process_id": os.getpid(), "parent_process_id": os.getppid()}))
         bootstrap()
     except Exception:

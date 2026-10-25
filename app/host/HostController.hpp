@@ -168,6 +168,7 @@ class HostController : public QObject {
     Q_PROPERTY(QString juliaStatus READ juliaStatus NOTIFY scorerEngineChanged)
     Q_PROPERTY(QString juliaModelDirectory READ juliaModelDirectory NOTIFY scorerEngineChanged)
     Q_PROPERTY(QString juliaPython READ juliaPython NOTIFY scorerEngineChanged)
+    Q_PROPERTY(QString juliaDevice READ juliaDevice NOTIFY scorerEngineChanged)
     Q_PROPERTY(bool nativeGraniteSelected READ nativeGraniteSelected NOTIFY activeModelChanged)
     Q_PROPERTY(QString nativeGraniteResidency READ nativeGraniteResidency NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(QString graniteResidencyPreset READ graniteResidencyPreset NOTIFY modelEngineStatusChanged)
@@ -319,6 +320,7 @@ public:
     [[nodiscard]] QString juliaStatus() const;
     [[nodiscard]] QString juliaModelDirectory() const { return m_juliaModelDirectory; }
     [[nodiscard]] QString juliaPython() const { return m_juliaPython; }
+    [[nodiscard]] QString juliaDevice() const { return m_juliaDevice; }
     [[nodiscard]] bool hasJuliaModel() const { return m_julia->isReady(); }
     [[nodiscard]] bool isJuliaModelInstalled() const;
     [[nodiscard]] QString juliaDiskStatus() const;
@@ -488,6 +490,7 @@ public slots:
     Q_INVOKABLE void downloadJuliaModel();
     Q_INVOKABLE void chooseJuliaModelDirectory();
     Q_INVOKABLE void chooseJuliaPython();
+    Q_INVOKABLE void setJuliaDevice(const QString& device);
     Q_INVOKABLE void refreshAvailableModels();
     Q_INVOKABLE bool pinActiveModelDigest();
     Q_INVOKABLE void downloadModel(const QString& modelTag);
@@ -768,6 +771,7 @@ private:
     std::optional<PendingNativeRewrite> m_pendingNativeRewrite;
     QString m_juliaModelDirectory;
     QString m_juliaPython;
+    QString m_juliaDevice;
     QHash<quint64, PendingJuliaScore> m_pendingJulia;
     QHash<quint64, PipelineTicket> m_pendingPromptTriage;
     std::optional<PipelineTicket> m_promptTriageLoad;

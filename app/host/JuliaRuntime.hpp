@@ -58,6 +58,9 @@ public:
     static constexpr const char* kConfigurationId = "julia.auto.bf16-fp32.v2";
     [[nodiscard]] bool isRunning() const noexcept { return process_ != nullptr; }
     [[nodiscard]] qsizetype automaticRestartCount() const noexcept { return restartTimes_.size(); }
+    // Allowed values: empty string (unset / auto), "auto", "cpu", "cuda", "mps", "directml".
+    [[nodiscard]] QString juliaDevice() const { return juliaDevice_; }
+    void setJuliaDevice(const QString& device);
     void cancel(quint64 requestId, const QString& reason = QStringLiteral("Julia scoring was cancelled."));
     void cancelAllEvaluations();
 
@@ -73,6 +76,8 @@ signals:
     void evaluationFailed(quint64 requestId, const QString& reason);
     void promptClassified(quint64 requestId, const roclint::core::analysis::PromptTriage& triage);
     void promptClassificationFailed(quint64 requestId, const QString& reason);
+    // Emitted when a new request is dropped because the pending queue is full.
+    void requestQueueFull();
 
 private:
     struct Pending {
@@ -109,6 +114,8 @@ private:
     bool failed_{false};
     bool handshaken_{false};
     bool promptTriageSupported_{false};
+    QString juliaDevice_;           // JULIA_DEVICE override; empty = unset (auto)
+    int activePlanVersion_{0};      // Negotiated triage plan version; 0 = not yet negotiated
     QString executionConfigurationId_;
     QString executionDevice_;
     QString executionPrecision_;

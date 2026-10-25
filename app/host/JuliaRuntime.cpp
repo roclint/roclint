@@ -8,6 +8,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QProcessEnvironment>
 #include <QStandardPaths>
 #include <QTimer>
 
@@ -93,9 +94,21 @@ void JuliaRuntime::stop() {
     beginStop(false, QStringLiteral("Julia stopped before scoring completed."));
 }
 
+void JuliaRuntime::setJuliaDevice(const QString& device) {
+    static const QStringList kAllowed{
+        QStringLiteral(""), QStringLiteral("auto"), QStringLiteral("cpu"),
+        QStringLiteral("cuda"), QStringLiteral("mps"), QStringLiteral("directml")};
+    if (!kAllowed.contains(device)) {
+        fail(QStringLiteral("JULIA_DEVICE value '%1' is not supported. Allowed values: auto, cpu, cuda, mps, directml.").arg(device));
+        return;
+    }
+    juliaDevice_ = device;
+}
+
 void JuliaRuntime::beginStop(bool failed, const QString& reason) {
     ready_ = false;
     promptTriageSupported_ = false;
+    activePlanVersion_ = 0;
     executionConfigurationId_.clear(); executionDevice_.clear(); executionPrecision_.clear();
     executionCpuThreads_ = 0;
     failed_ = failed;
@@ -227,6 +240,11 @@ void JuliaRuntime::startWorker() {
     setState(QStringLiteral("STARTING"), QStringLiteral("Starting Julia's versioned local helper."));
     process->setProgram(launch_->python);
     process->setArguments({QStringLiteral("-u"), helperPath_, QStringLiteral("--model-dir"), launch_->directory});
+    if (!juliaDevice_.isEmpty()) {
+        auto env = QProcessEnvironment::systemEnvironment();
+        env.insert(QStringLiteral("JULIA_DEVICE"), juliaDevice_);
+        process->setProcessEnvironment(env);
+    }
     process->start();
     static_cast<void>(send(QStringLiteral("hello"), {}, {}, kHandshakeTimeoutMs));
 }
@@ -242,7 +260,11 @@ void JuliaRuntime::startModelLoad() {
 
 quint64 JuliaRuntime::send(const QString& operation, QJsonObject payload, QString snapshot, int timeoutMs,
                            const RequestContext* context) {
-    if (!process_ || pending_.size() >= 8 || nextId_ >= kMaxId) return 0;
+    if (!process_ || nextId_ >= kMaxId) return 0;
+    if (pending_.size() >= 8) {
+        emit requestQueueFull();
+        return 0;
+    }
     const quint64 id = ++nextId_;
     const QString control = QStringLiteral("runtime_%1").arg(id);
     const QByteArray input = payload.value(QStringLiteral("prompt")).toString().toUtf8();
@@ -413,6 +435,25 @@ void JuliaRuntime::receive(const QJsonObject& object) {
         }
         handshaken_ = true;
         promptTriageSupported_ = operations.contains(QJsonValue(QStringLiteral("triage")));
+        // Negotiate the triage plan version. The worker reports which versions it supports;
+        // the host picks the highest version both sides know. Old workers that omit the field
+        // default to [2] for backward compatibility.
+        const auto planVersionsArray = result.value(QStringLiteral("triage_plan_versions")).toArray();
+        QList<int> workerVersions;
+        if (planVersionsArray.isEmpty()) {
+            workerVersions = {2}; // Backward-compatible default for old workers.
+        } else {
+            for (const auto& v : planVersionsArray)
+                if (v.isDouble() && v.toInt() > 0) workerVersions.append(v.toInt());
+        }
+        static const QList<int> kHostVersions{2};
+        activePlanVersion_ = 0;
+        for (int v : kHostVersions)
+            if (workerVersions.contains(v) && v > activePlanVersion_) activePlanVersion_ = v;
+        if (activePlanVersion_ == 0) {
+            fail(QStringLiteral("Julia's triage plan version is incompatible with this host. "
+                                "Update the Julia worker or reinstall Roclint.")); return;
+        }
         startModelLoad();
         return;
     }

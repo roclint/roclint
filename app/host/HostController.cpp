@@ -207,6 +207,7 @@ HostController::HostController(const QString& dbPathOverride,
         m_modelsBaseDirectory = settings.value(QStringLiteral("models/baseDirectory"), m_modelsBaseDirectory).toString();
         m_juliaModelDirectory = settings.value(QStringLiteral("scoring/juliaDirectory"), m_modelsBaseDirectory + QStringLiteral("/s1")).toString();
         m_juliaPython = settings.value(QStringLiteral("scoring/juliaPython"), m_juliaPython).toString();
+        m_juliaDevice = settings.value(QStringLiteral("scoring/juliaDevice"), QString{}).toString();
         m_activeModel = settings.value(QStringLiteral("models/active"), m_activeModel).toString();
         m_modelDirectory = settings.value(QStringLiteral("models/directory")).toString();
         m_nativeDirectory = settings.value(QStringLiteral("models/nativeDirectory"), m_modelsBaseDirectory + QStringLiteral("/s2")).toString();
@@ -2714,6 +2715,7 @@ void HostController::invalidateScorerConfiguration() {
 void HostController::refreshJuliaModel() {
     if (m_s1Adapter.engine() != bridge::ScorerEngine::JuliaLocal) return;
     invalidateScorerConfiguration();
+    m_julia->setJuliaDevice(m_juliaDevice);
     m_julia->load(m_juliaModelDirectory, m_juliaPython);
 }
 
@@ -2753,6 +2755,22 @@ void HostController::chooseJuliaPython() {
     if (!QCoreApplication::organizationName().isEmpty()) {
         QSettings settings;
         settings.setValue(QStringLiteral("scoring/juliaPython"), python);
+    }
+    refreshJuliaModel();
+    emit scorerEngineChanged();
+}
+
+void HostController::setJuliaDevice(const QString& device) {
+    static const QStringList kAllowed{
+        QStringLiteral(""), QStringLiteral("auto"), QStringLiteral("cpu"),
+        QStringLiteral("cuda"), QStringLiteral("mps"), QStringLiteral("directml")};
+    if (!kAllowed.contains(device)) return;
+    if (device == m_juliaDevice) return;
+    m_juliaDevice = device;
+    if (!QCoreApplication::organizationName().isEmpty()) {
+        QSettings settings;
+        if (device.isEmpty()) settings.remove(QStringLiteral("scoring/juliaDevice"));
+        else settings.setValue(QStringLiteral("scoring/juliaDevice"), device);
     }
     refreshJuliaModel();
     emit scorerEngineChanged();

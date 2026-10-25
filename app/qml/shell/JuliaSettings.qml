@@ -247,13 +247,35 @@ ColumnLayout {
                             Body {
                                 visible: dashboardWindow.hc && hostController.scorerEngine === "JULIA_LOCAL"
                                 text: dashboardWindow.hc
-                                    ? qsTr("Model folder (S1): %1\nDisk status: %2\nRuntime status: %3\nPython: %4")
+                                    ? qsTr("Model folder (S1): %1\nDisk status: %2\nRuntime status: %3\nPython: %4\nDevice override: %5")
                                         .arg(hostController.juliaModelDirectory)
                                         .arg(hostController.juliaDiskStatus)
                                         .arg(hostController.juliaMemoryStatus)
                                         .arg(hostController.juliaPython || qsTr("Not found"))
+                                        .arg(hostController.juliaDevice || qsTr("auto"))
                                     : ""
                                 wrapMode: Text.WrapAnywhere
+                            }
+                            // Persistent CPU-fallback advisory: shown whenever Julia is ready but running
+                            // on CPU FP32, so the user cannot miss it even without opening the log.
+                            Rectangle {
+                                visible: dashboardWindow.hc
+                                    && hostController.scorerEngine === "JULIA_LOCAL"
+                                    && hostController.hasJuliaModel
+                                    && hostController.juliaStatus.indexOf("CPU (FP32)") >= 0
+                                Layout.fillWidth: true
+                                height: cpuWarningText.implicitHeight + 16
+                                color: "#2a1a00"
+                                border.color: "#8a5a00"
+                                radius: 4
+                                Text {
+                                    id: cpuWarningText
+                                    anchors { fill: parent; margins: 8 }
+                                    text: qsTr("⚠ GPU acceleration unavailable — Julia is running on CPU.\nInstall CUDA drivers (NVIDIA) or torch-directml (AMD/Intel/Qualcomm),\nor set Device override to force a specific backend.")
+                                    color: "#d4a030"
+                                    font.pixelSize: 12
+                                    wrapMode: Text.WordWrap
+                                }
                             }
                             Body {
                                 visible: dashboardWindow.hc && hostController.scorerEngine === "JULIA_LOCAL"
