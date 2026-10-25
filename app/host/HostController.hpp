@@ -139,6 +139,7 @@ class HostController : public QObject {
     Q_PROPERTY(QString proposalMessage READ proposalMessage NOTIFY rewriteProposalChanged)
     Q_PROPERTY(bool hasProposal READ hasProposal NOTIFY rewriteProposalChanged)
     Q_PROPERTY(QString proposalText READ proposalText NOTIFY rewriteProposalChanged)
+    Q_PROPERTY(QString streamingPreview READ streamingPreview NOTIFY rewriteProposalChanged)
     Q_PROPERTY(QString lastDiffText READ lastDiffText NOTIFY rewriteProposalChanged)
     Q_PROPERTY(QVariantList proposalConstraints READ proposalConstraints NOTIFY rewriteProposalChanged)
     Q_PROPERTY(int pendingReviewCount READ pendingReviewCount NOTIFY rewriteProposalChanged)
@@ -189,6 +190,7 @@ class HostController : public QObject {
     Q_PROPERTY(QString juliaDiskStatus READ juliaDiskStatus NOTIFY scorerEngineChanged)
     Q_PROPERTY(QString juliaMemoryStatus READ juliaMemoryStatus NOTIFY scorerEngineChanged)
     Q_PROPERTY(bool isOriginalRoute READ isOriginalRoute NOTIFY analysisStatusChanged)
+    Q_PROPERTY(bool isUncertainRoute READ isUncertainRoute NOTIFY analysisStatusChanged)
     Q_PROPERTY(bool useLiveWeights READ usesLiveModel NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(bool isInferring READ isInferring NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(bool directInjectionEnabled READ isAmbientModeEnabled WRITE setAmbientModeEnabled NOTIFY ambientModeEnabledChanged)
@@ -293,6 +295,7 @@ public:
     [[nodiscard]] QString proposalMessage() const { return m_proposalMessage; }
     [[nodiscard]] bool hasProposal() const noexcept;
     [[nodiscard]] QString proposalText() const;
+    [[nodiscard]] QString streamingPreview() const { return m_streamingPreview; }
     [[nodiscard]] QString lastDiffText() const;
     [[nodiscard]] QVariantList proposalConstraints() const;
     [[nodiscard]] int pendingReviewCount() const;
@@ -327,7 +330,11 @@ public:
     [[nodiscard]] QString juliaMemoryStatus() const;
     [[nodiscard]] bool isOriginalRoute() const {
         return m_currentSnapshot && m_currentSnapshot->promptTriage && m_revisionState && !m_revisionState->isDraftDirty() &&
-            m_currentSnapshot->promptTriage->ambiguityScore < core::analysis::kPromptTriageThreshold;
+            m_promptTriageLastRoute == core::analysis::PromptTriageRoute::Original;
+    }
+    [[nodiscard]] bool isUncertainRoute() const {
+        return m_currentSnapshot && m_currentSnapshot->promptTriage && m_revisionState && !m_revisionState->isDraftDirty() &&
+            m_promptTriageLastRoute == core::analysis::PromptTriageRoute::UncertainBuffer;
     }
     [[nodiscard]] bool usesLiveModel() const { return m_graniteAdapter->state() == bridge::GraniteRuntimeState::Ready || isInferring(); }
     [[nodiscard]] bool isInferring() const { return m_graniteAdapter->state() == bridge::GraniteRuntimeState::Busy; }
@@ -776,6 +783,7 @@ private:
     QHash<quint64, PipelineTicket> m_pendingPromptTriage;
     std::optional<PipelineTicket> m_promptTriageLoad;
     std::optional<core::analysis::PromptTriage> m_promptTriage;
+    core::analysis::PromptTriageRoute m_promptTriageLastRoute{core::analysis::PromptTriageRoute::Original};
     std::shared_ptr<AnalysisGroup> m_routedAnalysisGroup;
 #ifdef ROCLINT_ENABLE_TEST_MOCKS
     bool m_promptTriageRouting{true};
@@ -812,6 +820,7 @@ private:
 
     ProposalUiStatus m_proposalStatus{ProposalUiStatus::None};
     QString m_proposalMessage;
+    QString m_streamingPreview;
     std::optional<core::rewrite::RewriteProposal> m_currentProposal;
     std::set<std::string> m_acknowledgedConstraints;
     std::optional<core::review::ApprovalRecord> m_currentApproval;

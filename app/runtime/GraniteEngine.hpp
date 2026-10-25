@@ -5,8 +5,10 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <stdexcept>
+#include <string_view>
 
 namespace roclint::runtime {
 
@@ -34,7 +36,10 @@ public:
     GraniteEngine& operator=(const GraniteEngine&) = delete;
     [[nodiscard]] QJsonObject identity() const;
     [[nodiscard]] QJsonObject status() const;
-    [[nodiscard]] QJsonObject execute(const QString& operation, const QJsonObject& payload, GraniteWorkControl& control);
+    // progressCallback, if set, is invoked with each decoded text piece during generation.
+    [[nodiscard]] QJsonObject execute(const QString& operation, const QJsonObject& payload,
+                                      GraniteWorkControl& control,
+                                      std::function<void(std::string_view)> progressCallback = {});
 
 private:
     class Impl;

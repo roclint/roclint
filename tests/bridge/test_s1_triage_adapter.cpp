@@ -22,6 +22,8 @@ void testPromptTriageOwnsTheExactGateBoundary() {
     source.weightsSha256 = std::string(64, 'a'); source.configurationId = "test_only";
     source.execution = analysis::TriageExecution::Mock;
     source.categoryScores = {0.1, 0.2, 0.69, 0.3}; source.latencyMs = 1;
+    // Three-tier routing: Clarify at threshold, UncertainBuffer in dead band, Original below dead band.
+    // Default policy: RULE threshold=0.70, delta=0.08, so dead band is [0.62, 0.70).
     for (const auto score : {0.699999, 0.70, 0.700001}) {
         source.categoryScores[2] = score;
         const auto sealed = analysis::sealPromptTriage(source, prompt);
@@ -29,9 +31,21 @@ void testPromptTriageOwnsTheExactGateBoundary() {
         ROCLINT_CHECK(sealed.value().primaryCategory == analysis::PromptCategory::Rule);
         ROCLINT_CHECK(sealed.value().ambiguityScore == score);
         const auto route = analysis::routePromptTriage(sealed.value());
-        ROCLINT_CHECK(route.ok() && route.value() == (score < 0.70 ? analysis::PromptTriageRoute::Original : analysis::PromptTriageRoute::Clarify));
+        // 0.699999 is within [0.62, 0.70) → UncertainBuffer; 0.70 and 0.700001 → Clarify.
+        const auto expected = (score >= 0.70)
+            ? analysis::PromptTriageRoute::Clarify
+            : analysis::PromptTriageRoute::UncertainBuffer;
+        ROCLINT_CHECK(route.ok() && route.value() == expected);
         auto tampered = sealed.value(); tampered.categoryScores[0] = 0.8;
         ROCLINT_CHECK(!analysis::routePromptTriage(tampered).ok());
+    }
+    // Below the dead band → Original (score 0.1 on all heads is well clear).
+    source.categoryScores = {0.1, 0.2, 0.1, 0.3};
+    {
+        const auto sealed = analysis::sealPromptTriage(source, prompt);
+        ROCLINT_CHECK(sealed.ok());
+        const auto route = analysis::routePromptTriage(sealed.value());
+        ROCLINT_CHECK(route.ok() && route.value() == analysis::PromptTriageRoute::Original);
     }
     source.categoryScores.fill(0.9); // Independent heads are not a normalized five-way distribution.
     const auto tied = analysis::sealPromptTriage(source, prompt);
@@ -48,6 +62,118 @@ void testPromptTriageOwnsTheExactGateBoundary() {
         ROCLINT_CHECK(!analysis::sealPromptTriage(missing, prompt).ok());
     }
     ROCLINT_CHECK(!analysis::routePromptTriage(analysis::PromptTriage{}).ok());
+}
+
+void testV1AndV2HashDomainsAreDistinct() {
+    analysis::PromptTriage r;
+    const std::string prompt = "Review this module.";
+    r.sessionId = "sess_v2hash"; r.revisionId = "rev_v2hash_1";
+    r.revisionTextHash = crypto::Sha256::hexDigest(prompt);
+    r.stateVersion = 1; r.requestGroupId = "grp_v2"; r.attemptId = "att_v2";
+    r.modelId = "fixture_julia"; r.modelRevision = "fixture_v1";
+    r.weightsSha256 = std::string(64, 'b'); r.configurationId = "test_only";
+    r.execution = analysis::TriageExecution::Mock;
+    r.categoryScores = {0.1, 0.2, 0.3, 0.4}; r.latencyMs = 2;
+
+    r.hashVersion = analysis::TriageHashVersion::V2;
+    const auto v2 = analysis::sealPromptTriage(r, prompt);
+    ROCLINT_CHECK(v2.ok());
+    ROCLINT_CHECK(analysis::validatePromptTriage(v2.value()).ok());
+
+    r.hashVersion = analysis::TriageHashVersion::V1;
+    const auto v1 = analysis::sealPromptTriage(r, prompt);
+    ROCLINT_CHECK(v1.ok());
+    ROCLINT_CHECK(analysis::validatePromptTriage(v1.value()).ok());
+
+    // V1 domain bakes in kPromptTriageThreshold; V2 does not — hashes must differ.
+    ROCLINT_CHECK(v2.value().triageHash != v1.value().triageHash);
+
+    // Tampering the hashVersion on a sealed record must fail validation (hash mismatch).
+    auto tampered = v2.value();
+    tampered.hashVersion = analysis::TriageHashVersion::V1;
+    ROCLINT_CHECK(!analysis::validatePromptTriage(tampered).ok());
+
+    auto tampered2 = v1.value();
+    tampered2.hashVersion = analysis::TriageHashVersion::V2;
+    ROCLINT_CHECK(!analysis::validatePromptTriage(tampered2).ok());
+
+    // New seals must default to V2.
+    analysis::PromptTriage fresh;
+    ROCLINT_CHECK(fresh.hashVersion == analysis::TriageHashVersion::V2);
+}
+
+void testPerHeadPolicyRouting() {
+    const std::string prompt = "Apply the patch.";
+    analysis::PromptTriage base;
+    base.sessionId = "sess_policy"; base.revisionId = "rev_policy_1";
+    base.revisionTextHash = crypto::Sha256::hexDigest(prompt);
+    base.stateVersion = 1; base.requestGroupId = "grp_policy"; base.attemptId = "att_policy";
+    base.modelId = "fixture_julia"; base.modelRevision = "fixture_v1";
+    base.weightsSha256 = std::string(64, 'c'); base.configurationId = "test_only";
+    base.execution = analysis::TriageExecution::Mock; base.latencyMs = 1;
+
+    analysis::TriagePolicy policy;
+    policy.thresholds = {0.70, 0.70, 0.70, 0.60};
+    policy.uncertaintyDelta = 0.08;
+
+    // RULE_CONFLICT at 0.62 — below global 0.70 but above per-head 0.60 → Clarify
+    base.categoryScores = {0.10, 0.15, 0.20, 0.62};
+    auto sealed = analysis::sealPromptTriage(base, prompt);
+    ROCLINT_CHECK(sealed.ok());
+    auto route = analysis::routePromptTriage(sealed.value(), policy);
+    ROCLINT_CHECK(route.ok() && route.value() == analysis::PromptTriageRoute::Clarify);
+
+    // All heads at 0.55 — RULE_CONFLICT in dead band [0.52, 0.60) → UncertainBuffer
+    base.categoryScores = {0.55, 0.55, 0.55, 0.55};
+    sealed = analysis::sealPromptTriage(base, prompt);
+    ROCLINT_CHECK(sealed.ok());
+    route = analysis::routePromptTriage(sealed.value(), policy);
+    ROCLINT_CHECK(route.ok() && route.value() == analysis::PromptTriageRoute::UncertainBuffer);
+
+    // All heads below dead band → Original
+    base.categoryScores = {0.20, 0.15, 0.10, 0.30};
+    sealed = analysis::sealPromptTriage(base, prompt);
+    ROCLINT_CHECK(sealed.ok());
+    route = analysis::routePromptTriage(sealed.value(), policy);
+    ROCLINT_CHECK(route.ok() && route.value() == analysis::PromptTriageRoute::Original);
+
+    // ACTION at 0.65 — in dead band for thr=0.70, delta=0.08 → UncertainBuffer
+    base.categoryScores = {0.65, 0.20, 0.15, 0.10};
+    sealed = analysis::sealPromptTriage(base, prompt);
+    ROCLINT_CHECK(sealed.ok());
+    route = analysis::routePromptTriage(sealed.value(), policy);
+    ROCLINT_CHECK(route.ok() && route.value() == analysis::PromptTriageRoute::UncertainBuffer);
+
+    // Default overload must produce the same result as passing TriagePolicy::defaults() explicitly
+    base.categoryScores = {0.62, 0.20, 0.15, 0.10};
+    sealed = analysis::sealPromptTriage(base, prompt);
+    ROCLINT_CHECK(sealed.ok());
+    const auto routeDefault   = analysis::routePromptTriage(sealed.value());
+    const auto routeExplicit  = analysis::routePromptTriage(sealed.value(), analysis::TriagePolicy::defaults());
+    ROCLINT_CHECK(routeDefault.ok() && routeExplicit.ok());
+    ROCLINT_CHECK(routeDefault.value() == routeExplicit.value());
+}
+
+void testUncertainBufferDoesNotFireWithZeroDelta() {
+    const std::string prompt = "Delete it.";
+    analysis::PromptTriage base;
+    base.sessionId = "sess_db"; base.revisionId = "rev_db_1";
+    base.revisionTextHash = crypto::Sha256::hexDigest(prompt);
+    base.stateVersion = 1; base.requestGroupId = "grp_db"; base.attemptId = "att_db";
+    base.modelId = "fixture_julia"; base.modelRevision = "fixture_v1";
+    base.weightsSha256 = std::string(64, 'd'); base.configurationId = "test_only";
+    base.execution = analysis::TriageExecution::Mock; base.latencyMs = 1;
+
+    analysis::TriagePolicy noDeadBand;
+    noDeadBand.thresholds = {0.70, 0.70, 0.70, 0.70};
+    noDeadBand.uncertaintyDelta = 0.0;
+
+    // All scores below threshold; delta=0 means no dead band → Original
+    base.categoryScores = {0.65, 0.66, 0.67, 0.68};
+    const auto sealed = analysis::sealPromptTriage(base, prompt);
+    ROCLINT_CHECK(sealed.ok());
+    const auto route = analysis::routePromptTriage(sealed.value(), noDeadBand);
+    ROCLINT_CHECK(route.ok() && route.value() == analysis::PromptTriageRoute::Original);
 }
 
 SnapshotEvaluationResponse scored(const analysis::NormalizedAnalysis& a) {
@@ -192,6 +318,9 @@ int main() {
     std::cout << "[Test S1TriageAdapter] Starting...\n";
     testTriageValidatesInputWithoutScoring();
     testPromptTriageOwnsTheExactGateBoundary();
+    testV1AndV2HashDomainsAreDistinct();
+    testPerHeadPolicyRouting();
+    testUncertainBufferDoesNotFireWithZeroDelta();
     testParseEngine();
     testOfflineCloudIsDegradedUnranked();
     testFailingCloudScorerDegrades();

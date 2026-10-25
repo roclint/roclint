@@ -9,11 +9,44 @@
 
 namespace roclint::core::analysis {
 
+// v1 compatibility only: used exclusively for reconstructing historical v1 hashes.
+// Do not use this constant in new routing or policy code.
 inline constexpr double kPromptTriageThreshold = 0.70;
 inline constexpr const char* kPromptTriageTemplateId = "julia.prompt_triage.categories.v2";
+
+// Version of the cryptographic seal.
+// V1: bakes kPromptTriageThreshold into the hash domain (legacy; read-only for historical records).
+// V2: commits only to model evidence (scores, identity, latency, prompt binding); threshold-independent.
+enum class TriageHashVersion { V1 = 1, V2 = 2 };
+
 enum class PromptCategory { Action, Target, Rule, RuleConflict };
-enum class PromptTriageRoute { Original, Clarify };
+
+// Three-tier routing outcome.
+// Original:       All head scores safely below per-head thresholds. Granite skipped.
+// Clarify:        At least one head score at or above its threshold. Granite invoked.
+// UncertainBuffer: No head is clearly Clarify, but at least one is within the dead band
+//                  [threshold[i] - uncertaintyDelta, threshold[i]). Non-blocking advisory;
+//                  the original wording is retained and explicit re-analyze invokes Granite.
+enum class PromptTriageRoute { Original, Clarify, UncertainBuffer };
+
 enum class TriageExecution { NotExecuted, Model, Mock };
+
+// Per-head routing policy. Passed to routePromptTriage(); never enters the sealed record.
+// Thresholds are indexed [ACTION=0, TARGET=1, RULE=2, RULE_CONFLICT=3].
+struct TriagePolicy {
+    // Route to Clarify when categoryScores[i] >= thresholds[i].
+    // RULE_CONFLICT is tighter (0.60) because missed conflicts have higher consequence.
+    std::array<double, 4> thresholds{0.70, 0.70, 0.70, 0.60};
+
+    // Dead-band half-width δ. A score in [thresholds[i] - uncertaintyDelta, thresholds[i])
+    // triggers UncertainBuffer when no head is in the Clarify zone.
+    double uncertaintyDelta{0.08};
+
+    // Human-readable policy identifier for logging and status messages.
+    std::string policyId{"roclint.triage_policy.v1"};
+
+    [[nodiscard]] static TriagePolicy defaults() noexcept { return {}; }
+};
 
 // Four independent Boolean classifier heads, in Action/Target/Rule/RuleConflict order.
 // Their scores are not a categorical probability distribution and must not be normalized together.
@@ -38,15 +71,20 @@ struct PromptTriage {
     double ambiguityScore{0}; // Derived from categoryScores; not per-Granite-alternative evidence.
     PromptCategory primaryCategory{PromptCategory::Action};
     double latencyMs{0};
+    TriageHashVersion hashVersion{TriageHashVersion::V2}; // V1 for historical records; V2 for new seals.
     bool operator==(const PromptTriage&) const = default;
 };
 
 [[nodiscard]] const char* toString(PromptCategory category) noexcept;
+[[nodiscard]] const char* toString(PromptTriageRoute route) noexcept;
 [[nodiscard]] std::string computePromptTriageHash(const PromptTriage& triage);
 [[nodiscard]] Status validatePromptTriage(const PromptTriage& triage);
 // Requires the model's input binding to match the frozen bytes. Derives only policy fields,
 // seals the result, and rejects missing execution/provenance or invalid model scores.
 [[nodiscard]] Result<PromptTriage> sealPromptTriage(PromptTriage triage, std::string_view frozenPrompt);
+// Backwards-compatible overload: applies TriagePolicy::defaults().
 [[nodiscard]] Result<PromptTriageRoute> routePromptTriage(const PromptTriage& triage);
+// Policy-aware overload: per-head thresholds and uncertainty dead band from policy.
+[[nodiscard]] Result<PromptTriageRoute> routePromptTriage(const PromptTriage& triage, const TriagePolicy& policy);
 
 } // namespace roclint::core::analysis

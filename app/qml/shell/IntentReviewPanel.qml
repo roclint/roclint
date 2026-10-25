@@ -509,10 +509,14 @@ FocusScope {
                 id: reviewPanel
                 objectName: "reviewPanel"
                 readonly property string status: rootWindow.hc ? hostController.proposalStatus : "NONE"
+                readonly property string preview: rootWindow.hc ? hostController.streamingPreview : ""
+                readonly property bool hasPreview: status === "GENERATING" && preview.length > 0
                 visible: status !== "NONE"
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                Layout.preferredHeight: status === "READY_FOR_REVIEW" ? Math.min(300, rootWindow.viewportHeight * 0.55) : reviewMessage.implicitHeight + 20
+                Layout.preferredHeight: status === "READY_FOR_REVIEW" || hasPreview
+                                        ? Math.min(300, rootWindow.viewportHeight * 0.55)
+                                        : reviewMessage.implicitHeight + 20
                 color: "transparent"
                 border.color: status === "READY_FOR_REVIEW" ? rootWindow.fgColor
                             : status === "GENERATING" ? rootWindow.mutedTextColor : rootWindow.warnColor
@@ -521,7 +525,7 @@ FocusScope {
 
                 Text {
                     id: reviewMessage
-                    visible: reviewPanel.status !== "READY_FOR_REVIEW"
+                    visible: reviewPanel.status !== "READY_FOR_REVIEW" && !reviewPanel.hasPreview
                     anchors.fill: parent
                     anchors.margins: 10
                     text: rootWindow.hc ? (reviewPanel.status === "NEEDS_CLARIFICATION"
@@ -531,6 +535,23 @@ FocusScope {
                     font.family: rootWindow.sansFont
                     font.pixelSize: 12
                     color: reviewPanel.status === "GENERATING" ? rootWindow.mutedTextColor : rootWindow.warnColor
+                }
+
+                // Live streaming preview — visible once chunks start arriving during generation.
+                ScrollView {
+                    visible: reviewPanel.hasPreview
+                    anchors.fill: parent
+                    anchors.margins: 10
+                    clip: true
+                    ScrollBar.vertical: HudScrollBar {}
+                    Text {
+                        width: parent.width
+                        text: reviewPanel.preview
+                        wrapMode: Text.WrapAnywhere
+                        font.family: rootWindow.monoFont
+                        font.pixelSize: 12
+                        color: rootWindow.mutedTextColor
+                    }
                 }
 
                 ColumnLayout {

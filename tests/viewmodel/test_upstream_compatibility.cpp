@@ -68,7 +68,7 @@ int protocolWorker(const QString& rawMode) {
             QJsonArray scores;
             for (const auto* category : {"ACTION", "TARGET", "RULE", "RULE_CONFLICT"})
                 scores.append(QJsonObject{{QStringLiteral("category"), QString::fromLatin1(category)},
-                    {QStringLiteral("score"), mode == QLatin1String("clear") ? .699999 : .70}});
+                    {QStringLiteral("score"), mode == QLatin1String("clear") ? .20 : .70}});
             if (mode == QLatin1String("bad_triage")) scores[3] = scores[0];
             if (mode == QLatin1String("bad_triage_score")) scores[0] = QJsonObject{
                 {QStringLiteral("category"), QStringLiteral("ACTION")}, {QStringLiteral("score"), QStringLiteral("0.1")}};

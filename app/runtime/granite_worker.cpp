@@ -265,7 +265,21 @@ int main(int argc, char** argv) {
             QJsonObject response;
             try {
                 control.check();
-                const auto result = engine.execute(work.request.value(QStringLiteral("op")).toString(), work.request.value(QStringLiteral("payload")).toObject(), control);
+                // Stream each decoded text piece to the host as a partial_result frame.
+                const auto streamToken = [&](std::string_view piece) {
+                    if (work.cancelled->load() || stopping.load()) return;
+                    const QJsonObject partial{
+                        {QStringLiteral("type"),       QStringLiteral("partial_result")},
+                        {QStringLiteral("ok"),         true},
+                        {QStringLiteral("request_id"), work.request.value(QStringLiteral("request_id"))},
+                        {QStringLiteral("chunk"),      QString::fromUtf8(piece.data(), static_cast<qsizetype>(piece.size()))}};
+                    const auto frame = QJsonDocument(partial).toJson(QJsonDocument::Compact) + '\n';
+                    const std::lock_guard lock(outputMutex);
+                    static_cast<void>(std::fwrite(frame.constData(), 1, static_cast<std::size_t>(frame.size()), stdout));
+                    static_cast<void>(std::fflush(stdout));
+                };
+                const auto result = engine.execute(work.request.value(QStringLiteral("op")).toString(),
+                                                   work.request.value(QStringLiteral("payload")).toObject(), control, streamToken);
                 response = reply(work.request, result, {}, {}, std::chrono::duration<double, std::milli>(Clock::now() - started).count());
             } catch (const GraniteFailure& error) {
                 response = reply(work.request, {}, QString::fromLatin1(error.what()), error.code,

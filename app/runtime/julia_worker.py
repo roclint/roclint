@@ -27,6 +27,18 @@ MAX_ID = 9007199254740991
 TRIAGE_PLAN_VERSION = 2
 TRIAGE_TEMPLATE_ID = "julia.prompt_triage.categories.v2"
 TRIAGE_CATEGORIES = ("ACTION", "TARGET", "RULE", "RULE_CONFLICT")
+
+# Temperature scaling for triage head probabilities.
+# T=1.0 is identity (raw sigmoid — current behaviour).
+# T>1.0 softens overconfident predictions toward calibrated frequencies.
+# Calibrate T offline using tools/calibrate_julia_triage.py on a labeled corpus.
+_TRIAGE_TEMPERATURE = float(os.environ.get("JULIA_TRIAGE_TEMPERATURE", "1.0"))
+if not (0.1 <= _TRIAGE_TEMPERATURE <= 10.0):
+    raise ValueError("JULIA_TRIAGE_TEMPERATURE must be between 0.1 and 10.0")
+
+# When JULIA_TRIAGE_DIAGNOSTICS=1, raw logits are returned alongside calibrated scores.
+# Never use raw logits in routing logic; they are for calibration tooling only.
+_TRIAGE_DIAGNOSTICS = os.environ.get("JULIA_TRIAGE_DIAGNOSTICS") == "1"
 TRIAGE_HEADS = (
     ("ACTION",
      "Is the intended action or requested outcome materially ambiguous?",
@@ -252,15 +264,26 @@ def triage(engine, request):
     if len(logits) != len(TRIAGE_CATEGORIES):
         raise ValueError("Julia returned the wrong number of triage heads")
     scores = []
+    raw_logits_out = [] if _TRIAGE_DIAGNOSTICS else None
     for category, values in zip(TRIAGE_CATEGORIES, logits):
-        probabilities = softmax(values)
+        # Apply temperature scaling before softmax; T=1.0 is the identity.
+        scaled_values = [v / _TRIAGE_TEMPERATURE for v in values]
+        probabilities = softmax(scaled_values)
         if len(probabilities) != 2:
             raise ValueError("Julia returned a malformed Boolean triage head")
         scores.append({"category": category, "score": probabilities[1]})
+        if raw_logits_out is not None:
+            raw_logits_out.append([float(v) for v in values])
     # These independent scores need not sum to one. Do not invent a global probability.
     result = {"triage_plan_version": TRIAGE_PLAN_VERSION, "template_id": TRIAGE_TEMPLATE_ID, "category_scores": scores}
     if hasattr(engine, "roclint_runtime"):
-        result["execution_configuration_id"] = engine.roclint_runtime["configuration_id"]
+        config_id = engine.roclint_runtime["configuration_id"]
+        # Encode T in the configuration ID when non-default so sealed records are reproducible.
+        if _TRIAGE_TEMPERATURE != 1.0:
+            config_id += f"+T{_TRIAGE_TEMPERATURE:.2f}"
+        result["execution_configuration_id"] = config_id
+    if raw_logits_out is not None:
+        result["raw_logits"] = raw_logits_out  # diagnostics only; never used in routing
     return result
 
 

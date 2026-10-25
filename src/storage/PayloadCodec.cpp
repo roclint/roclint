@@ -124,6 +124,7 @@ std::string encodePromptTriage(const an::PromptTriage& t) {
     root.set("model_revision", str(t.modelRevision)); root.set("weights_sha256", str(t.weightsSha256));
     root.set("configuration_id", str(t.configurationId)); root.set("template_id", str(t.templateId));
     root.set("execution", num(static_cast<std::uint64_t>(t.execution)));
+    root.set("hash_version", num(static_cast<std::uint64_t>(t.hashVersion)));
     Value scores = Value::array();
     for (const auto score : t.categoryScores) scores.push(Value::number(score));
     root.set("category_scores", std::move(scores)); root.set("ambiguity", Value::number(t.ambiguityScore));
@@ -159,6 +160,15 @@ Result<an::PromptTriage> decodePromptTriage(std::string_view payload) {
     ROCLINT_TRY_ASSIGN(category, json::requireUInt(root, "primary_category"));
     if (execution > 2 || category > 3) return makeError(ErrorCode::InvalidInput, "Invalid classification enum");
     t.execution = static_cast<an::TriageExecution>(execution); t.primaryCategory = static_cast<an::PromptCategory>(category);
+    // hash_version is absent in records written before Phase 1; treat missing as V1 for backwards compatibility.
+    if (const auto* hv = root.find("hash_version")) {
+        if (!hv->isNumber()) return makeError(ErrorCode::InvalidInput, "Invalid hash_version field");
+        const auto val = static_cast<std::uint64_t>(hv->asNumber());
+        if (val != 1 && val != 2) return makeError(ErrorCode::InvalidInput, "Unknown hash_version value");
+        t.hashVersion = static_cast<an::TriageHashVersion>(val);
+    } else {
+        t.hashVersion = an::TriageHashVersion::V1; // historical record pre-dating Phase 1
+    }
     const Value* scores = nullptr;
     ROCLINT_TRY_ASSIGN(scores, json::requireArray(root, "category_scores"));
     if (scores->asArray().size() != 4) return makeError(ErrorCode::InvalidInput, "Incomplete classification heads");

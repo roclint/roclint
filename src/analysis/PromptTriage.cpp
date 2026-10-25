@@ -37,8 +37,20 @@ const char* toString(PromptCategory category) noexcept {
     return "UNKNOWN";
 }
 
+const char* toString(PromptTriageRoute route) noexcept {
+    switch (route) {
+        case PromptTriageRoute::Original:       return "ORIGINAL";
+        case PromptTriageRoute::Clarify:        return "CLARIFY";
+        case PromptTriageRoute::UncertainBuffer: return "UNCERTAIN_BUFFER";
+    }
+    return "UNKNOWN";
+}
+
 std::string computePromptTriageHash(const PromptTriage& triage) {
-    crypto::CanonicalHasher hash("roclint.prompt_triage.v1");
+    const char* domain = (triage.hashVersion == TriageHashVersion::V1)
+        ? "roclint.prompt_triage.v1"
+        : "roclint.prompt_triage.v2";
+    crypto::CanonicalHasher hash(domain);
     hash.field(triage.sessionId).field(triage.revisionId).field(triage.revisionTextHash).number(triage.stateVersion)
         .field(triage.requestGroupId).field(triage.attemptId).field(triage.provider).field(triage.modelId)
         .field(triage.modelRevision).field(triage.weightsSha256).field(triage.configurationId).field(triage.templateId)
@@ -46,7 +58,10 @@ std::string computePromptTriageHash(const PromptTriage& triage) {
     for (const auto score : triage.categoryScores) hashDouble(hash, score);
     hashDouble(hash, triage.ambiguityScore);
     hash.number(static_cast<std::uint64_t>(triage.primaryCategory));
-    hashDouble(hash, kPromptTriageThreshold);
+    // V1 only: bake in kPromptTriageThreshold for historical record verification.
+    // V2 records exclude it so thresholds can be tuned without breaking the audit chain.
+    if (triage.hashVersion == TriageHashVersion::V1)
+        hashDouble(hash, kPromptTriageThreshold);
     hashDouble(hash, triage.latencyMs);
     return hash.finalizeHex();
 }
@@ -89,8 +104,21 @@ Result<PromptTriage> sealPromptTriage(PromptTriage triage, std::string_view froz
 }
 
 Result<PromptTriageRoute> routePromptTriage(const PromptTriage& triage) {
+    return routePromptTriage(triage, TriagePolicy::defaults());
+}
+
+Result<PromptTriageRoute> routePromptTriage(const PromptTriage& triage, const TriagePolicy& policy) {
     if (const auto status = validatePromptTriage(triage); !status.ok()) return status.error();
-    return triage.ambiguityScore < kPromptTriageThreshold ? PromptTriageRoute::Original : PromptTriageRoute::Clarify;
+    bool inDeadBand = false;
+    for (std::size_t i = 0; i < triage.categoryScores.size(); ++i) {
+        const double score = triage.categoryScores[i];
+        const double thr   = policy.thresholds[i];
+        if (score >= thr)
+            return PromptTriageRoute::Clarify;
+        if (score >= thr - policy.uncertaintyDelta)
+            inDeadBand = true;
+    }
+    return inDeadBand ? PromptTriageRoute::UncertainBuffer : PromptTriageRoute::Original;
 }
 
 } // namespace roclint::core::analysis

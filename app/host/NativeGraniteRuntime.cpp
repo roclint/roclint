@@ -323,6 +323,16 @@ void NativeGraniteRuntime::readOutput() {
 }
 
 void NativeGraniteRuntime::receive(const QJsonObject& response) {
+    // Streaming chunk — dispatched before the final result frame.
+    if (response.value(QStringLiteral("type")) == QLatin1String("partial_result")) {
+        bool valid = false;
+        const auto id = response.value(QStringLiteral("request_id")).toString().toULongLong(&valid);
+        if (valid && pending_.contains(id)) {
+            const auto chunk = response.value(QStringLiteral("chunk")).toString();
+            if (!chunk.isEmpty()) emit partialResultReceived(id, chunk);
+        }
+        return;
+    }
     bool valid = false;
     const auto idText = response.value(QStringLiteral("request_id"));
     const auto id = idText.toString().toULongLong(&valid);

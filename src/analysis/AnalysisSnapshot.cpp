@@ -151,7 +151,12 @@ Status validateAnalysisSnapshot(const AnalysisSnapshot& snapshot) {
         const auto& triage = *snapshot.promptTriage;
         if (triage.sessionId != snapshot.normalized.sessionId || triage.revisionId != snapshot.normalized.baseRevisionId ||
             triage.revisionTextHash != snapshot.revisionTextHash) return invalid("Classification belongs to another frozen prompt");
-        const bool clear = routePromptTriage(triage).value() == PromptTriageRoute::Original;
+        const auto routeRes = routePromptTriage(triage);
+        if (!routeRes.ok()) return routeRes.error();
+        // Both Original (clearly below threshold) and UncertainBuffer (dead band advisory)
+        // retain the original prompt without invoking Granite discovery.
+        const bool clear = (routeRes.value() == PromptTriageRoute::Original ||
+                            routeRes.value() == PromptTriageRoute::UncertainBuffer);
         const bool empty = snapshot.normalized.choiceGroups.empty() && snapshot.normalized.assumptions.empty() &&
             snapshot.normalized.missingDecisions.empty() && snapshot.normalized.conflicts.empty();
         if ((clear && (!snapshot.discoveryAttemptId.empty() || !empty)) ||

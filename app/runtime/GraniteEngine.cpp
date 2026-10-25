@@ -250,7 +250,8 @@ public:
         state_.store(ReadyState::Ready);
     }
 
-    QJsonObject generate(const QJsonObject& payload, GraniteWorkControl& control) {
+    QJsonObject generate(const QJsonObject& payload, GraniteWorkControl& control,
+                         const std::function<void(std::string_view)>& progressCallback) {
         prepare(control);
         state_.store(ReadyState::Busy);
         const auto instructions = payload.value(QStringLiteral("instructions")).toString().toUtf8();
@@ -346,6 +347,8 @@ public:
                 output.append(piece.data(), length);
                 ++emitted;
                 if (output.size() > 64 * 1024) throw GraniteFailure(QStringLiteral("OUTPUT_TOO_LARGE"), "Native Granite exceeded the output byte limit.");
+                if (progressCallback && emitted % 4 == 0 && !control.aborted())
+                    progressCallback(std::string_view(piece.data(), static_cast<std::size_t>(length)));
                 timedDecode({token}, static_cast<llama_pos>(tokens.size()) + generated);
             }
             const auto latency = static_cast<double>(timer.nsecsElapsed()) / 1e6;
@@ -371,7 +374,8 @@ public:
         }
     }
 
-    QJsonObject execute(const QString& operation, const QJsonObject& payload, GraniteWorkControl& control) {
+    QJsonObject execute(const QString& operation, const QJsonObject& payload, GraniteWorkControl& control,
+                        const std::function<void(std::string_view)>& progressCallback) {
         try {
             if (operation == QLatin1String("load") || operation == QLatin1String("warm")) prepare(control);
             else if (operation == QLatin1String("set_residency")) {
@@ -383,7 +387,7 @@ public:
                 }
                 else if (tier == QLatin1String("UNLOADED")) unload();
                 else throw GraniteFailure(QStringLiteral("CONFIGURATION"), "Requested residency is unavailable.");
-            } else return generate(payload, control);
+            } else return generate(payload, control, progressCallback);
             auto result = status();
             result.insert(QStringLiteral("template_sha256"), QString::fromLatin1(templateHash_));
             return result;
@@ -420,5 +424,9 @@ GraniteEngine::GraniteEngine(QString directory, const QString& quantization) : i
 GraniteEngine::~GraniteEngine() = default;
 QJsonObject GraniteEngine::identity() const { return impl_->identity(); }
 QJsonObject GraniteEngine::status() const { return impl_->status(); }
-QJsonObject GraniteEngine::execute(const QString& operation, const QJsonObject& payload, GraniteWorkControl& control) { return impl_->execute(operation, payload, control); }
+QJsonObject GraniteEngine::execute(const QString& operation, const QJsonObject& payload,
+                                   GraniteWorkControl& control,
+                                   std::function<void(std::string_view)> progressCallback) {
+    return impl_->execute(operation, payload, control, std::move(progressCallback));
+}
 } // namespace roclint::runtime

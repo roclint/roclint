@@ -63,6 +63,8 @@ signals:
     void stateChanged();
     void stopped();
     void speedMetricsChanged();
+    // Emitted for each streaming chunk during an active generation.
+    void partialResultReceived(quint64 requestId, const QString& chunk);
 
 private:
     struct Call;

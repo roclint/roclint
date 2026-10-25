@@ -265,6 +265,14 @@ HostController::HostController(const QString& dbPathOverride,
         emit modelDirectoryChanged();
     });
 
+    connect(m_native.get(), &NativeGraniteRuntime::partialResultReceived,
+            this, [this](quint64, const QString& chunk) {
+        if (m_proposalStatus == ProposalUiStatus::Generating) {
+            m_streamingPreview += chunk;
+            emit rewriteProposalChanged();
+        }
+    });
+
     m_ambientDebounce.setSingleShot(true);
     m_ambientDebounce.setInterval(kAmbientDebounceMs);
     connect(&m_ambientDebounce, &QTimer::timeout, this, &HostController::onAmbientDebounce);
@@ -863,6 +871,7 @@ void HostController::invalidateDownstreamPipeline() {
     m_currentApproval.reset();
     m_proposalStatus = ProposalUiStatus::None;
     m_proposalMessage.clear();
+    m_streamingPreview.clear();
     m_analysisStatus = AnalysisStatus::Idle;
     m_analysisMessage.clear();
 
@@ -915,6 +924,7 @@ Status HostController::invalidateProposalArtifacts() {
     m_currentApproval.reset();
     m_proposalStatus = ProposalUiStatus::None;
     m_proposalMessage.clear();
+    m_streamingPreview.clear();
     emit rewriteProposalChanged();
     emit approvalChanged();
     emit intentChanged();
@@ -1977,6 +1987,7 @@ bool HostController::synthesizeRewrite(quint64 expectedVersion) {
             return makeError(ErrorCode::ProviderUnavailable, "The local rewrite runtime is not ready.");
         }
 
+        m_streamingPreview.clear();
         setProposalStatus(ProposalUiStatus::Generating, QStringLiteral("Writing a suggested rewrite."));
         emit modelEngineStatusChanged();
 

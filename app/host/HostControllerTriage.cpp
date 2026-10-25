@@ -112,6 +112,7 @@ void HostController::onPromptClassified(quint64 id, const an::PromptTriage* tria
     ticket.configuration += "; prompt_triage_payload=" + storage::encodePromptTriage(*triage);
     completeAttempt(ticket, storage::AttemptStatus::Succeeded, "");
     m_promptTriage = *triage;
+    m_promptTriageLastRoute = route.value();
     m_routedAnalysisGroup = ticket.analysisGroup;
     if (route.value() == an::PromptTriageRoute::Original) {
         ticket.analysisGroup->terminal = true;
@@ -119,8 +120,21 @@ void HostController::onPromptClassified(quint64 id, const an::PromptTriage* tria
         empty.sessionId = ticket.sessionId; empty.baseRevisionId = ticket.revisionId;
         an::sealSnapshot(empty);
         if (applyAnalysis(std::move(empty), {}, {}, std::nullopt, *triage))
-            setAnalysisStatus(AnalysisStatus::Ready, QStringLiteral("Prompt is clear (S1 score %1 < 0.70) — original wording retained (Granite skipped to save battery/latency).")
+            setAnalysisStatus(AnalysisStatus::Ready, QStringLiteral("Prompt is clear (S1 score %1) — original wording retained (Granite skipped to save battery/latency).")
                 .arg(triage->ambiguityScore, 0, 'f', 3));
-    } else if (const auto status = startDiscovery(); !status.ok()) setLastError(status.error());
+    } else if (route.value() == an::PromptTriageRoute::UncertainBuffer) {
+        ticket.analysisGroup->terminal = true;
+        an::NormalizedAnalysis empty;
+        empty.sessionId = ticket.sessionId; empty.baseRevisionId = ticket.revisionId;
+        an::sealSnapshot(empty);
+        if (applyAnalysis(std::move(empty), {}, {}, std::nullopt, *triage))
+            setAnalysisStatus(AnalysisStatus::Ready,
+                QStringLiteral("S1 score is borderline (%1 on %2) — original wording retained "
+                               "but clarity is not confirmed. Use Analyze to review with Granite.")
+                    .arg(triage->ambiguityScore, 0, 'f', 3)
+                    .arg(QString::fromUtf8(an::toString(triage->primaryCategory))));
+    } else {
+        if (const auto status = startDiscovery(); !status.ok()) setLastError(status.error());
+    }
 }
 } // namespace roclint::host
