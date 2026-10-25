@@ -13,7 +13,35 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MODEL_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "roclint/Roclint/models/julia-1"
+
+
+def find_default_model_dir():
+    candidates = [
+        Path.home() / "models/s1",
+        Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "roclint/Roclint/models/s1",
+        Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "roclint/Roclint/models/julia-1",
+    ]
+    for c in candidates:
+        if c.is_dir() and (c / "model.safetensors").is_file():
+            return c
+    return candidates[0]
+
+
+def ensure_environment():
+    try:
+        import torch
+        import transformers
+    except ImportError:
+        venv_python = ROOT / "build/runtime/julia-python/bin/python3"
+        if not venv_python.is_file():
+            venv_python = ROOT / "build/runtime/julia-python/Scripts/python.exe"
+        if venv_python.is_file() and str(venv_python) != sys.executable:
+            os.execv(str(venv_python), [str(venv_python)] + sys.argv)
+
+
+ensure_environment()
+
+DEFAULT_MODEL_DIR = find_default_model_dir()
 WORKER_PATH = ROOT / "app/runtime/julia_worker.py"
 
 sys.path.insert(0, str(DEFAULT_MODEL_DIR))
@@ -23,10 +51,18 @@ spec = importlib.util.spec_from_file_location("julia_worker", WORKER_PATH)
 worker = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(worker)
 
-engine = load_model(
-    str(DEFAULT_MODEL_DIR), device="cuda", backend="torch", max_length=8192,
-    head_length=512, strict_encoding=True, marker_only_head=True, batch_size=4
-)
+device = "cpu"
+try:
+    import torch
+    if torch.cuda.is_available() and getattr(torch.cuda, "is_bf16_supported", lambda: False)():
+        device = "cuda"
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = "mps"
+except Exception:
+    pass
+
+os.environ["JULIA_DEVICE"] = device
+engine = worker.load(DEFAULT_MODEL_DIR)
 
 test_prompts = [
     # Clear cases that falsely triggered RULE_CONFLICT in Formulation A

@@ -205,7 +205,11 @@ public:
             auto params = llama_context_default_params();
             params.n_ctx = static_cast<std::uint32_t>(manifest_.value(QStringLiteral("context_tokens")).toInt());
             params.n_batch = 512;
+#if defined(__APPLE__)
+            params.n_ubatch = 512;
+#else
             params.n_ubatch = 128;
+#endif
             params.n_seq_max = 1;
             params.n_threads = params.n_threads_batch = manifest_.value(QStringLiteral("cpu_threads")).toInt();
             params.offload_kqv = manifest_.value(QStringLiteral("gpu_layers")).toInt() > 0;

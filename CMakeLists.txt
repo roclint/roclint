@@ -410,7 +410,7 @@ if(BUILD_TESTING)
         roclint_add_test(roclint_native_granite tests/bridge/test_native_granite_runtime.cpp roclint_host_lib_testing Qt6::Core Qt6::Network Qt6::Concurrent)
         target_compile_definitions(roclint_native_granite_tests PRIVATE
             ROCLINT_GRANITE_SOURCE_MANIFEST="${CMAKE_CURRENT_SOURCE_DIR}/app/runtime/granite-models.json")
-        target_include_directories(roclint_native_granite_tests PRIVATE app/runtime)
+        target_include_directories(roclint_native_granite_tests PRIVATE app/runtime "${CMAKE_CURRENT_BINARY_DIR}/generated")
         roclint_add_test(roclint_host_lifecycle    tests/viewmodel/test_host_lifecycle.cpp    roclint_host_lib_testing Qt6::Core)
         roclint_add_test(roclint_invocation_binding tests/viewmodel/test_invocation_binding.cpp roclint_host_lib_testing Qt6::Core Qt6::Gui)
         roclint_add_test(roclint_host_persistence  tests/viewmodel/test_host_persistence.cpp  roclint_host_lib_testing Qt6::Core)

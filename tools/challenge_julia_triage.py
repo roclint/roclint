@@ -18,7 +18,33 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_MODEL_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "roclint/Roclint/models/julia-1"
+
+
+def find_default_model_dir():
+    candidates = [
+        Path.home() / "models/s1",
+        Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "roclint/Roclint/models/s1",
+        Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "roclint/Roclint/models/julia-1",
+    ]
+    for c in candidates:
+        if c.is_dir() and (c / "model.safetensors").is_file():
+            return c
+    return candidates[0]
+
+
+def ensure_environment():
+    try:
+        import torch
+        import transformers
+    except ImportError:
+        venv_python = ROOT / "build/runtime/julia-python/bin/python3"
+        if not venv_python.is_file():
+            venv_python = ROOT / "build/runtime/julia-python/Scripts/python.exe"
+        if venv_python.is_file() and str(venv_python) != sys.executable:
+            os.execv(str(venv_python), [str(venv_python)] + sys.argv)
+
+
+DEFAULT_MODEL_DIR = find_default_model_dir()
 WORKER_PATH = ROOT / "app/runtime/julia_worker.py"
 
 
@@ -329,30 +355,54 @@ def main():
             c["expected"] = "clear" if c["id"] in {"clear_bounds", "quoted_instructions"} else "ambiguous"
         c["category"] = "canonical"
 
-    # 1. Load CUDA BF16 Engine
-    print("\n--- [Phase 1] Loading Engine on CUDA BF16 ---")
-    os.environ["JULIA_DEVICE"] = "cuda"
-    cuda_engine = worker.load(model_dir)
+    primary_accel = None
+    accel_name = None
+    try:
+        import torch
+        if torch.cuda.is_available() and getattr(torch.cuda, "is_bf16_supported", lambda: False)():
+            primary_accel = "cuda"
+            accel_name = "CUDA BF16"
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            primary_accel = "mps"
+            accel_name = "Metal MPS (FP16)"
+    except Exception:
+        pass
 
-    print("\n--- [Phase 2] Evaluating Canonical Benchmark Cases on CUDA BF16 ---")
-    canon_cuda_res, canon_cuda_lat = evaluate_cases(cuda_engine, worker, canonical_cases)
-    canon_fps = sum(1 for r in canon_cuda_res if r["expected"] == "clear" and not r["passed"])
-    canon_fns = sum(1 for r in canon_cuda_res if r["expected"] == "ambiguous" and not r["passed"])
-    print(f"Canonical Results: FP={canon_fps}/5, FN={canon_fns}/7")
-    for r in canon_cuda_res:
-        heads_str = ", ".join(f"{k}:{v:.3f}" for k, v in r["scores"].items())
-        print(f"  {r['id']:24s} [{r['expected']:9s}] max={r['max_score']:.4f} -> {r['status']:12s} | {heads_str}")
+    # 1. Load Primary Accelerator Engine if available
+    accel_engine = None
+    canon_accel_res = []
+    adv_accel_res = []
+    canon_fps = 0
+    canon_fns = 0
+    adv_fps = 0
+    adv_fns = 0
 
-    print("\n--- [Phase 3] Evaluating Adversarial Edge Cases on CUDA BF16 ---")
-    adv_cuda_res, adv_cuda_lat = evaluate_cases(cuda_engine, worker, ADVERSARIAL_CASES)
-    adv_clear_cases = [r for r in adv_cuda_res if r["expected"] == "clear"]
-    adv_ambig_cases = [r for r in adv_cuda_res if r["expected"] == "ambiguous"]
-    adv_fps = sum(1 for r in adv_clear_cases if not r["passed"])
-    adv_fns = sum(1 for r in adv_ambig_cases if not r["passed"])
-    print(f"Adversarial Results: clear-margin violations={adv_fps}/{len(adv_clear_cases)}, ambiguous-margin violations={adv_fns}/{len(adv_ambig_cases)}")
-    for r in adv_cuda_res:
-        heads_str = ", ".join(f"{k}:{v:.3f}" for k, v in r["scores"].items())
-        print(f"  {r['id']:32s} [{r['expected']:9s}] max={r['max_score']:.4f} -> {r['status']:20s} | {heads_str}")
+    if primary_accel:
+        print(f"\n--- [Phase 1] Loading Engine on {accel_name} ---")
+        os.environ["JULIA_DEVICE"] = primary_accel
+        accel_engine = worker.load(model_dir)
+
+        print(f"\n--- [Phase 2] Evaluating Canonical Benchmark Cases on {accel_name} ---")
+        canon_accel_res, canon_accel_lat = evaluate_cases(accel_engine, worker, canonical_cases)
+        canon_fps = sum(1 for r in canon_accel_res if r["expected"] == "clear" and not r["passed"])
+        canon_fns = sum(1 for r in canon_accel_res if r["expected"] == "ambiguous" and not r["passed"])
+        print(f"Canonical Results ({accel_name}): FP={canon_fps}/5, FN={canon_fns}/7")
+        for r in canon_accel_res:
+            heads_str = ", ".join(f"{k}:{v:.3f}" for k, v in r["scores"].items())
+            print(f"  {r['id']:24s} [{r['expected']:9s}] max={r['max_score']:.4f} -> {r['status']:12s} | {heads_str}")
+
+        print(f"\n--- [Phase 3] Evaluating Adversarial Edge Cases on {accel_name} ---")
+        adv_accel_res, adv_accel_lat = evaluate_cases(accel_engine, worker, ADVERSARIAL_CASES)
+        adv_clear_cases = [r for r in adv_accel_res if r["expected"] == "clear"]
+        adv_ambig_cases = [r for r in adv_accel_res if r["expected"] == "ambiguous"]
+        adv_fps = sum(1 for r in adv_clear_cases if not r["passed"])
+        adv_fns = sum(1 for r in adv_ambig_cases if not r["passed"])
+        print(f"Adversarial Results ({accel_name}): clear-margin violations={adv_fps}/{len(adv_clear_cases)}, ambiguous-margin violations={adv_fns}/{len(adv_ambig_cases)}")
+        for r in adv_accel_res:
+            heads_str = ", ".join(f"{k}:{v:.3f}" for k, v in r["scores"].items())
+            print(f"  {r['id']:32s} [{r['expected']:9s}] max={r['max_score']:.4f} -> {r['status']:20s} | {heads_str}")
+    else:
+        print("\n--- [Phase 1] No GPU accelerator available (CUDA/MPS not found). Skipping accelerated pass ---")
 
     print("\n--- [Phase 4] Long-Prompt Bounded Context Stress Test (> 2000 tokens) ---")
     long_prompt = generate_long_prompt(token_target=2500)
@@ -362,14 +412,19 @@ def main():
     sha_before = hashlib.sha256(long_prompt.encode("utf-8")).hexdigest()
     print(f"Generated Long Prompt: {num_chars:,} characters, {num_tokens:,} tokens (target > 2,000 tokens)")
 
+    stress_engine = accel_engine
+    if stress_engine is None:
+        os.environ["JULIA_DEVICE"] = "cpu"
+        stress_engine = worker.load(model_dir)
+
     req_long = {"triage_plan_version": 2, "prompt": long_prompt}
     t0 = time.perf_counter()
     long_success = True
     long_encoding = []
     try:
-        long_encoding = cuda_engine.encoding_info([{"state": long_prompt, "question": question,
+        long_encoding = stress_engine.encoding_info([{"state": long_prompt, "question": question,
             "options": list(options), "type": "noul"} for _, question, options in worker.TRIAGE_HEADS])
-        res_long = worker.triage(cuda_engine, req_long)
+        res_long = worker.triage(stress_engine, req_long)
     except (ValueError, RuntimeError):
         long_success = False
         res_long = {"category_scores": []}
@@ -386,22 +441,34 @@ def main():
 
     print("\n--- [Phase 5] Loading Engine on CPU FP32 for Parity Verification ---")
     import torch
-    torch.set_num_threads(int(os.environ["JULIA_CPU_THREADS"]))
+    cpu_threads = int(os.environ.get("JULIA_CPU_THREADS", str(min(8, os.cpu_count() or 4))))
+    torch.set_num_threads(cpu_threads)
     os.environ["JULIA_DEVICE"] = "cpu"
     cpu_engine = worker.load(model_dir)
 
     all_cases = canonical_cases + ADVERSARIAL_CASES
-    print(f"Evaluating all {len(all_cases)} cases across CUDA vs CPU...")
-    all_cuda_res, _ = evaluate_cases(cuda_engine, worker, all_cases)
+    print(f"Evaluating all {len(all_cases)} cases across {accel_name or 'Ref'} vs CPU...")
+    all_accel_res = evaluate_cases(accel_engine, worker, all_cases)[0] if accel_engine else None
     all_cpu_res, _ = evaluate_cases(cpu_engine, worker, all_cases)
 
+    if not accel_engine:
+        canon_accel_res = all_cpu_res[:len(canonical_cases)]
+        adv_accel_res = all_cpu_res[len(canonical_cases):]
+        canon_fps = sum(1 for r in canon_accel_res if r["expected"] == "clear" and not r["passed"])
+        canon_fns = sum(1 for r in canon_accel_res if r["expected"] == "ambiguous" and not r["passed"])
+        adv_clear_cases = [r for r in adv_accel_res if r["expected"] == "clear"]
+        adv_ambig_cases = [r for r in adv_accel_res if r["expected"] == "ambiguous"]
+        adv_fps = sum(1 for r in adv_clear_cases if not r["passed"])
+        adv_fns = sum(1 for r in adv_ambig_cases if not r["passed"])
+
+    ref_res = all_accel_res or all_cpu_res
     parity_matches = 0
     deltas = []
     max_delta = 0.0
     max_delta_case = ""
     discrepancies = []
 
-    for cr, pr in zip(all_cuda_res, all_cpu_res):
+    for cr, pr in zip(ref_res, all_cpu_res):
         c_dec = cr["max_score"] >= 0.70
         p_dec = pr["max_score"] >= 0.70
         if c_dec == p_dec:
@@ -431,11 +498,13 @@ def main():
         "scope": "Reused development/tuning cases plus twenty fixed challenges; not a held-out accuracy estimate or certified uncontended run",
         "worker_sha256": hashlib.sha256(WORKER_PATH.read_bytes()).hexdigest(),
         "template_id": worker.TRIAGE_TEMPLATE_ID,
-        "cuda_profile": cuda_engine.roclint_runtime, "cpu_profile": cpu_engine.roclint_runtime,
+        "accel_profile": accel_engine.roclint_runtime if accel_engine else None,
+        "cuda_profile": accel_engine.roclint_runtime if accel_engine else None,
+        "cpu_profile": cpu_engine.roclint_runtime,
         "canonical_fps": canon_fps,
         "canonical_fns": canon_fns,
         "counter_scope": "Legacy *_fps/*_fns fields count strict <0.30 / >0.70 margin violations, not threshold confusion",
-        "canonical_confusion": confusion(canon_cuda_res), "adversarial_confusion": confusion(adv_cuda_res),
+        "canonical_confusion": confusion(canon_accel_res), "adversarial_confusion": confusion(adv_accel_res),
         "adversarial_fps": adv_fps,
         "adversarial_fns": adv_fns,
         "long_prompt_tokens": num_tokens,
@@ -446,8 +515,8 @@ def main():
         "total_parity_cases": len(all_cases),
         "mean_delta": mean_delta,
         "max_delta": max_delta,
-        "canonical_results": canon_cuda_res,
-        "adversarial_results": adv_cuda_res,
+        "canonical_results": canon_accel_res,
+        "adversarial_results": adv_accel_res,
         "discrepancies": discrepancies,
     }
     report_path = args.output
@@ -464,4 +533,5 @@ def main():
 
 
 if __name__ == "__main__":
+    ensure_environment()
     sys.exit(main())

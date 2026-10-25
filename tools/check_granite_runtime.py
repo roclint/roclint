@@ -138,7 +138,8 @@ class Worker:
         started = time.perf_counter()
         self.process.stdin.write((json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8"))
         self.process.stdin.flush()
-        timeout = 3 if operation == "hello" else 2 if operation == "shutdown" else 15 if operation == "granite_analyze" else 63 if operation == "granite_rewrite" else 185
+        analysis_timeout = 21 if platform.system() == "Darwin" else 15
+        timeout = 3 if operation == "hello" else 2 if operation == "shutdown" else analysis_timeout if operation == "granite_analyze" else 63 if operation == "granite_rewrite" else 185
         if self.diagnostic_unbounded and operation in ("granite_analyze", "granite_rewrite"):
             timeout = 300
         response = self.messages.get(timeout=timeout)
@@ -154,7 +155,8 @@ class Worker:
             capabilities = response.get("result", {})
             if capabilities.get("diagnostic_unbounded") is not self.diagnostic_unbounded:
                 raise RuntimeError("Native diagnostic deadline mode did not match the explicit launch")
-            if (capabilities.get("analysis_timeout_ms") != (0 if self.diagnostic_unbounded else 12000) or
+            expected_analysis_timeout = 0 if self.diagnostic_unbounded else (18000 if platform.system() == "Darwin" else 12000)
+            if (capabilities.get("analysis_timeout_ms") != expected_analysis_timeout or
                     capabilities.get("rewrite_timeout_ms") != (0 if self.diagnostic_unbounded else 60000)):
                 raise RuntimeError("Native operation deadline capabilities were incompatible")
         if (operation in ("granite_analyze", "granite_rewrite") and response["ok"] and
@@ -180,12 +182,50 @@ class Worker:
                 "elapsed_ms": round((time.perf_counter() - started) * 1000, 2)}
 
 
+def find_binary(name, subpath=""):
+    exts = (".exe", "") if platform.system() == "Windows" else ("", ".exe")
+    search_dirs = [
+        ROOT / "build/Release" / subpath,
+        ROOT / "build" / subpath,
+        ROOT / "build/Release",
+        ROOT / "build",
+    ]
+    for d in search_dirs:
+        for ext in exts:
+            p = d / f"{name}{ext}"
+            if p.is_file():
+                return p
+    ext = ".exe" if platform.system() == "Windows" else ""
+    return ROOT / "build/Release" / subpath / f"{name}{ext}"
+
+
+def find_config(name):
+    for d in [ROOT / "build/generated", ROOT / "build/Release/runtime", ROOT / "build/runtime"]:
+        p = d / name
+        if p.is_file():
+            return p
+    return ROOT / "build/generated" / name
+
+
+def find_default_granite_model_dir():
+    candidates = [
+        Path.home() / "models/s2",
+        Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "roclint/Roclint/models/s2",
+        Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "roclint/Roclint/models/granite-3b",
+    ]
+    for c in candidates:
+        if c.is_dir() and any(c.glob("*.gguf")):
+            return c
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model-dir", required=True, type=Path)
-    parser.add_argument("--worker", type=Path, default=ROOT / "build/Release/runtime/roclint_granite_worker.exe")
-    parser.add_argument("--config", type=Path, default=ROOT / "build/generated/granite-runtime-config.json")
-    parser.add_argument("--contracts-tool", type=Path, default=ROOT / "build/Release/roclint_granite_contracts.exe")
+    default_model = find_default_granite_model_dir()
+    parser.add_argument("--model-dir", type=Path, default=default_model, required=default_model is None)
+    parser.add_argument("--worker", type=Path, default=find_binary("roclint_granite_worker", "runtime"))
+    parser.add_argument("--config", type=Path, default=find_config("granite-runtime-config.json"))
+    parser.add_argument("--contracts-tool", type=Path, default=find_binary("roclint_granite_contracts"))
     parser.add_argument("--qt-bin", type=Path)
     parser.add_argument("--quantization", action="append", choices=("Q4_K_M", "Q5_K_M", "Q8_0"))
     parser.add_argument("--case", action="append", help="Run only the named development fixture(s); records the restricted scope")

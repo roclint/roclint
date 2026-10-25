@@ -79,11 +79,37 @@ class WindowsJob:
             self.handle = None
 
 
+def find_default_python(root):
+    candidates = [
+        root / "build/runtime/julia-python/bin/python3",
+        root / "build/runtime/julia-python/Scripts/python.exe",
+    ]
+    for c in candidates:
+        if c.is_file():
+            return c
+    import sys
+    return Path(sys.executable)
+
+
+def find_default_julia_model_dir():
+    candidates = [
+        Path.home() / "models/s1",
+        Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "roclint/Roclint/models/s1",
+        Path(os.environ.get("LOCALAPPDATA", Path.home() / ".local/share")) / "roclint/Roclint/models/julia-1",
+    ]
+    for c in candidates:
+        if c.is_dir() and (c / "model.safetensors").is_file():
+            return c
+    return candidates[0]
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
+    default_python = find_default_python(root)
+    default_model = find_default_julia_model_dir()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--python", required=True, type=Path)
-    parser.add_argument("--model-dir", required=True, type=Path)
+    parser.add_argument("--python", type=Path, default=default_python, required=default_python is None)
+    parser.add_argument("--model-dir", type=Path, default=default_model, required=default_model is None)
     parser.add_argument("--worker", type=Path, default=root / "app/runtime/julia_worker.py")
     parser.add_argument("--output", type=Path, default=root / "build/assumption-scoring-live.json")
     args = parser.parse_args()

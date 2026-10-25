@@ -2,6 +2,7 @@
 #include "GraniteModelInstaller.hpp"
 #include "GraniteJsonGrammar.hpp"
 #include "GraniteResidencyPolicy.hpp"
+#include "GraniteConfig.hpp"
 #include "HostController.hpp"
 #include "support/check.hpp"
 
@@ -243,7 +244,9 @@ void protocolTests() {
     ROCLINT_CHECK(runtime.configurationDetail().contains(QStringLiteral("temperature=1; top_p=0.95; seed=42")));
     ROCLINT_CHECK(runtime.configurationDetail().contains(QStringLiteral("sampling_reference=") + compiled.value(QStringLiteral("sampling_reference")).toString()));
     ROCLINT_CHECK(runtime.configurationDetail().contains(QStringLiteral("output_format=compact_json; grammar_transform=json_gbnf_space_empty_v1")));
-    ROCLINT_CHECK(runtime.configurationDetail().contains(QStringLiteral("grammar_strategy=llama_common_rejection_v1; analysis_timeout_ms=12000; rewrite_timeout_ms=60000")));
+    ROCLINT_CHECK(runtime.configurationDetail().contains(
+        QStringLiteral("grammar_strategy=llama_common_rejection_v1; analysis_timeout_ms=%1; rewrite_timeout_ms=60000")
+            .arg(roclint::runtime::kGraniteAnalysisTimeoutMs)));
 
     runtime.setResidency(QStringLiteral("IDLE_MAPPED"));
     waitUntil([&]() { return runtime.state() == QLatin1String("UNLOADED"); });
@@ -391,7 +394,7 @@ int liveHostPipeline(int argc, char** argv) {
     QObject::connect(&host, &roclint::host::HostController::analysisStatusChanged, [&]() {
         std::cout << host.analysisStatus().toStdString() << ": " << host.analysisMessage().toStdString() << std::endl;
     });
-    auto prompt = QStringLiteral("Refactor the parser so it runs faster.");
+    auto prompt = QStringLiteral("Delete the old files.");
     if (argc == 7) {
         QFile input(QString::fromLocal8Bit(argv[6]));
         ROCLINT_CHECK(input.open(QIODevice::ReadOnly));
