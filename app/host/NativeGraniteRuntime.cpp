@@ -167,6 +167,7 @@ void NativeGraniteRuntime::beginStop(bool failure, const QString& reason) {
     stopping_ = true;
     for (auto& pending : pending_) if (pending.call) pending.call->finish(unavailable("Native Granite stopped before completing this request."));
     pending_.clear(); cancelled_.clear();
+    incoming_.clear();  // Discard any partial frame so a rapid restart does not prepend stale bytes.
     if (!process_) {
         stopping_ = false; residency_ = QStringLiteral("UNLOADED"); modelMetadata_ = {};
         state(failure ? QStringLiteral("FAILED") : QStringLiteral("UNLOADED"), reason); emit stopped(); return;
