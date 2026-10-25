@@ -22,6 +22,7 @@
 #include <limits>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -212,6 +213,12 @@ public:
 #endif
             params.n_seq_max = 1;
             params.n_threads = params.n_threads_batch = manifest_.value(QStringLiteral("cpu_threads")).toInt();
+#if defined(__APPLE__)
+            const auto hwThreads = static_cast<int>(std::thread::hardware_concurrency());
+            if (hwThreads > params.n_threads) {
+                params.n_threads_batch = std::min(hwThreads, 8);
+            }
+#endif
             params.offload_kqv = manifest_.value(QStringLiteral("gpu_layers")).toInt() > 0;
             params.op_offload = params.offload_kqv;
             params.abort_callback = abortDecode;

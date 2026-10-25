@@ -119,8 +119,8 @@ void HostController::onPromptClassified(quint64 id, const an::PromptTriage* tria
         empty.sessionId = ticket.sessionId; empty.baseRevisionId = ticket.revisionId;
         an::sealSnapshot(empty);
         if (applyAnalysis(std::move(empty), {}, {}, std::nullopt, *triage))
-            setAnalysisStatus(AnalysisStatus::Ready, QStringLiteral("S1 score %1 < 0.70: keep the original prompt unchanged. Granite was not called.")
-                .arg(triage->ambiguityScore, 0, 'g', 17));
+            setAnalysisStatus(AnalysisStatus::Ready, QStringLiteral("Prompt is clear (S1 score %1 < 0.70) — original wording retained (Granite skipped to save battery/latency).")
+                .arg(triage->ambiguityScore, 0, 'f', 3));
     } else if (const auto status = startDiscovery(); !status.ok()) setLastError(status.error());
 }
 } // namespace roclint::host

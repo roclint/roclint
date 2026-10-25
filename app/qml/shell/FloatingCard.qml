@@ -606,10 +606,11 @@ Window {
                                 anchors.centerIn: parent
                                 text: {
                                     if (!rootWindow.hc) return "[ MODEL UNAVAILABLE ]";
-                                    if (hostController.isInferring) return "[ 🧠 INFERRING... ]";
+                                    if (hostController.isInferring) return "[ 🧠 INFERRING (" + (hostController.acceleratorName ? hostController.acceleratorName : "GPU") + ") ]";
                                     if (hostController.modelRuntimeState === "LOADING") return "[ LOADING MODEL ]";
                                     if (hostController.useLiveWeights) return "[ LOCAL MODEL ]";
                                     if (hostController.modelRuntimeState === "FAILED") return "[ MODEL ERROR ]";
+                                    if (hostController.isNativeGraniteInstalled) return "[ READY · STANDBY ]";
                                     return "[ MODEL NOT LOADED ]";
                                 }
                                 font.family: rootWindow.monoFont
@@ -619,7 +620,11 @@ Window {
                                        ? "#FFB000"
                                        : (typeof hostController !== "undefined" && hostController.modelRuntimeState === "FAILED")
                                          ? "#F85149"
-                                       : ((typeof hostController !== "undefined" && hostController.useLiveWeights) ? "#7EE787" : rootWindow.mutedTextColor)
+                                       : ((typeof hostController !== "undefined" && hostController.useLiveWeights)
+                                         ? "#7EE787"
+                                         : ((typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
+                                           ? "#38BDF8"
+                                           : rootWindow.mutedTextColor))
                             }
 
                             HudMouseArea {
@@ -1205,7 +1210,7 @@ Window {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     visible: text.length > 0
-                    text: rootWindow.hc ? [hostController.shortcutWarning, hostController.lastError, hostController.analysisMessage].filter(function(x) { return x.length > 0; }).join("\n") : ""
+                    text: rootWindow.hc ? [hostController.shortcutWarning, hostController.lastError === hostController.analysisMessage ? "" : hostController.lastError, hostController.analysisMessage].filter(function(x) { return x.length > 0; }).join("\n") : ""
                     wrapMode: Text.WordWrap
                     color: rootWindow.mutedTextColor
                     font.family: rootWindow.monoFont
@@ -1263,6 +1268,17 @@ Window {
                             font.family: rootWindow.monoFont
                             font.pixelSize: 8
                             color: rootWindow.fgColor
+                        }
+
+                        Text { text: "│"; visible: rootWindow.width >= 540 && rootWindow.hc && hostController.inferenceSpeed.length > 0; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
+
+                        Text {
+                            visible: rootWindow.width >= 540 && rootWindow.hc && hostController.inferenceSpeed.length > 0
+                            text: "SPEED: " + (rootWindow.hc ? hostController.inferenceSpeed : "")
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 8
+                            font.bold: true
+                            color: "#38BDF8"
                         }
 
                         Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
@@ -1338,6 +1354,23 @@ Window {
 
                         Text {
                             visible: rootWindow.width >= 680 && rootWindow.toastMessage.length === 0
+                            text: "|"
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 9
+                            color: rootWindow.mutedTextColor
+                        }
+
+                        Text {
+                            visible: rootWindow.width >= 580 && rootWindow.hc && hostController.inferenceSpeed.length > 0 && rootWindow.toastMessage.length === 0
+                            text: "SPEED: " + (rootWindow.hc ? hostController.inferenceSpeed : "")
+                            font.family: rootWindow.monoFont
+                            font.bold: true
+                            font.pixelSize: 9
+                            color: "#38BDF8"
+                        }
+
+                        Text {
+                            visible: rootWindow.width >= 580 && rootWindow.hc && hostController.inferenceSpeed.length > 0 && rootWindow.toastMessage.length === 0
                             text: "|"
                             font.family: rootWindow.monoFont
                             font.pixelSize: 9

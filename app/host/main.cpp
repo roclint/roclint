@@ -34,6 +34,7 @@ int main(int argc, char* argv[]) {
     QString targetScope;
     QString workspacePath;
     QString targetFile;
+    QString initialPrompt;
     int resolveChoice = 0;
     bool openFileDropdown = false;
     bool autoEnhance = false;
@@ -58,6 +59,7 @@ int main(int argc, char* argv[]) {
         if (arg == "--scope" && i + 1 < argc) targetScope = QString::fromLocal8Bit(argv[++i]);
         if (arg == "--workspace" && i + 1 < argc) workspacePath = QString::fromLocal8Bit(argv[++i]);
         if (arg == "--file" && i + 1 < argc) targetFile = QString::fromLocal8Bit(argv[++i]);
+        if (arg == "--prompt" && i + 1 < argc) { initialPrompt = QString::fromLocal8Bit(argv[++i]); autoShow = true; }
         if (arg == "--resolve" && i + 1 < argc) { resolveChoice = std::atoi(argv[++i]); autoShow = true; }
         if (arg == "--open-file-dropdown") { openFileDropdown = true; autoShow = true; }
         if (arg == "--enhance") { autoEnhance = true; autoShow = true; }
@@ -147,7 +149,7 @@ int main(int argc, char* argv[]) {
     const QUrl dashboardUrl(QStringLiteral("qrc:/shell/DashboardWindow.qml"));
     const QUrl badgeUrl(QStringLiteral("qrc:/shell/AmbientBadge.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
-                     &app, [cardUrl, dashboardUrl, badgeUrl, controller = controller.get(), autoShow, autoShowDashboard, dryRun, screenshotPath, dashboardScreenshotPath, dashboardScroll, customWidth, customHeight, dashboardTab, pinCard, dashboardMaximized, targetScope, workspacePath, targetFile, resolveChoice, openFileDropdown, autoEnhance](QObject* obj, const QUrl& objUrl) {
+                     &app, [cardUrl, dashboardUrl, badgeUrl, controller = controller.get(), autoShow, autoShowDashboard, dryRun, screenshotPath, dashboardScreenshotPath, dashboardScroll, customWidth, customHeight, dashboardTab, pinCard, dashboardMaximized, targetScope, workspacePath, targetFile, resolveChoice, openFileDropdown, autoEnhance, initialPrompt](QObject* obj, const QUrl& objUrl) {
         if (!obj && (cardUrl == objUrl || dashboardUrl == objUrl || badgeUrl == objUrl)) {
             std::cerr << "[Roclint Host] Error: Failed to load QML root object from " << objUrl.toString().toStdString() << std::endl;
             QCoreApplication::exit(-1);
@@ -231,6 +233,13 @@ int main(int argc, char* argv[]) {
                             controller->synthesizeRewrite(controller->stateVersion());
                     });
                 QTimer::singleShot(0, window, [window]() { QMetaObject::invokeMethod(window, "analyzeNow"); });
+            }
+
+            if (!initialPrompt.isEmpty() && !dryRun) {
+                QTimer::singleShot(150, window, [window, initialPrompt]() {
+                    QMetaObject::invokeMethod(window, "setEditorText", Q_ARG(QVariant, initialPrompt));
+                    QMetaObject::invokeMethod(window, "analyzeNow");
+                });
             }
 
             if (!screenshotPath.isEmpty()) {

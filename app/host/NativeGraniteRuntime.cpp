@@ -368,9 +368,22 @@ void NativeGraniteRuntime::receive(const QJsonObject& response) {
     if (op == QLatin1String("cancel")) return;
     if (request.call) {
         const auto output = result.value(QStringLiteral("text"));
+        const auto outputTokens = result.value(QStringLiteral("output_tokens")).toInteger();
+        const auto decodeMs = result.value(QStringLiteral("decode_ms")).toDouble();
+        const auto genMs = result.value(QStringLiteral("generation_ms")).toDouble();
+        lastOutputTokens_ = outputTokens;
+        lastDecodeMs_ = decodeMs;
+        lastGenerationMs_ = genMs;
+        if (decodeMs > 0.0 && outputTokens > 0) {
+            lastTokensPerSecond_ = (static_cast<double>(outputTokens) * 1000.0) / decodeMs;
+        } else if (genMs > 0.0 && outputTokens > 0) {
+            lastTokensPerSecond_ = (static_cast<double>(outputTokens) * 1000.0) / genMs;
+        }
         if (!output.isString() || output.toString().toUtf8().size() > 64 * 1024) request.call->finish(core::makeError(core::ErrorCode::ValidationFailed, "Native output was absent or oversized."));
         else request.call->finish(ss(output.toString()));
-        state(QStringLiteral("READY"), QStringLiteral("Native Granite completed this request locally.")); return;
+        state(QStringLiteral("READY"), QStringLiteral("Native Granite completed this request locally."));
+        emit speedMetricsChanged();
+        return;
     }
     const auto resource = result.value(QStringLiteral("residency")).toString();
     const auto readiness = result.value(QStringLiteral("state")).toString();

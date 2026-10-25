@@ -242,6 +242,10 @@ HostController::HostController(const QString& dbPathOverride,
             [this](quint64 id, const QString& reason) { onPromptClassified(id, nullptr, reason); });
 
     connect(m_native.get(), &NativeGraniteRuntime::stateChanged, this, &HostController::onNativeRuntimeChanged);
+    connect(m_native.get(), &NativeGraniteRuntime::speedMetricsChanged, this, [this]() {
+        emit inferenceSpeedChanged();
+        emit modelEngineStatusChanged();
+    });
     connect(m_nativeInstaller.get(), &GraniteModelInstaller::progress, this, [this](int percent, const QString& message) {
         m_downloadProgress = percent; m_downloadStatusMessage = message; emit downloadProgressChanged();
     });
@@ -1248,7 +1252,7 @@ void HostController::onDiscoveryFinished(const PipelineTicket& ticket,
         if (ticket.analysisGroup) ticket.analysisGroup->terminal = true;
         completeAttempt(ticket, storage::AttemptStatus::Failed, result.error().message);
         const auto error = modelReplyError(result.error());
-        setAnalysisStatus(AnalysisStatus::Failed, QStringLiteral("Analysis failed. ") + plainError(error));
+        setAnalysisStatus(AnalysisStatus::Failed, plainError(error));
         setLastError(error);
         return;
     }
@@ -3027,6 +3031,34 @@ bool HostController::isNativeGraniteQ5Installed() const {
     return false;
 }
 
+bool HostController::isNativeGraniteQ4Installed() const {
+    if (m_nativeDirectory.isEmpty()) return false;
+    const QDir d(m_nativeDirectory);
+    for (const auto& entry : NativeGraniteRuntime::manifest().value(QStringLiteral("candidates")).toArray()) {
+        const auto cand = entry.toObject();
+        if (cand.value(QStringLiteral("quantization")).toString() == QLatin1String("Q4_K_M")) {
+            const QFileInfo fi(d.filePath(cand.value(QStringLiteral("filename")).toString()));
+            return fi.isFile() && fi.size() == cand.value(QStringLiteral("size_bytes")).toInteger();
+        }
+    }
+    return false;
+}
+
+double HostController::tokensPerSecond() const {
+    if (nativeGraniteSelected() && m_native) {
+        return m_native->lastTokensPerSecond();
+    }
+    return 0.0;
+}
+
+QString HostController::inferenceSpeed() const {
+    const double tps = tokensPerSecond();
+    if (tps > 0.0) {
+        return QStringLiteral("%1 tok/s").arg(tps, 0, 'f', 1);
+    }
+    return {};
+}
+
 QString HostController::nativeGraniteDiskStatus() const {
     if (m_nativeDirectory.isEmpty()) return QStringLiteral("No model folder configured");
     const QDir d(m_nativeDirectory);
@@ -3055,10 +3087,16 @@ QString HostController::nativeGraniteDiskStatus() const {
 
 QString HostController::nativeGraniteMemoryStatus() const {
     if (m_native->isReady() || usesLiveModel()) {
-        return QStringLiteral("Loaded in GPU memory (Metal Unified Memory · Ready for inference)");
+        const double tps = tokensPerSecond();
+        if (tps > 0.0) {
+            return QStringLiteral("Loaded in GPU memory (%1 · %2 tok/s)")
+                .arg(acceleratorName(), QString::number(tps, 'f', 1));
+        }
+        return QStringLiteral("Loaded in GPU memory (%1 Unified Memory · Ready for inference)")
+            .arg(acceleratorName());
     }
     if (m_nativeWarming || isCheckingModel()) {
-        return QStringLiteral("Warming into GPU Unified Memory...");
+        return QStringLiteral("Warming into GPU Unified Memory (%1)...").arg(acceleratorName());
     }
     if (isNativeGraniteInstalled()) {
         return QStringLiteral("Unloaded (Standby on disk — warms automatically on first prompt or click 'Load model')");
@@ -3074,7 +3112,7 @@ QString HostController::modelRuntimeState() const {
 QString HostController::modelEngineStatus() const {
     if (nativeGraniteSelected() && !usesTransportOverride()) {
         if (m_native->isReady()) return m_native->detail();
-        if (m_nativeWarming || isCheckingModel()) return QStringLiteral("Warming Granite into Apple Metal GPU memory...");
+        if (m_nativeWarming || isCheckingModel()) return QStringLiteral("Warming Granite into %1 GPU memory...").arg(acceleratorName());
         if (isNativeGraniteInstalled()) {
             return QStringLiteral("Model verified on disk (Standby). Warms automatically on prompt or click 'Warm Model'.");
         }

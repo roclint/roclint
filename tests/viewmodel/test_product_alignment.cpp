@@ -526,7 +526,8 @@ void testClipboardFallbackDoesNotDismissQmlCard() {
     ROCLINT_CHECK(engine.rootObjects().size() == 1);
     auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
     auto* modelLabel = window->findChild<QObject*>(QStringLiteral("modelRuntimeLabel"));
-    ROCLINT_CHECK(modelLabel && modelLabel->property("text").toString() == "[ MODEL NOT LOADED ]");
+    const auto labelText = modelLabel ? modelLabel->property("text").toString() : QString();
+    ROCLINT_CHECK(modelLabel && (labelText == "[ MODEL NOT LOADED ]" || labelText == "[ READY · STANDBY ]"));
     ROCLINT_CHECK(window);
     controller.showCard();
     window->show();

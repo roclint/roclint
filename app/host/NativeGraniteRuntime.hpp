@@ -45,6 +45,10 @@ public:
     [[nodiscard]] QString activeQuantization() const { return identity_.value(QStringLiteral("quantization")).toString(); }
     [[nodiscard]] bridge::GraniteModelInfo modelInfo() const;
     [[nodiscard]] QString configurationDetail() const;
+    [[nodiscard]] double lastTokensPerSecond() const noexcept { return lastTokensPerSecond_; }
+    [[nodiscard]] qint64 lastOutputTokens() const noexcept { return lastOutputTokens_; }
+    [[nodiscard]] double lastDecodeMs() const noexcept { return lastDecodeMs_; }
+    [[nodiscard]] double lastGenerationMs() const noexcept { return lastGenerationMs_; }
     void load(const QString& directory, const QString& quantization);
     void setResidency(const QString& tier);
     void stop();
@@ -58,6 +62,7 @@ public:
 signals:
     void stateChanged();
     void stopped();
+    void speedMetricsChanged();
 
 private:
     struct Call;
@@ -107,5 +112,9 @@ private:
     QList<qint64> restarts_;
     quint64 restartEpoch_{0};
     quint64 requestEpoch_{0};
+    double lastTokensPerSecond_{0.0};
+    qint64 lastOutputTokens_{0};
+    double lastDecodeMs_{0.0};
+    double lastGenerationMs_{0.0};
 };
 } // namespace roclint::host

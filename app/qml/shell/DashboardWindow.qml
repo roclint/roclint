@@ -846,7 +846,9 @@ Window {
                                             Item { Layout.fillWidth: true }
                                             Text {
                                                 text: (typeof hostController !== "undefined" && hostController.useLiveWeights)
-                                                      ? "[LIVE WEIGHTS IN GPU]"
+                                                      ? ((typeof hostController !== "undefined" && hostController.inferenceSpeed.length > 0)
+                                                          ? "[LIVE WEIGHTS IN GPU · " + hostController.inferenceSpeed + "]"
+                                                          : "[LIVE WEIGHTS IN GPU]")
                                                       : (typeof hostController !== "undefined" && hostController.isCheckingModel)
                                                         ? "[WARMING INTO GPU...]"
                                                         : (typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
@@ -969,6 +971,15 @@ Window {
                                                     color: dashboardWindow.fgColor
                                                     elide: Text.ElideRight
                                                 }
+
+                                                Text {
+                                                    visible: typeof hostController !== "undefined" && hostController.inferenceSpeed.length > 0
+                                                    text: "SPEED: " + (typeof hostController !== "undefined" ? hostController.inferenceSpeed : "")
+                                                    font.family: dashboardWindow.monoFont
+                                                    font.pixelSize: 8
+                                                    font.bold: true
+                                                    color: "#38BDF8"
+                                                }
                                             }
                                         }
 
@@ -1088,7 +1099,7 @@ Window {
                                             Text {
                                                 text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
                                                       ? (hostController.isNativeGraniteInstalled
-                                                         ? "✓ Model weights verified on disk in this folder. Ready to load into Apple Metal GPU."
+                                                         ? "✓ Model weights verified on disk in this folder. Ready to load into " + (typeof hostController !== "undefined" ? hostController.acceleratorName : "GPU") + " GPU memory."
                                                          : "⚠️ No model weights found in this folder. Download Granite below or click '[ 📂 CONNECT FOLDER... ]' to point to your existing models.")
                                                       : "* Non-invasive isolation: Roclint only reads models inside this specific folder. Your hard drive and personal files are never searched."
                                                 font.family: dashboardWindow.monoFont
@@ -1275,6 +1286,41 @@ Window {
                                                 Layout.fillWidth: true
                                                 Layout.minimumWidth: 0
                                                 spacing: 8
+
+                                                Rectangle {
+                                                    implicitWidth: dl0Txt.contentWidth + 14
+                                                    height: 24
+                                                    color: dl0Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
+                                                    border.color: (typeof hostController !== "undefined" && hostController.isNativeGraniteQ4Installed) ? "#7EE787" : dashboardWindow.borderColor
+                                                    border.width: 1
+
+                                                    Text {
+                                                        id: dl0Txt
+                                                        anchors.centerIn: parent
+                                                        text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
+                                                              ? (hostController.isNativeGraniteQ4Installed
+                                                                 ? "[ ✓ Q4_K_M INSTALLED (2.09 GiB) · RE-DOWNLOAD ]"
+                                                                 : "[ ⬇ DOWNLOAD GRANITE 4.2 Q4_K_M (2.09 GiB) · FASTEST ]")
+                                                              : "[ ⬇ PULL GRANITE 4.2 3B Q4 ]"
+                                                        font.family: dashboardWindow.monoFont
+                                                        font.pixelSize: 8
+                                                        font.bold: true
+                                                        color: dl0Mouse.containsMouse ? dashboardWindow.bgColor : ((typeof hostController !== "undefined" && hostController.isNativeGraniteQ4Installed) ? "#7EE787" : dashboardWindow.fgColor)
+                                                    }
+
+                                                    HudMouseArea {
+                                                        id: dl0Mouse
+                                                        anchors.fill: parent
+                                                        hoverEnabled: true
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: {
+                                                            if (typeof hostController !== "undefined") {
+                                                                hostController.downloadModel(hostController.nativeGraniteSelected ? "native-granite:Q4_K_M" : "granite4.2:3b-q4_k_m");
+                                                                dashboardWindow.showToast("DOWNLOADING GRANITE 4.2 3B (Q4_K_M)...");
+                                                            }
+                                                        }
+                                                    }
+                                                }
 
                                                 Rectangle {
                                                     implicitWidth: dl1Txt.contentWidth + 14

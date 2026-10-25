@@ -176,6 +176,10 @@ class HostController : public QObject {
     Q_PROPERTY(bool isNativeGraniteInstalled READ isNativeGraniteInstalled NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(bool isNativeGraniteQ8Installed READ isNativeGraniteQ8Installed NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(bool isNativeGraniteQ5Installed READ isNativeGraniteQ5Installed NOTIFY modelEngineStatusChanged)
+    Q_PROPERTY(bool isNativeGraniteQ4Installed READ isNativeGraniteQ4Installed NOTIFY modelEngineStatusChanged)
+    Q_PROPERTY(QString inferenceSpeed READ inferenceSpeed NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(double tokensPerSecond READ tokensPerSecond NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(QString acceleratorName READ acceleratorName CONSTANT)
     Q_PROPERTY(QString nativeGraniteDiskStatus READ nativeGraniteDiskStatus NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(QString nativeGraniteMemoryStatus READ nativeGraniteMemoryStatus NOTIFY modelEngineStatusChanged)
     // Upstream HUD/dashboard bindings retained over the corrected runtime services.
@@ -336,6 +340,18 @@ public:
     [[nodiscard]] bool isNativeGraniteInstalled() const;
     [[nodiscard]] bool isNativeGraniteQ8Installed() const;
     [[nodiscard]] bool isNativeGraniteQ5Installed() const;
+    [[nodiscard]] bool isNativeGraniteQ4Installed() const;
+    [[nodiscard]] QString inferenceSpeed() const;
+    [[nodiscard]] double tokensPerSecond() const;
+    [[nodiscard]] QString acceleratorName() const {
+#if defined(__APPLE__)
+        return QStringLiteral("METAL");
+#elif defined(_WIN32)
+        return QStringLiteral("VULKAN");
+#else
+        return QStringLiteral("GPU");
+#endif
+    }
     [[nodiscard]] QString nativeGraniteDiskStatus() const;
     [[nodiscard]] QString nativeGraniteMemoryStatus() const;
     [[nodiscard]] QString graniteResidencyPreset() const { return m_graniteResidencyPreset; }
@@ -496,6 +512,7 @@ signals:
     void intentChanged();
     void rewriteProfileChanged(const QString& profile);
     void rewriteProposalChanged();
+    void inferenceSpeedChanged();
     void approvalChanged();
     void accessibilityTrustedChanged();
     void ambientModeEnabledChanged();
