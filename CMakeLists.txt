@@ -198,6 +198,16 @@ if(BUILD_DESKTOP)
             roclint_add_host_library(roclint_host_lib_testing roclint_core_testing roclint_storage_testing)
         endif()
 
+        # Default accelerator name before the native backend is resolved.
+        # Overridden below once _roclint_backend is known (CPU / VULKAN / METAL).
+        if(APPLE)
+            set(_roclint_accelerator_name "METAL")
+        elseif(WIN32)
+            set(_roclint_accelerator_name "VULKAN")
+        else()
+            set(_roclint_accelerator_name "GPU")
+        endif()
+
         add_executable(roclint_host
             app/host/main.cpp
             app/qml/shell/qml.qrc
@@ -278,6 +288,8 @@ if(BUILD_DESKTOP)
                 endif()
             endforeach()
             message(STATUS "Roclint native Granite backend: ${_roclint_backend}")
+            # Update the accelerator name now that the real backend is known.
+            set(_roclint_accelerator_name "${_roclint_backend}")
             set(GGML_CUDA OFF CACHE BOOL "CUDA is not part of these frozen profiles" FORCE)
             if(_roclint_backend STREQUAL "VULKAN")
                 set(GGML_VULKAN ON CACHE BOOL "Selected native accelerator" FORCE)
@@ -337,6 +349,16 @@ if(BUILD_DESKTOP)
                 COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:roclint_host>/runtime"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:roclint_granite_worker>" "$<TARGET_FILE_DIR:roclint_host>/runtime/"
                 DEPENDS roclint_host roclint_granite_worker VERBATIM)
+        endif()
+
+        # Propagate the resolved accelerator name so HostController::acceleratorName()
+        # always matches the backend that was actually compiled into the native runtime.
+        # PUBLIC so that test executables linking roclint_host_lib/_testing also see the define.
+        target_compile_definitions(roclint_host_lib PUBLIC
+            ROCLINT_ACCELERATOR_NAME="${_roclint_accelerator_name}")
+        if(BUILD_TESTING)
+            target_compile_definitions(roclint_host_lib_testing PUBLIC
+                ROCLINT_ACCELERATOR_NAME="${_roclint_accelerator_name}")
         endif()
 
         if(WIN32)

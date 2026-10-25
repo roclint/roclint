@@ -344,13 +344,22 @@ public:
     [[nodiscard]] QString inferenceSpeed() const;
     [[nodiscard]] double tokensPerSecond() const;
     [[nodiscard]] QString acceleratorName() const {
-#if defined(__APPLE__)
-        return QStringLiteral("METAL");
-#elif defined(_WIN32)
-        return QStringLiteral("VULKAN");
-#else
-        return QStringLiteral("GPU");
+        // ROCLINT_ACCELERATOR_NAME is injected by CMakeLists.txt (PUBLIC) from the resolved
+        // _roclint_backend variable so it always matches the actual compiled backend
+        // (METAL / VULKAN / CPU / GPU). The #ifndef fallback below covers any TU that is
+        // compiled outside the normal roclint_host_lib target graph (e.g. standalone headers).
+        // QLatin1StringView is used instead of QStringLiteral because QStringLiteral requires
+        // a raw string-literal token and cannot accept a macro expansion.
+#ifndef ROCLINT_ACCELERATOR_NAME
+#  if defined(__APPLE__)
+#    define ROCLINT_ACCELERATOR_NAME "METAL"
+#  elif defined(_WIN32)
+#    define ROCLINT_ACCELERATOR_NAME "VULKAN"
+#  else
+#    define ROCLINT_ACCELERATOR_NAME "GPU"
+#  endif
 #endif
+        return QString(QLatin1StringView(ROCLINT_ACCELERATOR_NAME));
     }
     [[nodiscard]] QString nativeGraniteDiskStatus() const;
     [[nodiscard]] QString nativeGraniteMemoryStatus() const;

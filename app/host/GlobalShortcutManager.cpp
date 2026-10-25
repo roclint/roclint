@@ -169,6 +169,11 @@ bool GlobalShortcutManager::registerSequence(const QString& sequence) {
     eventType.eventClass = kEventClassKeyboard;
     eventType.eventKind = kEventHotKeyPressed;
 
+    // Remove any stale handler before installing a new one so we never orphan a handlerRef.
+    if (m_impl->handlerRef) {
+        RemoveEventHandler(m_impl->handlerRef);
+        m_impl->handlerRef = nullptr;
+    }
     OSStatus status = InstallApplicationEventHandler(&hotKeyHandler, 1, &eventType, this, &m_impl->handlerRef);
     if (status != noErr) {
         std::cerr << "[GlobalShortcutManager] Failed to install Carbon event handler: " << status << "\n";

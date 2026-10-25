@@ -218,6 +218,10 @@ public:
             if (hwThreads > params.n_threads) {
                 params.n_threads_batch = std::min(hwThreads, 8);
             }
+            // Lock decode threads at 4 to prevent Metal command queue starvation.
+            // Batch prefill uses up to 8 P-cores (above); the single-token decode loop
+            // is GPU-bound on Metal and extra CPU threads only contend the command queue.
+            params.n_threads = std::min(params.n_threads, 4);
 #endif
             params.offload_kqv = manifest_.value(QStringLiteral("gpu_layers")).toInt() > 0;
             params.op_offload = params.offload_kqv;

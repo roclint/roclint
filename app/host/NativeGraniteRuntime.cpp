@@ -155,6 +155,13 @@ void NativeGraniteRuntime::beginStop(bool failure, const QString& reason) {
     warmAfterResidency_ = false;
     failure_ = failure;
     ++requestEpoch_;
+    // Clear stale speed telemetry so the UI does not show a tok/s value from a
+    // previous completed request while inference is stopped or has failed.
+    lastTokensPerSecond_ = 0.0;
+    lastOutputTokens_ = 0;
+    lastDecodeMs_ = 0.0;
+    lastGenerationMs_ = 0.0;
+    emit speedMetricsChanged();
     mailbox_->cancel(false, failure ? unavailable("Native Granite stopped before completing this request.") : stale());
     if (stopping_) { if (failure) state(QStringLiteral("FAILED"), reason); return; }
     stopping_ = true;

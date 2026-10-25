@@ -479,7 +479,19 @@ void JuliaRuntime::receive(const QJsonObject& object) {
         executionConfigurationId_ = configuration; executionDevice_ = device; executionPrecision_ = precision;
         executionCpuThreads_ = threads.toInt();
         ready_ = true;
+#ifdef Q_OS_WIN
+        if (cpu) {
+            // On Windows with an RTX GPU, GPU acceleration requires a working CUDA driver.
+            // Running on CPU FP32 means CUDA was unavailable; advise the user.
+            setState(QStringLiteral("READY"),
+                     QStringLiteral("Julia-1 is running on CPU (FP32) — GPU acceleration unavailable. "
+                                    "Install CUDA drivers and restart to use your NVIDIA GPU."));
+        } else {
+            setState(QStringLiteral("READY"), QStringLiteral("Julia-1 is ready on %1 (%2). Scores come from local model inference.").arg(device, precision));
+        }
+#else
         setState(QStringLiteral("READY"), QStringLiteral("Julia-1 is ready on %1 (%2). Scores come from local model inference.").arg(device, precision));
+#endif
         return;
     }
     if (result.value(QStringLiteral("snapshot_id")).toString() != request.snapshot) {
