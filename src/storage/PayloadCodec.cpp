@@ -1,6 +1,7 @@
 #include "roclint/storage/PayloadCodec.hpp"
 
 #include "roclint/core/Json.hpp"
+#include "roclint/core/schema/SchemaVisitor.hpp"
 
 #include <cmath>
 #include <utility>
@@ -117,19 +118,9 @@ std::string encodePromptTriage(const an::PromptTriage& t) {
     Value root = Value::object();
     root.set("schema", str("prompt_triage.v1"));
     root.set("id", str(t.id)); root.set("hash", str(t.triageHash));
-    root.set("session_id", str(t.sessionId)); root.set("revision_id", str(t.revisionId));
-    root.set("text_hash", str(t.revisionTextHash)); root.set("state_version", num(t.stateVersion));
-    root.set("request_group_id", str(t.requestGroupId)); root.set("attempt_id", str(t.attemptId));
-    root.set("provider", str(t.provider)); root.set("model_id", str(t.modelId));
-    root.set("model_revision", str(t.modelRevision)); root.set("weights_sha256", str(t.weightsSha256));
-    root.set("configuration_id", str(t.configurationId)); root.set("template_id", str(t.templateId));
-    root.set("execution", num(static_cast<std::uint64_t>(t.execution)));
     root.set("hash_version", num(static_cast<std::uint64_t>(t.hashVersion)));
-    Value scores = Value::array();
-    for (const auto score : t.categoryScores) scores.push(Value::number(score));
-    root.set("category_scores", std::move(scores)); root.set("ambiguity", Value::number(t.ambiguityScore));
-    root.set("primary_category", num(static_cast<std::uint64_t>(t.primaryCategory)));
-    root.set("latency_ms", Value::number(t.latencyMs));
+    core::schema::JsonEncodeVisitor visitor(root);
+    t.visitEvidence(visitor);
     return json::serialize(root);
 }
 
@@ -143,23 +134,6 @@ Result<an::PromptTriage> decodePromptTriage(std::string_view payload) {
     an::PromptTriage t;
     ROCLINT_TRY_ASSIGN(t.id, json::requireString(root, "id"));
     ROCLINT_TRY_ASSIGN(t.triageHash, json::requireString(root, "hash"));
-    ROCLINT_TRY_ASSIGN(t.sessionId, json::requireString(root, "session_id"));
-    ROCLINT_TRY_ASSIGN(t.revisionId, json::requireString(root, "revision_id"));
-    ROCLINT_TRY_ASSIGN(t.revisionTextHash, json::requireString(root, "text_hash"));
-    ROCLINT_TRY_ASSIGN(t.stateVersion, json::requireUInt(root, "state_version"));
-    ROCLINT_TRY_ASSIGN(t.requestGroupId, json::requireString(root, "request_group_id"));
-    ROCLINT_TRY_ASSIGN(t.attemptId, json::requireString(root, "attempt_id"));
-    ROCLINT_TRY_ASSIGN(t.provider, json::requireString(root, "provider"));
-    ROCLINT_TRY_ASSIGN(t.modelId, json::requireString(root, "model_id"));
-    ROCLINT_TRY_ASSIGN(t.modelRevision, json::requireString(root, "model_revision"));
-    ROCLINT_TRY_ASSIGN(t.weightsSha256, json::requireString(root, "weights_sha256"));
-    ROCLINT_TRY_ASSIGN(t.configurationId, json::requireString(root, "configuration_id"));
-    ROCLINT_TRY_ASSIGN(t.templateId, json::requireString(root, "template_id"));
-    std::uint64_t execution = 0, category = 0;
-    ROCLINT_TRY_ASSIGN(execution, json::requireUInt(root, "execution"));
-    ROCLINT_TRY_ASSIGN(category, json::requireUInt(root, "primary_category"));
-    if (execution > 2 || category > 3) return makeError(ErrorCode::InvalidInput, "Invalid classification enum");
-    t.execution = static_cast<an::TriageExecution>(execution); t.primaryCategory = static_cast<an::PromptCategory>(category);
     // hash_version is absent in records written before Phase 1; treat missing as V1 for backwards compatibility.
     if (const auto* hv = root.find("hash_version")) {
         if (!hv->isNumber()) return makeError(ErrorCode::InvalidInput, "Invalid hash_version field");
@@ -169,19 +143,9 @@ Result<an::PromptTriage> decodePromptTriage(std::string_view payload) {
     } else {
         t.hashVersion = an::TriageHashVersion::V1; // historical record pre-dating Phase 1
     }
-    const Value* scores = nullptr;
-    ROCLINT_TRY_ASSIGN(scores, json::requireArray(root, "category_scores"));
-    if (scores->asArray().size() != 4) return makeError(ErrorCode::InvalidInput, "Incomplete classification heads");
-    for (std::size_t i = 0; i < 4; ++i) {
-        if (!scores->asArray()[i].isNumber()) return makeError(ErrorCode::InvalidInput, "Invalid classification score");
-        t.categoryScores[i] = scores->asArray()[i].asNumber();
-    }
-    for (const auto* key : {"ambiguity", "latency_ms"}) {
-        const auto* value = root.find(key);
-        if (!value || !value->isNumber()) return makeError(ErrorCode::InvalidInput, "Missing classification number");
-        if (std::string_view(key) == "ambiguity") t.ambiguityScore = value->asNumber();
-        else t.latencyMs = value->asNumber();
-    }
+    core::schema::JsonDecodeVisitor visitor(root);
+    t.visitEvidence(visitor);
+    if (!visitor.status().ok()) return visitor.status().error();
     if (const auto status = an::validatePromptTriage(t); !status.ok()) return status.error();
     return t;
 }

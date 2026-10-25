@@ -2,6 +2,7 @@
 #include "roclint/core/Result.hpp"
 #include "roclint/core/crypto/Sha256.hpp"
 #include "roclint/core/prompt_state/TextNormalization.hpp"
+#include "roclint/core/schema/SchemaVisitor.hpp"
 #include "support/check.hpp"
 
 #include <filesystem>
@@ -174,6 +175,79 @@ void testJsonSerializeRoundTrip() {
     ROCLINT_CHECK(!json::requireBool(back.value(), "missing").ok());
 }
 
+struct DummyEntity {
+    std::string name{"test"};
+    std::uint64_t count{42};
+    double score{3.14159};
+    bool active{true};
+    std::array<double, 3> coords{1.0, 2.0, 3.0};
+    std::optional<std::string> tag{"production"};
+
+    template <typename Visitor>
+    void visit(Visitor& v) const {
+        v("name", name);
+        v("count", count);
+        v("score", score);
+        v("active", active);
+        v("coords", coords);
+        v("tag", tag);
+    }
+
+    template <typename Visitor>
+    void visit(Visitor& v) {
+        v("name", name);
+        v("count", count);
+        v("score", score);
+        v("active", active);
+        v("coords", coords);
+        v("tag", tag);
+    }
+
+    bool operator==(const DummyEntity&) const = default;
+};
+
+void testSchemaVisitorRoundTrip() {
+    DummyEntity original;
+    original.name = "alpha";
+    original.count = 999;
+    original.score = 0.875;
+    original.active = false;
+    original.coords = {10.5, 20.25, 30.75};
+    original.tag = "calibrated";
+
+    // HashVisitor produces deterministic hash
+    crypto::CanonicalHasher h1("test.domain.v1");
+    schema::HashVisitor v1(h1);
+    original.visit(v1);
+    const auto hash1 = h1.finalizeHex();
+
+    crypto::CanonicalHasher h2("test.domain.v1");
+    schema::HashVisitor v2(h2);
+    original.visit(v2);
+    const auto hash2 = h2.finalizeHex();
+    ROCLINT_CHECK(hash1 == hash2);
+
+    // JsonEncodeVisitor -> JsonDecodeVisitor round trip
+    auto root = json::Value::object();
+    schema::JsonEncodeVisitor enc(root);
+    original.visit(enc);
+
+    DummyEntity decoded;
+    schema::JsonDecodeVisitor dec(root);
+    decoded.visit(dec);
+    ROCLINT_CHECK(dec.status().ok());
+    ROCLINT_CHECK(decoded == original);
+
+    // Missing required field fails cleanly
+    auto badRoot = json::Value::object();
+    badRoot.set("name", json::Value::string("incomplete"));
+    DummyEntity failEntity;
+    schema::JsonDecodeVisitor failDec(badRoot);
+    failEntity.visit(failDec);
+    ROCLINT_CHECK(!failDec.status().ok());
+    ROCLINT_CHECK(failDec.status().error().code == ErrorCode::InvalidInput);
+}
+
 } // namespace
 
 int main() {
@@ -187,6 +261,7 @@ int main() {
     testJsonParsing();
     testJsonUnicodeEscapes();
     testJsonSerializeRoundTrip();
+    testSchemaVisitorRoundTrip();
     std::cout << "[Test CorePrimitives] All tests PASSED.\n";
     return 0;
 }

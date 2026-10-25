@@ -73,6 +73,49 @@ struct PromptTriage {
     double latencyMs{0};
     TriageHashVersion hashVersion{TriageHashVersion::V2}; // V1 for historical records; V2 for new seals.
     bool operator==(const PromptTriage&) const = default;
+
+    // Single source of truth for evidence field iteration across hashing and serialization
+    template <typename Visitor>
+    void visitEvidence(Visitor& v) const {
+        v("session_id", sessionId);
+        v("revision_id", revisionId);
+        v("text_hash", revisionTextHash);
+        v("state_version", stateVersion);
+        v("request_group_id", requestGroupId);
+        v("attempt_id", attemptId);
+        v("provider", provider);
+        v("model_id", modelId);
+        v("model_revision", modelRevision);
+        v("weights_sha256", weightsSha256);
+        v("configuration_id", configurationId);
+        v("template_id", templateId);
+        v("execution", execution);
+        v("category_scores", categoryScores);
+        v("ambiguity", ambiguityScore);
+        v("primary_category", primaryCategory);
+        v("latency_ms", latencyMs);
+    }
+
+    template <typename Visitor>
+    void visitEvidence(Visitor& v) {
+        v("session_id", sessionId);
+        v("revision_id", revisionId);
+        v("text_hash", revisionTextHash);
+        v("state_version", stateVersion);
+        v("request_group_id", requestGroupId);
+        v("attempt_id", attemptId);
+        v("provider", provider);
+        v("model_id", modelId);
+        v("model_revision", modelRevision);
+        v("weights_sha256", weightsSha256);
+        v("configuration_id", configurationId);
+        v("template_id", templateId);
+        v("execution", execution);
+        v("category_scores", categoryScores);
+        v("ambiguity", ambiguityScore);
+        v("primary_category", primaryCategory);
+        v("latency_ms", latencyMs);
+    }
 };
 
 [[nodiscard]] const char* toString(PromptCategory category) noexcept;

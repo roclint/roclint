@@ -1,6 +1,7 @@
 #include "roclint/analysis/PromptTriage.hpp"
 #include "roclint/core/crypto/Sha256.hpp"
 #include "roclint/core/prompt_state/TextNormalization.hpp"
+#include "roclint/core/schema/SchemaVisitor.hpp"
 
 #include <algorithm>
 #include <bit>
@@ -51,18 +52,22 @@ std::string computePromptTriageHash(const PromptTriage& triage) {
         ? "roclint.prompt_triage.v1"
         : "roclint.prompt_triage.v2";
     crypto::CanonicalHasher hash(domain);
-    hash.field(triage.sessionId).field(triage.revisionId).field(triage.revisionTextHash).number(triage.stateVersion)
-        .field(triage.requestGroupId).field(triage.attemptId).field(triage.provider).field(triage.modelId)
-        .field(triage.modelRevision).field(triage.weightsSha256).field(triage.configurationId).field(triage.templateId)
-        .number(static_cast<std::uint64_t>(triage.execution));
-    for (const auto score : triage.categoryScores) hashDouble(hash, score);
-    hashDouble(hash, triage.ambiguityScore);
-    hash.number(static_cast<std::uint64_t>(triage.primaryCategory));
-    // V1 only: bake in kPromptTriageThreshold for historical record verification.
-    // V2 records exclude it so thresholds can be tuned without breaking the audit chain.
-    if (triage.hashVersion == TriageHashVersion::V1)
+    if (triage.hashVersion == TriageHashVersion::V1) {
+        // V1 legacy sequence: threshold was baked in right before latencyMs
+        hash.field(triage.sessionId).field(triage.revisionId).field(triage.revisionTextHash).number(triage.stateVersion)
+            .field(triage.requestGroupId).field(triage.attemptId).field(triage.provider).field(triage.modelId)
+            .field(triage.modelRevision).field(triage.weightsSha256).field(triage.configurationId).field(triage.templateId)
+            .number(static_cast<std::uint64_t>(triage.execution));
+        for (const auto score : triage.categoryScores) hashDouble(hash, score);
+        hashDouble(hash, triage.ambiguityScore);
+        hash.number(static_cast<std::uint64_t>(triage.primaryCategory));
         hashDouble(hash, kPromptTriageThreshold);
-    hashDouble(hash, triage.latencyMs);
+        hashDouble(hash, triage.latencyMs);
+    } else {
+        // V2 single-source-of-truth visitor: iterates fields automatically from struct definition
+        schema::HashVisitor visitor(hash);
+        triage.visitEvidence(visitor);
+    }
     return hash.finalizeHex();
 }
 
