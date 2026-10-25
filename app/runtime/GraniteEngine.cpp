@@ -206,7 +206,7 @@ public:
             auto params = llama_context_default_params();
             params.n_ctx = static_cast<std::uint32_t>(manifest_.value(QStringLiteral("context_tokens")).toInt());
             params.n_batch = 512;
-#if defined(__APPLE__)
+#if defined(__APPLE__) || defined(_WIN32)
             params.n_ubatch = 512;
 #else
             params.n_ubatch = 128;
@@ -222,6 +222,17 @@ public:
             // Batch prefill uses up to 8 P-cores (above); the single-token decode loop
             // is GPU-bound on Metal and extra CPU threads only contend the command queue.
             params.n_threads = std::min(params.n_threads, 4);
+#elif defined(_WIN32)
+            const auto hwThreads = static_cast<int>(std::thread::hardware_concurrency());
+            if (hwThreads > params.n_threads) {
+                // RTX/AMD/Intel systems benefit from filling available cores during prefill.
+                params.n_threads_batch = std::min(hwThreads, 12);
+            }
+            // Lock decode threads at 4 only when Vulkan offload is active: the single-token
+            // decode loop is GPU-bound; extra CPU threads only contend the Vulkan compute queue.
+            if (manifest_.value(QStringLiteral("gpu_layers")).toInt() > 0) {
+                params.n_threads = std::min(params.n_threads, 4);
+            }
 #endif
             params.offload_kqv = manifest_.value(QStringLiteral("gpu_layers")).toInt() > 0;
             params.op_offload = params.offload_kqv;
