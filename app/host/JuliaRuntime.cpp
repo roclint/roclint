@@ -473,19 +473,24 @@ void JuliaRuntime::receive(const QJsonObject& object) {
         const bool mps = device == QLatin1String("mps") &&
             (precision == QLatin1String("float16") || precision == QLatin1String("bfloat16")) &&
             configuration == QLatin1String("julia.mps.fp16.v2");
-        if ((!cpu && !cuda && !mps) || !threads.isDouble() || threads.toDouble() != threads.toInt(-1) || threads.toInt() < 1 || threads.toInt() > 256) {
+        const bool directml = device == QLatin1String("directml") &&
+            precision == QLatin1String("float16") &&
+            configuration == QLatin1String("julia.directml.fp16.v2");
+        if ((!cpu && !cuda && !mps && !directml) || !threads.isDouble() || threads.toDouble() != threads.toInt(-1) || threads.toInt() < 1 || threads.toInt() > 256) {
             fail(QStringLiteral("Julia did not report a supported execution device, precision and thread count.")); return;
         }
         executionConfigurationId_ = configuration; executionDevice_ = device; executionPrecision_ = precision;
         executionCpuThreads_ = threads.toInt();
         ready_ = true;
 #ifdef Q_OS_WIN
-        if (cpu) {
-            // On Windows with an RTX GPU, GPU acceleration requires a working CUDA driver.
-            // Running on CPU FP32 means CUDA was unavailable; advise the user.
+        if (directml) {
+            setState(QStringLiteral("READY"),
+                     QStringLiteral("Julia-1 is ready on DirectML (%1). GPU acceleration active via DirectML.").arg(precision));
+        } else if (cpu) {
+            // On Windows, CPU FP32 means no supported GPU accelerator was available.
             setState(QStringLiteral("READY"),
                      QStringLiteral("Julia-1 is running on CPU (FP32) — GPU acceleration unavailable. "
-                                    "Install CUDA drivers and restart to use your NVIDIA GPU."));
+                                    "Install CUDA drivers or torch-directml and restart."));
         } else {
             setState(QStringLiteral("READY"), QStringLiteral("Julia-1 is ready on %1 (%2). Scores come from local model inference.").arg(device, precision));
         }

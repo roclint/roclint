@@ -131,8 +131,18 @@ def load(root):
 
 def create_engine(load_model, torch, root, threads, override=None):
     """The pinned SDK uses BF16 autocast on CUDA and FP16 on Apple MPS; unsupported devices use CPU FP32."""
-    if override not in (None, "auto", "cpu", "cuda", "mps"):
-        raise ValueError("JULIA_DEVICE must be auto, cpu, cuda or mps")
+    # Detect optional DirectML backend (Windows AMD/Intel/Qualcomm).
+    # torch-directml is an optional dependency; degrade silently if absent.
+    directml_supported = False
+    try:
+        import torch_directml  # type: ignore[import]
+        directml_supported = torch_directml.is_available()
+    except Exception:  # ImportError or any init failure
+        pass
+    if override not in (None, "auto", "cpu", "cuda", "mps", "directml"):
+        raise ValueError("JULIA_DEVICE must be auto, cpu, cuda, mps or directml")
+    if override == "directml" and not directml_supported:
+        raise ValueError("Explicit DirectML requires torch-directml to be installed and available")
     cuda_supported = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
     mps_supported = hasattr(torch, "backends") and hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
     if override == "cuda" and not cuda_supported:
@@ -141,12 +151,16 @@ def create_engine(load_model, torch, root, threads, override=None):
         raise ValueError("Explicit MPS requires Apple Metal support in the pinned Julia runtime")
     if override == "cuda":
         devices = ["cuda"]
+    elif override == "directml":
+        devices = ["directml"]
     elif override == "mps":
         devices = ["mps"]
     elif override == "cpu":
         devices = ["cpu"]
     elif cuda_supported:
-        devices = ["cuda", "cpu"]
+        devices = ["cuda", "directml", "cpu"] if directml_supported else ["cuda", "cpu"]
+    elif directml_supported:
+        devices = ["directml", "cpu"]
     elif mps_supported:
         devices = ["mps", "cpu"]
     else:
@@ -154,23 +168,29 @@ def create_engine(load_model, torch, root, threads, override=None):
     for device in devices:
         engine = None
         try:
-            engine = load_model(str(root), device=device, backend="torch", max_length=8192, head_length=512,
+            sdk_device = device
+            if device == "directml":
+                sdk_device = torch_directml.device(0)  # torch_directml guaranteed imported above
+            engine = load_model(str(root), device=sdk_device, backend="torch", max_length=8192, head_length=512,
                                 strict_encoding=True, marker_only_head=True, batch_size=4, compile_model=False)
             engine.logits([{"state": "The user asks for a refund.", "question": "Which team?",
                             "options": ["Billing", "Shipping"], "type": "choice"}])
-            if engine.device.type != device:
+            # torch-directml exposes its device as type "privateuseone" internally.
+            expected_type = "privateuseone" if device == "directml" else device
+            if engine.device.type != expected_type:
                 raise RuntimeError("Julia loaded on an unexpected device")
             if device == "cpu" and next(engine.model.parameters()).dtype != torch.float32:
                 raise RuntimeError("Julia CPU execution requires FP32 weights")
             config_id = (
-                "julia.cuda.bf16.v2" if device == "cuda"
-                else "julia.mps.fp16.v2" if device == "mps"
-                else "julia.cpu.fp32.v2"
+                "julia.cuda.bf16.v2"      if device == "cuda"      else
+                "julia.directml.fp16.v2"  if device == "directml"  else
+                "julia.mps.fp16.v2"       if device == "mps"        else
+                "julia.cpu.fp32.v2"
             )
             compute_dtype = (
-                "bfloat16" if device == "cuda"
-                else "float16" if device == "mps"
-                else "float32"
+                "bfloat16" if device == "cuda"                      else
+                "float16"  if device in ("directml", "mps")         else
+                "float32"
             )
             engine.roclint_runtime = {
                 "configuration_id": config_id,
@@ -179,8 +199,14 @@ def create_engine(load_model, torch, root, threads, override=None):
                 "cpu_threads": threads
             }
             return engine
-        except (RuntimeError, MemoryError):
-            if device not in ("cuda", "mps") or len(devices) == 1:
+        except (RuntimeError, MemoryError) as exc:
+            oom = (device == "cuda" and hasattr(torch, "cuda") and
+                   hasattr(torch.cuda, "OutOfMemoryError") and
+                   isinstance(exc, torch.cuda.OutOfMemoryError))
+            if oom:
+                print(f"[Julia] CUDA out-of-memory ('{device}'); retrying on next device. ({exc})",
+                      file=sys.stderr)
+            if device not in ("cuda", "mps", "directml") or len(devices) == 1:
                 raise
             del engine
         # Leave the exception handler first so its traceback cannot retain the failed model.

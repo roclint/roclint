@@ -1,0 +1,4 @@
+# Install in addition to julia-requirements.txt to enable DirectML acceleration
+# for AMD, Intel Arc, and Qualcomm GPU users on Windows.
+# pip install -r app/runtime/julia-requirements-directml.txt
+torch-directml>=0.2.5.dev240914
