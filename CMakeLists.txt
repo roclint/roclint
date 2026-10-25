@@ -326,6 +326,7 @@ if(BUILD_DESKTOP)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/app/runtime/julia_worker.py"
                 "${CMAKE_CURRENT_SOURCE_DIR}/app/runtime/julia-requirements.txt"
+                "${CMAKE_CURRENT_SOURCE_DIR}/app/runtime/julia-requirements-directml.txt"
                 "${CMAKE_CURRENT_SOURCE_DIR}/app/runtime/granite-models.json"
                 "${CMAKE_CURRENT_BINARY_DIR}/generated/granite-runtime-config.json"
                 "$<TARGET_FILE_DIR:roclint_host>/runtime"
@@ -336,6 +337,7 @@ if(BUILD_DESKTOP)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 "${CMAKE_CURRENT_SOURCE_DIR}/app/runtime/julia_worker.py"
                 "${CMAKE_CURRENT_SOURCE_DIR}/app/runtime/julia-requirements.txt"
+                "${CMAKE_CURRENT_SOURCE_DIR}/app/runtime/julia-requirements-directml.txt"
                 "${CMAKE_CURRENT_SOURCE_DIR}/app/runtime/granite-models.json"
                 "${CMAKE_CURRENT_BINARY_DIR}/generated/granite-runtime-config.json"
                 "$<TARGET_FILE_DIR:roclint_host>/runtime"
