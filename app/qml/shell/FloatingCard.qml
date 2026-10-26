@@ -13,7 +13,7 @@ Window {
     minimumWidth: !isAmbientMode ? 520 : (isDetailedExpanded ? 520 : 420)
     minimumHeight: !isAmbientMode ? 360 : (isDetailedExpanded ? 360 : 200)
     visible: false
-    flags: Qt.Tool | Qt.FramelessWindowHint | ((pinToTop || isAmbientMode) ? Qt.WindowStaysOnTopHint : 0) | (isAmbientMode ? Qt.WindowDoesNotAcceptFocus : 0)
+    flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
     color: "transparent"
 
     function toggleDetailedExpanded() {
