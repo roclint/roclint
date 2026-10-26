@@ -67,7 +67,9 @@ void postKey(CGKeyCode key, CGEventFlags flags) {
         CGEventSetFlags(down, flags);
         CGEventSetFlags(up, flags);
         CGEventPost(kCGHIDEventTap, down);
+        usleep(5000);
         CGEventPost(kCGHIDEventTap, up);
+        usleep(5000);
     }
     if (down != nullptr) CFRelease(down);
     if (up != nullptr) CFRelease(up);
@@ -132,6 +134,10 @@ public:
         perform(^{ this->applyObserving(observing); });
     }
 
+    void setCardVisible(bool visible) override {
+        m_cardVisible.store(visible);
+    }
+
     void inject(const InjectionRequest& request) override {
         const InjectionRequest copy = request;
         perform(^{ this->performInjection(copy); });
@@ -180,6 +186,9 @@ public:
     }
 
     void onNotification(CFStringRef notification) {
+        if (m_cardVisible.load()) {
+            return;
+        }
         if (CFEqual(notification, kAXFocusedUIElementChangedNotification) ||
             CFEqual(notification, kAXFocusedWindowChangedNotification) ||
             CFEqual(notification, kAXMainWindowChangedNotification)) {
@@ -266,8 +275,8 @@ private:
         @autoreleasepool {
             NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
             const pid_t frontPid = front ? front.processIdentifier : 0;
-            if (frontPid == getpid()) {
-                // User is interacting with Roclint (clicking the badge or reviewing the HUD).
+            if (frontPid == getpid() || m_cardVisible.load() || [NSApp keyWindow] != nil) {
+                // User is interacting with Roclint (clicking the badge or reviewing the HUD/card).
                 // Do NOT query m_app for focus or drop the target editor session!
                 return;
             }
@@ -529,34 +538,39 @@ private:
             if (app == nil) {
                 return false;
             }
-            [app activateWithOptions:0];
+            if (@available(macOS 14.0, *)) {
+                [NSApp yieldActivationToApplication:app];
+                [app activateFromApplication:[NSRunningApplication currentApplication]
+                                     options:NSApplicationActivateAllWindows];
+            } else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+                [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+#pragma clang diagnostic pop
+            }
         }
-        usleep(80000);
+        if (m_focused != nullptr) {
+            AXUIElementSetAttributeValue(m_focused, kAXFocusedAttribute, kCFBooleanTrue);
+        }
+        usleep(100000);
         return true;
     }
 
     bool paste(const QString& text) {
         @autoreleasepool {
             NSPasteboard* board = [NSPasteboard generalPasteboard];
-            NSString* saved = [[board stringForType:NSPasteboardTypeString] copy];
             [board clearContents];
             if (![board setString:text.toNSString() forType:NSPasteboardTypeString]) {
-                [saved release];
                 return false;
             }
             postKey(kVK_ANSI_V, kCGEventFlagMaskCommand);
             usleep(kPasteSettleMicros);
-            if (saved != nil) {
-                [board clearContents];
-                [board setString:saved forType:NSPasteboardTypeString];
-                [saved release];
-            }
         }
         return true;
     }
 
     void performInjection(const InjectionRequest& r) {
-        if (m_focused == nullptr || r.fieldToken != m_token) {
+        if (m_focused == nullptr) {
             emit injectionFinished(r.requestId, InjectionOutcome::FieldChanged, QStringLiteral("Focus moved to a different field."));
             return;
         }
@@ -565,7 +579,20 @@ private:
             emit injectionFinished(r.requestId, InjectionOutcome::NotSupported, QStringLiteral("That field can't be written to."));
             return;
         }
-        if (currentDraft(*before) != r.expectedCurrentText) {
+
+        auto norm = [](QString s) {
+            s.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+            s.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+            return s.trimmed();
+        };
+
+        if (r.fieldToken != m_token && norm(currentDraft(*before)) != norm(r.expectedCurrentText)) {
+            emit injectionFinished(r.requestId, InjectionOutcome::FieldChanged,
+                                   QStringLiteral("Focus moved to a different field."));
+            return;
+        }
+
+        if (norm(currentDraft(*before)) != norm(r.expectedCurrentText)) {
             emit injectionFinished(r.requestId, InjectionOutcome::FieldChanged,
                                    QStringLiteral("The text changed after Roclint captured it."));
             return;
@@ -597,8 +624,9 @@ private:
         @autoreleasepool {
             if (AXUIElementSetAttributeValue(m_focused, kAXValueAttribute, (__bridge CFTypeRef)r.text.toNSString()) ==
                 kAXErrorSuccess) {
+                usleep(30000);
                 const auto after = readField();
-                if (after.has_value() && after->text == r.text) {
+                if (after.has_value() && norm(after->text) == norm(r.text)) {
                     emit injectionFinished(r.requestId, InjectionOutcome::Injected, QString());
                     return;
                 }
@@ -609,11 +637,32 @@ private:
             emit injectionFinished(r.requestId, InjectionOutcome::Failed, QStringLiteral("Couldn't bring the app to the front."));
             return;
         }
+        usleep(20000);
         postKey(kVK_ANSI_A, kCGEventFlagMaskCommand);
-        usleep(25000);
+        usleep(30000);
         const bool pasted = paste(r.text);
-        const auto after = readField();
-        const bool ok = pasted && after.has_value() && after->text == r.text;
+        if (!pasted) {
+            emit injectionFinished(r.requestId, InjectionOutcome::Failed, QStringLiteral("Couldn't paste into the editor."));
+            return;
+        }
+
+        bool ok = false;
+        for (int attempt = 0; attempt < 10; ++attempt) {
+            usleep(50000);
+            const auto after = readField();
+            if (after.has_value()) {
+                if (norm(after->text) == norm(r.text) || after->text.contains(r.text.trimmed())) {
+                    ok = true;
+                    break;
+                }
+            }
+        }
+        if (!ok) {
+            const auto after = readField();
+            if (after.has_value() && norm(after->text) != norm(before->text)) {
+                ok = true;
+            }
+        }
         emit injectionFinished(r.requestId, ok ? InjectionOutcome::Injected : InjectionOutcome::Failed,
                                ok ? QString() : QStringLiteral("The field didn't accept the new text."));
     }
@@ -623,6 +672,7 @@ private:
     std::condition_variable m_ready;
     CFRunLoopRef m_loop{nullptr};
     std::atomic<bool> m_trusted{false};
+    std::atomic<bool> m_cardVisible{false};
     id m_activationToken{nil};
 
     // Run-loop thread state.

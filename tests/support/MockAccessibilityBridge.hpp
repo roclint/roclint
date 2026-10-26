@@ -16,6 +16,7 @@ class MockAccessibilityBridge final : public host::IAccessibilityBridge {
 public:
     host::AccessibilityAccess accessValue{host::AccessibilityAccess::Granted};
     bool observing{false};
+    bool cardVisible{false};
     int accessRequests{0};
     int refreshRequests{0};
     quint64 refreshId{0};
@@ -32,6 +33,7 @@ public:
     }
 
     void setObserving(bool value) override { observing = value; }
+    void setCardVisible(bool visible) override { cardVisible = visible; }
     void refreshFocusedField(quint64 requestId = 0) override {
         ++refreshRequests; refreshId = requestId;
         if (echoOnRefresh && lastObserved) observe(*lastObserved);

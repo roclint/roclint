@@ -632,6 +632,9 @@ bool HostController::setCardVisibility(CardVisibility visibility) {
         return false;
     }
     m_cardVisibility = visibility;
+    if (m_accessibility) {
+        m_accessibility->setCardVisible(visibility != CardVisibility::Hidden);
+    }
     emit cardVisibilityChanged();
     return true;
 }

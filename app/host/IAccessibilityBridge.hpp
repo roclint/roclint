@@ -64,6 +64,7 @@ public:
     // Shows the OS permission prompt where one exists. Returns false when there is nothing to request.
     virtual bool requestAccess() = 0;
     virtual void setObserving(bool observing) = 0;
+    virtual void setCardVisible(bool visible) { Q_UNUSED(visible); }
     // One-shot refresh before invoking the HUD, while the external editor still owns focus.
     virtual void refreshFocusedField(quint64 requestId = 0) { Q_UNUSED(requestId); }
     // Completion is always reported through injectionFinished, including immediate refusals.
