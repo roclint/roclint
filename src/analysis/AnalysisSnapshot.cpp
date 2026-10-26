@@ -281,7 +281,8 @@ Result<AnalysisSnapshot> buildAnalysisSnapshot(NormalizedAnalysis normalized, Sn
 }
 
 Result<AnalysisSnapshot> buildRoutedAnalysisSnapshot(NormalizedAnalysis normalized, PromptTriage triage,
-    std::string_view frozenPrompt, std::string discoveryAttemptId) {
+    std::string_view frozenPrompt, std::string discoveryAttemptId,
+    std::optional<SnapshotEvaluationResponse> evaluation) {
     if (!validatePromptTriage(triage).ok() || triage.revisionTextHash != crypto::Sha256::hexDigest(frozenPrompt) ||
         validateNormalizedAnalysis(normalized, frozenPrompt).status == AnalysisValidationStatus::Invalid)
         return invalid("Routed analysis does not match its frozen prompt").error();
@@ -291,10 +292,14 @@ Result<AnalysisSnapshot> buildRoutedAnalysisSnapshot(NormalizedAnalysis normaliz
     snapshot.normalized = std::move(normalized);
     snapshot.promptTriage = std::move(triage);
     snapshot.discoveryAttemptId = std::move(discoveryAttemptId);
-    snapshot.evaluation.success = true;
-    snapshot.evaluation.analysisSnapshotId = snapshot.normalized.id;
-    snapshot.evaluation.engine = ScorerEngine::JuliaLocal;
-    snapshot.evaluation.executionStatus = ExecutionStatus::NotRequested;
+    if (evaluation) {
+        snapshot.evaluation = std::move(*evaluation);
+    } else {
+        snapshot.evaluation.success = true;
+        snapshot.evaluation.analysisSnapshotId = snapshot.normalized.id;
+        snapshot.evaluation.engine = ScorerEngine::JuliaLocal;
+        snapshot.evaluation.executionStatus = ExecutionStatus::NotRequested;
+    }
     snapshot.presentationPolicyVersion = "prompt_triage_presentation.v1";
     snapshot.presentation = buildPresentation(snapshot.normalized, snapshot.evaluation);
     for (const auto index : orderedAssumptionIndices(snapshot.normalized))

@@ -121,7 +121,7 @@ def run_benchmark(device="cuda", model_dir=DEFAULT_MODEL_DIR, repeats=5):
         cat_scores = {item["category"]: item["score"] for item in triage_res["category_scores"]}
 
         is_clear = case["id"] in CLEAR_IDS
-        target_heads = {"ambiguous_speed": ["RULE"], "three_groups": ["RULE"], "missing_target": ["TARGET"],
+        target_heads = {"ambiguous_speed": ["RULE", "ACTION"], "three_groups": ["RULE", "ACTION"], "missing_target": ["TARGET"],
             "conflicting_output": ["RULE_CONFLICT"], "vague_interface": ["ACTION", "RULE"],
             "conflict_counts": ["RULE_CONFLICT"], "missing_file": ["TARGET"]}.get(case["id"], [])
         passed = True

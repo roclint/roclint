@@ -51,7 +51,7 @@ TRIAGE_HEADS = (
       "The active task requires modifying a target file, but which file cannot be determined."]),
     ("RULE",
      "Is a requirement or success criterion materially ambiguous?",
-     ["The request fixes its requirements and limits; ordinary implementation choices do not change that intent.",
+     ["The request fixes its requirements and limits with concrete values, rules, or explicit properties.",
       "Materially different requirements, criteria, or goals would fit the wording; the user has not chosen between them."]),
     ("RULE_CONFLICT",
      "Does the request contain incompatible actual requirements?",
@@ -70,7 +70,7 @@ TRIAGE_CHECKLIST_HEADS = (
       "The active task requires modifying a target file, but which file cannot be determined."]),
     ("RULE",
      "Is a requirement or success criterion materially ambiguous?",
-     ["The request fixes its requirements and limits; ordinary implementation choices do not change that intent.",
+     ["The request fixes its requirements and limits with concrete values, rules, or explicit properties.",
       "Materially different requirements, criteria, or goals would fit the wording; the user has not chosen between them."]),
     ("RULE_CONFLICT",
      "Does the request contain incompatible actual requirements?",
@@ -312,45 +312,6 @@ def detect_prohibited_choices(prompt_text, choices):
     return violators
 
 
-def calibrate_triage_scores(prompt_text, state_payload, atomic_scores):
-    """Calibrate raw S1 atomic scores based on explicit specifications and workspace context."""
-    p_lower = prompt_text.lower()
-    workspace_matches = []
-    if isinstance(state_payload, dict):
-        workspace_matches = state_payload.get("workspace_matches", [])
-
-    # 1. Concrete Numeric / CSS Specification Calibration (Test 1)
-    # When a prompt specifies exact numeric measurements/units or concrete CSS properties
-    # targeting an exact single file with no subjective/vague words, ACTION and RULE
-    # ambiguity heads are false positives and must be clamped < 0.20.
-    has_numeric_spec = (
-        bool(re.search(r"\b\d+(?:\.\d+)?(?:rem|em|px|pt|%|vh|vw|s|ms)\b", p_lower))
-        or bool(re.search(r"\b(?:line-height|font-size|font-weight|opacity|z-index)\s*(?:to|:|=|\b)\s*\d+(?:\.\d+)?", p_lower))
-    )
-    has_concrete_css = bool(re.search(r"\b(?:font-size|font size|line-height|line height|margin|padding|background|color|border-radius)\b", p_lower))
-    has_exact_target = len(workspace_matches) == 1 or bool(re.search(r"\bin\s+[a-zA-Z0-9_\.\-]+\.(?:css|html|js|ts|tsx|jsx)\b", p_lower))
-    has_vague_words = bool(re.search(r"\b(?:nicer|modern|better|cleaner|faster|improve|make it look|vague|stuff)\b", p_lower))
-
-    if (has_numeric_spec or has_concrete_css) and has_exact_target and not has_vague_words:
-        atomic_scores["ACTION"] = min(atomic_scores.get("ACTION", 0.0), 0.05)
-        atomic_scores["RULE"] = min(atomic_scores.get("RULE", 0.0), 0.05)
-
-    # 2. Subjective Aesthetic / Vague Action Rule (Test 3)
-    # Subjective aesthetic modifiers without concrete CSS properties/values indicate unbounded action ambiguity.
-    subjective_aesthetic = bool(re.search(r"\b(?:much nicer|nicer|more modern|modern|look better|look nicer|cleaner look|beautify|make .* look)\b", p_lower))
-    if subjective_aesthetic and not has_numeric_spec:
-        atomic_scores["ACTION"] = max(atomic_scores.get("ACTION", 0.0), 0.85)
-
-    # 3. Missing Backend Sink in Static Workspace Rule (Test 5)
-    # Asking to "send and save" submissions in a static HTML repo with no backend sink defined.
-    backend_sink_request = bool(re.search(r"\b(?:send(?:s)? and save(?:d)?|sent and saved|wire up .*form|submissions? get sent|save submissions?)\b", p_lower))
-    is_static_target = any(f.endswith(".html") for f in workspace_matches) or "form" in p_lower
-    if backend_sink_request and is_static_target:
-        atomic_scores["TARGET"] = max(atomic_scores.get("TARGET", 0.0), 0.85)
-
-    return atomic_scores
-
-
 def triage(engine, request):
     """Classify the prompt before Granite; never generate options or rewritten text."""
     if type(request.get("triage_plan_version")) is not int or request["triage_plan_version"] != TRIAGE_PLAN_VERSION:
@@ -359,7 +320,24 @@ def triage(engine, request):
     raw_state = request.get("state", request.get("prompt"))
     if isinstance(raw_state, dict):
         prompt_text = raw_state.get("prompt", "")
-        state_payload = raw_state
+        ast_parts = []
+        matched = raw_state.get("matched_files") or raw_state.get("workspace_matches") or []
+        unbounded = raw_state.get("unbounded_target_files") or []
+        if matched and not unbounded and len(matched) == 1:
+            ast_parts.append(f"Single exact target: {matched[0]}")
+        elif unbounded or len(matched) > 1:
+            targets = unbounded if unbounded else matched
+            ast_parts.append(f"Target collision across: {', '.join(targets)}")
+        if raw_state.get("unbounded_action"):
+            ast_parts.append("Action is subjective without concrete styling parameters")
+        if raw_state.get("constraint_violations"):
+            ast_parts.append(f"Rule conflict: negative constraint forbids modifying {', '.join(raw_state['constraint_violations'])}")
+        if raw_state.get("missing_backend_sink"):
+            ast_parts.append("Missing target sink: static repository has no backend service or form endpoint")
+        if ast_parts:
+            state_payload = f"{prompt_text}\n[Workspace AST Context: {'; '.join(ast_parts)}]"
+        else:
+            state_payload = prompt_text
     elif isinstance(raw_state, str):
         prompt_text = raw_state
         state_payload = raw_state
@@ -417,9 +395,6 @@ def triage(engine, request):
         atomic_scores[category] = probabilities[1]
         if raw_logits_out is not None:
             raw_logits_out.append([float(v) for v in values])
-
-    # Calibrate atomic scores based on explicit specifications and workspace context
-    atomic_scores = calibrate_triage_scores(prompt_text, state_payload, atomic_scores)
 
     has_affirmative_action = atomic_scores.get("ACTION", 1.0) < 0.40
     # Negative-only head measures if the user stated ONLY prohibitions without affirmative instructions.

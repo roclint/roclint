@@ -222,6 +222,21 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
         triage.set("threshold", json::Value::number(core::analysis::kPromptTriageThreshold));
         request.set("s1_classification", std::move(triage));
     }
+    if (!req.workspaceFiles.empty()) {
+        json::Value files = json::Value::array();
+        for (const auto& f : req.workspaceFiles) {
+            files.push(json::Value::string(f));
+        }
+        request.set("workspace_files", std::move(files));
+    }
+    if (!req.workspaceSymbols.empty()) {
+        json::Value syms = json::Value::array();
+        for (const auto& s : req.workspaceSymbols) {
+            syms.push(json::Value::string(s));
+        }
+        request.set("workspace_symbols", std::move(syms));
+    }
+    request.set("is_non_technical", json::Value::boolean(req.isNonTechnicalPrompt));
 
     std::string out;
     out += "Instruction contract: granite.discovery.balanced.v6\n";
@@ -277,7 +292,9 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
            "result.\n";
     out += "- Use \"needs_clarification\" only when prompt_text is empty, unreadable, or not a request at all. Never "
            "use it just because details are missing.\n";
-    out += "- Do not invent requirements, file names, or paths that are not in prompt_text.\n";
+    out += "- Workspace grounding: You may ground options in the provided workspace_files and workspace_symbols. Do not invent arbitrary files or requirements outside the prompt and workspace.\n";
+    out += "- Tone adaptation: If is_non_technical is true, provide clean, jargon-free option labels focusing on high-level goals, UX flow, or architectural scope without exposing raw code syntax. If is_non_technical is false, use precise technical engineering options.\n";
+    out += "- When S1 flags material ambiguity, provide exactly two mutually exclusive concrete alternatives (option [1] vs option [2]) that decisively settle the user's intent.\n";
     out += R"EXAMPLES(
 Apply the user's explicit bounds before looking for ambiguity. A reading that violates an explicit
 prohibition is not a valid alternative. Do not ask permission to change what the user already fixed.

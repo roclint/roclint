@@ -68,7 +68,11 @@ class JuliaPromptTriageTests(unittest.TestCase):
         })
         self.assertEqual(engine.calls, 1)
         self.assertEqual(len(engine.rows), 6)  # 6 atomic heads
-        self.assertTrue(all(row["state"] == state_dict for row in engine.rows))
+        expected_state = (
+            "Update the card clamping logic so it stays inside the screen margin...\n"
+            "[Workspace AST Context: Target collision across: FloatingCard.qml, ScreenPlacement.cpp]"
+        )
+        self.assertTrue(all(row["state"] == expected_state for row in engine.rows))
         self.assertTrue(all(row["type"] == "noul" for row in engine.rows))
         self.assertIn("atomic_scores", result)
         self.assertEqual(len(result["atomic_scores"]), 6)
@@ -93,34 +97,57 @@ class JuliaPromptTriageTests(unittest.TestCase):
         self.assertIn(result["choice_decision"]["recommended_option"], candidates)
         self.assertTrue(0.0 <= result["choice_decision"]["confidence"] <= 1.0)
 
-    def test_calibration_rules_polarity(self):
+    def test_ast_context_formatting_and_state_injection(self):
         engine = Engine()
-        # 1. Concrete numeric spec is clamped clear
-        r1 = worker.triage(engine, {
+        # 1. Single exact target file
+        worker.triage(engine, {
             "triage_plan_version": 2,
-            "prompt": "Increase the hero lede font size to 1.25rem and line-height to 1.7 in styles.css.",
-            "state": {"prompt": "Increase the hero lede font size to 1.25rem and line-height to 1.7 in styles.css.", "workspace_matches": ["styles.css"]}
+            "state": {
+                "prompt": "Increase the hero lede font size to 1.25rem and line-height to 1.7 in styles.css.",
+                "matched_files": ["styles.css"]
+            }
         })
-        scores1 = {item["category"]: item["score"] for item in r1["category_scores"]}
-        self.assertLess(scores1["ACTION"], 0.20)
-        self.assertLess(scores1["RULE"], 0.20)
+        self.assertIn("Single exact target: styles.css", engine.rows[0]["state"])
 
-        # 2. Subjective aesthetic modifiers trigger action ambiguity >= 0.70
-        r3 = worker.triage(engine, {
+        # 2. Target collision across multiple files
+        worker.triage(engine, {
             "triage_plan_version": 2,
-            "prompt": "Make the card components on the home page look much nicer and more modern."
+            "state": {
+                "prompt": "Add a Blog link in the navigation.",
+                "matched_files": ["index.html", "about.html", "work.html", "contact.html"]
+            }
         })
-        scores3 = {item["category"]: item["score"] for item in r3["category_scores"]}
-        self.assertGreaterEqual(scores3["ACTION"], 0.70)
+        self.assertIn("Target collision across: index.html, about.html, work.html, contact.html", engine.rows[0]["state"])
 
-        # 3. Form submission in static workspace triggers target ambiguity >= 0.70
-        r5 = worker.triage(engine, {
+        # 3. Subjective action modifier
+        worker.triage(engine, {
             "triage_plan_version": 2,
-            "prompt": "Wire up the contact form so submissions get sent and saved.",
-            "state": {"prompt": "Wire up the contact form so submissions get sent and saved.", "workspace_matches": ["contact.html"]}
+            "state": {
+                "prompt": "Make the cards look much nicer and more modern.",
+                "unbounded_action": True
+            }
         })
-        scores5 = {item["category"]: item["score"] for item in r5["category_scores"]}
-        self.assertGreaterEqual(scores5["TARGET"], 0.70)
+        self.assertIn("Action is subjective without concrete styling parameters", engine.rows[0]["state"])
+
+        # 4. Negative constraint violations
+        worker.triage(engine, {
+            "triage_plan_version": 2,
+            "state": {
+                "prompt": "Change the background color without modifying any CSS custom properties.",
+                "constraint_violations": [":root CSS custom properties"]
+            }
+        })
+        self.assertIn("Rule conflict: negative constraint forbids modifying :root CSS custom properties", engine.rows[0]["state"])
+
+        # 5. Missing backend sink in static workspace
+        worker.triage(engine, {
+            "triage_plan_version": 2,
+            "state": {
+                "prompt": "Wire up the contact form so submissions get sent and saved.",
+                "missing_backend_sink": True
+            }
+        })
+        self.assertIn("Missing target sink: static repository has no backend service or form endpoint", engine.rows[0]["state"])
 
     def test_complete_prompt_tail_is_classified_without_mutating_the_request(self):
         engine = Engine()

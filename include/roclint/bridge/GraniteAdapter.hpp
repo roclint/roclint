@@ -11,6 +11,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace roclint::bridge {
 
@@ -60,6 +61,9 @@ struct GraniteOptionDiscoveryRequest {
     std::string promptString{};               // Frozen revision text (canonical LF)
     std::string hostContextCategory{"UNKNOWN"};
     std::optional<core::analysis::PromptTriage> promptTriage{};
+    std::vector<std::string> workspaceFiles{};
+    std::vector<std::string> workspaceSymbols{};
+    bool isNonTechnicalPrompt{false};
 };
 
 enum class DiscoveryOutcome {

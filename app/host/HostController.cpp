@@ -1261,6 +1261,19 @@ Status HostController::startDiscovery(bool allowReconnect) {
     request.hostContextCategory = ss(m_hostContext.categoryString());
     if (promptTriageRoutingEnabled()) request.promptTriage = m_promptTriage;
 
+    for (const auto& f : m_projectFiles) {
+        request.workspaceFiles.push_back(f.toStdString());
+        if (request.workspaceFiles.size() >= 25) break;
+    }
+
+    const QString pText = qs(request.promptString);
+    static const QRegularExpression codeExtRe(QStringLiteral("\\.(?:html|css|js|ts|tsx|jsx|qml|cpp|hpp|c|h|py|rs|go|java|swift|json|yaml|sql)\\b"), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression codeSyntaxRe(QStringLiteral("[{}<>()\\[\\];:=#]"));
+    static const QRegularExpression codeKeywordRe(QStringLiteral("\\b(?:function|class|const|let|var|import|export|return|struct|enum|void|public|private)\\b"));
+    request.isNonTechnicalPrompt = !codeExtRe.match(pText).hasMatch() &&
+                                   !codeKeywordRe.match(pText).hasMatch() &&
+                                   (pText.count(codeSyntaxRe) < 3);
+
     setAnalysisStatus(AnalysisStatus::Analyzing, QStringLiteral("Analyzing your prompt."));
     armAnalysisDeadline(ticket);
     if (ticket.analysisGroup->deadline.hasExpired()) { expireAnalysisGroup(ticket); return Status::success(); }
@@ -1464,9 +1477,48 @@ void HostController::onJuliaFinished(quint64 requestId, const bridge::SnapshotEv
     const bool ranked = evaluation.isRanked();
     completeAttempt(pending.ticket, ranked ? storage::AttemptStatus::Succeeded : storage::AttemptStatus::Failed,
                     ranked ? std::string() : evaluation.degradedReason);
+    // Dynamic Choice scoring update: compute entropy confidence and winner from group scores
+    if (response && !response->groupScores.empty() && response->groupScores[0].probabilities.has_value()) {
+        const auto& probs = *response->groupScores[0].probabilities;
+        const std::size_t k = probs.size();
+        if (k >= 2) {
+            double entropy = 0.0;
+            double maxP = -1.0;
+            std::string bestAltId;
+            for (const auto& altProb : probs) {
+                if (altProb.probability > 0.0) {
+                    entropy -= altProb.probability * std::log(altProb.probability);
+                }
+                if (altProb.probability > maxP) {
+                    maxP = altProb.probability;
+                    bestAltId = altProb.alternativeId;
+                }
+            }
+            const double maxEntropy = std::log(static_cast<double>(k));
+            const double confidence = maxEntropy > 0.0 ? std::max(0.0, std::min(1.0, 1.0 - (entropy / maxEntropy))) : 1.0;
+
+            QString bestLabel;
+            for (const auto& g : pending.analysis.choiceGroups) {
+                for (const auto& a : g.alternatives) {
+                    if (a.id == bestAltId) {
+                        bestLabel = qs(a.interpretation);
+                        break;
+                    }
+                }
+                if (!bestLabel.isEmpty()) break;
+            }
+
+            if (!bestLabel.isEmpty()) {
+                m_recommendedOption = bestLabel;
+                m_recommendedConfidence = confidence;
+                emit recommendedOptionChanged();
+            }
+        }
+    }
+
     const auto detail = ranked ? QStringLiteral(" Julia scored the supplied decisions locally. Confirm your interpretation explicitly.")
                                : QStringLiteral(" Julia scoring was unavailable; options remain unranked. ") + qs(evaluation.degradedReason);
-    if (applyAnalysis(std::move(pending.analysis), std::move(pending.discoveryAttemptId), pending.ticket.attemptId, std::move(evaluation)))
+    if (applyAnalysis(std::move(pending.analysis), std::move(pending.discoveryAttemptId), pending.ticket.attemptId, std::move(evaluation), m_promptTriage))
         setAnalysisStatus(AnalysisStatus::Ready, pending.message + detail);
 }
 
@@ -1474,8 +1526,8 @@ bool HostController::applyAnalysis(analysis::NormalizedAnalysis normalized, std:
                                     std::string scorerAttemptId,
                                     std::optional<bridge::SnapshotEvaluationResponse> evaluation,
                                     std::optional<analysis::PromptTriage> triage) {
-    auto scored = triage ? bridge::SnapshotEvaluationResponse{} :
-        evaluation ? std::move(*evaluation) : m_s1Adapter.evaluateSnapshot(normalized);
+    auto scored = evaluation ? std::move(*evaluation) :
+        triage ? bridge::SnapshotEvaluationResponse{} : m_s1Adapter.evaluateSnapshot(normalized);
 #if defined(ROCLINT_ENABLE_TEST_MOCKS)
     if (scored.executionStatus == bridge::ExecutionStatus::ExecutedMock && scorerAttemptId.empty()) {
         auto ticket = makeTicket();
@@ -1490,7 +1542,7 @@ bool HostController::applyAnalysis(analysis::NormalizedAnalysis normalized, std:
     }
 #endif
     auto result = triage ? analysis::buildRoutedAnalysisSnapshot(std::move(normalized), std::move(*triage),
-        m_revisionState->currentRevision().text(), std::move(discoveryAttemptId)) :
+        m_revisionState->currentRevision().text(), std::move(discoveryAttemptId), evaluation) :
         analysis::buildAnalysisSnapshot(std::move(normalized), std::move(scored), m_revisionState->currentRevision().text(),
             std::move(discoveryAttemptId), std::move(scorerAttemptId));
     if (!result.ok()) {

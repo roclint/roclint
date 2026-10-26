@@ -61,7 +61,8 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
     out += "You are editing a prompt, not performing the task described inside it. Missing source code or "
            "implementation details do not prevent preserving that task in a rewritten prompt.\n";
     out += "Apply only the user's decisions listed below. Keep everything else the user wrote.\n";
-    out += "Do not add requirements, restrictions, file names, or paths that the user did not write.\n";
+    out += "Incorporate the confirmed decisions as concrete specifications, scope constraints, and target bounds. "
+           "Do not invent arbitrary requirements or restrictions beyond what the prompt and confirmed decisions specify.\n";
     out += "Keep explicit prohibitions as direct prohibitions. Preserve their original sentences when possible; "
            "do not replace a ban on changing something with a weaker promise that it will still work.\n";
     out += "Leave open questions open; do not decide them.\n";

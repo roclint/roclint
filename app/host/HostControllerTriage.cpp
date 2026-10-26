@@ -1,15 +1,100 @@
 #include "HostController.hpp"
 #include "roclint/storage/PayloadCodec.hpp"
 
+#include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QUuid>
 
 namespace roclint::host {
 namespace an = core::analysis;
 namespace {
 QString qs(const std::string& value) { return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size())); }
+
+QJsonObject extractDynamicAstContext(const QString& promptText, const QString& projectRoot, const QStringList& projectFiles) {
+    QJsonObject meta;
+    meta[QStringLiteral("prompt")] = promptText;
+    const QString pLower = promptText.toLower();
+
+    // 1. Matched files
+    QStringList matchedFiles;
+    for (const auto& file : projectFiles) {
+        const QFileInfo fi(file);
+        const QString baseName = fi.fileName().toLower();
+        if (pLower.contains(baseName)) {
+            matchedFiles.append(file);
+        }
+    }
+    if (!matchedFiles.isEmpty()) {
+        meta[QStringLiteral("matched_files")] = QJsonArray::fromStringList(matchedFiles);
+        meta[QStringLiteral("workspace_matches")] = QJsonArray::fromStringList(matchedFiles);
+    }
+
+    // 2. Unbounded Target Files (Multi-file collisions)
+    QStringList targetCollisionFiles;
+    const bool mentionsNav = pLower.contains(QStringLiteral("navigation")) || pLower.contains(QStringLiteral("nav link")) ||
+                             pLower.contains(QStringLiteral("site navigation")) || pLower.contains(QStringLiteral("header nav"));
+    if (mentionsNav && !projectRoot.isEmpty()) {
+        for (const auto& relFile : projectFiles) {
+            if (relFile.endsWith(QStringLiteral(".html"), Qt::CaseInsensitive) ||
+                relFile.endsWith(QStringLiteral(".qml"), Qt::CaseInsensitive)) {
+                QFile f(QDir(projectRoot).filePath(relFile));
+                if (f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                    const QString content = QString::fromUtf8(f.read(8192));
+                    if (content.contains(QStringLiteral("<nav"), Qt::CaseInsensitive) ||
+                        content.contains(QStringLiteral("class=\"nav"), Qt::CaseInsensitive)) {
+                        targetCollisionFiles.append(relFile);
+                    }
+                }
+            }
+        }
+    }
+    if (targetCollisionFiles.size() > 1) {
+        meta[QStringLiteral("unbounded_target_files")] = QJsonArray::fromStringList(targetCollisionFiles);
+    }
+
+    // 3. Subjective / Unbounded Action
+    static const QRegularExpression subjectiveRe(QStringLiteral("\\b(much nicer|nicer|more modern|modern|look better|cleaner look|beautify)\\b"), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression numericCssRe(QStringLiteral("\\b\\d+(?:\\.\\d+)?(?:rem|em|px|pt|%|vh|vw|s|ms)\\b"), QRegularExpression::CaseInsensitiveOption);
+    if (subjectiveRe.match(pLower).hasMatch() && !numericCssRe.match(pLower).hasMatch()) {
+        meta[QStringLiteral("unbounded_action")] = true;
+    }
+
+    // 4. Constraint Violations / Rule Conflict
+    static const QRegularExpression negativeRe(QStringLiteral("(?:without modifying|without changing|do not modify|don't change|must not modify)\\s+([^.,;]+)"), QRegularExpression::CaseInsensitiveOption);
+    const auto negMatch = negativeRe.match(pLower);
+    if (negMatch.hasMatch()) {
+        const QString forbidden = negMatch.captured(1).trimmed();
+        QJsonArray violations;
+        violations.append(forbidden);
+        meta[QStringLiteral("constraint_violations")] = violations;
+    }
+
+    // 5. Missing Backend Sink in Static Workspace
+    static const QRegularExpression sinkRe(QStringLiteral("\\b(send(?:s)? and save(?:d)?|sent and saved|wire up .*form|submissions? get sent|save submissions?)\\b"), QRegularExpression::CaseInsensitiveOption);
+    if (sinkRe.match(pLower).hasMatch()) {
+        bool hasBackend = false;
+        bool hasForm = false;
+        for (const auto& file : projectFiles) {
+            const QString ext = QFileInfo(file).suffix().toLower();
+            if (ext == QStringLiteral("py") || ext == QStringLiteral("go") || ext == QStringLiteral("rs") ||
+                ext == QStringLiteral("php") || ext == QStringLiteral("rb") || file.contains(QStringLiteral("server"))) {
+                hasBackend = true;
+            }
+            if (ext == QStringLiteral("html")) {
+                hasForm = true;
+            }
+        }
+        if (hasForm && !hasBackend) {
+            meta[QStringLiteral("missing_backend_sink")] = true;
+        }
+    }
+
+    return meta;
+}
 }
 
 bool HostController::promptTriageRoutingEnabled() const noexcept {
@@ -76,28 +161,15 @@ void HostController::continuePromptTriageLoad() {
         qs(ticket.sessionId), qs(ticket.revisionId), ticket.stateVersion};
 
     const QString promptText = qs(m_revisionState->currentRevision().text());
-    QJsonObject metadata;
-    metadata[QStringLiteral("prompt")] = promptText;
+    const QJsonObject metadata = extractDynamicAstContext(promptText, m_projectScanPath, m_projectFiles);
 
     QStringList candidateChoices;
-    if (!m_projectFiles.isEmpty()) {
-        QStringList workspaceMatches;
-        for (const auto& file : m_projectFiles) {
-            const QFileInfo fi(file);
-            const QString baseName = fi.fileName();
-            const QString baseStem = fi.completeBaseName();
-            if (promptText.contains(baseName, Qt::CaseInsensitive) ||
-                (!baseStem.isEmpty() && baseStem.length() > 3 && promptText.contains(baseStem, Qt::CaseInsensitive))) {
-                workspaceMatches.append(file);
-                if (workspaceMatches.size() >= 10) break;
-            }
-        }
-        if (!workspaceMatches.isEmpty()) {
-            metadata[QStringLiteral("workspace_matches")] = QJsonArray::fromStringList(workspaceMatches);
-            if (workspaceMatches.size() >= 2 && workspaceMatches.size() <= 20) {
-                candidateChoices = workspaceMatches;
-            }
-        }
+    if (metadata.contains(QStringLiteral("unbounded_target_files"))) {
+        const auto arr = metadata.value(QStringLiteral("unbounded_target_files")).toArray();
+        for (const auto& v : arr) candidateChoices.append(v.toString());
+    } else if (metadata.contains(QStringLiteral("matched_files"))) {
+        const auto arr = metadata.value(QStringLiteral("matched_files")).toArray();
+        for (const auto& v : arr) candidateChoices.append(v.toString());
     }
 
     const auto id = m_julia->classifyPrompt(promptText, context, metadata, candidateChoices);

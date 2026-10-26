@@ -115,6 +115,7 @@ struct AnalysisSnapshot {
 // Diagram route: Julia classifies raw prompt; Granite only supplies choices for Clarify.
 // Alternative ranking is deliberately NotRequested; triage scores are never copied onto choices.
 [[nodiscard]] Result<AnalysisSnapshot> buildRoutedAnalysisSnapshot(NormalizedAnalysis normalized,
-    PromptTriage triage, std::string_view frozenPrompt, std::string discoveryAttemptId = {});
+    PromptTriage triage, std::string_view frozenPrompt, std::string discoveryAttemptId = {},
+    std::optional<SnapshotEvaluationResponse> evaluation = std::nullopt);
 
 } // namespace roclint::core::analysis
