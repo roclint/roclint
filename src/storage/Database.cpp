@@ -31,6 +31,7 @@ Database::Database(const std::filesystem::path& path) {
 }
 
 Database::Database(Database&& other) noexcept : db_(other.db_), inMemory_(other.inMemory_) {
+    cancellation_ = std::move(other.cancellation_);
     other.db_ = nullptr;
 }
 
@@ -39,6 +40,7 @@ Database& Database::operator=(Database&& other) noexcept {
         close();
         db_ = other.db_;
         inMemory_ = other.inMemory_;
+        cancellation_ = std::move(other.cancellation_);
         other.db_ = nullptr;
     }
     return *this;
@@ -62,10 +64,22 @@ core::Status Database::open(const std::filesystem::path& path) {
         return makeError(ErrorCode::DbError, std::move(message));
     }
     sqlite3_extended_result_codes(db_, 1);
+    sqlite3_busy_timeout(db_, kBusyTimeoutMs); // Includes WAL initialization contention.
 
     if (auto status = applyAndVerifyPragmas(); !status.ok()) {
         close();
         return status;
+    }
+    if (cancellation_) {
+        sqlite3_busy_handler(db_, [](void* pointer, int count) -> int {
+            const auto* cancelled = static_cast<std::atomic_bool*>(pointer);
+            if (cancelled->load() || count >= kBusyTimeoutMs / 5) return 0;
+            sqlite3_sleep(5);
+            return !cancelled->load();
+        }, cancellation_.get());
+        sqlite3_progress_handler(db_, 1000, [](void* pointer) -> int {
+            return static_cast<std::atomic_bool*>(pointer)->load() ? 1 : 0;
+        }, cancellation_.get());
     }
     return core::Status::success();
 }

@@ -18,6 +18,14 @@ Window {
     readonly property string sansFont: isMac ? "Helvetica Neue" : "Arial"
 
     // Multi-Palette Theme System (Mirrors FloatingCard.qml exactly)
+    Connections {
+        target: typeof hostController !== "undefined" ? hostController : null
+        function onClarificationDeferred(message, automatic) { dashboardWindow.showToast(message); }
+        function onStorageCommandFinished(requestId, name, succeeded, errorCode, message) {
+            if (name === "purgeHistory" && succeeded) dashboardWindow.showToast("HISTORY PURGED");
+        }
+    }
+
     property string currentTheme: "dark" // "dark", "light", "acid", "amber"
 
     readonly property color bgColor: {
@@ -1757,6 +1765,7 @@ Window {
                                                             if (!dashboardWindow.confirmPurge) { dashboardWindow.confirmPurge = true; dashboardWindow.showToast("CLICK PURGE AGAIN TO CONFIRM"); return; }
                                                             if (!hostController.purgeHistory()) return;
                                                             dashboardWindow.confirmPurge = false;
+                                                            return;
                                                         }
                                                         dashboardWindow.showToast("HISTORY PURGED");
                                                     }

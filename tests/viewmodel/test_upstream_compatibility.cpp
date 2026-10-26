@@ -332,6 +332,7 @@ void testJuliaControllerLifecycle() {
     settings.setValue(QStringLiteral("scoring/engine"), QStringLiteral("julia"));
     {
         HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
         controller.setLegacyDiscoveryForTesting(true);
         controller.setAnalysisGroupTimeoutForTesting(100);
         ROCLINT_CHECK(controller.juliaState() == QLatin1String("NOT_LOADED"));
@@ -345,9 +346,9 @@ void testJuliaControllerLifecycle() {
         });
         ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
         const auto prompt = QString::fromStdString(fx::kChainPrompt);
-        ROCLINT_CHECK(controller.analyzePrompt(prompt, controller.stateVersion()));
+        ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(prompt, controller.stateVersion())));
         waitUntil([&]() { return controller.juliaState() == QLatin1String("SCORING"); });
-        ROCLINT_CHECK(controller.noteDraftEdited(controller.stateVersion()));
+        ROCLINT_CHECK(controller.waitForCommandForTesting(controller.noteDraftEdited(controller.stateVersion())));
         ROCLINT_CHECK(controller.waitForIdleForTesting(1000));
         bool lateWindowElapsed = false;
         QTimer::singleShot(700, [&]() { lateWindowElapsed = true; });
@@ -355,7 +356,7 @@ void testJuliaControllerLifecycle() {
         ROCLINT_CHECK(!controller.analysisForTesting().has_value());
         ROCLINT_CHECK(controller.isDraftDirty() && controller.currentRevisionText() == prompt);
         const auto attempts = controller.repositoryForTesting()->getModelAttempts(
-            roclint::core::SessionId(controller.currentSessionIdString().toStdString()));
+            roclint::core::SessionId(controller.currentSessionIdString().toStdString())).waitForTesting();
         ROCLINT_CHECK(attempts.ok());
         bool discardedScore = false;
         for (const auto& attempt : attempts.value())
@@ -365,6 +366,7 @@ void testJuliaControllerLifecycle() {
     settings.setValue(QStringLiteral("scoring/juliaDirectory"), QStringLiteral("hang_shutdown"));
     {
         HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
         controller.setLegacyDiscoveryForTesting(true);
         controller.refreshJuliaModel();
         waitUntil([&]() { return controller.juliaState() == QLatin1String("READY"); });
@@ -386,6 +388,7 @@ void testSharedDiscoveryJuliaDeadline() {
     settings.setValue(QStringLiteral("scoring/engine"), QStringLiteral("julia"));
     for (const int budget : {250, 2000}) {
         HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
         controller.setLegacyDiscoveryForTesting(true);
         controller.setAnalysisGroupTimeoutForTesting(budget);
         controller.refreshJuliaModel();
@@ -398,7 +401,7 @@ void testSharedDiscoveryJuliaDeadline() {
         });
         ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
         QElapsedTimer elapsed; elapsed.start();
-        ROCLINT_CHECK(controller.analyzePrompt(QString::fromStdString(fx::kChainPrompt), 0));
+        ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(QString::fromStdString(fx::kChainPrompt), 0)));
         waitUntil([&]() { return controller.juliaState() == QLatin1String("SCORING"); });
         ROCLINT_CHECK(!controller.finalSnapshotForTesting());
         ROCLINT_CHECK(controller.waitForIdleForTesting(5000));
@@ -412,7 +415,7 @@ void testSharedDiscoveryJuliaDeadline() {
             for (const auto& score : snapshot.evaluation.groupScores) ROCLINT_CHECK(!score.isScored && !score.probabilities);
         }
         const auto attempts = controller.repositoryForTesting()->getModelAttempts(
-            roclint::core::SessionId(controller.currentSessionIdString().toStdString()));
+            roclint::core::SessionId(controller.currentSessionIdString().toStdString())).waitForTesting();
         ROCLINT_CHECK(attempts.ok() && attempts.value().size() == 2);
         std::string group;
         for (const auto& attempt : attempts.value()) {
@@ -447,6 +450,7 @@ void testS1FirstControllerRouting() {
     for (const auto* mode : {"clear", "valid", "assumption_only", "late_cancel", "bad_triage", "slow_triage", "s1_timeout", "no_options", "crash_triage"}) {
         settings.setValue(QStringLiteral("scoring/juliaDirectory"), QString::fromLatin1(mode));
         HostController controller(history.filePath(QString::fromLatin1(mode) + ".db"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
         if (std::string_view(mode) == "slow_triage") controller.setAnalysisGroupTimeoutForTesting(200);
         if (std::string_view(mode) == "s1_timeout") controller.setAnalysisGroupTimeoutForTesting(25);
         // Uses the production routing default. Only the out-of-process model data is scripted.
@@ -474,11 +478,11 @@ void testS1FirstControllerRouting() {
         });
         ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
         const auto prompt = QString::fromStdString(fx::kChainPrompt);
-        ROCLINT_CHECK(controller.analyzePrompt(prompt, 0));
+        ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(prompt, 0)));
         ROCLINT_CHECK(graniteCalls == 0); // S1 must complete first.
         if (std::string_view(mode) == "late_cancel") {
             waitUntil([&]() { return controller.juliaState() == QLatin1String("TRIAGING"); });
-            ROCLINT_CHECK(controller.noteDraftEdited(controller.stateVersion()));
+            ROCLINT_CHECK(controller.waitForCommandForTesting(controller.noteDraftEdited(controller.stateVersion())));
         }
         ROCLINT_CHECK(controller.waitForIdleForTesting(5000));
         if (std::string_view(mode) == "clear") {
@@ -486,19 +490,19 @@ void testS1FirstControllerRouting() {
             ROCLINT_CHECK(controller.currentRevisionText() == prompt && controller.analysisStatus() == "READY");
             ROCLINT_CHECK(controller.finalSnapshotForTesting()->payloadVersion == 4);
             ROCLINT_CHECK(!controller.isRewriteEnabled());
-            ROCLINT_CHECK(!controller.synthesizeRewrite(controller.stateVersion()));
+            ROCLINT_CHECK(!controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
             clearSession = controller.currentSessionIdString();
         } else if (std::string_view(mode) == "valid" || std::string_view(mode) == "assumption_only") {
             ROCLINT_CHECK(graniteCalls == 1 && !controller.isOriginalRoute());
             ROCLINT_CHECK(controller.finalSnapshotForTesting()->promptTriage->ambiguityScore == .70);
             ROCLINT_CHECK(controller.finalSnapshotForTesting()->evaluation.executionStatus == an::ExecutionStatus::NotRequested);
             ROCLINT_CHECK(controller.isClarifying() && !controller.isRewriteEnabled() && rewriteCalls == 0);
-            ROCLINT_CHECK(!controller.synthesizeRewrite(controller.stateVersion()));
+            ROCLINT_CHECK(!controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
             if (std::string_view(mode) == "assumption_only")
-                ROCLINT_CHECK(controller.resolveActiveAssumption(true, controller.stateVersion()));
-            else ROCLINT_CHECK(controller.confirmChoice("alt_0_0", controller.stateVersion()));
+                ROCLINT_CHECK(controller.waitForCommandForTesting(controller.resolveActiveAssumption(true, controller.stateVersion())));
+            else ROCLINT_CHECK(controller.waitForCommandForTesting(controller.confirmChoice("alt_0_0", controller.stateVersion())));
             ROCLINT_CHECK(controller.isRewriteEnabled() && rewriteCalls == 0);
-            ROCLINT_CHECK(controller.synthesizeRewrite(controller.stateVersion()));
+            ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
             ROCLINT_CHECK(controller.waitForIdleForTesting(5000));
             ROCLINT_CHECK(rewriteCalls == 1 && controller.hasProposal() && !controller.hasApproval());
         } else if (std::string_view(mode) == "slow_triage" || std::string_view(mode) == "no_options") {
@@ -508,7 +512,7 @@ void testS1FirstControllerRouting() {
             ROCLINT_CHECK(graniteCalls == 0 && !controller.finalSnapshotForTesting());
         }
         const auto attempts = controller.repositoryForTesting()->getModelAttempts(
-            roclint::core::SessionId(controller.currentSessionIdString().toStdString())).value();
+            roclint::core::SessionId(controller.currentSessionIdString().toStdString())).waitForTesting().value();
         ROCLINT_CHECK(attempts.front().stage == "julia_triage");
         for (const auto& attempt : attempts) ROCLINT_CHECK(attempt.stage != "julia_scoring");
         if (std::string_view(mode) == "clear" || std::string_view(mode) == "valid")
@@ -534,7 +538,8 @@ void testS1FirstControllerRouting() {
         ROCLINT_CHECK(QDir().mkpath(localDirectory));
         settings.setValue(QStringLiteral("scoring/juliaDirectory"), localDirectory);
         HostController automatic(":memory:");
-        ROCLINT_CHECK(automatic.analyzePrompt(QString::fromStdString(fx::kChainPrompt), 0));
+    ROCLINT_CHECK(automatic.waitForStorageForTesting());
+        ROCLINT_CHECK(automatic.waitForCommandForTesting(automatic.analyzePrompt(QString::fromStdString(fx::kChainPrompt), 0)));
         ROCLINT_CHECK(automatic.waitForIdleForTesting(5000));
         ROCLINT_CHECK(automatic.isOriginalRoute() && automatic.finalSnapshotForTesting());
         // No Granite transport was configured or marked ready.
@@ -544,12 +549,14 @@ void testS1FirstControllerRouting() {
     {
         settings.setValue(QStringLiteral("scoring/juliaDirectory"), history.filePath("missing"));
         HostController missing(":memory:");
-        ROCLINT_CHECK(!missing.analyzePrompt(QString::fromStdString(fx::kChainPrompt), 0));
+    ROCLINT_CHECK(missing.waitForStorageForTesting());
+        ROCLINT_CHECK(!missing.waitForCommandForTesting(missing.analyzePrompt(QString::fromStdString(fx::kChainPrompt), 0)));
         ROCLINT_CHECK(missing.analysisStatus() == "FAILED" && !missing.isOriginalRoute() && !missing.finalSnapshotForTesting());
     }
     {
         HostController restored(history.filePath("clear.db"));
-        ROCLINT_CHECK(restored.restoreSession(clearSession, 0));
+    ROCLINT_CHECK(restored.waitForStorageForTesting());
+        ROCLINT_CHECK(restored.waitForCommandForTesting(restored.restoreSession(clearSession, 0)));
         ROCLINT_CHECK(restored.isOriginalRoute() && !restored.isRewriteEnabled());
         ROCLINT_CHECK(restored.currentRevisionText() == QString::fromStdString(fx::kChainPrompt));
     }
@@ -662,6 +669,7 @@ int main(int argc, char** argv) {
     writeFile(workspace.path() + QStringLiteral("/outside.cpp"));
 
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
 
     c.setLegacyDiscoveryForTesting(true);
     ROCLINT_CHECK(c.invocationShortcut() == "Ctrl+Shift+L");

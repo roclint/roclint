@@ -24,6 +24,7 @@ int main(int argc, char** argv) {
     std::optional<analysis::AnalysisSnapshot> saved;
     {
         host::HostController controller(database);
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
         controller.setLegacyDiscoveryForTesting(true);
         controller.setScorerEngine("jev");
         controller.s1AdapterForTesting().setMockCloudScorer([](const analysis::NormalizedAnalysis& normalized)
@@ -43,7 +44,7 @@ int main(int argc, char** argv) {
                               {"label":"Higher throughput","why_material":"Batches","evidence":["runs faster"]}]}]})");
         });
         ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
-        ROCLINT_CHECK(controller.analyzePrompt(QString::fromStdString(fx::kChainPrompt), 0));
+        ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(QString::fromStdString(fx::kChainPrompt), 0)));
         ROCLINT_CHECK(controller.waitForIdleForTesting(5000));
         ROCLINT_CHECK(controller.analysisStatus() == "READY");
         ROCLINT_CHECK(controller.finalSnapshotForTesting());
@@ -52,22 +53,23 @@ int main(int argc, char** argv) {
         ROCLINT_CHECK(controller.activeAlternatives().at(0).toMap().value("id").toString() == "alt_0_1");
         ROCLINT_CHECK(!controller.confirmedIntentForTesting());
         // The label at position 1 carries its real alternative ID after reordering.
-        ROCLINT_CHECK(controller.confirmChoice("alt_0_1", controller.stateVersion()));
+        ROCLINT_CHECK(controller.waitForCommandForTesting(controller.confirmChoice("alt_0_1", controller.stateVersion())));
         ROCLINT_CHECK(controller.confirmedIntentForTesting()->snapshotId == saved->id);
         session = controller.currentSessionIdString();
     }
     {
         host::HostController controller(database);
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
         controller.setLegacyDiscoveryForTesting(true);
         // Neither a configured scorer nor a live Granite model is available on restore.
         controller.setScorerEngine("julia");
-        ROCLINT_CHECK(controller.restoreSession(session, controller.stateVersion()));
+        ROCLINT_CHECK(controller.waitForCommandForTesting(controller.restoreSession(session, controller.stateVersion())));
         ROCLINT_CHECK(controller.finalSnapshotForTesting() == saved);
         ROCLINT_CHECK(controller.confirmedIntentForTesting());
         ROCLINT_CHECK(controller.confirmedIntentForTesting()->snapshotHash == saved->snapshotHash);
         ROCLINT_CHECK(controller.confirmedIntentForTesting()->items.at(0).chosenAlternativeId == "alt_0_1");
         ROCLINT_CHECK(!controller.isIntentStale());
-        const auto restored = controller.repositoryForTesting()->restoreSession(SessionId(session.toStdString()));
+        const auto restored = controller.repositoryForTesting()->restoreSession(SessionId(session.toStdString())).waitForTesting();
         ROCLINT_CHECK(restored.ok() && restored.value().analysis == saved);
     }
     std::cout << "Controller persists scored ordering and restores its exact source binding without rescoring.\n";

@@ -75,9 +75,10 @@ void testCaptureAndSettings() {
     QSettings().clear();
     {
         HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
         c.setLegacyDiscoveryForTesting(true);
         c.setHostContextEnabled(false);
-        c.setRewriteProfile(QStringLiteral("OPENAI_STRUCTURED"), c.stateVersion());
+        c.waitForCommandForTesting(c.setRewriteProfile(QStringLiteral("OPENAI_STRUCTURED"), c.stateVersion()));
         HostContextDetector::setMockObservation(HostContextObservation{
             HostContextCategory::CodeEditor, QStringLiteral("VS Code"), QStringLiteral("Code.exe")});
         QGuiApplication::clipboard()->setText(QStringLiteral("first draft"));
@@ -93,6 +94,7 @@ void testCaptureAndSettings() {
     HostContextDetector::resetMock();
     {
         HostController restored(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(restored.waitForStorageForTesting());
         restored.setLegacyDiscoveryForTesting(true);
         ROCLINT_CHECK(!restored.hostContextEnabled());
         ROCLINT_CHECK(restored.rewriteProfile() == "OPENAI_STRUCTURED@1");
@@ -114,16 +116,17 @@ void testCaptureAndSettings() {
 void testHintChangeRejectsInFlightResult() {
     std::atomic<int> calls{0};
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     prepare(c, calls, 80);
     HostContextDetector::setMockObservation(HostContextObservation{
         HostContextCategory::CodeEditor, QStringLiteral("VS Code"), QStringLiteral("Code.exe")});
     c.showCard();
-    ROCLINT_CHECK(c.analyzePrompt(QString::fromStdString(fx::kChainPrompt), c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(QString::fromStdString(fx::kChainPrompt), c.stateVersion())));
     c.clearHostContext();
     ROCLINT_CHECK(c.waitForIdleForTesting(3000));
     ROCLINT_CHECK(!c.analysisForTesting().has_value());
-    const auto attempts = c.repositoryForTesting()->getModelAttempts(SessionId(c.currentSessionIdString().toStdString()));
+    const auto attempts = c.repositoryForTesting()->getModelAttempts(SessionId(c.currentSessionIdString().toStdString())).waitForTesting();
     ROCLINT_CHECK(attempts.ok() && attempts.value().size() == 1);
     ROCLINT_CHECK(attempts.value()[0].status == roclint::storage::AttemptStatus::DiscardedStale);
     ROCLINT_CHECK(attempts.value()[0].modelDetail.find("host_context_category=CODE_EDITOR") != std::string::npos);
@@ -134,10 +137,11 @@ void testHintChangeRejectsInFlightResult() {
 void testModelSwitchDuringInference() {
     std::atomic<int> calls{0};
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     prepare(c, calls, 120);
     ROCLINT_CHECK(c.setModelRuntimeUrlForTesting(QUrl(QStringLiteral("http://127.0.0.1:1"))));
-    ROCLINT_CHECK(c.analyzePrompt(QString::fromStdString(fx::kChainPrompt), c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(QString::fromStdString(fx::kChainPrompt), c.stateVersion())));
     for (int n = 0; n < 500 && calls == 0; ++n) QTest::qWait(1);
     ROCLINT_CHECK(calls == 1 && c.modelRuntimeState() == "BUSY");
     c.setActiveModel(QStringLiteral("different-model"));
@@ -145,7 +149,7 @@ void testModelSwitchDuringInference() {
     ROCLINT_CHECK(c.waitForIdleForTesting(15000));
     ROCLINT_CHECK(!c.analysisForTesting().has_value());
     ROCLINT_CHECK(c.modelRuntimeState() == "FAILED"); // the new model was actually probed, not assumed ready
-    const auto attempts = c.repositoryForTesting()->getModelAttempts(SessionId(c.currentSessionIdString().toStdString()));
+    const auto attempts = c.repositoryForTesting()->getModelAttempts(SessionId(c.currentSessionIdString().toStdString())).waitForTesting();
     ROCLINT_CHECK(attempts.ok() && attempts.value().size() == 1);
     ROCLINT_CHECK(attempts.value()[0].status == roclint::storage::AttemptStatus::DiscardedStale);
     ROCLINT_CHECK(attempts.value()[0].modelId == fx::testModel().modelId);
@@ -159,6 +163,7 @@ void testKeyboardWorkflow() {
         HostContextCategory::CodeEditor, QStringLiteral("VS Code"), QStringLiteral("Code.exe")});
     std::atomic<int> calls{0};
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     prepare(c, calls);
     QQmlApplicationEngine engine;
@@ -204,6 +209,7 @@ void testKeyboardWorkflow() {
     ROCLINT_CHECK(c.roundsCompleted() == 0 && !c.hasConfirmedIntent());
     ROCLINT_CHECK(choices->hasActiveFocus());
     QTest::keyClick(window, Qt::Key_1);
+    ROCLINT_CHECK(c.waitForIdleForTesting(3000));
     ROCLINT_CHECK(c.hasConfirmedIntent());
     ROCLINT_CHECK(QGuiApplication::clipboard()->text() == "untouched");
 
@@ -221,6 +227,7 @@ void testKeyboardWorkflow() {
     auto* review = window->findChild<QQuickItem*>(QStringLiteral("reviewPanel"));
     ROCLINT_CHECK(review != nullptr && review->width() <= window->width() - 28);
     QTest::keyClick(window, Qt::Key_Return, Qt::ControlModifier);
+    ROCLINT_CHECK(c.waitForIdleForTesting(3000));
     ROCLINT_CHECK(c.hasApproval());
     ROCLINT_CHECK(QGuiApplication::clipboard()->text() == kRewritten);
     ROCLINT_CHECK(c.approvalLabel() == "Wording reviewed");
@@ -244,15 +251,16 @@ void testKeyboardWorkflow() {
 void testReviewRequiresExplicitActivation() {
     QSettings().clear();
     HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
     controller.setLegacyDiscoveryForTesting(true);
     controller.setTransportOverrideForTesting([](std::string_view prompt) -> Result<std::string> {
         return prompt.find("<instructions>") == std::string_view::npos ? kDiscovery : fx::rewriteReply("Make the parser quicker.");
     });
     ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
-    ROCLINT_CHECK(controller.analyzePrompt(QString::fromStdString(fx::kChainPrompt), 0));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(QString::fromStdString(fx::kChainPrompt), 0)));
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
-    ROCLINT_CHECK(controller.confirmChoice(QStringLiteral("alt_0_0"), controller.stateVersion()));
-    ROCLINT_CHECK(controller.synthesizeRewrite(controller.stateVersion()));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.confirmChoice(QStringLiteral("alt_0_0"), controller.stateVersion())));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(controller.pendingReviewCount() == 1);
     QQmlApplicationEngine engine;
@@ -278,6 +286,7 @@ void testReviewRequiresExplicitActivation() {
     check->forceActiveFocus(Qt::TabFocusReason);
     QTest::qWait(60);
     QTest::keyClick(window, Qt::Key_Space);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(controller.pendingReviewCount() == 0 && controller.stateVersion() == observed + 1);
     ROCLINT_CHECK(controller.canApprove() && !controller.hasApproval());
     ROCLINT_CHECK(controller.lastErrorCode().isEmpty());
@@ -287,6 +296,7 @@ void testReviewRequiresExplicitActivation() {
 void testResidencySettingsKeyboard() {
     QSettings().clear();
     HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
     controller.setLegacyDiscoveryForTesting(true);
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("hostController"), &controller);
@@ -315,6 +325,7 @@ void testResidencySettingsKeyboard() {
 void testOverBudgetAssumptionsRemainVisibleAndUnconfirmed() {
     QSettings().clear();
     HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
     controller.setLegacyDiscoveryForTesting(true);
     controller.setScorerEngine("jev");
     controller.s1AdapterForTesting().setMockCloudScorer([](const analysis::NormalizedAnalysis& input) -> Result<roclint::bridge::SnapshotEvaluationResponse> {
@@ -345,7 +356,7 @@ void testOverBudgetAssumptionsRemainVisibleAndUnconfirmed() {
         return json::serialize(response);
     });
     ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
-    ROCLINT_CHECK(controller.analyzePrompt("The service needs tests.", 0));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt("The service needs tests.", 0)));
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(controller.isManual() && !controller.hasConfirmedIntent());
     ROCLINT_CHECK(controller.assumptionReviews().size() == 5);
@@ -381,6 +392,7 @@ void testLiveCapturedDraftAndCancelRetryInQml() {
     auto* observed = bridge.get();
     observed->accessValue = AccessibilityAccess::Granted;
     HostController controller(QStringLiteral(":memory:"), std::move(bridge));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
     controller.setLegacyDiscoveryForTesting(true);
     std::atomic<int> calls{0};
     prepare(controller, calls, 180);
@@ -398,7 +410,7 @@ void testLiveCapturedDraftAndCancelRetryInQml() {
     field.appIdentifier = QStringLiteral("ChatGPT.exe"); field.appDisplayName = QStringLiteral("Codex");
     field.kind = FieldKind::GuiEditor;
     observed->observe(field);
-    ROCLINT_CHECK(controller.openFromAmbient());
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.openFromAmbient()));
     window->show();
     window->requestActivate();
     ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
@@ -407,11 +419,11 @@ void testLiveCapturedDraftAndCancelRetryInQml() {
     observed->observe(field);
     ROCLINT_CHECK(editor->property("text").toString() == field.text && calls == 0);
     ROCLINT_CHECK(QMetaObject::invokeMethod(window, "analyzeNow"));
-    ROCLINT_CHECK(controller.isAnalyzing());
+    QTRY_VERIFY_WITH_TIMEOUT(controller.isAnalyzing(), 3000);
     ROCLINT_CHECK(action->property("text").toString().contains(QStringLiteral("CANCEL ANALYSIS")));
     ROCLINT_CHECK(QMetaObject::invokeMethod(window, "handleEnter"));
-    ROCLINT_CHECK(!controller.isAnalyzing());
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    ROCLINT_CHECK(!controller.isAnalyzing());
     ROCLINT_CHECK(controller.analysisStatus() == "IDLE" && !controller.hasProposal());
     ROCLINT_CHECK(editor->property("text").toString() == field.text);
     ROCLINT_CHECK(QMetaObject::invokeMethod(window, "analyzeNow"));
@@ -437,6 +449,7 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
     auto* observed = bridge.get();
     HostController controller(QStringLiteral(":memory:"), std::move(bridge));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
     controller.setLegacyDiscoveryForTesting(true);
     controller.setAmbientModeEnabled(true);
     int modelCalls = 0;
@@ -459,11 +472,11 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
     const auto original = QString::fromStdString(fx::kChainPrompt);
     ROCLINT_CHECK(QMetaObject::invokeMethod(window, "setEditorText", Q_ARG(QVariant, original)));
-    ROCLINT_CHECK(controller.analyzePrompt(original, 0));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(original, 0)));
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(controller.analysisStatus() == "READY" && controller.activeItemId() == "mdc_0");
-    ROCLINT_CHECK(controller.submitCustomIntent(QStringLiteral("Prefer lower latency per call."), controller.stateVersion()));
-    ROCLINT_CHECK(controller.synthesizeRewrite(controller.stateVersion()));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.submitCustomIntent(QStringLiteral("Prefer lower latency per call."), controller.stateVersion())));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(controller.hasProposal() && controller.pendingReviewCount() > 0 && !controller.canApprove());
     const auto version = controller.stateVersion();
@@ -503,14 +516,16 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     auto* check = findReview(window->contentItem());
     ROCLINT_CHECK(check && !check->property("checked").toBool());
     check->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(controller.canApprove());
     approve->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     QTest::qWait(30);
     ROCLINT_CHECK(controller.hasApproval() && observed->injections.size() == 1);
     ROCLINT_CHECK(observed->injections[0].text == kRewritten && observed->injections[0].expectedCurrentText == field.text);
     ROCLINT_CHECK(QGuiApplication::clipboard()->text() == "Leave clipboard unchanged" && modelCalls == calls);
     const auto savedSession = controller.currentSessionIdString();
-    ROCLINT_CHECK(controller.restoreSessionForReview(savedSession, controller.stateVersion()));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.restoreSessionForReview(savedSession, controller.stateVersion())));
     ROCLINT_CHECK(controller.isCardVisible() && !controller.isAmbientCapture());
     ROCLINT_CHECK(controller.proposalForTesting()->proposalHash == proposalHash && modelCalls == calls);
     ROCLINT_CHECK(approve->property("label").toString() == "Approve & Copy");
@@ -520,6 +535,7 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
 void testClipboardFallbackDoesNotDismissQmlCard() {
     QSettings().clear();
     HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("hostController"), &controller);
     engine.load(QUrl(QStringLiteral("qrc:/shell/FloatingCard.qml")));
@@ -555,6 +571,7 @@ void testClipboardFallbackDoesNotDismissQmlCard() {
 void testManualRemainderCanFinishAndGeneratePreview() {
     QSettings().clear();
     HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
     controller.setLegacyDiscoveryForTesting(true);
     int rewriteCalls = 0;
     const std::string discovery = R"({"status":"options_generated","choice_groups":[
@@ -584,12 +601,12 @@ void testManualRemainderCanFinishAndGeneratePreview() {
     ROCLINT_CHECK(window);
     window->show(); window->requestActivate();
     const QString original = QStringLiteral("Make it faster, smaller, and safer.");
-    ROCLINT_CHECK(controller.analyzePrompt(original, 0));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(original, 0)));
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     for (int i = 0; i < 3; ++i) {
         ROCLINT_CHECK(controller.isClarifying());
         const auto id = controller.activeAlternatives().first().toMap().value("id").toString();
-        ROCLINT_CHECK(controller.confirmChoice(id, controller.stateVersion()));
+        ROCLINT_CHECK(controller.waitForCommandForTesting(controller.confirmChoice(id, controller.stateVersion())));
     }
     ROCLINT_CHECK(controller.isManual());
     ROCLINT_CHECK(rewriteCalls == 0);
@@ -610,7 +627,7 @@ void testManualRemainderCanFinishAndGeneratePreview() {
     ROCLINT_CHECK(controller.roundsCompleted() == 3);
     ROCLINT_CHECK(controller.currentRevisionText() == original);
     ROCLINT_CHECK(!controller.hasApproval());
-    ROCLINT_CHECK(controller.restoreSession(controller.currentSessionIdString(), controller.stateVersion()));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.restoreSession(controller.currentSessionIdString(), controller.stateVersion())));
     ROCLINT_CHECK(controller.hasConfirmedIntent() && controller.roundsCompleted() == 3);
     ROCLINT_CHECK(rewriteCalls == 1); // Restoring completed history never generates a new preview.
     std::cout << "  [PASS] The visible manual remainder completes intent and starts one reviewable rewrite.\n";
@@ -619,6 +636,7 @@ void testManualRemainderCanFinishAndGeneratePreview() {
 void testForbiddenColorOptionIsBlockedInUiAndController() {
     QSettings().clear();
     HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
     controller.setLegacyDiscoveryForTesting(true);
     controller.setTransportOverrideForTesting([](std::string_view) -> Result<std::string> {
         return std::string(R"({"status":"options_generated","choice_groups":[{"dimension":"color","question":"Which dog color?","material":true,"alternatives":[
@@ -627,13 +645,13 @@ void testForbiddenColorOptionIsBlockedInUiAndController() {
           "assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""})");
     });
     ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
-    ROCLINT_CHECK(controller.analyzePrompt(QStringLiteral("The dog will be black but it cant be blue."), 0));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(QStringLiteral("The dog will be black but it cant be blue."), 0)));
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(controller.activeAlternatives().size() == 2);
     ROCLINT_CHECK(controller.activeAlternatives()[0].toMap().value("permitted").toBool());
     ROCLINT_CHECK(!controller.activeAlternatives()[1].toMap().value("permitted").toBool());
     const auto version = controller.stateVersion();
-    ROCLINT_CHECK(!controller.confirmChoice(QStringLiteral("alt_0_1"), version));
+    ROCLINT_CHECK(!controller.waitForCommandForTesting(controller.confirmChoice(QStringLiteral("alt_0_1"), version)));
     ROCLINT_CHECK(controller.stateVersion() == version && controller.roundsCompleted() == 0);
     ROCLINT_CHECK(controller.lastError().contains(QStringLiteral("color requirement")));
     QQmlApplicationEngine engine;
@@ -650,7 +668,7 @@ void testForbiddenColorOptionIsBlockedInUiAndController() {
     };
     auto* forbidden = findForbidden(window->contentItem());
     ROCLINT_CHECK(forbidden && !forbidden->isEnabled());
-    ROCLINT_CHECK(controller.confirmChoice(QStringLiteral("alt_0_0"), version));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.confirmChoice(QStringLiteral("alt_0_0"), version)));
     ROCLINT_CHECK(controller.hasConfirmedIntent());
 }
 } // namespace

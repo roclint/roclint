@@ -138,6 +138,9 @@ if(BUILD_DESKTOP)
         set(CMAKE_AUTOUIC ON)
 
         set(ROCLINT_HOST_SOURCES
+            app/host/AsyncTask.hpp
+            app/host/StorageService.hpp
+            app/host/AsyncRepository.hpp
             app/host/HostController.hpp
             app/host/HostController.cpp
             app/host/HostControllerWorkspace.cpp
@@ -149,6 +152,7 @@ if(BUILD_DESKTOP)
             app/host/JuliaRuntime.hpp
             app/host/JuliaRuntime.cpp
             app/host/OwnedProcessJob.hpp
+            app/host/WorkspaceInspection.hpp
             app/host/NativeGraniteRuntime.hpp
             app/host/NativeGraniteRuntime.cpp
             app/host/GraniteModelInstaller.hpp
@@ -332,6 +336,17 @@ if(BUILD_DESKTOP)
                 "$<TARGET_FILE_DIR:roclint_host>/runtime"
             VERBATIM)
         # Refresh Python-only changes on ordinary incremental builds even when the host does not relink.
+        add_executable(roclint_workspace_helper app/runtime/workspace_helper.cpp)
+        target_link_libraries(roclint_workspace_helper PRIVATE Qt6::Core)
+        add_dependencies(roclint_host roclint_workspace_helper)
+        add_custom_command(TARGET roclint_host POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:roclint_host>/runtime"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:roclint_workspace_helper>" "$<TARGET_FILE_DIR:roclint_host>/runtime/")
+        add_custom_target(roclint_workspace_runtime_files ALL
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:roclint_host>/runtime"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:roclint_workspace_helper>" "$<TARGET_FILE_DIR:roclint_host>/runtime/"
+            DEPENDS roclint_workspace_helper)
+
         add_custom_target(roclint_runtime_files ALL
             COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:roclint_host>/runtime"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -438,9 +453,12 @@ if(BUILD_TESTING)
         target_include_directories(roclint_native_granite_tests PRIVATE app/runtime "${CMAKE_CURRENT_BINARY_DIR}/generated")
         roclint_add_test(roclint_host_lifecycle    tests/viewmodel/test_host_lifecycle.cpp    roclint_host_lib_testing Qt6::Core)
         roclint_add_test(roclint_invocation_binding tests/viewmodel/test_invocation_binding.cpp roclint_host_lib_testing Qt6::Core Qt6::Gui)
+        roclint_add_test(roclint_async_persistence tests/viewmodel/test_async_persistence.cpp roclint_host_lib_testing Qt6::Core Qt6::Gui)
         roclint_add_test(roclint_host_persistence  tests/viewmodel/test_host_persistence.cpp  roclint_host_lib_testing Qt6::Core)
         roclint_add_test(roclint_scored_history    tests/viewmodel/test_scored_history.cpp    roclint_host_lib_testing Qt6::Core Qt6::Gui)
         roclint_add_test(roclint_host_controller   tests/viewmodel/test_host_controller.cpp   roclint_host_lib_testing Qt6::Core Qt6::Gui Qt6::Network)
+        roclint_add_test(roclint_workspace_inspection tests/viewmodel/test_workspace_inspection.cpp roclint_host_lib_testing Qt6::Core)
+        add_dependencies(roclint_workspace_inspection_tests roclint_workspace_runtime_files)
         roclint_add_test(roclint_host_context      tests/viewmodel/test_host_context.cpp      roclint_host_lib_testing Qt6::Core)
         roclint_add_test(roclint_terminal_adapter  tests/viewmodel/test_terminal_adapter.cpp  roclint_host_lib_testing Qt6::Core)
         roclint_add_test(roclint_dual_mode         tests/viewmodel/test_dual_mode.cpp         roclint_host_lib_testing Qt6::Core Qt6::Gui)

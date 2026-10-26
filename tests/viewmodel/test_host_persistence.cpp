@@ -26,15 +26,16 @@ int main(int argc, char* argv[]) {
 
     {
         HostController c(dbPath);
+    ROCLINT_CHECK(c.waitForStorageForTesting());
         c.setLegacyDiscoveryForTesting(true);
         ROCLINT_CHECK(c.isStorageAvailable());
         ROCLINT_CHECK(c.sessionCount() == 0);
         ROCLINT_CHECK(c.stateVersion() == 0);
 
-        ROCLINT_CHECK(c.commitPrompt(prompt1, 0));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(prompt1, 0)));
         ROCLINT_CHECK(c.stateVersion() == 1);
         firstRevisionId = c.currentRevisionId();
-        ROCLINT_CHECK(c.commitPrompt(prompt2, 1));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(prompt2, 1)));
         ROCLINT_CHECK(c.stateVersion() == 2);
         ROCLINT_CHECK(c.sessionCount() == 1);
 
@@ -55,12 +56,13 @@ int main(int argc, char* argv[]) {
         attempt.stage = "discovery";
         attempt.transport = "ollama_loopback";
         attempt.startedAtMs = 1;
-        ROCLINT_CHECK(c.repositoryForTesting()->beginModelAttempt(attempt).ok());
+        ROCLINT_CHECK(c.repositoryForTesting()->beginModelAttempt(attempt).waitForTesting().ok());
     }
     std::cout << "  [PASS] Revisions are committed with optimistic versions and persisted.\n";
 
     {
         HostController c(dbPath);
+    ROCLINT_CHECK(c.waitForStorageForTesting());
         c.setLegacyDiscoveryForTesting(true);
         ROCLINT_CHECK(c.sessionCount() == 1);
         const auto history = c.getSessionHistory(sessionId);
@@ -75,7 +77,7 @@ int main(int argc, char* argv[]) {
         ROCLINT_CHECK(h1[QStringLiteral("parentRevisionId")].toString() == firstRevisionId);
 
         // Startup recovery closed the orphaned attempt.
-        auto attempts = c.repositoryForTesting()->getModelAttempts(roclint::core::SessionId(sessionId.toStdString()));
+        auto attempts = c.repositoryForTesting()->getModelAttempts(roclint::core::SessionId(sessionId.toStdString())).waitForTesting();
         ROCLINT_CHECK(attempts.ok() && attempts.value().size() == 1);
         ROCLINT_CHECK(attempts.value()[0].status == storage::AttemptStatus::Interrupted);
         ROCLINT_CHECK(attempts.value()[0].completedAtMs.has_value());
@@ -83,29 +85,29 @@ int main(int argc, char* argv[]) {
 
         QString restoredText;
         QObject::connect(&c, &HostController::revisionRestored, [&](const QString& text) { restoredText = text; });
-        ROCLINT_CHECK(c.restoreSession(sessionId, c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.restoreSession(sessionId, c.stateVersion())));
         ROCLINT_CHECK(restoredText == prompt2);
         ROCLINT_CHECK(c.stateVersion() == 2);
         ROCLINT_CHECK(c.currentSessionIdString() == sessionId);
 
         // Restoring an older revision appends a new one; nothing is rewritten in place.
-        ROCLINT_CHECK(c.restoreRevision(firstRevisionId, c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.restoreRevision(firstRevisionId, c.stateVersion())));
         ROCLINT_CHECK(restoredText == prompt1);
         ROCLINT_CHECK(c.stateVersion() == 3);
         ROCLINT_CHECK(c.currentRevisionId() == QStringLiteral("rev_") + sessionId + QStringLiteral("_3"));
         const auto after = c.getSessionHistory(sessionId);
         ROCLINT_CHECK(after.size() == 3);
         ROCLINT_CHECK(after[2].toMap()[QStringLiteral("origin")].toString() == "RESTORE");
-        ROCLINT_CHECK(!c.restoreRevision(QStringLiteral("rev_other_1"), c.stateVersion()));
+        ROCLINT_CHECK(!c.waitForCommandForTesting(c.restoreRevision(QStringLiteral("rev_other_1"), c.stateVersion())));
         std::cout << "  [PASS] Restore rebuilds the session and appends restored revisions.\n";
 
-        ROCLINT_CHECK(c.deleteSession(sessionId));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.deleteSession(sessionId)));
         ROCLINT_CHECK(c.sessionCount() == 0);
         ROCLINT_CHECK(c.getRecentSessions().isEmpty());
         ROCLINT_CHECK(c.getSessionHistory(sessionId).isEmpty());
         ROCLINT_CHECK(c.stateVersion() == 0);
         ROCLINT_CHECK(c.currentSessionIdString().isEmpty());
-        ROCLINT_CHECK(!c.restoreSession(sessionId, c.stateVersion()));
+        ROCLINT_CHECK(!c.waitForCommandForTesting(c.restoreSession(sessionId, c.stateVersion())));
         std::cout << "  [PASS] Deleting the open session removes it and resets the controller.\n";
     }
 

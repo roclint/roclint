@@ -1,56 +1,18 @@
 #include "HostController.hpp"
+#include "WorkspaceInspection.hpp"
+#include <QJsonArray>
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
-#include <QElapsedTimer>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QFutureWatcher>
 #include <QSettings>
 #include <QTemporaryFile>
-#include <QtConcurrent/QtConcurrentRun>
 
 #include <algorithm>
 
 namespace roclint::host {
-namespace {
-QStringList scanProject(const QString& rootPath) {
-    // Prune before descending. Read filenames only, never source text or hidden credentials.
-    const QStringList excluded{QStringLiteral("node_modules"), QStringLiteral("vendor"), QStringLiteral("build"),
-        QStringLiteral("dist"), QStringLiteral("out"), QStringLiteral("target"), QStringLiteral("venv"),
-        QStringLiteral("__pycache__"), QStringLiteral("CMakeFiles")};
-    const QStringList extensions{QStringLiteral("cpp"), QStringLiteral("hpp"), QStringLiteral("c"), QStringLiteral("h"),
-        QStringLiteral("cc"), QStringLiteral("cxx"), QStringLiteral("mm"), QStringLiteral("qml"), QStringLiteral("js"),
-        QStringLiteral("jsx"), QStringLiteral("ts"), QStringLiteral("tsx"), QStringLiteral("py"), QStringLiteral("rs"),
-        QStringLiteral("go"), QStringLiteral("java"), QStringLiteral("kt"), QStringLiteral("swift"), QStringLiteral("cs"),
-        QStringLiteral("md"), QStringLiteral("txt"), QStringLiteral("cmake"), QStringLiteral("json"), QStringLiteral("yaml"),
-        QStringLiteral("yml"), QStringLiteral("toml"), QStringLiteral("html"), QStringLiteral("css"), QStringLiteral("sh"),
-        QStringLiteral("ps1"), QStringLiteral("sql")};
-    QStringList directories{rootPath}, result;
-    QElapsedTimer elapsed;
-    elapsed.start();
-    const QDir root(rootPath);
-    int visited = 0;
-    while (!directories.isEmpty() && result.size() < 5000 && visited < 100000 && elapsed.elapsed() < 2000) {
-        const auto folder = directories.takeLast();
-        const auto entries = QDir(folder).entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks,
-                                                       QDir::Name);
-        for (const auto& entry : entries) {
-            if (++visited > 100000 || result.size() >= 5000 || elapsed.elapsed() >= 2000) break;
-            const auto name = entry.fileName();
-            if (name.startsWith(QLatin1Char('.'))) continue;
-            if (entry.isDir()) {
-                if (!excluded.contains(name, Qt::CaseInsensitive) && !name.startsWith(QStringLiteral("build-")) &&
-                    !name.startsWith(QStringLiteral("build_")) && !name.startsWith(QStringLiteral("cmake-build-")))
-                    directories.append(entry.absoluteFilePath());
-            } else if (extensions.contains(entry.suffix().toLower())) result.append(root.relativeFilePath(entry.filePath()));
-        }
-    }
-    result.sort(Qt::CaseInsensitive);
-    return result;
-}
-}
 
 QVariantList HostController::recentProjects() const {
     QVariantList result;
@@ -79,23 +41,27 @@ QString HostController::openFolderDialog() {
 }
 
 QStringList HostController::getProjectFiles(const QString& projectPath) {
-    const auto canonical = QFileInfo(projectPath).canonicalFilePath();
-    if (canonical.isEmpty() || !QFileInfo(canonical).isDir()) return {};
+    const auto canonical = QDir::cleanPath(projectPath);
+    if (projectPath.isEmpty() || !QDir::isAbsolutePath(canonical)) return {};
     if (canonical == m_projectScanPath) return m_projectFiles;
     m_projectScanPath = canonical;
     m_projectFiles.clear();
+    m_workspaceRootIdentity.clear();
+    m_workspaceScanIncomplete = true;
     const auto serial = ++m_projectScanSerial;
-    auto* watcher = new QFutureWatcher<QStringList>(this);
+    if (m_cancelWorkspaceScan) m_cancelWorkspaceScan();
     ++m_inFlight;
-    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, serial]() {
-        --m_inFlight;
-        const auto files = watcher->result();
-        watcher->deleteLater();
-        if (serial != m_projectScanSerial) return;
-        m_projectFiles = files;
-        emit projectFilesChanged();
-    });
-    watcher->setFuture(QtConcurrent::run([canonical]() { return scanProject(canonical); }));
+    m_cancelWorkspaceScan = inspectWorkspace(this, {{"operation", "scan"}, {"root", canonical}}, 2000,
+        [this, serial](QJsonObject result) {
+            --m_inFlight;
+            if (serial != m_projectScanSerial) return;
+            m_workspaceRootIdentity = result.value("root_identity").toString();
+            m_workspaceScanIncomplete = result.value("context_incomplete").toBool(true);
+            m_projectFiles.clear();
+            for (const auto& value : result.value("files").toArray()) m_projectFiles.append(value.toString());
+            emit projectFilesChanged();
+            finishQuitWhenRuntimesStopped();
+        });
     return {};
 }
 

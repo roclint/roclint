@@ -98,6 +98,18 @@ void testRejectsTruncatedAndMalformedOutput() {
     ROCLINT_CHECK(!parse(R"({"status": "no_ambiguity", "status": "no_ambiguity"})").ok());
 }
 
+void testResponseEnvelopes() {
+    const std::string valid = R"({"status":"no_ambiguity"})";
+    for (const auto& opening : {std::string("```json\n"), std::string("```\r\n")})
+        ROCLINT_CHECK(parse(" \t" + opening + valid + "\r\n```\n").ok());
+    for (const auto& output : {"Here: " + valid, valid + " done", "```json\n" + valid,
+            "```python\n" + valid + "\n```", "```json\n" + valid + "\n```\n```\n{}\n```",
+            std::string(R"({"status":null})"), std::string(R"({"status":""})"),
+            std::string(R"({"status":42})"), std::string(R"({"status":"success"})")})
+        ROCLINT_CHECK(!parse(output).ok());
+    ROCLINT_CHECK(!parse("```json\n" + valid + std::string(kMaxDiscoveryResponseBytes, ' ') + "\n```").ok());
+}
+
 void testRejectsOversizedResponse() {
     std::string big = R"({"status": "no_ambiguity", "pad": ")";
     big += std::string(kMaxDiscoveryResponseBytes, 'x');
@@ -143,6 +155,8 @@ void testStatusRules() {
     ROCLINT_CHECK(nc.value().analysis.missingDecisions[0].blocking);
     ROCLINT_CHECK(nc.value().analysis.missingDecisions[0].question == "Which service?");
     ROCLINT_CHECK(!parse(R"({"status": "needs_clarification"})").ok());
+    ROCLINT_CHECK(!parse(R"({"status":"needs_clarification","clarification_question":" \f\u000b ",
+        "missing_decisions":[{"question":"Which service?","blocking":true}]})").ok());
 
     auto err = parse(R"({"error": "model overloaded"})");
     ROCLINT_CHECK(!err.ok());
@@ -382,6 +396,7 @@ int main() {
     testUnicodeEscapesDecodeBeforeGrounding();
     testRejectsTruncatedAndMalformedOutput();
     testRejectsOversizedResponse();
+    testResponseEnvelopes();
     testDiscoveryGroupLimitMatchesProductContract();
     testStatusRules();
     testRequiresRevisionBinding();

@@ -187,7 +187,7 @@ Window {
         if (hc) hostController.hideCard(); else rootWindow.hide();
     }
     function executeHardBypass() {
-        if (!hc) return;
+        if (!hc || !hostController.isStorageAvailable) return;
         const text = promptInput.text.trim().length ? promptInput.text : hostController.currentRevisionText;
         if (text.trim().length) {
             hostController.hardBypass(text, hostController.stateVersion);
@@ -197,11 +197,15 @@ Window {
     }
     function sendAsTyped() { executeHardBypass(); }
     function revertToDraft() { if (hc) hostController.discardProposal(hostController.stateVersion); promptInput.forceActiveFocus(); }
+    function retryHistory() {
+        if (hc) hostController.retryStorage(promptInput.text, hostController.stateVersion);
+    }
+
     function analyzeNow() {
-        if (hc && promptInput.text.trim().length) hostController.analyzePrompt(promptInput.text, hostController.stateVersion);
+        if (hc && hostController.isStorageAvailable && promptInput.text.trim().length) hostController.analyzePrompt(promptInput.text, hostController.stateVersion);
     }
     function approveForCurrentDestination() {
-        if (!hc) return;
+        if (!hc || hostController.storageBusy || !hostController.isStorageAvailable) return;
         if (!hostController.isAmbientCapture && hostController.isAmbientActive)
             hostController.beginInsertionTargetSelection(hostController.stateVersion);
         else hostController.approveAndCopyRewrite(hostController.stateVersion);
@@ -1298,6 +1302,12 @@ Window {
                     color: rootWindow.mutedTextColor
                     font.family: rootWindow.monoFont
                     font.pixelSize: 10
+                }
+                Button {
+                    visible: rootWindow.hc && hostController.storageNeedsRecovery
+                    text: qsTr("Retry history")
+                    enabled: rootWindow.hc && !hostController.storageBusy
+                    onClicked: rootWindow.retryHistory()
                 }
                 IntentReviewPanel {
                     id: reviewFlow

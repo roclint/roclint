@@ -19,6 +19,10 @@
 #include <string>
 
 #include "HostContext.hpp"
+#include "AsyncRepository.hpp"
+#include <deque>
+#include <QHash>
+#include <QPointer>
 #include "IAccessibilityBridge.hpp"
 #include "OllamaClient.hpp"
 #include "JuliaRuntime.hpp"
@@ -102,6 +106,8 @@ class HostController : public QObject {
 
     Q_PROPERTY(QString databasePath READ databasePath NOTIFY storageChanged)
     Q_PROPERTY(QString databaseStats READ databaseStats NOTIFY storageChanged)
+    Q_PROPERTY(bool storageBusy READ storageBusy NOTIFY storageBusyChanged)
+    Q_PROPERTY(bool storageNeedsRecovery READ storageNeedsRecovery NOTIFY storageChanged)
     Q_PROPERTY(bool isStorageAvailable READ isStorageAvailable NOTIFY storageChanged)
     Q_PROPERTY(int sessionCount READ sessionCount NOTIFY sessionListChanged)
 
@@ -260,9 +266,12 @@ public:
     [[nodiscard]] QString hostContextDisplayName() const { return m_hostContext.displayName; }
     [[nodiscard]] QString capturedDraftText() const { return m_capturedDraftText; }
 
+    bool storageBusy() const { return m_commandRunning || !m_storageCommands.empty() || (m_pendingDraft.has_value() && !m_storageFault) || m_draftWriting || m_draftNotifications > 0; }
+    bool storageNeedsRecovery() const { return m_storageFault; }
+    Q_INVOKABLE quint64 retryStorage(const QString& draftText, quint64 expectedVersion);
     [[nodiscard]] QString databasePath() const { return m_databasePath; }
     [[nodiscard]] QString databaseStats() const { return m_databaseStats; }
-    [[nodiscard]] bool isStorageAvailable() const noexcept { return m_repository != nullptr; }
+    [[nodiscard]] bool isStorageAvailable() const noexcept { return m_repository != nullptr && !m_storageFault; }
     [[nodiscard]] int sessionCount() const;
 
     [[nodiscard]] QString analysisStatus() const;
@@ -406,6 +415,8 @@ public:
     [[nodiscard]] bool setModelRuntimeUrlForTesting(const QUrl& url);
     [[nodiscard]] bool markModelReadyForTesting(const bridge::GraniteModelInfo& info);
     [[nodiscard]] bridge::S1TriageAdapter& s1AdapterForTesting() noexcept { return m_s1Adapter; }
+    bool waitForCommandForTesting(quint64 id, int timeoutMs = 15000);
+    bool waitForStorageForTesting(int timeoutMs = 15000);
     [[nodiscard]] bool waitForIdleForTesting(int timeoutMs);
     void setAnalysisGroupTimeoutForTesting(int timeoutMs) { m_analysisGroupTimeoutMs = timeoutMs > 0 ? timeoutMs : 1; }
     void setRecommendedOptionForTesting(const QString& option, double confidence) {
@@ -432,7 +443,7 @@ public:
     [[nodiscard]] const core::intent::WorkingIntentState& workingIntentForTesting() const noexcept {
         return m_workingIntent;
     }
-    [[nodiscard]] storage::PromptRepository* repositoryForTesting() noexcept { return m_repository.get(); }
+    [[nodiscard]] AsyncRepository* repositoryForTesting() noexcept { return m_repository.get(); }
 #endif
 
 public slots:
@@ -454,48 +465,48 @@ public slots:
 
     // Draft lifecycle. expectedVersion is the stateVersion the caller last observed.
     Q_INVOKABLE void pauseAmbientFollowing();
-    Q_INVOKABLE bool noteDraftEdited(quint64 expectedVersion);
-    Q_INVOKABLE bool commitPrompt(const QString& text, quint64 expectedVersion);
-    Q_INVOKABLE bool hardBypass(const QString& text, quint64 expectedVersion);
+    Q_INVOKABLE quint64 noteDraftEdited(quint64 expectedVersion);
+    Q_INVOKABLE quint64 commitPrompt(QString text, quint64 expectedVersion);
+    Q_INVOKABLE quint64 hardBypass(QString text, quint64 expectedVersion);
 
     // Analysis and clarification.
-    Q_INVOKABLE bool analyzePrompt(const QString& text, quint64 expectedVersion);
-    Q_INVOKABLE bool cancelAnalysis(quint64 expectedVersion);
-    Q_INVOKABLE bool confirmChoice(const QString& alternativeId, quint64 expectedVersion);
-    Q_INVOKABLE bool submitCustomIntent(const QString& customText, quint64 expectedVersion);
-    Q_INVOKABLE bool submitClarification(const QString& text, bool isDeferral, quint64 expectedVersion);
-    Q_INVOKABLE bool submitClarification(const QString& text, quint64 expectedVersion);
+    Q_INVOKABLE quint64 analyzePrompt(QString text, quint64 expectedVersion);
+    Q_INVOKABLE quint64 cancelAnalysis(quint64 expectedVersion);
+    Q_INVOKABLE quint64 confirmChoice(QString alternativeId, quint64 expectedVersion);
+    Q_INVOKABLE quint64 submitCustomIntent(QString customText, quint64 expectedVersion);
+    Q_INVOKABLE quint64 submitClarification(const QString& text, bool isDeferral, quint64 expectedVersion);
+    Q_INVOKABLE quint64 submitClarification(const QString& text, quint64 expectedVersion);
     [[nodiscard]] static bool isDeferralPhrase(const QString& text);
-    Q_INVOKABLE bool keepOriginalPrompt(quint64 expectedVersion);
-    Q_INVOKABLE bool resolveActiveAssumption(bool accepted, quint64 expectedVersion);
-    Q_INVOKABLE bool skipCurrentItem(quint64 expectedVersion);
-    Q_INVOKABLE bool switchToManual(quint64 expectedVersion);
-    Q_INVOKABLE bool setRewriteProfile(const QString& profile, quint64 expectedVersion);
+    Q_INVOKABLE quint64 keepOriginalPrompt(quint64 expectedVersion);
+    Q_INVOKABLE quint64 resolveActiveAssumption(bool accepted, quint64 expectedVersion);
+    Q_INVOKABLE quint64 skipCurrentItem(quint64 expectedVersion);
+    Q_INVOKABLE quint64 switchToManual(quint64 expectedVersion);
+    Q_INVOKABLE quint64 setRewriteProfile(QString profile, quint64 expectedVersion);
     Q_INVOKABLE QVariantMap getConfirmedIntentPayload() const;
 
     // Rewrite review. synthesizeRewrite only produces and validates a proposal.
-    Q_INVOKABLE bool synthesizeRewrite(quint64 expectedVersion);
-    Q_INVOKABLE bool acknowledgeConstraint(const QString& constraintId, bool acknowledged, quint64 expectedVersion);
+    Q_INVOKABLE quint64 synthesizeRewrite(quint64 expectedVersion);
+    Q_INVOKABLE quint64 acknowledgeConstraint(QString constraintId, bool acknowledged, quint64 expectedVersion);
     // Persists the approval, then delivers the approved text: into the captured field for an
     // ambient capture (falling back to the clipboard if that fails), otherwise to the clipboard.
-    Q_INVOKABLE bool approveAndCopyRewrite(quint64 expectedVersion);
+    Q_INVOKABLE quint64 approveAndCopyRewrite(quint64 expectedVersion);
     Q_INVOKABLE bool beginInsertionTargetSelection(quint64 expectedVersion);
-    Q_INVOKABLE bool discardProposal(quint64 expectedVersion);
+    Q_INVOKABLE quint64 discardProposal(quint64 expectedVersion);
 
     // Ambient mode.
     Q_INVOKABLE bool requestAccessibilityPermission();
     // Opens the card on the prompt last observed in an eligible app.
-    Q_INVOKABLE bool openFromAmbient();
+    Q_INVOKABLE quint64 openFromAmbient();
     Q_INVOKABLE void dismissAmbientBadge();
 
     // History.
     Q_INVOKABLE QVariantList getRecentSessions();
     Q_INVOKABLE QVariantList getSessionHistory(const QString& sessionId);
-    Q_INVOKABLE bool restoreRevision(const QString& revisionId, quint64 expectedVersion);
-    Q_INVOKABLE bool restoreSession(const QString& sessionId, quint64 expectedVersion);
-    Q_INVOKABLE bool restoreSessionForReview(const QString& sessionId, quint64 expectedVersion);
-    Q_INVOKABLE bool deleteSession(const QString& sessionId);
-    Q_INVOKABLE bool purgeHistory();
+    Q_INVOKABLE quint64 restoreRevision(QString revisionId, quint64 expectedVersion);
+    Q_INVOKABLE quint64 restoreSession(QString sessionId, quint64 expectedVersion);
+    Q_INVOKABLE quint64 restoreSessionForReview(QString sessionId, quint64 expectedVersion);
+    Q_INVOKABLE quint64 deleteSession(QString sessionId);
+    Q_INVOKABLE quint64 purgeHistory();
     Q_INVOKABLE void refreshStorageStats();
 
     // Scorer and model runtime.
@@ -523,6 +534,8 @@ public slots:
     Q_INVOKABLE QPoint calculateAmbientAnchor(int width, int height);
 
 signals:
+    void storageBusyChanged();
+    void storageCommandFinished(quint64 requestId, const QString& name, bool succeeded, const QString& errorCode, const QString& message);
     void cardVisibilityChanged();
     void dashboardVisibilityChanged();
     void hostStateChanged();
@@ -652,7 +665,28 @@ private:
 
     bool setCardVisibility(CardVisibility visibility);
     bool setDashboardVisibility(bool visible);
-    void initStorage(const QString& dbPathOverride);
+    AsyncTask<void> initStorage(QString dbPathOverride);
+    AsyncTask<core::Status> openFromAmbientOperation(std::optional<AmbientObservation> observationSnapshot);
+    AsyncTask<core::Status> purgeHistoryOperation();
+    AsyncTask<core::Status> deleteSessionOperation(QString sessionId);
+    AsyncTask<core::Status> restoreSessionOperation(QString sessionId, quint64 expectedVersion);
+    AsyncTask<core::Status> restoreSessionForReviewOperation(QString sessionId, quint64 expectedVersion);
+    AsyncTask<core::Status> restoreRevisionOperation(QString revisionId, quint64 expectedVersion);
+    AsyncTask<core::Status> discardProposalOperation(quint64 expectedVersion);
+    AsyncTask<core::Status> approveAndCopyRewriteOperation(quint64 expectedVersion);
+    AsyncTask<core::Status> acknowledgeConstraintOperation(QString constraintId, bool acknowledged, quint64 expectedVersion);
+    AsyncTask<core::Status> synthesizeRewriteOperation(quint64 expectedVersion);
+    AsyncTask<core::Status> setRewriteProfileOperation(QString profile, quint64 expectedVersion);
+    AsyncTask<core::Status> switchToManualOperation(quint64 expectedVersion);
+    AsyncTask<core::Status> skipCurrentItemOperation(quint64 expectedVersion);
+    AsyncTask<core::Status> resolveActiveAssumptionOperation(bool accepted, quint64 expectedVersion);
+    AsyncTask<core::Status> keepOriginalPromptOperation(quint64 expectedVersion);
+    AsyncTask<core::Status> submitCustomIntentOperation(QString customText, quint64 expectedVersion);
+    AsyncTask<core::Status> confirmChoiceOperation(QString alternativeId, quint64 expectedVersion);
+    AsyncTask<core::Status> analyzePromptOperation(QString text, quint64 expectedVersion);
+    AsyncTask<core::Status> cancelAnalysisOperation(quint64 expectedVersion);
+    AsyncTask<core::Status> hardBypassOperation(QString text, quint64 expectedVersion);
+    AsyncTask<core::Status> commitPromptOperation(QString text, quint64 expectedVersion);
 
     void setLastError(const QString& message);
     void setLastError(const core::Error& error);
@@ -663,60 +697,63 @@ private:
     [[nodiscard]] bool isTicketCurrent(const PipelineTicket& ticket, bool checkProposalGeneration) const;
     [[nodiscard]] PipelineTicket makeTicket() const;
 
-    core::Status ensureSession(const std::string& canonicalText, std::int64_t nowMs);
-    core::Status commitRevision(const std::string& canonicalText,
+    AsyncTask<core::Status> ensureSession(std::string canonicalText, std::int64_t nowMs);
+    AsyncTask<core::Status> commitRevision(std::string canonicalText,
                                 std::uint64_t expectedVersion,
                                 storage::RevisionOrigin origin);
-    core::Status freezeDraftIfNeeded(const std::string& canonicalText, std::uint64_t expectedVersion);
+    AsyncTask<core::Status> freezeDraftIfNeeded(std::string canonicalText, std::uint64_t expectedVersion);
 
     // Clears every artifact derived from the current revision: analysis, scores, decision, working
     // intent, confirmed intent, proposal, acknowledgments, approval; cancels in-flight results.
     void invalidateDownstreamPipeline();
     // Clears the proposal, acknowledgments and approval and advances the proposal generation.
-    core::Status invalidateProposalArtifacts();
-    core::Status advanceProposalGeneration();
+    AsyncTask<core::Status> invalidateProposalArtifacts();
+    AsyncTask<core::Status> advanceProposalGeneration();
     core::Status checkExpectedVersion(quint64 expectedVersion) const;
-    core::Status persistStateChange(const core::RevisionState& next, quint64 expectedVersion);
-    core::Status advanceCommandVersion(quint64 expectedVersion);
+    AsyncTask<core::Status> persistStateChange(core::RevisionState next, quint64 expectedVersion);
+    AsyncTask<core::Status> advanceCommandVersion(quint64 expectedVersion);
     void resetSessionState();
 
     // With allowReconnect, an unconnected or failed runtime is re-checked first and discovery
     // resumes from onHealthFinished; without it, discovery fails immediately.
-    core::Status startDiscovery(bool allowReconnect = true);
-    core::Status startPromptTriage();
-    void continuePromptTriageLoad();
+    AsyncTask<void> resumeDiscovery(bool allowReconnect = true);
+    AsyncTask<core::Status> startDiscovery(bool allowReconnect = true);
+    AsyncTask<core::Status> startPromptTriage();
+    AsyncTask<void> continuePromptTriageLoad();
     void onPromptClassified(quint64 requestId, const core::analysis::PromptTriage* triage, const QString& error);
+    AsyncTask<void> onPromptClassifiedAsync(quint64 requestId, std::optional<core::analysis::PromptTriage> triage, QString error);
     [[nodiscard]] bool promptTriageRoutingEnabled() const noexcept;
     [[nodiscard]] bool usesTransportOverride() const noexcept;
-    void onDiscoveryFinished(const PipelineTicket& ticket,
-                             const core::Result<bridge::GraniteOptionDiscoveryResponse>& result);
-    void onRewriteFinished(const PipelineTicket& ticket,
-                           const core::Result<core::rewrite::RewriteProposal>& result);
-    void onHealthFinished(const HealthResult& result);
-    void rebuildFromRestore(const storage::RestoredSession& restored);
+    AsyncTask<void> onDiscoveryFinished(PipelineTicket ticket,
+                             core::Result<bridge::GraniteOptionDiscoveryResponse> result);
+    AsyncTask<void> onRewriteFinished(PipelineTicket ticket,
+                           core::Result<core::rewrite::RewriteProposal> result);
+    AsyncTask<void> onHealthFinished(HealthResult result);
+    AsyncTask<void> rebuildFromRestore(storage::RestoredSession restored);
 
-    bool applyAnalysis(core::analysis::NormalizedAnalysis analysis, std::string discoveryAttemptId,
+    AsyncTask<bool> applyAnalysis(core::analysis::NormalizedAnalysis analysis, std::string discoveryAttemptId,
                        std::string scorerAttemptId = {},
                        std::optional<bridge::SnapshotEvaluationResponse> evaluation = std::nullopt,
                        std::optional<core::analysis::PromptTriage> triage = std::nullopt);
     void onJuliaFinished(quint64 requestId, const bridge::SnapshotEvaluationResponse* response, const QString& error);
+    AsyncTask<void> onJuliaFinishedAsync(quint64 requestId, std::optional<bridge::SnapshotEvaluationResponse> response, QString error);
     void armAnalysisDeadline(const PipelineTicket& ticket);
     void expireAnalysisGroup(const PipelineTicket& ticket);
     void invalidateScorerConfiguration();
     void appendLocalModelFiles();
-    void reevaluateIntervention();
+    AsyncTask<void> reevaluateIntervention();
     void refreshActiveItemPresentation();
-    core::Status finalizeIntentIfQuiet();
-    bool applyTransition(const char* name, quint64 expectedVersion,
-                         const std::function<core::Status(core::intent::WorkingIntentState&)>& transition);
+    AsyncTask<core::Status> finalizeIntentIfQuiet();
+    AsyncTask<core::Status> applyTransition(const char* name, quint64 expectedVersion,
+                         std::function<core::Status(core::intent::WorkingIntentState&)> transition);
 
     [[nodiscard]] core::rewrite::ValidationResult validateCurrentProposal() const;
     [[nodiscard]] std::optional<core::review::ApprovalContext> approvalContext() const;
 
-    core::Status beginAttempt(PipelineTicket& ticket, const char* stage);
-    void completeAttempt(const PipelineTicket& ticket,
+    AsyncTask<core::Status> beginAttempt(PipelineTicket& ticket, const char* stage);
+    AsyncTask<void> completeAttempt(PipelineTicket ticket,
                          storage::AttemptStatus status,
-                         const std::string& errorMessage,
+                         std::string errorMessage,
                          const bridge::GraniteModelInfo* model = nullptr);
 
     [[nodiscard]] bridge::GraniteTransport currentTransport(const std::string& outputSchema, const PipelineTicket* ticket = nullptr,
@@ -724,7 +761,7 @@ private:
     void prepareNativeModel();
     void initializeResidencyPolicy();
     void applyResidencyPolicy();
-    void onNativeRuntimeChanged();
+    AsyncTask<void> onNativeRuntimeChanged();
     void appendNativeModelFiles();
     void finishQuitWhenRuntimesStopped();
     void startPendingNativeDownload();
@@ -733,7 +770,7 @@ private:
 
     // Persists a discovery response for the current revision and applies it. Shared by live
     // discovery and by rebinding an ambient check's reply to the frozen revision.
-    void acceptDiscovery(const PipelineTicket& ticket, const bridge::GraniteOptionDiscoveryResponse& response);
+    AsyncTask<void> acceptDiscovery(PipelineTicket ticket, bridge::GraniteOptionDiscoveryResponse response);
     void showCardInternal(bool captureClipboard);
     void beginCaptureInvocation(const HostContextObservation& frontmost);
     // Delivers text for the current capture: injection for ambient captures, clipboard otherwise.
@@ -763,8 +800,45 @@ private:
     HostContextObservation m_hostContext;
     QString m_capturedDraftText;
 
-    std::unique_ptr<storage::Database> m_database;
-    std::unique_ptr<storage::PromptRepository> m_repository;
+    struct StorageCommand { quint64 id; quint64 editSerial; QString name; std::function<AsyncTask<core::Status>()> operation; };
+    struct DraftBatch { core::RevisionState next; quint64 expectedVersion; std::vector<std::pair<quint64, quint64>> requests; };
+    quint64 enqueueStorageCommand(const char* name, std::function<AsyncTask<core::Status>()> operation);
+    void pumpStorageCommands();
+    AsyncTask<void> runStorageCommand(std::shared_ptr<StorageCommand> command);
+    AsyncTask<core::Status> flushDraftEdits();
+    AsyncTask<core::Status> writeDraftBatch(DraftBatch batch);
+    AsyncTask<void> loadHistoryCache();
+    AsyncTask<core::Status> retryStorageOperation(QString draftText, quint64 expectedVersion);
+    struct DraftCompletion { std::vector<std::pair<quint64, quint64>> ranges; size_t range{0}; quint64 next{0}; core::Status status; };
+    void finishDraftRequests(std::vector<std::pair<quint64, quint64>> requests, core::Status status);
+    void publishDraftCompletions(std::shared_ptr<DraftCompletion> completion);
+    size_t m_draftNotifications{0};
+    void finishStorageCommand(quint64 id, const QString& name, const core::Status& status);
+    void failStorage(const core::Error& error);
+    bool m_storageFault{false};
+    bool m_commandRunning{false};
+    bool m_historyRefreshRunning{false};
+    bool m_historyRefreshAgain{false};
+    bool m_draftWriting{false};
+    quint64 m_nextStorageRequest{0};
+    quint64 m_latestStorageFeedback{0};
+    quint64 m_liveEditSerial{0};
+    quint64 m_storageEpoch{0};
+    std::deque<std::shared_ptr<StorageCommand>> m_storageCommands;
+    std::optional<DraftBatch> m_pendingDraft;
+    std::optional<AsyncTask<core::Status>> m_draftFlushTask;
+    QTimer m_draftDebounce;
+    QTimer m_draftMaxWait;
+    QVariantList m_recentSessions;
+    QHash<QString, QVariantList> m_historyCache;
+    QHash<quint64, bool> m_commandResults;
+    std::unique_ptr<StorageService> m_storage;
+    std::unique_ptr<AsyncRepository> m_repository;
+    QString m_workspaceRootIdentity;
+    bool m_workspaceScanIncomplete{true};
+    QString m_lastInternalDiagnostic; // Bounded diagnostic; never exposed as a QML property or logged by default.
+    std::function<void()> m_cancelWorkspaceScan;
+    std::function<void()> m_cancelWorkspaceContext;
     QString m_databasePath;
     QString m_databaseStats;
 

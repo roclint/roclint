@@ -54,6 +54,7 @@ void testScreenPlacement() {
 
 void testHostContextDisclosureAndClear() {
     HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
     controller.setLegacyDiscoveryForTesting(true);
     controller.markResident();
     HostContextDetector::setMockObservation(HostContextObservation{
@@ -88,6 +89,7 @@ void testHostContextDisclosureAndClear() {
 
 void testClipboardCaptureOnInvocation() {
     HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
     controller.setLegacyDiscoveryForTesting(true);
     controller.markResident();
     const QString sample = QStringLiteral("Refactor SessionManager to handle async token refreshes");

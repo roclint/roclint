@@ -51,6 +51,7 @@ struct Harness {
         mock->accessValue = access;
         bridge = mock.get();
         controller = std::make_unique<HostController>(QStringLiteral(":memory:"), std::move(mock));
+        ROCLINT_CHECK(controller->waitForStorageForTesting());
         controller->setLegacyDiscoveryForTesting(true);
         auto c = calls;
         auto r = rewriteCalls;
@@ -140,6 +141,7 @@ void testAmbientRouteWhenPermissionGranted() {
 
     // The hotkey opens the card on the captured prompt, with the manual text box hidden.
     h.c().toggleCard();
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
     ROCLINT_CHECK(h.c().isCardVisible());
     ROCLINT_CHECK(h.c().isAmbientCapture());
     ROCLINT_CHECK(h.c().isAmbientAttached());
@@ -152,7 +154,7 @@ void testAmbientRouteWhenPermissionGranted() {
     // The cached reply was bound to the frozen revision without asking the model again.
     ROCLINT_CHECK(*h.calls == 1);
     ROCLINT_CHECK(h.c().sessionCount() == 1);
-    auto attempts = h.c().repositoryForTesting()->getModelAttempts(SessionId(h.c().currentSessionIdString().toStdString()));
+    auto attempts = h.c().repositoryForTesting()->getModelAttempts(SessionId(h.c().currentSessionIdString().toStdString())).waitForTesting();
     ROCLINT_CHECK(attempts.ok() && attempts.value().size() == 1);
     ROCLINT_CHECK(attempts.value()[0].status == roclint::storage::AttemptStatus::Succeeded);
     ROCLINT_CHECK(h.c().analysisForTesting()->baseRevisionId == h.c().currentRevisionId().toStdString());
@@ -174,6 +176,7 @@ void testWidgetFallbackWhenPermissionDenied() {
 
     setClipboard(QStringLiteral("Draft copied from somewhere else"));
     h.c().toggleCard();
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
     ROCLINT_CHECK(h.c().isCardVisible());
     ROCLINT_CHECK(!h.c().isAmbientCapture());
     ROCLINT_CHECK(!h.c().isAmbientAttached());
@@ -196,6 +199,7 @@ void testAmbientOffUsesWidgetEvenWithPermission() {
     pumpFor(HostController::kAmbientDebounceMs * 2);
     ROCLINT_CHECK(*h.calls == 0);
     h.c().toggleCard();
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
     ROCLINT_CHECK(h.c().isCardVisible() && !h.c().isAmbientCapture());
     std::cout << "  [PASS] Ambient mode off: no observation is used, the widget opens.\n";
 }
@@ -220,6 +224,7 @@ void testIneligibleFieldsAreNeverRead() {
     ROCLINT_CHECK(h.c().ambientStatus().contains(QStringLiteral("administrator")));
     ROCLINT_CHECK(*h.calls == 0);
     h.c().toggleCard();
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
     ROCLINT_CHECK(!h.c().isAmbientCapture());
     h.c().hideCard();
 
@@ -261,8 +266,9 @@ void reachApprovableRewrite(Harness& h) {
     h.c().setAmbientModeEnabled(true);
     observeAndWaitForBadge(h);
     h.c().toggleCard();
-    ROCLINT_CHECK(h.c().confirmChoice(QStringLiteral("alt_0_0"), h.c().stateVersion()));
-    ROCLINT_CHECK(h.c().synthesizeRewrite(h.c().stateVersion()));
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().confirmChoice(QStringLiteral("alt_0_0"), h.c().stateVersion())));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().synthesizeRewrite(h.c().stateVersion())));
     ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
     ROCLINT_CHECK(h.c().canApprove());
 }
@@ -275,7 +281,7 @@ void testApprovedRewriteIsInjectedInPlace() {
     QObject::connect(h.controller.get(), &HostController::promptInjected,
                      [&](const QString& text, const QString&) { injected = text; });
 
-    ROCLINT_CHECK(h.c().approveAndCopyRewrite(h.c().stateVersion()));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().approveAndCopyRewrite(h.c().stateVersion())));
     ROCLINT_CHECK(h.c().isCardVisible()); // No dismissal before the asynchronous readback result.
     ROCLINT_CHECK(h.bridge->injections.size() == 1);
     const auto& request = h.bridge->injections[0];
@@ -287,7 +293,7 @@ void testApprovedRewriteIsInjectedInPlace() {
     ROCLINT_CHECK(!h.c().isCardVisible());
     ROCLINT_CHECK(injected == QString::fromStdString(kRewrite));
     ROCLINT_CHECK(clipboardText() == "untouched");
-    auto approval = h.c().repositoryForTesting()->getCurrentApproval(SessionId(h.c().currentSessionIdString().toStdString()));
+    auto approval = h.c().repositoryForTesting()->getCurrentApproval(SessionId(h.c().currentSessionIdString().toStdString())).waitForTesting();
     ROCLINT_CHECK(approval.ok() && approval.value().has_value());
     std::cout << "  [PASS] Approve & Insert persists the approval and injects into the captured field.\n";
 }
@@ -296,10 +302,11 @@ void testConnectingEditorPreservesManualRewriteAndAnswers() {
     Harness h;
     h.c().setAmbientModeEnabled(true);
     h.c().showCard();
-    ROCLINT_CHECK(h.c().analyzePrompt(kPrompt, 0));
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().analyzePrompt(kPrompt, 0)));
     ROCLINT_CHECK(h.c().waitForIdleForTesting(3000));
-    ROCLINT_CHECK(h.c().confirmChoice(QStringLiteral("alt_0_0"), h.c().stateVersion()));
-    ROCLINT_CHECK(h.c().synthesizeRewrite(h.c().stateVersion()));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().confirmChoice(QStringLiteral("alt_0_0"), h.c().stateVersion())));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().synthesizeRewrite(h.c().stateVersion())));
     ROCLINT_CHECK(h.c().waitForIdleForTesting(3000));
     ROCLINT_CHECK(h.c().canApprove() && !h.c().isAmbientCapture());
     const auto version = h.c().stateVersion();
@@ -321,12 +328,13 @@ void testConnectingEditorPreservesManualRewriteAndAnswers() {
         roclint::host::HostContextObservation{roclint::host::HostContextCategory::CodeEditor,
                                              field.appDisplayName, field.appIdentifier}});
     h.c().toggleCard();
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
     ROCLINT_CHECK(h.c().isAmbientCapture() && h.c().isCardVisible());
     ROCLINT_CHECK(h.c().stateVersion() == version && h.c().currentRevisionId() == revision);
     ROCLINT_CHECK(h.c().roundsCompleted() == rounds && h.c().confirmedIntentForTesting()->intentHash == intent.intentHash);
     ROCLINT_CHECK(h.c().proposalForTesting()->proposalHash == proposal.proposalHash);
     ROCLINT_CHECK(h.c().currentRevisionText() == kPrompt && *h.calls == calls);
-    ROCLINT_CHECK(h.c().approveAndCopyRewrite(version));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().approveAndCopyRewrite(version)));
     ROCLINT_CHECK(h.bridge->injections.size() == 1);
     ROCLINT_CHECK(h.bridge->injections[0].text == QString::fromStdString(kRewrite));
     ROCLINT_CHECK(h.bridge->injections[0].fieldToken == 88 && h.bridge->injections[0].expectedCurrentText == field.text);
@@ -343,7 +351,7 @@ void testInjectionFailureFallsBackToClipboard() {
     QObject::connect(h.controller.get(), &HostController::deliveryFellBack,
                      [&](const QString& message) { fallback = message; });
 
-    ROCLINT_CHECK(h.c().approveAndCopyRewrite(h.c().stateVersion()));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().approveAndCopyRewrite(h.c().stateVersion())));
     ROCLINT_CHECK(pumpUntil([&]() { return !fallback.isEmpty(); }));
     ROCLINT_CHECK(h.c().isCardVisible());
     ROCLINT_CHECK(clipboardText() == QString::fromStdString(kRewrite));
@@ -356,8 +364,9 @@ void testInjectionFailureFallsBackToClipboard() {
 void testHardBypassInWidgetMode() {
     Harness h;
     h.c().showCard();
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
     setClipboard(QStringLiteral("old clipboard"));
-    ROCLINT_CHECK(h.c().hardBypass(QStringLiteral("ship it exactly like this"), 0));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().hardBypass(QStringLiteral("ship it exactly like this"), 0)));
     ROCLINT_CHECK(clipboardText() == "ship it exactly like this");
     ROCLINT_CHECK(h.c().isCardVisible());
     ROCLINT_CHECK(h.c().analysisMessage().contains("No editor is bound"));
@@ -372,11 +381,12 @@ void testHardBypassInAmbientMode() {
     h.c().setAmbientModeEnabled(true);
     observeAndWaitForBadge(h);
     h.c().toggleCard();
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
     ROCLINT_CHECK(h.c().isClarifying());
     const int callsBefore = *h.calls;
     setClipboard(QStringLiteral("untouched"));
 
-    ROCLINT_CHECK(h.c().hardBypass(h.c().currentRevisionText(), h.c().stateVersion()));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().hardBypass(h.c().currentRevisionText(), h.c().stateVersion())));
     ROCLINT_CHECK(h.c().isCardVisible());
     ROCLINT_CHECK(h.bridge->injections.size() == 1);
     ROCLINT_CHECK(h.bridge->injections[0].text == kPrompt);
@@ -401,9 +411,10 @@ void testCodexShortPromptCapturePreservesWhitespace() {
     ROCLINT_CHECK(pumpUntil([&]() { return h.c().isAmbientBadgeVisible(); }));
     ROCLINT_CHECK(*h.calls == 0); // Typing never runs Granite ahead of S1.
     h.c().showCard(); // Tray and hotkey must use the same captured target.
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
     ROCLINT_CHECK(h.c().isAmbientCapture());
     ROCLINT_CHECK(h.c().currentRevisionText() == field.text);
-    ROCLINT_CHECK(h.c().hardBypass(field.text, h.c().stateVersion()));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().hardBypass(field.text, h.c().stateVersion())));
     ROCLINT_CHECK(h.c().isCardVisible());
     ROCLINT_CHECK(h.bridge->injections.size() == 1);
     ROCLINT_CHECK(h.bridge->injections[0].expectedCurrentText == field.text);
@@ -416,12 +427,14 @@ void testStaleInsertionKeepsDraftAndRejectsDuplicateDelivery() {
     Harness h;
     reachApprovableRewrite(h);
     h.bridge->nextOutcome = InjectionOutcome::FieldChanged;
-    ROCLINT_CHECK(h.c().approveAndCopyRewrite(h.c().stateVersion()));
-    ROCLINT_CHECK(!h.c().approveAndCopyRewrite(h.c().stateVersion()));
+    const auto first = h.c().approveAndCopyRewrite(h.c().stateVersion());
+    const auto duplicate = h.c().approveAndCopyRewrite(h.c().stateVersion());
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(first));
+    ROCLINT_CHECK(!h.c().waitForCommandForTesting(duplicate));
     ROCLINT_CHECK(h.bridge->injections.size() == 1);
     ROCLINT_CHECK(pumpUntil([&]() { return !h.c().lastCopiedText().isEmpty(); }));
     ROCLINT_CHECK(h.c().isCardVisible());
-    ROCLINT_CHECK(h.c().lastError().contains(QStringLiteral("clipboard")));
+    ROCLINT_CHECK(h.c().ambientStatus().contains(QStringLiteral("clipboard")));
 }
 
 void testDeliveryRemainsBoundWhenOtherFieldsReceiveFocus() {
@@ -429,7 +442,7 @@ void testDeliveryRemainsBoundWhenOtherFieldsReceiveFocus() {
     reachApprovableRewrite(h);
     h.bridge->observe(cursorField(QStringLiteral("An unrelated draft in another field"), 99));
     h.bridge->lose();
-    ROCLINT_CHECK(h.c().approveAndCopyRewrite(h.c().stateVersion()));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().approveAndCopyRewrite(h.c().stateVersion())));
     ROCLINT_CHECK(h.bridge->injections.size() == 1);
     const auto& request = h.bridge->injections.front();
     ROCLINT_CHECK(request.fieldToken == 7 && request.expectedCurrentText == kPrompt);
@@ -442,6 +455,7 @@ void testTypingIsObservedWhileWidgetRemainsOpen() {
     h.c().setLegacyDiscoveryForTesting(false);
     h.c().setAmbientModeEnabled(true);
     h.c().showCard();
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
     auto field = cursorField(QStringLiteral("Check this new draft"));
     field.appIdentifier = QStringLiteral("ChatGPT.exe");
     h.bridge->observe(field);
@@ -449,6 +463,7 @@ void testTypingIsObservedWhileWidgetRemainsOpen() {
         roclint::host::HostContextObservation{roclint::host::HostContextCategory::CodeEditor,
                                              QStringLiteral("Codex"), field.appIdentifier}});
     h.c().toggleCard();
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
     roclint::host::HostContextDetector::resetMock();
     ROCLINT_CHECK(h.c().isCardVisible() && h.c().isAmbientCapture());
     ROCLINT_CHECK(h.c().currentRevisionText() == field.text);
@@ -462,11 +477,13 @@ void testInvocationRefreshesFieldBeforeStealingFocus() {
                                              QStringLiteral("Codex"), QStringLiteral("ChatGPT.exe")}});
     setClipboard(QStringLiteral("Unrelated clipboard must never be imported"));
     h.c().showCard();
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
     ROCLINT_CHECK(h.bridge->refreshRequests == 1);
     ROCLINT_CHECK(!h.c().isCardVisible());
     auto field = cursorField(kPrompt);
     field.appIdentifier = QStringLiteral("ChatGPT.exe");
     h.bridge->observe(field);
+    ROCLINT_CHECK(pumpUntil([&]() { return h.c().isCardVisible(); }));
     ROCLINT_CHECK(h.c().isCardVisible() && h.c().isAmbientCapture());
     ROCLINT_CHECK(h.c().currentRevisionText() == kPrompt);
     ROCLINT_CHECK(clipboardText() == "Unrelated clipboard must never be imported");
@@ -478,7 +495,7 @@ void testOpenHudFollowsFocusedDraftUntilHudEdit() {
     h.c().setAmbientModeEnabled(true);
     auto field = cursorField(kPrompt);
     h.bridge->observe(field);
-    ROCLINT_CHECK(h.c().openFromAmbient());
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().openFromAmbient()));
     ROCLINT_CHECK(h.c().waitForIdleForTesting(3000));
     const auto frozen = h.c().currentRevisionText();
     QString visibleDraft;
@@ -504,13 +521,13 @@ void testOpenHudFollowsFocusedDraftUntilHudEdit() {
     h.bridge->observe(otherField);
     ROCLINT_CHECK(updates == 3 && visibleDraft == otherField.text);
     ROCLINT_CHECK(h.c().deliveryLabel() == "Delivers into Codex");
-    ROCLINT_CHECK(h.c().noteDraftEdited(h.c().stateVersion())); // Human now edits in the HUD.
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().noteDraftEdited(h.c().stateVersion()))); // Human now edits in the HUD.
     field.text = QStringLiteral("External text after the HUD edit");
     h.bridge->observe(field);
     ROCLINT_CHECK(updates == 3); // Do not erase the human's HUD draft.
     pumpFor(HostController::kAmbientDebounceMs + 30);
     ROCLINT_CHECK(*h.calls == calls); // No inference on keystrokes.
-    ROCLINT_CHECK(h.c().hardBypass(QStringLiteral("The user's local HUD draft"), h.c().stateVersion()));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().hardBypass(QStringLiteral("The user's local HUD draft"), h.c().stateVersion())));
     ROCLINT_CHECK(h.bridge->injections.back().expectedCurrentText == otherField.text); // Retain the stale guard.
 }
 
@@ -523,10 +540,11 @@ void testEmptyComposerIsStillAnInsertionTarget() {
     h.bridge->observe(field);
     ROCLINT_CHECK(!h.c().isAmbientBadgeVisible());
     h.c().showCard();
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
     ROCLINT_CHECK(h.c().isAmbientCapture());
     ROCLINT_CHECK(h.c().currentRevisionText().isEmpty());
     ROCLINT_CHECK(*h.calls == 0);
-    ROCLINT_CHECK(h.c().hardBypass(QStringLiteral("A draft authored in the HUD"), 0));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().hardBypass(QStringLiteral("A draft authored in the HUD"), 0)));
     ROCLINT_CHECK(h.bridge->injections.size() == 1);
     ROCLINT_CHECK(h.bridge->injections[0].expectedCurrentText.isEmpty());
     ROCLINT_CHECK(h.bridge->injections[0].text == "A draft authored in the HUD");
@@ -541,12 +559,14 @@ void testInvocationWaitsForFreshFieldInsteadOfCachedTarget() {
         roclint::host::HostContextObservation{roclint::host::HostContextCategory::CodeEditor,
                                              QStringLiteral("Cursor"), QStringLiteral("Cursor.exe")}});
     h.c().toggleCard();
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
     ROCLINT_CHECK(h.bridge->refreshRequests == 1 && !h.c().isCardVisible());
     auto fresh = cursorField(kPrompt, 27);
     h.bridge->observe(fresh);
+    ROCLINT_CHECK(pumpUntil([&]() { return h.c().isCardVisible(); }));
     ROCLINT_CHECK(h.c().isAmbientCapture() && h.c().isCardVisible());
     ROCLINT_CHECK(h.c().currentRevisionText() == kPrompt);
-    ROCLINT_CHECK(h.c().hardBypass(QStringLiteral("Changed in the HUD"), h.c().stateVersion()));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().hardBypass(QStringLiteral("Changed in the HUD"), h.c().stateVersion())));
     ROCLINT_CHECK(h.bridge->injections.front().fieldToken == 27);
     ROCLINT_CHECK(h.bridge->injections.front().expectedCurrentText == kPrompt);
     roclint::host::HostContextDetector::resetMock();
@@ -561,6 +581,7 @@ void testLateEditorBindsWithoutAnotherHotkeyAndPreservesHudEdits() {
             roclint::host::HostContextObservation{roclint::host::HostContextCategory::CodeEditor,
                                                  QStringLiteral("Cursor"), QStringLiteral("Cursor.exe")}});
         h.c().showCard();
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
         pumpFor(1350);
         ROCLINT_CHECK(h.c().isCardVisible() && !h.c().isAmbientCapture());
         ROCLINT_CHECK(!h.c().lastError().isEmpty());
@@ -569,7 +590,7 @@ void testLateEditorBindsWithoutAnotherHotkeyAndPreservesHudEdits() {
         QObject::connect(&h.c(), &HostController::ambientDraftUpdated, [&](const QString& text) {
             adopted = text; ++updates;
         });
-        if (editedHud) ROCLINT_CHECK(h.c().noteDraftEdited(h.c().stateVersion()));
+        if (editedHud) ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().noteDraftEdited(h.c().stateVersion())));
         auto field = cursorField(QStringLiteral("A field exposed after the HUD opened"), 67);
         h.bridge->observe(field);
         ROCLINT_CHECK(h.c().isAmbientCapture() && h.c().lastError().isEmpty());
@@ -577,7 +598,7 @@ void testLateEditorBindsWithoutAnotherHotkeyAndPreservesHudEdits() {
         if (!editedHud) ROCLINT_CHECK(adopted == field.text);
         ROCLINT_CHECK(*h.calls == 0 && h.bridge->refreshRequests == 1);
         const auto output = editedHud ? QStringLiteral("Preserved HUD draft") : field.text;
-        ROCLINT_CHECK(h.c().hardBypass(output, h.c().stateVersion()));
+        ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().hardBypass(output, h.c().stateVersion())));
         ROCLINT_CHECK(h.bridge->injections.back().fieldToken == 67);
         ROCLINT_CHECK(h.bridge->injections.back().expectedCurrentText == field.text);
     }
@@ -589,13 +610,13 @@ void testRestoringHistoryPausesLiveFollowing() {
         h.c().setAmbientModeEnabled(true);
         auto field = cursorField(kPrompt);
         h.bridge->observe(field);
-        ROCLINT_CHECK(h.c().openFromAmbient());
+        ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().openFromAmbient()));
         ROCLINT_CHECK(h.c().waitForIdleForTesting(3000));
         const auto revision = h.c().currentRevisionId();
         int updates = 0;
         QObject::connect(&h.c(), &HostController::ambientDraftUpdated, [&](const QString&) { ++updates; });
-        if (wholeSession) ROCLINT_CHECK(h.c().restoreSession(h.c().currentSessionIdString(), h.c().stateVersion()));
-        else ROCLINT_CHECK(h.c().restoreRevision(revision, h.c().stateVersion()));
+        if (wholeSession) ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().restoreSession(h.c().currentSessionIdString(), h.c().stateVersion())));
+        else ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().restoreRevision(revision, h.c().stateVersion())));
         field.text = QStringLiteral("External typing after a history restore");
         h.bridge->observe(field);
         ROCLINT_CHECK(updates == 0 && h.c().currentRevisionText() == kPrompt && !h.c().isDraftDirty());
@@ -616,9 +637,9 @@ void testTerminalDraftIsCapturedAndReplaced() {
     ROCLINT_CHECK(pumpUntil([&]() { return h.c().ambientStatus().contains(QStringLiteral("looked clear")); }));
     ROCLINT_CHECK(*h.calls == 1);
 
-    ROCLINT_CHECK(h.c().openFromAmbient());
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().openFromAmbient()));
     ROCLINT_CHECK(h.c().currentRevisionText() == "fix the bugs in the project");
-    ROCLINT_CHECK(h.c().hardBypass(h.c().currentRevisionText(), h.c().stateVersion()));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().hardBypass(h.c().currentRevisionText(), h.c().stateVersion())));
     ROCLINT_CHECK(h.bridge->injections.size() == 1);
     const auto& r = h.bridge->injections[0];
     ROCLINT_CHECK(r.kind == FieldKind::Terminal);

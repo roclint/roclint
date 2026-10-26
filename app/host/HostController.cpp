@@ -87,11 +87,11 @@ QString plainError(const core::Error& error) {
         case ErrorCode::StaleVersion:
             return QStringLiteral("The prompt changed while this action was pending. ") + qs(error.message);
         case ErrorCode::ProviderUnavailable:
-            return QStringLiteral("The local model isn't available. ") + qs(error.message);
+            return QStringLiteral("The local model isn't available. Retry explicitly or keep the original prompt.");
         case ErrorCode::ProviderFailed:
-            return QStringLiteral("The local model returned an unusable reply. ") + qs(error.message);
+            return QStringLiteral("The local model returned an unusable reply. Retry explicitly or keep the original prompt.");
         case ErrorCode::DbError:
-            return QStringLiteral("Saving to history failed. ") + qs(error.message);
+            return QStringLiteral("History couldn't be saved. Your draft is preserved. Retry history explicitly.");
         case ErrorCode::InvalidInput:
         case ErrorCode::NotFound:
         case ErrorCode::Conflict:
@@ -105,12 +105,11 @@ QString plainError(const core::Error& error) {
 
 // Model output that fails strict parsing is reported as an unusable reply, not as bad user input.
 core::Error modelReplyError(const core::Error& error) {
-    if (error.code != ErrorCode::InvalidInput) {
+    if (error.code == ErrorCode::ProviderUnavailable || error.code == ErrorCode::StaleVersion) {
         return error;
     }
     return core::Error{ErrorCode::ProviderFailed,
-                       "Nothing was shown because the reply didn't follow the required format. Try again or "
-                       "rephrase the prompt. (Detail: " + error.message + ")"};
+                       "The local model returned an unusable reply. Retry explicitly or keep the original prompt."};
 }
 
 static QString resolveJuliaDirectory(const QString& configuredDir, const QString& baseDir) {
@@ -304,43 +303,7 @@ HostController::~HostController() {
     }
 }
 
-void HostController::initStorage(const QString& dbPathOverride) {
-    QString finalPath = dbPathOverride;
-    if (finalPath.isEmpty()) {
-        const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-        if (dataDir.isEmpty() || !QDir().mkpath(dataDir)) {
-            m_databaseStats = QStringLiteral("History storage unavailable: no writable application data folder.");
-            emit storageChanged();
-            return;
-        }
-        finalPath = dataDir + QStringLiteral("/history.db");
-    }
-    m_databasePath = finalPath;
 
-    auto db = std::make_unique<storage::Database>();
-    const std::filesystem::path path = (finalPath == QLatin1String(":memory:"))
-                                           ? std::filesystem::path(":memory:")
-                                           : std::filesystem::path(finalPath.toStdWString());
-    if (auto st = db->open(path); !st.ok()) {
-        m_databaseStats = QStringLiteral("History storage unavailable: ") + qs(st.error().message);
-        emit storageChanged();
-        return;
-    }
-    auto repo = std::make_unique<storage::PromptRepository>(*db);
-    if (auto st = repo->migrate(); !st.ok()) {
-        m_databaseStats = QStringLiteral("History storage unavailable: ") + qs(st.error().message);
-        emit storageChanged();
-        return;
-    }
-    if (auto interrupted = repo->interruptOrphanedAttemptsOnStartup(nowMs()); !interrupted.ok()) {
-        m_databaseStats = QStringLiteral("History storage unavailable: ") + qs(interrupted.error().message);
-        emit storageChanged();
-        return;
-    }
-    m_database = std::move(db);
-    m_repository = std::move(repo);
-    refreshStorageStats();
-}
 
 // ----------------------------------------------------------------------------------------------
 // Errors and command plumbing
@@ -380,7 +343,8 @@ bool HostController::runCommand(const char* name, Fn&& fn) {
         clearLastError();
         return true;
     } catch (const std::exception& ex) {
-        setLastError(QStringLiteral("%1 failed unexpectedly: %2").arg(QLatin1String(name), QString::fromUtf8(ex.what())));
+        m_lastInternalDiagnostic = QString::fromUtf8(ex.what()).left(1024);
+        setLastError(QStringLiteral("%1 couldn't finish. Retry explicitly or keep the original prompt.").arg(QLatin1String(name)));
         return false;
     } catch (...) {
         setLastError(QStringLiteral("%1 failed unexpectedly.").arg(QLatin1String(name)));
@@ -595,6 +559,7 @@ void HostController::requestQuit() {
     }
     hideCard();
     hideDashboard();
+    if (m_cancelWorkspaceScan) m_cancelWorkspaceScan();
     m_hostState = HostState::Quitting;
     invalidateDownstreamPipeline();
     emit hostStateChanged();
@@ -603,11 +568,17 @@ void HostController::requestQuit() {
     cancelModelDownload();
     m_julia->stop();
     m_native->stop();
+    QTimer::singleShot(2000, this, [this]() {
+        if (m_hostState == HostState::Quitting && m_storage && !m_storage->closed()) m_storage->cancelOutstanding();
+    });
     finishQuitWhenRuntimesStopped();
 }
 
 void HostController::finishQuitWhenRuntimesStopped() {
     if (m_hostState == HostState::Quitting && !m_quitSignalSent && !m_julia->isRunning() && !m_native->isRunning() && m_nativeSemanticInFlight == 0) {
+        if (m_pendingDraft && !m_storageFault) { flushDraftEdits(); return; }
+        if (m_commandRunning || !m_storageCommands.empty() || m_draftWriting || m_draftNotifications > 0 || m_historyRefreshRunning || (m_storage && m_storage->pending())) return;
+        if (m_storage && !m_storage->closed()) { m_storage->close([this]() { finishQuitWhenRuntimesStopped(); }); return; }
         m_quitSignalSent = true;
         emit quitRequested();
     }
@@ -745,40 +716,40 @@ Status HostController::copyToClipboard(const QString& text) {
 }
 
 
-Status HostController::ensureSession(const std::string& canonicalText, std::int64_t now) {
+AsyncTask<core::Status> HostController::ensureSession(std::string canonicalText, std::int64_t now) {
     if (m_revisionState) {
-        return Status::success();
+        co_return Status::success();
     }
     if (!m_repository) {
-        return storageUnavailable();
+        co_return storageUnavailable();
     }
     const core::SessionId sessionId(newOpaqueId("sess_"));
     const core::PromptRevision root(sessionId, core::RevisionState::makeRevisionId(sessionId, 1), std::nullopt,
                                     canonicalText, now);
-    if (auto st = m_repository->createSessionWithRootRevision(root, now); !st.ok()) {
-        return st;
+    if (auto st = (co_await m_repository->createSessionWithRootRevision(root, now)); !st.ok()) {
+        co_return st;
     }
     m_revisionState = std::make_unique<core::RevisionState>(root);
     emit stateVersionChanged();
     emit sessionListChanged();
     refreshStorageStats();
-    return Status::success();
+    co_return Status::success();
 }
 
-Status HostController::commitRevision(const std::string& canonicalText,
+AsyncTask<core::Status> HostController::commitRevision(std::string canonicalText,
                                       std::uint64_t expectedVersion,
                                       storage::RevisionOrigin origin) {
     if (!m_revisionState) {
-        return makeError(ErrorCode::PreconditionFailed, "No prompt session is open");
+        co_return makeError(ErrorCode::PreconditionFailed, "No prompt session is open");
     }
     if (!m_repository) {
-        return storageUnavailable();
+        co_return storageUnavailable();
     }
     const std::int64_t now = nowMs();
     core::RevisionState next = *m_revisionState;
     auto newId = next.commitEdit(expectedVersion, canonicalText, now);
     if (!newId.ok()) {
-        return newId.error();
+        co_return newId.error();
     }
     const storage::RevisionWrite write{
         .revision = next.currentRevision(),
@@ -791,32 +762,32 @@ Status HostController::commitRevision(const std::string& canonicalText,
     };
     Status st = Status::success();
     switch (origin) {
-        case storage::RevisionOrigin::Commit: st = m_repository->insertRevision(write); break;
-        case storage::RevisionOrigin::DraftFreeze: st = m_repository->insertDraftRevision(write); break;
-        case storage::RevisionOrigin::Restore: st = m_repository->insertRestoredRevision(write); break;
+        case storage::RevisionOrigin::Commit: st = (co_await m_repository->insertRevision(write)); break;
+        case storage::RevisionOrigin::DraftFreeze: st = (co_await m_repository->insertDraftRevision(write)); break;
+        case storage::RevisionOrigin::Restore: st = (co_await m_repository->insertRestoredRevision(write)); break;
         case storage::RevisionOrigin::Root:
-            return makeError(ErrorCode::Internal, "Root revisions are created with the session");
+            co_return makeError(ErrorCode::Internal, "Root revisions are created with the session");
     }
     if (!st.ok()) {
-        return st;
+        co_return st;
     }
     *m_revisionState = std::move(next);
     emit stateVersionChanged();
     emit sessionListChanged();
     refreshStorageStats();
-    return Status::success();
+    co_return Status::success();
 }
 
-Status HostController::freezeDraftIfNeeded(const std::string& canonicalText, std::uint64_t expectedVersion) {
+AsyncTask<core::Status> HostController::freezeDraftIfNeeded(std::string canonicalText, std::uint64_t expectedVersion) {
     if (m_revisionState->isStale(expectedVersion)) {
-        return makeError(ErrorCode::StaleVersion,
+        co_return makeError(ErrorCode::StaleVersion,
                          "Expected state version " + std::to_string(expectedVersion) + " but current is " +
                              std::to_string(m_revisionState->stateVersion()));
     }
     if (!m_revisionState->isDraftDirty() && canonicalText == m_revisionState->currentRevision().text()) {
-        return Status::success();
+        co_return Status::success();
     }
-    return commitRevision(canonicalText, expectedVersion, storage::RevisionOrigin::DraftFreeze);
+    co_return (co_await commitRevision(canonicalText, expectedVersion, storage::RevisionOrigin::DraftFreeze));
 }
 
 void HostController::pauseAmbientFollowing() {
@@ -826,69 +797,54 @@ void HostController::pauseAmbientFollowing() {
         qInfo() << "[Roclint follow] Ambient following paused by user HUD interaction";
 }
 
-bool HostController::noteDraftEdited(quint64 expectedVersion) {
-    return runCommand("noteDraftEdited", [&]() -> Status {
-        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) return status;
-        // A HUD edit belongs to the user; later external typing must not overwrite it.
-        m_followAmbientDraft = false;
-        if (m_captureSource == CaptureSource::Widget || m_captureOpenPending) m_widgetDraftEdited = true;
-        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
-            qInfo() << "[Roclint follow] HUD edit notification; following paused";
-        if (!m_revisionState) return Status::success();
-        auto next = *m_revisionState;
-        if (auto st = next.noteDraftEdit(expectedVersion); !st.ok()) {
-            return st;
-        }
-        if (auto status = persistStateChange(next, expectedVersion); !status.ok()) return status;
-        invalidateDownstreamPipeline();
-        emit stateVersionChanged();
-        return Status::success();
-    });
-}
 
-bool HostController::commitPrompt(const QString& text, quint64 expectedVersion) {
-    return runCommand("commitPrompt", [&]() -> Status {
+
+AsyncTask<core::Status> HostController::commitPromptOperation(QString text, quint64 expectedVersion) {
+
         const std::string canonical = core::normalizeLineEndings(ss(text));
         if (isBlank(canonical)) {
-            return makeError(ErrorCode::InvalidInput, "Nothing to save: the prompt is empty.");
+            co_return makeError(ErrorCode::InvalidInput, "Nothing to save: the prompt is empty.");
         }
         if (!m_revisionState) {
             if (expectedVersion != 0) {
-                return makeError(ErrorCode::StaleVersion, "The session this edit belonged to is no longer open.");
+                co_return makeError(ErrorCode::StaleVersion, "The session this edit belonged to is no longer open.");
             }
-            if (auto st = ensureSession(canonical, nowMs()); !st.ok()) {
-                return st;
+            if (auto st = (co_await ensureSession(canonical, nowMs())); !st.ok()) {
+                co_return st;
             }
             invalidateDownstreamPipeline();
-            return Status::success();
+            co_return Status::success();
         }
         if (m_revisionState->isStale(expectedVersion)) {
-            return makeError(ErrorCode::StaleVersion,
+            co_return makeError(ErrorCode::StaleVersion,
                              "Expected state version " + std::to_string(expectedVersion) + " but current is " +
                                  std::to_string(m_revisionState->stateVersion()));
         }
         if (!m_revisionState->isDraftDirty() && canonical == m_revisionState->currentRevision().text()) {
-            return Status::success();
+            co_return Status::success();
         }
-        if (auto st = commitRevision(canonical, expectedVersion, storage::RevisionOrigin::Commit); !st.ok()) {
-            return st;
+        if (auto st = (co_await commitRevision(canonical, expectedVersion, storage::RevisionOrigin::Commit)); !st.ok()) {
+            co_return st;
         }
         invalidateDownstreamPipeline();
-        return Status::success();
-    });
+        co_return Status::success();
+
 }
 
-bool HostController::hardBypass(const QString& text, quint64 expectedVersion) {
-    if (!commitPrompt(text, expectedVersion)) {
-        return false;
+AsyncTask<core::Status> HostController::hardBypassOperation(QString text, quint64 expectedVersion) {
+    if (!(co_await commitPromptOperation(text, expectedVersion))) {
+        co_return Status(makeError(ErrorCode::PreconditionFailed, "The preceding action could not finish"));
     }
-    return runCommand("hardBypass", [&]() -> Status {
+
         // The raw text goes out as typed: any analysis or rewrite in flight is dropped unused.
-        if (auto status = advanceCommandVersion(stateVersion()); !status.ok()) return status;
+        if (auto status = (co_await advanceCommandVersion(stateVersion())); !status.ok()) co_return status;
         invalidateDownstreamPipeline();
+        const auto deliveryTicket = makeTicket();
+        const auto deliveryText = currentRevisionText();
         emit stateVersionChanged();
-        return deliver(currentRevisionText());
-    });
+        if (!isTicketCurrent(deliveryTicket, false)) co_return makeError(ErrorCode::StaleVersion, "The draft changed before delivery");
+        co_return deliver(deliveryText);
+
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -899,6 +855,7 @@ void HostController::invalidateDownstreamPipeline() {
     m_selectingInsertionTarget = false;
     ++m_pipelineSerial;
     m_promptTriageLoad.reset();
+    if (m_cancelWorkspaceContext) m_cancelWorkspaceContext();
     m_promptTriage.reset();
     if (!m_recommendedOption.isEmpty() || m_recommendedConfidence > 0.0) {
         m_recommendedOption.clear();
@@ -934,9 +891,12 @@ void HostController::invalidateDownstreamPipeline() {
     m_analysisMessage.clear();
 
     if (hadApproval && m_repository && m_revisionState) {
-        if (auto st = m_repository->invalidateApprovals(core::SessionId(currentSessionId())); !st.ok()) {
-            setLastError(st.error());
-        }
+        auto task = m_repository->invalidateApprovals(core::SessionId(currentSessionId()));
+        const QPointer<HostController> owner(this);
+        task.then([task, owner]() mutable {
+            if (!owner) return;
+            try { auto status = task.await_resume(); if (!status.ok()) owner->failStorage(status.error()); } catch (...) {}
+        });
     }
 
     emit analysisStatusChanged();
@@ -951,31 +911,31 @@ Status HostController::checkExpectedVersion(quint64 expectedVersion) const {
     return Status::success();
 }
 
-Status HostController::persistStateChange(const core::RevisionState& next, quint64 expectedVersion) {
-    if (!m_repository) return storageUnavailable();
-    if (auto status = m_repository->advanceSessionState(next, expectedVersion, nowMs()); !status.ok()) return status;
+AsyncTask<core::Status> HostController::persistStateChange(core::RevisionState next, quint64 expectedVersion) {
+    if (!m_repository) co_return storageUnavailable();
+    if (auto status = (co_await m_repository->advanceSessionState(next, expectedVersion, nowMs())); !status.ok()) co_return status;
     *m_revisionState = next;
     m_currentApproval.reset();
-    return Status::success();
+    co_return Status::success();
 }
 
-Status HostController::advanceCommandVersion(quint64 expectedVersion) {
-    if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) return status;
-    if (!m_revisionState) return Status::success();
+AsyncTask<core::Status> HostController::advanceCommandVersion(quint64 expectedVersion) {
+    if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
+    if (!m_revisionState) co_return Status::success();
     auto next = *m_revisionState;
-    if (auto status = next.advanceState(expectedVersion); !status.ok()) return status;
-    return persistStateChange(next, expectedVersion);
+    if (auto status = next.advanceState(expectedVersion); !status.ok()) co_return status;
+    co_return (co_await persistStateChange(next, expectedVersion));
 }
 
-Status HostController::advanceProposalGeneration() {
-    if (!m_revisionState) return Status::success();
+AsyncTask<core::Status> HostController::advanceProposalGeneration() {
+    if (!m_revisionState) co_return Status::success();
     auto next = *m_revisionState;
-    if (auto status = next.noteProposalEdit(stateVersion()); !status.ok()) return status;
-    return persistStateChange(next, stateVersion());
+    if (auto status = next.noteProposalEdit(stateVersion()); !status.ok()) co_return status;
+    co_return (co_await persistStateChange(next, stateVersion()));
 }
 
-Status HostController::invalidateProposalArtifacts() {
-    if (auto status = advanceProposalGeneration(); !status.ok()) return status;
+AsyncTask<core::Status> HostController::invalidateProposalArtifacts() {
+    if (auto status = (co_await advanceProposalGeneration()); !status.ok()) co_return status;
     m_pendingNativeRewrite.reset();
     m_currentProposal.reset();
     m_acknowledgedConstraints.clear();
@@ -987,7 +947,7 @@ Status HostController::invalidateProposalArtifacts() {
     emit approvalChanged();
     emit intentChanged();
     emit stateVersionChanged();
-    return Status::success();
+    co_return Status::success();
 }
 
 void HostController::resetSessionState() {
@@ -1049,9 +1009,9 @@ bridge::GraniteTransport HostController::currentTransport(const std::string& out
     return m_ollama->transportFor(m_activeModel, OllamaClient::kDefaultGenerateTimeoutMs, outputSchema);
 }
 
-Status HostController::beginAttempt(PipelineTicket& ticket, const char* stage) {
+AsyncTask<core::Status> HostController::beginAttempt(PipelineTicket& ticket, const char* stage) {
     if (!m_repository) {
-        return storageUnavailable();
+        co_return storageUnavailable();
     }
     storage::ModelAttemptRecord record;
     record.attemptId = newOpaqueId("att_");
@@ -1096,32 +1056,39 @@ Status HostController::beginAttempt(PipelineTicket& ticket, const char* stage) {
         ticket.configuration += "; request_group_id=" + ticket.analysisGroup->id + "; analysis_group_budget_ms=" + std::to_string(ticket.analysisGroup->budgetMs);
     record.modelDetail = ticket.configuration;
     record.startedAtMs = nowMs();
-    if (auto st = m_repository->beginModelAttempt(record); !st.ok()) {
-        return st;
+    if (auto st = (co_await m_repository->beginModelAttempt(record)); !st.ok()) {
+        co_return st;
     }
     ticket.attemptId = record.attemptId;
+    if (!isTicketCurrent(ticket, false)) {
+        completeAttempt(ticket, storage::AttemptStatus::DiscardedStale, "Prompt changed while recording the request");
+        co_return makeError(ErrorCode::StaleVersion, "The prompt changed before the request started");
+    }
     if (ticket.analysisGroup) {
         ticket.analysisGroup->activeAttemptId = ticket.attemptId;
         ticket.analysisGroup->activeConfiguration = ticket.configuration;
         ticket.analysisGroup->activeModel = ticket.model;
     }
-    return Status::success();
+    co_return Status::success();
 }
 
-void HostController::completeAttempt(const PipelineTicket& ticket,
+AsyncTask<void> HostController::completeAttempt(PipelineTicket ticket,
                                      storage::AttemptStatus status,
-                                     const std::string& errorMessage,
+                                     std::string errorMessage,
                                      const bridge::GraniteModelInfo* model) {
     if (ticket.attemptId.empty() || !m_repository) {
-        return;
+        co_return;
     }
     const bridge::GraniteModelInfo info = model ? *model : ticket.model;
-    if (auto st = m_repository->completeModelAttempt(ticket.attemptId, status, info.modelId,
+    if (auto st = (co_await m_repository->completeModelAttempt(ticket.attemptId, status, info.modelId,
                                                      modelDetail(info) + "; " + ticket.configuration,
-                                                     errorMessage, nowMs());
+                                                     errorMessage.substr(0, 1024), nowMs()));
         !st.ok()) {
         setLastError(st.error());
     }
+
+    finishQuitWhenRuntimesStopped();
+    co_return;
 }
 
 void HostController::setAnalysisStatus(AnalysisStatus status, const QString& message) {
@@ -1141,39 +1108,39 @@ void HostController::setProposalStatus(ProposalUiStatus status, const QString& m
 // Analysis
 // ----------------------------------------------------------------------------------------------
 
-bool HostController::cancelAnalysis(quint64 expectedVersion) {
-    return runCommand("cancelAnalysis", [&]() -> Status {
-        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) return status;
-        if (!isAnalyzing()) return Status::success();
-        if (auto status = advanceCommandVersion(expectedVersion); !status.ok()) return status;
+AsyncTask<core::Status> HostController::cancelAnalysisOperation(quint64 expectedVersion) {
+
+        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
+        if (!isAnalyzing()) co_return Status::success();
+        if (auto status = (co_await advanceCommandVersion(expectedVersion)); !status.ok()) co_return status;
         invalidateDownstreamPipeline();
         emit stateVersionChanged();
         setAnalysisStatus(AnalysisStatus::Idle, QStringLiteral("Analysis cancelled. Your draft remains available; choose Analyze to retry."));
-        return Status::success();
-    });
+        co_return Status::success();
+
 }
 
-bool HostController::analyzePrompt(const QString& text, quint64 expectedVersion) {
-    return runCommand("analyzePrompt", [&]() -> Status {
+AsyncTask<core::Status> HostController::analyzePromptOperation(QString text, quint64 expectedVersion) {
+
         const std::string canonical = core::normalizeLineEndings(ss(text));
         if (isBlank(canonical)) {
-            return makeError(ErrorCode::InvalidInput, "Type a prompt before analyzing it.");
+            co_return makeError(ErrorCode::InvalidInput, "Type a prompt before analyzing it.");
         }
         if (!m_revisionState) {
             if (expectedVersion != 0) {
-                return makeError(ErrorCode::StaleVersion, "The session this edit belonged to is no longer open.");
+                co_return makeError(ErrorCode::StaleVersion, "The session this edit belonged to is no longer open.");
             }
-            if (auto st = ensureSession(canonical, nowMs()); !st.ok()) {
-                return st;
+            if (auto st = (co_await ensureSession(canonical, nowMs())); !st.ok()) {
+                co_return st;
             }
-        } else if (auto st = freezeDraftIfNeeded(canonical, expectedVersion); !st.ok()) {
-            return st;
+        } else if (auto st = (co_await freezeDraftIfNeeded(canonical, expectedVersion)); !st.ok()) {
+            co_return st;
         }
-        if (auto status = advanceCommandVersion(stateVersion()); !status.ok()) return status;
+        if (auto status = (co_await advanceCommandVersion(stateVersion())); !status.ok()) co_return status;
         invalidateDownstreamPipeline();
         emit stateVersionChanged();
-        return startDiscovery();
-    });
+        co_return (co_await startDiscovery());
+
 }
 
 bool HostController::usesTransportOverride() const noexcept {
@@ -1184,26 +1151,26 @@ bool HostController::usesTransportOverride() const noexcept {
 #endif
 }
 
-Status HostController::startDiscovery(bool allowReconnect) {
+AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
     if (!m_revisionState) {
-        return makeError(ErrorCode::PreconditionFailed, "No prompt session is open");
+        co_return makeError(ErrorCode::PreconditionFailed, "No prompt session is open");
     }
-    if (promptTriageRoutingEnabled() && !m_promptTriage) return startPromptTriage();
+    if (promptTriageRoutingEnabled() && !m_promptTriage) co_return (co_await startPromptTriage());
     if (promptTriageRoutingEnabled() && (!m_routedAnalysisGroup || m_routedAnalysisGroup->terminal ||
         analysis::routePromptTriage(*m_promptTriage).value() != analysis::PromptTriageRoute::Clarify))
-        return makeError(ErrorCode::PreconditionFailed, "Granite discovery requires current ambiguous S1 classification");
+        co_return makeError(ErrorCode::PreconditionFailed, "Granite discovery requires current ambiguous S1 classification");
     if (promptTriageRoutingEnabled() && !nativeGraniteSelected() && !usesTransportOverride()) {
         m_routedAnalysisGroup->terminal = true;
         const auto reason = QStringLiteral("This flow requires pinned IBM Granite 3B. Choose Native Granite in Settings.");
         setAnalysisStatus(AnalysisStatus::Failed, reason);
-        return makeError(ErrorCode::ProviderUnavailable, ss(reason));
+        co_return makeError(ErrorCode::ProviderUnavailable, ss(reason));
     }
     const auto runtime = m_graniteAdapter->state();
     if (runtime == bridge::GraniteRuntimeState::Busy) {
         if (m_routedAnalysisGroup) m_routedAnalysisGroup->pause();
         m_discoveryQueued = true;
         setAnalysisStatus(AnalysisStatus::Analyzing, QStringLiteral("Waiting for the model to finish an earlier request."));
-        return Status::success();
+        co_return Status::success();
     }
     if (allowReconnect && nativeGraniteSelected() && !usesTransportOverride() &&
         (runtime != bridge::GraniteRuntimeState::Ready || !m_native->isReady())) {
@@ -1211,7 +1178,7 @@ Status HostController::startDiscovery(bool allowReconnect) {
         m_discoveryQueued = true;
         setAnalysisStatus(AnalysisStatus::Analyzing, QStringLiteral("Warming the pinned native model. Editing and the widget remain available."));
         prepareNativeModel();
-        return Status::success();
+        co_return Status::success();
     }
     if (allowReconnect && !nativeGraniteSelected() && m_ollama && !usesTransportOverride() && !m_activeModel.isEmpty() &&
         runtime != bridge::GraniteRuntimeState::Ready) {
@@ -1222,7 +1189,7 @@ Status HostController::startDiscovery(bool allowReconnect) {
         if (runtime != bridge::GraniteRuntimeState::Loading || !m_healthCheckInFlight) {
             refreshAvailableModels();
         }
-        return Status::success();
+        co_return Status::success();
     }
     m_discoveryQueued = false;
 
@@ -1230,10 +1197,10 @@ Status HostController::startDiscovery(bool allowReconnect) {
     ticket.analysisGroup = m_routedAnalysisGroup ? m_routedAnalysisGroup : std::make_shared<AnalysisGroup>(m_analysisGroupTimeoutMs);
     if (ticket.analysisGroup->id.empty()) ticket.analysisGroup->id = newOpaqueId("grp_");
     ticket.analysisGroup->resume();
-    if (auto st = beginAttempt(ticket, "discovery"); !st.ok()) {
+    if (auto st = (co_await beginAttempt(ticket, "discovery")); !st.ok()) {
         ticket.analysisGroup->terminal = true;
         setAnalysisStatus(AnalysisStatus::Failed, plainError(st.error()));
-        return st;
+        co_return st;
     }
 
     const auto transport = currentTransport(bridge::discoveryResponseSchema(), &ticket, QStringLiteral("granite_analyze"), qs(m_revisionState->currentRevision().text()));
@@ -1244,14 +1211,14 @@ Status HostController::startDiscovery(bool allowReconnect) {
         } else if (m_activeModel.isEmpty()) {
             reason = "No model is selected. Choose one in Settings.";
         } else if (!m_graniteAdapter->lastError().empty()) {
-            reason = m_graniteAdapter->lastError();
+            reason = "The local model isn't available. Retry explicitly or keep the original prompt.";
         } else {
             reason = "The local model isn't connected yet.";
         }
         completeAttempt(ticket, storage::AttemptStatus::Failed, reason);
         ticket.analysisGroup->terminal = true;
         setAnalysisStatus(AnalysisStatus::Failed, QStringLiteral("Analysis unavailable. ") + qs(reason));
-        return makeError(ErrorCode::ProviderUnavailable, reason);
+        co_return makeError(ErrorCode::ProviderUnavailable, reason);
     }
 
     bridge::GraniteOptionDiscoveryRequest request;
@@ -1269,14 +1236,14 @@ Status HostController::startDiscovery(bool allowReconnect) {
     const QString pText = qs(request.promptString);
     static const QRegularExpression codeExtRe(QStringLiteral("\\.(?:html|css|js|ts|tsx|jsx|qml|cpp|hpp|c|h|py|rs|go|java|swift|json|yaml|sql)\\b"), QRegularExpression::CaseInsensitiveOption);
     static const QRegularExpression codeSyntaxRe(QStringLiteral("[{}<>()\\[\\];:=#]"));
-    static const QRegularExpression codeKeywordRe(QStringLiteral("\\b(?:function|class|const|let|var|import|export|return|struct|enum|void|public|private)\\b"));
+    static const QRegularExpression codeKeywordRe(QStringLiteral("\\b(?:function|class|const|let|var|import|export|co_return|struct|enum|void|public|private)\\b"));
     request.isNonTechnicalPrompt = !codeExtRe.match(pText).hasMatch() &&
                                    !codeKeywordRe.match(pText).hasMatch() &&
                                    (pText.count(codeSyntaxRe) < 3);
 
     setAnalysisStatus(AnalysisStatus::Analyzing, QStringLiteral("Analyzing your prompt."));
     armAnalysisDeadline(ticket);
-    if (ticket.analysisGroup->deadline.hasExpired()) { expireAnalysisGroup(ticket); return Status::success(); }
+    if (ticket.analysisGroup->deadline.hasExpired()) { expireAnalysisGroup(ticket); co_return Status::success(); }
     emit modelEngineStatusChanged();
 
     using DiscoveryResult = core::Result<bridge::GraniteOptionDiscoveryResponse>;
@@ -1300,11 +1267,11 @@ Status HostController::startDiscovery(bool allowReconnect) {
             return makeError(ErrorCode::Internal, std::string("Discovery crashed: ") + ex.what());
         }
     }));
-    return Status::success();
+    co_return Status::success();
 }
 
-void HostController::onDiscoveryFinished(const PipelineTicket& ticket,
-                                         const core::Result<bridge::GraniteOptionDiscoveryResponse>& result) {
+AsyncTask<void> HostController::onDiscoveryFinished(PipelineTicket ticket,
+                                         core::Result<bridge::GraniteOptionDiscoveryResponse> result) {
     if (m_healthRecheckRequested && !m_healthCheckInFlight) refreshAvailableModels();
     emit modelEngineStatusChanged();
     if (m_ambientCheckPending) {
@@ -1312,23 +1279,23 @@ void HostController::onDiscoveryFinished(const PipelineTicket& ticket,
     }
     if (ticket.analysisGroup && ticket.analysisGroup->terminal) {
         if (m_discoveryQueued) {
-            if (auto status = startDiscovery(); !status.ok()) setLastError(status.error());
+            if (auto status = (co_await startDiscovery()); !status.ok()) setLastError(status.error());
         }
-        return;
+        co_return;
     }
     if (!isTicketCurrent(ticket, false)) {
         if (ticket.analysisGroup) ticket.analysisGroup->terminal = true;
         completeAttempt(ticket, storage::AttemptStatus::DiscardedStale,
                         "The prompt changed before analysis finished");
         if (m_discoveryQueued) {
-            if (auto st = startDiscovery(); !st.ok()) {
+            if (auto st = (co_await startDiscovery()); !st.ok()) {
                 setLastError(st.error());
             }
         }
-        return;
+        co_return;
     }
 
-    if (ticket.analysisGroup && ticket.analysisGroup->deadline.hasExpired()) { expireAnalysisGroup(ticket); return; }
+    if (ticket.analysisGroup && ticket.analysisGroup->deadline.hasExpired()) { expireAnalysisGroup(ticket); co_return; }
 
     if (!result.ok()) {
         if (ticket.analysisGroup) ticket.analysisGroup->terminal = true;
@@ -1336,20 +1303,22 @@ void HostController::onDiscoveryFinished(const PipelineTicket& ticket,
         const auto error = modelReplyError(result.error());
         setAnalysisStatus(AnalysisStatus::Failed, plainError(error));
         setLastError(error);
-        return;
+        co_return;
     }
-    acceptDiscovery(ticket, result.value());
+    (co_await acceptDiscovery(ticket, result.value()));
+
+    co_return;
 }
 
-void HostController::acceptDiscovery(const PipelineTicket& ticket, const bridge::GraniteOptionDiscoveryResponse& response) {
-    const std::string& frozenText = m_revisionState->currentRevision().text();
+AsyncTask<void> HostController::acceptDiscovery(PipelineTicket ticket, bridge::GraniteOptionDiscoveryResponse response) {
+    const std::string frozenText = m_revisionState->currentRevision().text();
     if (response.analysis.sessionId != ticket.sessionId || response.analysis.baseRevisionId != ticket.revisionId ||
         !analysis::isSnapshotSealed(response.analysis)) {
         if (ticket.analysisGroup) ticket.analysisGroup->terminal = true;
         completeAttempt(ticket, storage::AttemptStatus::Failed, "Analysis is not bound to the frozen revision",
                         &response.model);
         setAnalysisStatus(AnalysisStatus::Failed, QStringLiteral("Analysis failed: the result did not match this prompt."));
-        return;
+        co_return;
     }
     const auto validation = analysis::validateNormalizedAnalysis(response.analysis, frozenText);
     if (validation.status == analysis::AnalysisValidationStatus::Invalid) {
@@ -1360,17 +1329,17 @@ void HostController::acceptDiscovery(const PipelineTicket& ticket, const bridge:
         }
         completeAttempt(ticket, storage::AttemptStatus::Failed, "Invalid analysis: " + issues, &response.model);
         setAnalysisStatus(AnalysisStatus::Failed, QStringLiteral("Analysis failed: the model's answer was inconsistent."));
-        return;
+        co_return;
     }
     completeAttempt(ticket, storage::AttemptStatus::Succeeded, std::string(), &response.model);
 
     if (promptTriageRoutingEnabled()) {
         ticket.analysisGroup->terminal = true;
-        if (applyAnalysis(response.analysis, ticket.attemptId, {}, std::nullopt, m_promptTriage))
+        if ((co_await applyAnalysis(response.analysis, ticket.attemptId, {}, std::nullopt, m_promptTriage)))
             setAnalysisStatus(AnalysisStatus::Ready, QStringLiteral("S1 score %1 ≥ 0.70 (%2). Granite supplied the decisions below; confirm your choice explicitly.")
                 .arg(m_promptTriage->ambiguityScore, 0, 'f', 3)
                 .arg(QString::fromLatin1(analysis::toString(m_promptTriage->primaryCategory))));
-        return;
+        co_return;
     }
 
     QString message;
@@ -1392,14 +1361,14 @@ void HostController::acceptDiscovery(const PipelineTicket& ticket, const bridge:
     if (ticket.analysisGroup && ticket.analysisGroup->deadline.hasExpired()) {
         ticket.analysisGroup->terminal = true;
         auto evaluation = bridge::S1TriageAdapter::degradedResponse(response.analysis, ss(analysisDeadlineReason()));
-        if (applyAnalysis(response.analysis, ticket.attemptId, {}, std::move(evaluation)))
+        if ((co_await applyAnalysis(response.analysis, ticket.attemptId, {}, std::move(evaluation))))
             setAnalysisStatus(AnalysisStatus::Ready, message + QLatin1Char(' ') + analysisDeadlineReason());
-        return;
+        co_return;
     }
     if (m_s1Adapter.engine() == bridge::ScorerEngine::JuliaLocal && m_julia->isReady() && hasScoringCandidates) {
         auto scoreTicket = ticket;
         scoreTicket.attemptId.clear();
-        if (auto st = beginAttempt(scoreTicket, "julia_scoring"); st.ok()) {
+        if (auto st = (co_await beginAttempt(scoreTicket, "julia_scoring")); st.ok()) {
             scorerAttemptId = scoreTicket.attemptId;
             const JuliaRuntime::RequestContext context{qs(ticket.analysisGroup ? ticket.analysisGroup->id : ticket.attemptId), qs(scoreTicket.attemptId),
                 qs(scoreTicket.sessionId), qs(scoreTicket.revisionId), scoreTicket.stateVersion};
@@ -1408,7 +1377,7 @@ void HostController::acceptDiscovery(const PipelineTicket& ticket, const bridge:
                 m_pendingJulia.insert(requestId, PendingJuliaScore{scoreTicket, response.analysis, message, ticket.attemptId});
                 ++m_inFlight;
                 setAnalysisStatus(AnalysisStatus::Analyzing, QStringLiteral("Julia is scoring the supplied choices and material assumptions locally."));
-                return;
+                co_return;
             }
             completeAttempt(scoreTicket, storage::AttemptStatus::Failed, "Julia could not accept this scoring request");
             message += QStringLiteral(" Julia could not score this request; options are unranked.");
@@ -1420,7 +1389,9 @@ void HostController::acceptDiscovery(const PipelineTicket& ticket, const bridge:
         message += QStringLiteral(" Julia is unavailable; options are unranked. Load it in Settings.");
     }
     if (ticket.analysisGroup) ticket.analysisGroup->terminal = true;
-    if (applyAnalysis(response.analysis, ticket.attemptId, scorerAttemptId)) setAnalysisStatus(AnalysisStatus::Ready, message);
+    if ((co_await applyAnalysis(response.analysis, ticket.attemptId, scorerAttemptId))) setAnalysisStatus(AnalysisStatus::Ready, message);
+
+    co_return;
 }
 
 void HostController::armAnalysisDeadline(const PipelineTicket& ticket) {
@@ -1457,18 +1428,21 @@ void HostController::expireAnalysisGroup(const PipelineTicket& ticket) {
 }
 
 void HostController::onJuliaFinished(quint64 requestId, const bridge::SnapshotEvaluationResponse* response, const QString& error) {
+    onJuliaFinishedAsync(requestId, response ? std::optional(*response) : std::nullopt, error);
+}
+AsyncTask<void> HostController::onJuliaFinishedAsync(quint64 requestId, std::optional<bridge::SnapshotEvaluationResponse> response, QString error) {
     const auto it = m_pendingJulia.find(requestId);
-    if (it == m_pendingJulia.end()) return;
+    if (it == m_pendingJulia.end()) co_return;
     auto pending = std::move(it.value());
     m_pendingJulia.erase(it);
     --m_inFlight;
     if (pending.ticket.analysisGroup) {
         pending.ticket.analysisGroup->terminal = true;
-        if (pending.ticket.analysisGroup->deadline.hasExpired()) response = nullptr;
+        if (pending.ticket.analysisGroup->deadline.hasExpired()) response = std::nullopt;
     }
     if (!isTicketCurrent(pending.ticket, false) || m_s1Adapter.engine() != bridge::ScorerEngine::JuliaLocal) {
         completeAttempt(pending.ticket, storage::AttemptStatus::DiscardedStale, "Prompt or scorer settings changed before Julia finished");
-        return;
+        co_return;
     }
     const auto failure = pending.ticket.analysisGroup && pending.ticket.analysisGroup->deadline.hasExpired() ? analysisDeadlineReason() : error;
     auto evaluation = response ? bridge::S1TriageAdapter::validateLocalEvaluation(pending.analysis, *response)
@@ -1518,11 +1492,13 @@ void HostController::onJuliaFinished(quint64 requestId, const bridge::SnapshotEv
 
     const auto detail = ranked ? QStringLiteral(" Julia scored the supplied decisions locally. Confirm your interpretation explicitly.")
                                : QStringLiteral(" Julia scoring was unavailable; options remain unranked. ") + qs(evaluation.degradedReason);
-    if (applyAnalysis(std::move(pending.analysis), std::move(pending.discoveryAttemptId), pending.ticket.attemptId, std::move(evaluation), m_promptTriage))
+    if ((co_await applyAnalysis(std::move(pending.analysis), std::move(pending.discoveryAttemptId), pending.ticket.attemptId, std::move(evaluation), m_promptTriage)))
         setAnalysisStatus(AnalysisStatus::Ready, pending.message + detail);
+
+    co_return;
 }
 
-bool HostController::applyAnalysis(analysis::NormalizedAnalysis normalized, std::string discoveryAttemptId,
+AsyncTask<bool> HostController::applyAnalysis(analysis::NormalizedAnalysis normalized, std::string discoveryAttemptId,
                                     std::string scorerAttemptId,
                                     std::optional<bridge::SnapshotEvaluationResponse> evaluation,
                                     std::optional<analysis::PromptTriage> triage) {
@@ -1531,10 +1507,10 @@ bool HostController::applyAnalysis(analysis::NormalizedAnalysis normalized, std:
 #if defined(ROCLINT_ENABLE_TEST_MOCKS)
     if (scored.executionStatus == bridge::ExecutionStatus::ExecutedMock && scorerAttemptId.empty()) {
         auto ticket = makeTicket();
-        if (auto status = beginAttempt(ticket, "test_mock_scoring"); !status.ok()) {
+        if (auto status = (co_await beginAttempt(ticket, "test_mock_scoring")); !status.ok()) {
             setAnalysisStatus(AnalysisStatus::Failed, plainError(status.error()));
             setLastError(status.error());
-            return false;
+            co_return false;
         }
         scorerAttemptId = ticket.attemptId;
         ticket.model.modelId = scored.modelVersion;
@@ -1548,15 +1524,15 @@ bool HostController::applyAnalysis(analysis::NormalizedAnalysis normalized, std:
     if (!result.ok()) {
         setAnalysisStatus(AnalysisStatus::Failed, plainError(result.error()));
         setLastError(result.error());
-        return false;
+        co_return false;
     }
     auto nextState = *m_revisionState;
     const auto observedVersion = stateVersion();
-    if (auto status = nextState.advanceState(observedVersion); !status.ok()) { setLastError(status.error()); return false; }
-    if (auto status = m_repository->insertAnalysisSnapshot(result.value(), nowMs(), observedVersion); !status.ok()) {
+    if (auto status = nextState.advanceState(observedVersion); !status.ok()) { setLastError(status.error()); co_return false; }
+    if (auto status = (co_await m_repository->insertAnalysisSnapshot(result.value(), nowMs(), observedVersion)); !status.ok()) {
         setAnalysisStatus(AnalysisStatus::Failed, plainError(status.error()));
         setLastError(status.error());
-        return false;
+        co_return false;
     }
     *m_revisionState = std::move(nextState);
     m_currentSnapshot = std::move(result).value();
@@ -1565,28 +1541,30 @@ bool HostController::applyAnalysis(analysis::NormalizedAnalysis normalized, std:
     m_currentPolicyResult = analysis::MaterialityPolicyV1::evaluatePrompt(*m_currentAnalysis, m_revisionState->currentRevision().text());
     m_workingIntent = intent::WorkingIntentState{};
     m_confirmedIntent.reset();
-    reevaluateIntervention();
+    (co_await reevaluateIntervention());
     emit stateVersionChanged();
-    return true;
+    co_return true;
 }
 
-void HostController::reevaluateIntervention() {
+AsyncTask<void> HostController::reevaluateIntervention() {
     if (!m_currentAnalysis) {
         m_currentDecision = intent::InterventionDecision{};
         refreshActiveItemPresentation();
         emit interventionChanged();
         emit intentChanged();
-        return;
+        co_return;
     }
     m_currentDecision = intent::InterventionStateMachine::evaluate(*m_currentAnalysis, m_currentPolicyResult,
                                                                    m_currentSnapshotEval, m_workingIntent);
     intent::InterventionStateMachine::recordPresented(m_currentDecision, m_workingIntent);
     refreshActiveItemPresentation();
-    if (auto st = finalizeIntentIfQuiet(); !st.ok()) {
+    if (auto st = (co_await finalizeIntentIfQuiet()); !st.ok()) {
         setLastError(st.error());
     }
     emit interventionChanged();
     emit intentChanged();
+
+    co_return;
 }
 
 void HostController::refreshActiveItemPresentation() {
@@ -1704,58 +1682,58 @@ void HostController::refreshActiveItemPresentation() {
     }
 }
 
-Status HostController::finalizeIntentIfQuiet() {
+AsyncTask<core::Status> HostController::finalizeIntentIfQuiet() {
     if (m_currentDecision.verdict != intent::InterventionVerdict::Quiet || !m_currentAnalysis) {
         m_confirmedIntent.reset();
-        return Status::success();
+        co_return Status::success();
     }
     if (m_confirmedIntent) {
-        return Status::success();
+        co_return Status::success();
     }
     if (!m_repository) {
-        return storageUnavailable();
+        co_return storageUnavailable();
     }
     const std::int64_t now = nowMs();
     auto built = intent::IntentProvenanceBuilder::buildConfirmedIntent(*m_currentSnapshot, m_currentPolicyResult,
                                                                        m_workingIntent, now);
     if (!built.ok()) {
-        return built.error();
+        co_return built.error();
     }
-    if (auto st = m_repository->insertIntentVersion(built.value(), now); !st.ok()) {
-        return st;
+    if (auto st = (co_await m_repository->insertIntentVersion(built.value(), now)); !st.ok()) {
+        co_return st;
     }
     m_confirmedIntent = std::move(built).value();
-    return Status::success();
+    co_return Status::success();
 }
 
-bool HostController::applyTransition(const char* name, quint64 expectedVersion,
-                                     const std::function<Status(intent::WorkingIntentState&)>& transition) {
-    return runCommand(name, [&]() -> Status {
-        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) return status;
+AsyncTask<core::Status> HostController::applyTransition(const char* /*name*/, quint64 expectedVersion,
+                                     std::function<Status(intent::WorkingIntentState&)> transition) {
+
+        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
         if (!m_currentAnalysis || !m_revisionState) {
-            return makeError(ErrorCode::PreconditionFailed, "There's nothing to answer yet. Analyze the prompt first.");
+            co_return makeError(ErrorCode::PreconditionFailed, "There's nothing to answer yet. Analyze the prompt first.");
         }
         if (m_revisionState->isDraftDirty()) {
-            return makeError(ErrorCode::StaleVersion, "The prompt changed after it was analyzed. Analyze it again.");
+            co_return makeError(ErrorCode::StaleVersion, "The prompt changed after it was analyzed. Analyze it again.");
         }
         intent::WorkingIntentState next = m_workingIntent;
         if (auto st = transition(next); !st.ok()) {
-            return st;
+            co_return st;
         }
         auto decision = intent::InterventionStateMachine::evaluate(*m_currentAnalysis, m_currentPolicyResult, m_currentSnapshotEval, next);
         intent::InterventionStateMachine::recordPresented(decision, next);
         auto nextState = *m_revisionState;
         const bool clearProposal = m_currentProposal.has_value() || m_proposalStatus == ProposalUiStatus::Generating;
         const auto advanced = clearProposal ? nextState.noteProposalEdit(expectedVersion) : nextState.advanceState(expectedVersion);
-        if (!advanced.ok()) return advanced;
+        if (!advanced.ok()) co_return advanced;
         std::optional<intent::ConfirmedIntent> confirmed;
         if (decision.verdict == intent::InterventionVerdict::Quiet) {
             auto result = intent::IntentProvenanceBuilder::buildConfirmedIntent(*m_currentSnapshot, m_currentPolicyResult, next, nowMs());
-            if (!result.ok()) return result.error();
+            if (!result.ok()) co_return result.error();
             confirmed = std::move(result).value();
-            if (auto status = m_repository->insertIntentVersion(*confirmed, nowMs(), expectedVersion); !status.ok()) return status;
+            if (auto status = (co_await m_repository->insertIntentVersion(*confirmed, nowMs(), expectedVersion)); !status.ok()) co_return status;
         } else {
-            if (auto status = m_repository->advanceSessionState(nextState, expectedVersion, nowMs()); !status.ok()) return status;
+            if (auto status = (co_await m_repository->advanceSessionState(nextState, expectedVersion, nowMs())); !status.ok()) co_return status;
         }
         *m_revisionState = std::move(nextState);
         m_workingIntent = std::move(next);
@@ -1775,13 +1753,13 @@ bool HostController::applyTransition(const char* name, quint64 expectedVersion,
         emit intentChanged();
         emit stateVersionChanged();
         emit approvalChanged();
-        return Status::success();
-    });
+        co_return Status::success();
+
 }
 
-bool HostController::confirmChoice(const QString& alternativeId, quint64 expectedVersion) {
+AsyncTask<core::Status> HostController::confirmChoiceOperation(QString alternativeId, quint64 expectedVersion) {
     const std::string alt = ss(alternativeId);
-    return applyTransition("confirmChoice", expectedVersion, [&](intent::WorkingIntentState& state) {
+    co_return (co_await applyTransition("confirmChoice", expectedVersion, [=, this](intent::WorkingIntentState& state) {
         for (const auto& group : m_currentAnalysis->choiceGroups) {
             for (const auto& alternative : group.alternatives) {
                 if (alternative.id != alt) continue;
@@ -1790,14 +1768,14 @@ bool HostController::confirmChoice(const QString& alternativeId, quint64 expecte
             }
         }
         return intent::InterventionStateMachine::applyChoice(*m_currentAnalysis, m_currentDecision, state, alt);
-    });
+    }));
 }
 
-bool HostController::submitCustomIntent(const QString& customText, quint64 expectedVersion) {
+AsyncTask<core::Status> HostController::submitCustomIntentOperation(QString customText, quint64 expectedVersion) {
     const std::string text = core::normalizeLineEndings(ss(customText));
-    return applyTransition("submitCustomIntent", expectedVersion, [&](intent::WorkingIntentState& state) {
+    co_return (co_await applyTransition("submitCustomIntent", expectedVersion, [=, this](intent::WorkingIntentState& state) {
         return intent::InterventionStateMachine::applyCustomText(*m_currentAnalysis, m_currentDecision, state, text);
-    });
+    }));
 }
 
 bool HostController::isDeferralPhrase(const QString& text) {
@@ -1826,14 +1804,26 @@ bool HostController::isDeferralPhrase(const QString& text) {
     return false;
 }
 
-bool HostController::submitClarification(const QString& text, quint64 expectedVersion) {
+quint64 HostController::submitClarification(const QString& text, quint64 expectedVersion) {
     return submitClarification(text, isDeferralPhrase(text), expectedVersion);
 }
 
-bool HostController::submitClarification(const QString& text, bool isDeferral, quint64 expectedVersion) {
+quint64 HostController::submitClarification(const QString& text, bool isDeferral, quint64 expectedVersion) {
     if (!isDeferral && !isDeferralPhrase(text)) {
         return submitCustomIntent(text, expectedVersion);
     }
+
+    const auto notifyAfter = [this](quint64 requestId, const QString& message, bool automatic) {
+        if (!requestId) return quint64{0};
+        const auto connection = std::make_shared<QMetaObject::Connection>();
+        *connection = connect(this, &HostController::storageCommandFinished, this,
+            [this, requestId, message, automatic, connection](quint64 finishedId, const QString&, bool succeeded, const QString&, const QString&) {
+                if (finishedId != requestId) return;
+                disconnect(*connection);
+                if (succeeded) { setAmbientStatus(message); emit clarificationDeferred(message, automatic); }
+            });
+        return requestId;
+    };
 
     if (m_recommendedConfidence >= 0.70 &&
         (!m_activeAlternatives.isEmpty() || m_currentDecision.activeItemKind == intent::ActiveItemKind::ChoiceGroup)) {
@@ -1864,46 +1854,43 @@ bool HostController::submitClarification(const QString& text, bool isDeferral, q
         if (!chosenAltId.isEmpty()) {
             const int pct = qRound(m_recommendedConfidence * 100.0);
             const QString message = QStringLiteral("Auto-selected: %1 (Julia %2% confident)").arg(chosenLabel).arg(pct);
-            setAmbientStatus(message);
-            emit clarificationDeferred(message, true);
-            return confirmChoice(chosenAltId, expectedVersion);
+            return notifyAfter(confirmChoice(chosenAltId, expectedVersion), message, true);
         }
     }
 
     // Otherwise, treat same as "Keep my original wording"
     const QString message = QStringLiteral("Kept original — Julia wasn't confident enough to auto-pick");
-    setAmbientStatus(message);
-    emit clarificationDeferred(message, false);
+
     if (m_currentDecision.activeItemKind == intent::ActiveItemKind::ChoiceGroup) {
-        return keepOriginalPrompt(expectedVersion);
+        return notifyAfter(keepOriginalPrompt(expectedVersion), message, false);
     }
-    return skipCurrentItem(expectedVersion);
+    return notifyAfter(skipCurrentItem(expectedVersion), message, false);
 }
 
-bool HostController::keepOriginalPrompt(quint64 expectedVersion) {
-    return applyTransition("keepOriginalPrompt", expectedVersion, [&](intent::WorkingIntentState& state) {
+AsyncTask<core::Status> HostController::keepOriginalPromptOperation(quint64 expectedVersion) {
+    co_return (co_await applyTransition("keepOriginalPrompt", expectedVersion, [=, this](intent::WorkingIntentState& state) {
         return intent::InterventionStateMachine::applyKeepOriginal(*m_currentAnalysis, m_currentDecision, state);
-    });
+    }));
 }
 
-bool HostController::resolveActiveAssumption(bool accepted, quint64 expectedVersion) {
-    return applyTransition("resolveActiveAssumption", expectedVersion, [&](intent::WorkingIntentState& state) {
+AsyncTask<core::Status> HostController::resolveActiveAssumptionOperation(bool accepted, quint64 expectedVersion) {
+    co_return (co_await applyTransition("resolveActiveAssumption", expectedVersion, [=, this](intent::WorkingIntentState& state) {
         return intent::InterventionStateMachine::applyAssumptionDecision(*m_currentAnalysis, m_currentDecision, state,
                                                                          accepted);
-    });
+    }));
 }
 
-bool HostController::skipCurrentItem(quint64 expectedVersion) {
-    return applyTransition("skipCurrentItem", expectedVersion, [&](intent::WorkingIntentState& state) {
+AsyncTask<core::Status> HostController::skipCurrentItemOperation(quint64 expectedVersion) {
+    co_return (co_await applyTransition("skipCurrentItem", expectedVersion, [=, this](intent::WorkingIntentState& state) {
         return intent::InterventionStateMachine::applySkip(*m_currentAnalysis, m_currentDecision, state);
-    });
+    }));
 }
 
-bool HostController::switchToManual(quint64 expectedVersion) {
-    return applyTransition("switchToManual", expectedVersion, [](intent::WorkingIntentState& state) {
+AsyncTask<core::Status> HostController::switchToManualOperation(quint64 expectedVersion) {
+    co_return (co_await applyTransition("switchToManual", expectedVersion, [](intent::WorkingIntentState& state) {
         intent::InterventionStateMachine::applyManualRequest(state);
         return Status::success();
-    });
+    }));
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -2059,24 +2046,24 @@ QVariantList HostController::availableRewriteProfiles() const {
     return list;
 }
 
-bool HostController::setRewriteProfile(const QString& profile, quint64 expectedVersion) {
-    return runCommand("setRewriteProfile", [&]() -> Status {
-        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) return status;
+AsyncTask<core::Status> HostController::setRewriteProfileOperation(QString profile, quint64 expectedVersion) {
+
+        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
         if (!rewrite::ProfileRegistry::isKnownProfile(ss(profile))) {
-            return makeError(ErrorCode::InvalidInput, "Unknown rewrite style: " + ss(profile));
+            co_return makeError(ErrorCode::InvalidInput, "Unknown rewrite style: " + ss(profile));
         }
         if (m_rewriteProfile == profile) {
-            return Status::success();
+            co_return Status::success();
         }
-        if (auto status = invalidateProposalArtifacts(); !status.ok()) return status;
+        if (auto status = (co_await invalidateProposalArtifacts()); !status.ok()) co_return status;
         m_rewriteProfile = qs(rewrite::ProfileRegistry::getProfile(ss(profile))->id);
         if (!QCoreApplication::organizationName().isEmpty()) {
             QSettings settings;
             settings.setValue(QStringLiteral("rewrite/profile"), m_rewriteProfile);
         }
         emit rewriteProfileChanged(m_rewriteProfile);
-        return Status::success();
-    });
+        co_return Status::success();
+
 }
 
 bool HostController::isRewriteEnabled() const {
@@ -2113,28 +2100,28 @@ QVariantMap HostController::getConfirmedIntentPayload() const {
 // Rewrite proposal and approval
 // ----------------------------------------------------------------------------------------------
 
-bool HostController::synthesizeRewrite(quint64 expectedVersion) {
-    return runCommand("synthesizeRewrite", [&]() -> Status {
-        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) return status;
+AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expectedVersion) {
+
+        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
         if (promptTriageRoutingEnabled() && (!m_currentSnapshot || !m_currentSnapshot->promptTriage ||
             analysis::routePromptTriage(*m_currentSnapshot->promptTriage).value() != analysis::PromptTriageRoute::Clarify ||
             (m_workingIntent.confirmedAlternatives.empty() && m_workingIntent.customResolutions.empty() &&
              m_workingIntent.assumptionDecisions.empty())))
-            return makeError(ErrorCode::PreconditionFailed, "Granite rewrite requires ambiguous S1 classification and an explicit confirmed choice. Clear prompts keep their original wording.");
+            co_return makeError(ErrorCode::PreconditionFailed, "Granite rewrite requires ambiguous S1 classification and an explicit confirmed choice. Clear prompts keep their original wording.");
         if (promptTriageRoutingEnabled() && !nativeGraniteSelected() && !usesTransportOverride())
-            return makeError(ErrorCode::ProviderUnavailable, "Only the pinned native IBM Granite model can generate this rewrite.");
+            co_return makeError(ErrorCode::ProviderUnavailable, "Only the pinned native IBM Granite model can generate this rewrite.");
         if (!m_revisionState) {
-            return makeError(ErrorCode::PreconditionFailed, "Write and analyze a prompt first.");
+            co_return makeError(ErrorCode::PreconditionFailed, "Write and analyze a prompt first.");
         }
         if (m_revisionState->isDraftDirty()) {
-            return makeError(ErrorCode::PreconditionFailed,
+            co_return makeError(ErrorCode::PreconditionFailed,
                              "The prompt has edits that haven't been analyzed. Analyze it again before rewriting.");
         }
         if (!m_currentAnalysis) {
-            return makeError(ErrorCode::PreconditionFailed, "Analyze the prompt before asking for a rewrite.");
+            co_return makeError(ErrorCode::PreconditionFailed, "Analyze the prompt before asking for a rewrite.");
         }
         if (!m_confirmedIntent) {
-            return makeError(ErrorCode::PreconditionFailed,
+            co_return makeError(ErrorCode::PreconditionFailed,
                              "Answer the open questions (or switch to manual) before asking for a rewrite.");
         }
         for (const auto& group : m_currentAnalysis->choiceGroups) {
@@ -2143,21 +2130,21 @@ bool HostController::synthesizeRewrite(quint64 expectedVersion) {
             for (const auto& alternative : group.alternatives) {
                 if (alternative.id != selected->second) continue;
                 if (const auto violation = bridge::explicitColorConstraintViolation(m_revisionState->currentRevision().text(), alternative, group.question))
-                    return makeError(ErrorCode::ValidationFailed, *violation);
+                    co_return makeError(ErrorCode::ValidationFailed, *violation);
             }
         }
         if (auto st = intent::IntentProvenanceBuilder::isIntentValid(
                 *m_confirmedIntent, m_revisionState->currentRevision().revisionId().value(), m_revisionState->status(),
                 *m_currentSnapshot);
             !st.ok()) {
-            return st;
+            co_return st;
         }
         if (m_proposalStatus == ProposalUiStatus::Generating) {
-            return makeError(ErrorCode::PreconditionFailed, "A rewrite is already being written.");
+            co_return makeError(ErrorCode::PreconditionFailed, "A rewrite is already being written.");
         }
         const auto profile = rewrite::ProfileRegistry::getProfile(ss(m_rewriteProfile));
         if (!profile.has_value()) {
-            return makeError(ErrorCode::InvalidInput, "Unknown rewrite style: " + ss(m_rewriteProfile));
+            co_return makeError(ErrorCode::InvalidInput, "Unknown rewrite style: " + ss(m_rewriteProfile));
         }
         const auto runtime = m_graniteAdapter->state();
         if (nativeGraniteSelected() && !usesTransportOverride() &&
@@ -2165,16 +2152,16 @@ bool HostController::synthesizeRewrite(quint64 expectedVersion) {
             m_pendingNativeRewrite = PendingNativeRewrite{expectedVersion, m_confirmedIntent->id, m_rewriteProfile, m_configurationGeneration};
             setProposalStatus(ProposalUiStatus::Generating, QStringLiteral("Warming the pinned native model before the requested rewrite."));
             prepareNativeModel();
-            return Status::success();
+            co_return Status::success();
         }
         if (runtime != bridge::GraniteRuntimeState::Ready || (!nativeGraniteSelected() && !currentTransport(bridge::rewriteResponseSchema()))) {
-            return makeError(ErrorCode::ProviderUnavailable, ss(modelEngineStatus()));
+            co_return makeError(ErrorCode::ProviderUnavailable, ss(modelEngineStatus()));
         }
 
-        if (auto status = invalidateProposalArtifacts(); !status.ok()) return status;
+        if (auto status = (co_await invalidateProposalArtifacts()); !status.ok()) co_return status;
         PipelineTicket ticket = makeTicket();
-        if (auto st = beginAttempt(ticket, "rewrite"); !st.ok()) {
-            return st;
+        if (auto st = (co_await beginAttempt(ticket, "rewrite")); !st.ok()) {
+            co_return st;
         }
 
         bridge::GraniteRewriteRequest request;
@@ -2189,7 +2176,7 @@ bool HostController::synthesizeRewrite(quint64 expectedVersion) {
             qs(request.originalText), qs(request.confirmedIntent.id), m_rewriteProfile);
         if (!transport) {
             completeAttempt(ticket, storage::AttemptStatus::Failed, "Native rewrite transport is unavailable");
-            return makeError(ErrorCode::ProviderUnavailable, "The local rewrite runtime is not ready.");
+            co_return makeError(ErrorCode::ProviderUnavailable, "The local rewrite runtime is not ready.");
         }
 
         m_streamingPreview.clear();
@@ -2218,12 +2205,12 @@ bool HostController::synthesizeRewrite(quint64 expectedVersion) {
                 return makeError(ErrorCode::Internal, std::string("Rewrite crashed: ") + ex.what());
             }
         }));
-        return Status::success();
-    });
+        co_return Status::success();
+
 }
 
-void HostController::onRewriteFinished(const PipelineTicket& ticket,
-                                       const core::Result<rewrite::RewriteProposal>& result) {
+AsyncTask<void> HostController::onRewriteFinished(PipelineTicket ticket,
+                                       core::Result<rewrite::RewriteProposal> result) {
     if (m_healthRecheckRequested && !m_healthCheckInFlight) refreshAvailableModels();
     emit modelEngineStatusChanged();
     if (m_ambientCheckPending) {
@@ -2232,18 +2219,18 @@ void HostController::onRewriteFinished(const PipelineTicket& ticket,
     if (!isTicketCurrent(ticket, true) || !m_confirmedIntent) {
         completeAttempt(ticket, storage::AttemptStatus::DiscardedStale, "The prompt or settings changed before the rewrite finished");
         if (m_discoveryQueued) {
-            if (auto st = startDiscovery(); !st.ok()) {
+            if (auto st = (co_await startDiscovery()); !st.ok()) {
                 setLastError(st.error());
             }
         }
-        return;
+        co_return;
     }
     if (!result.ok()) {
         completeAttempt(ticket, storage::AttemptStatus::Failed, result.error().message);
         const auto error = modelReplyError(result.error());
         setProposalStatus(ProposalUiStatus::Failed, QStringLiteral("The rewrite couldn't be produced. ") + plainError(error));
         setLastError(error);
-        return;
+        co_return;
     }
 
     const rewrite::RewriteProposal& proposal = result.value();
@@ -2257,31 +2244,31 @@ void HostController::onRewriteFinished(const PipelineTicket& ticket,
     if (auto status = nextState.noteProposalEdit(ticket.stateVersion); !status.ok()) {
         completeAttempt(ticket, storage::AttemptStatus::Failed, status.error().message, &model);
         setProposalStatus(ProposalUiStatus::Failed, plainError(status.error()));
-        return;
+        co_return;
     }
     if (proposal.proposalEditGeneration != nextState.proposalEditGeneration()) {
         completeAttempt(ticket, storage::AttemptStatus::Failed, "Proposal generation mismatch", &model);
         setProposalStatus(ProposalUiStatus::Failed, QStringLiteral("The rewrite was out of date and was discarded."));
-        return;
+        co_return;
     }
-    auto persistProposal = [&]() -> Status {
-        if (auto status = m_repository->insertProposal(proposal, nowMs(), ticket.stateVersion); !status.ok()) return status;
+    auto persistProposal = [&]() -> AsyncTask<core::Status> {
+        if (auto status = (co_await m_repository->insertProposal(proposal, nowMs(), ticket.stateVersion)); !status.ok()) co_return status;
         *m_revisionState = nextState;
         m_currentApproval.reset();
-        return Status::success();
+        co_return Status::success();
     };
 
     if (proposal.status == rewrite::ProposalStatus::NeedsClarification) {
-        if (auto st = persistProposal(); !st.ok()) {
+        if (auto st = (co_await persistProposal()); !st.ok()) {
             completeAttempt(ticket, storage::AttemptStatus::Failed, st.error().message, &model);
             setProposalStatus(ProposalUiStatus::Failed, plainError(st.error()));
-            return;
+            co_return;
         }
         completeAttempt(ticket, storage::AttemptStatus::Succeeded, std::string(), &model);
         m_currentProposal = proposal;
         setProposalStatus(ProposalUiStatus::NeedsClarification, qs(proposal.clarificationQuestion));
         emit stateVersionChanged();
-        return;
+        co_return;
     }
 
     const auto validation = rewrite::RewriteValidator::validateProposal(
@@ -2290,13 +2277,13 @@ void HostController::onRewriteFinished(const PipelineTicket& ticket,
         completeAttempt(ticket, storage::AttemptStatus::Failed, "Validation failed: " + validation.rejectionReason, &model);
         setProposalStatus(ProposalUiStatus::ValidationFailed,
                           QStringLiteral("The suggested rewrite failed checks: ") + qs(validation.rejectionReason));
-        return;
+        co_return;
     }
-    if (auto st = persistProposal(); !st.ok()) {
+    if (auto st = (co_await persistProposal()); !st.ok()) {
         completeAttempt(ticket, storage::AttemptStatus::Failed, st.error().message, &model);
         setProposalStatus(ProposalUiStatus::Failed, plainError(st.error()));
         setLastError(st.error());
-        return;
+        co_return;
     }
     completeAttempt(ticket, storage::AttemptStatus::Succeeded, std::string(), &model);
 
@@ -2307,6 +2294,8 @@ void HostController::onRewriteFinished(const PipelineTicket& ticket,
     setProposalStatus(ProposalUiStatus::ReadyForReview,
                       pending == 0 ? QStringLiteral("Review the suggested wording, then choose Insert or Copy.")
                                    : QStringLiteral("Check the %1 highlighted item(s), then approve the wording.").arg(pending));
+
+    co_return;
 }
 
 rewrite::ValidationResult HostController::validateCurrentProposal() const {
@@ -2337,19 +2326,19 @@ std::optional<review::ApprovalContext> HostController::approvalContext() const {
     return ctx;
 }
 
-bool HostController::acknowledgeConstraint(const QString& constraintId, bool acknowledged, quint64 expectedVersion) {
-    return runCommand("acknowledgeConstraint", [&]() -> Status {
-        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) return status;
+AsyncTask<core::Status> HostController::acknowledgeConstraintOperation(QString constraintId, bool acknowledged, quint64 expectedVersion) {
+
+        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
         if (m_proposalStatus != ProposalUiStatus::ReadyForReview || !m_currentProposal) {
-            return makeError(ErrorCode::PreconditionFailed, "There is no suggested rewrite to review.");
+            co_return makeError(ErrorCode::PreconditionFailed, "There is no suggested rewrite to review.");
         }
         const std::string id = ss(constraintId);
         const auto constraint = m_currentProposal->getConstraint(id);
         if (!constraint.has_value() || constraint->status != rewrite::ConstraintStatus::SemanticReviewRequired) {
-            return makeError(ErrorCode::InvalidInput, "That item doesn't need your review.");
+            co_return makeError(ErrorCode::InvalidInput, "That item doesn't need your review.");
         }
-        if ((m_acknowledgedConstraints.count(id) > 0) == acknowledged) return Status::success();
-        if (auto status = advanceCommandVersion(expectedVersion); !status.ok()) return status;
+        if ((m_acknowledgedConstraints.count(id) > 0) == acknowledged) co_return Status::success();
+        if (auto status = (co_await advanceCommandVersion(expectedVersion)); !status.ok()) co_return status;
         if (acknowledged) {
             m_acknowledgedConstraints.insert(id);
         } else {
@@ -2358,8 +2347,8 @@ bool HostController::acknowledgeConstraint(const QString& constraintId, bool ack
         emit rewriteProposalChanged();
         emit stateVersionChanged();
         emit approvalChanged();
-        return Status::success();
-    });
+        co_return Status::success();
+
 }
 
 bool HostController::beginInsertionTargetSelection(quint64 expectedVersion) {
@@ -2380,49 +2369,53 @@ bool HostController::beginInsertionTargetSelection(quint64 expectedVersion) {
     });
 }
 
-bool HostController::approveAndCopyRewrite(quint64 expectedVersion) {
-    return runCommand("approveAndCopyRewrite", [&]() -> Status {
-        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) return status;
+AsyncTask<core::Status> HostController::approveAndCopyRewriteOperation(quint64 expectedVersion) {
+
+        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
         if (m_proposalStatus != ProposalUiStatus::ReadyForReview || !m_currentProposal) {
-            return makeError(ErrorCode::PreconditionFailed, "There is no suggested rewrite to approve.");
+            co_return makeError(ErrorCode::PreconditionFailed, "There is no suggested rewrite to approve.");
         }
         if (!m_repository) {
-            return storageUnavailable();
+            co_return storageUnavailable();
         }
         const auto validation = validateCurrentProposal();
         if (!validation.structurallyValid) {
             setProposalStatus(ProposalUiStatus::ValidationFailed,
                               QStringLiteral("The suggested rewrite failed checks: ") + qs(validation.rejectionReason));
-            return makeError(ErrorCode::ValidationFailed, validation.rejectionReason);
+            co_return makeError(ErrorCode::ValidationFailed, validation.rejectionReason);
         }
         if (!validation.isValid) {
-            return makeError(ErrorCode::PreconditionFailed,
+            co_return makeError(ErrorCode::PreconditionFailed,
                              "Check the " + std::to_string(validation.pendingAcknowledgments.size()) +
                                  " highlighted item(s) before approving.");
         }
         auto ctx = approvalContext();
         if (!ctx.has_value()) {
-            return makeError(ErrorCode::PreconditionFailed, "The rewrite is no longer bound to the current prompt.");
+            co_return makeError(ErrorCode::PreconditionFailed, "The rewrite is no longer bound to the current prompt.");
         }
         auto nextState = *m_revisionState;
-        if (auto status = nextState.advanceState(expectedVersion); !status.ok()) return status;
+        if (auto status = nextState.advanceState(expectedVersion); !status.ok()) co_return status;
         ctx->stateVersion = nextState.stateVersion();
         auto approval = review::ApprovalFactory::createApproval(*ctx, nowMs());
         if (!approval.ok()) {
-            return approval.error();
+            co_return approval.error();
         }
         if (!review::ApprovalFactory::isApprovalValid(approval.value(), *ctx)) {
-            return makeError(ErrorCode::Internal, "The approval record failed its own validation");
+            co_return makeError(ErrorCode::Internal, "The approval record failed its own validation");
         }
-        if (auto st = m_repository->insertApproval(approval.value(), expectedVersion); !st.ok()) {
-            return st;
+        if (auto st = (co_await m_repository->insertApproval(approval.value(), expectedVersion)); !st.ok()) {
+            co_return st;
         }
         *m_revisionState = nextState;
         m_currentApproval = approval.value();
+        const auto deliveryTicket = makeTicket();
+        const auto deliveryText = qs(approval.value().approvedText);
         emit stateVersionChanged();
         emit approvalChanged();
-        return deliver(qs(m_currentApproval->approvedText));
-    });
+        if (!m_currentApproval || !isTicketCurrent(deliveryTicket, true))
+            co_return makeError(ErrorCode::StaleVersion, "The draft changed before delivery");
+        co_return deliver(deliveryText);
+
 }
 
 Status HostController::deliver(const QString& text) {
@@ -2492,14 +2485,14 @@ void HostController::onInjectionFinished(quint64 requestId, InjectionOutcome out
     emit deliveryFellBack(message);
 }
 
-bool HostController::discardProposal(quint64 expectedVersion) {
-    return runCommand("discardProposal", [&]() -> Status {
-        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) return status;
+AsyncTask<core::Status> HostController::discardProposalOperation(quint64 expectedVersion) {
+
+        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
         if (!m_currentProposal && m_proposalStatus == ProposalUiStatus::None) {
-            return Status::success();
+            co_return Status::success();
         }
-        return invalidateProposalArtifacts();
-    });
+        co_return (co_await invalidateProposalArtifacts());
+
 }
 
 QString HostController::proposalStatus() const {
@@ -2549,7 +2542,7 @@ int HostController::pendingReviewCount() const {
 }
 
 bool HostController::canApprove() const {
-    return hasProposal() && validateCurrentProposal().isValid;
+    return isStorageAvailable() && hasProposal() && validateCurrentProposal().isValid;
 }
 
 QString HostController::approvalLabel() const {
@@ -2567,150 +2560,59 @@ QString HostController::approvalLabel() const {
 // History
 // ----------------------------------------------------------------------------------------------
 
-int HostController::sessionCount() const {
-    if (!m_repository) {
-        return 0;
-    }
-    auto sessions = m_repository->listSessions();
-    return sessions.ok() ? static_cast<int>(sessions.value().size()) : 0;
-}
 
-void HostController::refreshStorageStats() {
-    if (!m_repository) {
-        if (m_databaseStats.isEmpty()) {
-            m_databaseStats = QStringLiteral("History storage is not connected.");
-        }
-        emit storageChanged();
-        return;
-    }
-    auto sessions = m_repository->listSessions();
-    if (!sessions.ok()) {
-        m_databaseStats = QStringLiteral("History storage error: ") + qs(sessions.error().message);
-        emit storageChanged();
-        return;
-    }
-    std::size_t revisions = 0;
-    for (const auto& s : sessions.value()) {
-        auto history = m_repository->getHistory(s.id);
-        if (!history.ok()) {
-            m_databaseStats = QStringLiteral("History storage error: ") + qs(history.error().message);
-            emit storageChanged();
-            return;
-        }
-        revisions += history.value().size();
-    }
-    auto schema = m_repository->getSchemaVersion();
-    m_databaseStats = QStringLiteral("%1 saved session(s), %2 revision(s), schema version %3")
-                          .arg(sessions.value().size())
-                          .arg(revisions)
-                          .arg(schema.ok() ? schema.value() : 0);
-    emit storageChanged();
-}
 
-QVariantList HostController::getRecentSessions() {
-    QVariantList result;
-    if (!m_repository) {
-        return result;
-    }
-    auto sessions = m_repository->listSessions();
-    if (!sessions.ok()) {
-        setLastError(sessions.error());
-        return result;
-    }
-    for (const auto& s : sessions.value()) {
-        QVariantMap item;
-        item[QStringLiteral("sessionId")] = qs(s.id.value());
-        item[QStringLiteral("createdAtMs")] = static_cast<qlonglong>(s.createdAtMs);
-        item[QStringLiteral("formattedTime")] =
-            QDateTime::fromMSecsSinceEpoch(s.createdAtMs).toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-        auto history = m_repository->getHistory(s.id);
-        item[QStringLiteral("revisionCount")] = history.ok() ? static_cast<int>(history.value().size()) : 0;
-        auto latest = m_repository->getLatestRevision(s.id);
-        if (latest.ok() && latest.value().has_value()) {
-            item[QStringLiteral("latestPrompt")] = qs(latest.value()->revision.text());
-            item[QStringLiteral("latestRevisionId")] = qs(latest.value()->revision.revisionId().value());
-        } else {
-            item[QStringLiteral("latestPrompt")] = QString();
-            item[QStringLiteral("latestRevisionId")] = QString();
-        }
-        result.append(item);
-    }
-    return result;
-}
 
-QVariantList HostController::getSessionHistory(const QString& sessionId) {
-    QVariantList result;
-    if (!m_repository || sessionId.trimmed().isEmpty()) {
-        return result;
-    }
-    auto history = m_repository->getHistory(core::SessionId(ss(sessionId)));
-    if (!history.ok()) {
-        setLastError(history.error());
-        return result;
-    }
-    for (const auto& rec : history.value()) {
-        const auto& rev = rec.revision;
-        QVariantMap item;
-        item[QStringLiteral("revisionId")] = qs(rev.revisionId().value());
-        item[QStringLiteral("sessionId")] = qs(rev.sessionId().value());
-        item[QStringLiteral("parentRevisionId")] =
-            rev.parentRevisionId().has_value() ? qs(rev.parentRevisionId()->value()) : QString();
-        item[QStringLiteral("text")] = qs(rev.text());
-        item[QStringLiteral("sequence")] = static_cast<qulonglong>(rec.sequence);
-        item[QStringLiteral("origin")] = QString::fromUtf8(storage::toString(rec.origin));
-        item[QStringLiteral("createdAtMs")] = static_cast<qlonglong>(rev.createdAtMs());
-        item[QStringLiteral("formattedTime")] =
-            QDateTime::fromMSecsSinceEpoch(rev.createdAtMs()).toString(QStringLiteral("HH:mm:ss"));
-        result.append(item);
-    }
-    return result;
-}
 
-bool HostController::restoreRevision(const QString& revisionId, quint64 expectedVersion) {
-    return runCommand("restoreRevision", [&]() -> Status {
-        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) return status;
+
+
+
+
+AsyncTask<core::Status> HostController::restoreRevisionOperation(QString revisionId, quint64 expectedVersion) {
+
+        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
         if (!m_revisionState) {
-            return makeError(ErrorCode::PreconditionFailed, "Open a session before restoring one of its revisions.");
+            co_return makeError(ErrorCode::PreconditionFailed, "Open a session before restoring one of its revisions.");
         }
         if (!m_repository) {
-            return storageUnavailable();
+            co_return storageUnavailable();
         }
-        auto rec = m_repository->getRevision(core::SessionId(currentSessionId()), core::RevisionId(ss(revisionId)));
+        auto rec = (co_await m_repository->getRevision(core::SessionId(currentSessionId()), core::RevisionId(ss(revisionId))));
         if (!rec.ok()) {
-            return rec.error();
+            co_return rec.error();
         }
         if (!rec.value().has_value()) {
-            return makeError(ErrorCode::NotFound, "That revision isn't part of the open session.");
+            co_return makeError(ErrorCode::NotFound, "That revision isn't part of the open session.");
         }
         const std::string text = rec.value()->revision.text();
-        if (auto st = commitRevision(text, expectedVersion, storage::RevisionOrigin::Restore); !st.ok()) {
-            return st;
+        if (auto st = (co_await commitRevision(text, expectedVersion, storage::RevisionOrigin::Restore)); !st.ok()) {
+            co_return st;
         }
         m_followAmbientDraft = false;
         m_captureRequestedApp.clear();
         invalidateDownstreamPipeline();
         emit revisionRestored(qs(text));
-        return Status::success();
-    });
+        co_return Status::success();
+
 }
 
-bool HostController::restoreSessionForReview(const QString& sessionId, quint64 expectedVersion) {
-    if (!restoreSession(sessionId, expectedVersion)) return false;
+AsyncTask<core::Status> HostController::restoreSessionForReviewOperation(QString sessionId, quint64 expectedVersion) {
+    if (!(co_await restoreSessionOperation(sessionId, expectedVersion))) co_return Status(makeError(ErrorCode::StaleVersion, "Session restore failed"));
     // Open saved work directly; a normal capture hotkey would adopt a different editor draft.
     setCaptureSource(CaptureSource::Widget);
     showCardInternal(false);
-    return true;
+    co_return Status::success();
 }
 
-bool HostController::restoreSession(const QString& sessionId, quint64 expectedVersion) {
-    return runCommand("restoreSession", [&]() -> Status {
-        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) return status;
+AsyncTask<core::Status> HostController::restoreSessionOperation(QString sessionId, quint64 expectedVersion) {
+
+        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
         if (!m_repository) {
-            return storageUnavailable();
+            co_return storageUnavailable();
         }
-        auto restored = m_repository->restoreSession(core::SessionId(ss(sessionId)));
+        auto restored = (co_await m_repository->restoreSession(core::SessionId(ss(sessionId))));
         if (!restored.ok()) {
-            return restored.error();
+            co_return restored.error();
         }
         auto& r = restored.value();
 
@@ -2725,21 +2627,21 @@ bool HostController::restoreSession(const QString& sessionId, quint64 expectedVe
         emit stateVersionChanged();
         emit revisionRestored(qs(r.latestRevision.revision.text()));
 
-        rebuildFromRestore(r);
-        return Status::success();
-    });
+        (co_await rebuildFromRestore(r));
+        co_return Status::success();
+
 }
 
-void HostController::rebuildFromRestore(const storage::RestoredSession& r) {
+AsyncTask<void> HostController::rebuildFromRestore(storage::RestoredSession r) {
     if (!r.analysis.has_value()) {
         if (r.legacyAnalysisRequiresReview) setAnalysisStatus(AnalysisStatus::Idle,
             QStringLiteral("This history predates saved scorer evidence. Analyze and review it again before rewriting."));
-        return;
+        co_return;
     }
     const std::string& text = m_revisionState->currentRevision().text();
     if (analysis::validateNormalizedAnalysis(r.analysis->normalized, text).status == analysis::AnalysisValidationStatus::Invalid) {
         setAnalysisStatus(AnalysisStatus::Idle, QStringLiteral("The saved analysis no longer matches this prompt. Analyze it again."));
-        return;
+        co_return;
     }
     m_currentPolicyResult = analysis::MaterialityPolicyV1::evaluatePrompt(r.analysis->normalized, text);
     m_currentSnapshot = *r.analysis;
@@ -2803,7 +2705,7 @@ void HostController::rebuildFromRestore(const storage::RestoredSession& r) {
     intent::InterventionStateMachine::recordPresented(m_currentDecision, m_workingIntent);
     refreshActiveItemPresentation();
     if (!intentRestored) {
-        if (auto st = finalizeIntentIfQuiet(); !st.ok()) {
+        if (auto st = (co_await finalizeIntentIfQuiet()); !st.ok()) {
             setLastError(st.error());
         }
     }
@@ -2813,18 +2715,18 @@ void HostController::rebuildFromRestore(const storage::RestoredSession& r) {
 
     if (!intentRestored || !r.proposal.has_value() ||
         r.proposal->proposalEditGeneration != m_revisionState->proposalEditGeneration()) {
-        return;
+        co_return;
     }
     const auto& proposal = *r.proposal;
     if (proposal.status == rewrite::ProposalStatus::NeedsClarification) {
         m_currentProposal = proposal;
         setProposalStatus(ProposalUiStatus::NeedsClarification, qs(proposal.clarificationQuestion));
-        return;
+        co_return;
     }
     const auto validation = rewrite::RewriteValidator::validateProposal(
         proposal, currentSessionId(), m_revisionState->currentRevision().revisionId().value(), *m_confirmedIntent, {});
     if (!validation.structurallyValid) {
-        return;
+        co_return;
     }
     m_currentProposal = proposal;
     if (r.approval.has_value()) {
@@ -2833,45 +2735,47 @@ void HostController::rebuildFromRestore(const storage::RestoredSession& r) {
             m_currentApproval = *r.approval;
             m_acknowledgedConstraints.insert(validation.pendingAcknowledgments.begin(),
                                              validation.pendingAcknowledgments.end());
-        } else if (auto st = m_repository->invalidateApprovals(core::SessionId(currentSessionId())); !st.ok()) {
+        } else if (auto st = (co_await m_repository->invalidateApprovals(core::SessionId(currentSessionId()))); !st.ok()) {
             setLastError(st.error());
         }
     }
     setProposalStatus(ProposalUiStatus::ReadyForReview, QStringLiteral("Restored the saved rewrite for review."));
     emit approvalChanged();
+
+    co_return;
 }
 
-bool HostController::deleteSession(const QString& sessionId) {
-    return runCommand("deleteSession", [&]() -> Status {
+AsyncTask<core::Status> HostController::deleteSessionOperation(QString sessionId) {
+
         if (!m_repository) {
-            return storageUnavailable();
+            co_return storageUnavailable();
         }
         const std::string id = ss(sessionId);
-        if (auto st = m_repository->deleteSession(core::SessionId(id)); !st.ok()) {
-            return st;
+        if (auto st = (co_await m_repository->deleteSession(core::SessionId(id))); !st.ok()) {
+            co_return st;
         }
         if (id == currentSessionId()) {
             resetSessionState();
         }
         refreshStorageStats();
         emit sessionListChanged();
-        return Status::success();
-    });
+        co_return Status::success();
+
 }
 
-bool HostController::purgeHistory() {
-    return runCommand("purgeHistory", [&]() -> Status {
+AsyncTask<core::Status> HostController::purgeHistoryOperation() {
+
         if (!m_repository) {
-            return storageUnavailable();
+            co_return storageUnavailable();
         }
-        if (auto st = m_repository->purgeHistory(); !st.ok()) {
-            return st;
+        if (auto st = (co_await m_repository->purgeHistory()); !st.ok()) {
+            co_return st;
         }
         resetSessionState();
         refreshStorageStats();
         emit sessionListChanged();
-        return Status::success();
-    });
+        co_return Status::success();
+
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -3163,18 +3067,18 @@ void HostController::prepareNativeModel() {
     emit modelEngineStatusChanged();
 }
 
-void HostController::onNativeRuntimeChanged() {
+AsyncTask<void> HostController::onNativeRuntimeChanged() {
     emit modelEngineStatusChanged();
     if (!nativeGraniteSelected() || usesTransportOverride() || m_hostState == HostState::Quitting) {
         if (!m_native->isRunning() || m_native->state() == QLatin1String("FAILED")) m_nativeWarming = false;
-        return;
+        co_return;
     }
     const auto state = m_native->state();
     if (m_native->isReady()) {
         m_nativeLastUse.restart();
         m_nativeWarming = false;
         const auto info = m_native->modelInfo();
-        if (info.quantization != ss(NativeGraniteRuntime::quantizationForTag(m_activeModel))) return;
+        if (info.quantization != ss(NativeGraniteRuntime::quantizationForTag(m_activeModel))) co_return;
         if (m_graniteAdapter->state() != bridge::GraniteRuntimeState::Busy && m_graniteAdapter->state() != bridge::GraniteRuntimeState::Ready) {
             if (m_graniteAdapter->state() != bridge::GraniteRuntimeState::Loading) {
                 static_cast<void>(m_graniteAdapter->unload()); static_cast<void>(m_graniteAdapter->beginLoading());
@@ -3183,14 +3087,14 @@ void HostController::onNativeRuntimeChanged() {
         }
         m_availableModels.clear(); appendNativeModelFiles(); appendLocalModelFiles(); emit availableModelsChanged();
         if (m_discoveryQueued && m_graniteAdapter->state() == bridge::GraniteRuntimeState::Ready) {
-            if (auto status = startDiscovery(false); !status.ok()) setLastError(status.error());
+            if (auto status = (co_await startDiscovery(false)); !status.ok()) setLastError(status.error());
         }
         if (m_pendingNativeRewrite && m_graniteAdapter->state() == bridge::GraniteRuntimeState::Ready) {
             const auto pending = std::exchange(m_pendingNativeRewrite, std::nullopt);
             setProposalStatus(ProposalUiStatus::None, {});
             if (pending->stateVersion == stateVersion() && m_confirmedIntent && pending->intentId == m_confirmedIntent->id &&
                 pending->profileId == m_rewriteProfile && pending->configurationGeneration == m_configurationGeneration) {
-                if (!synthesizeRewrite(pending->stateVersion)) setProposalStatus(ProposalUiStatus::Failed, lastError());
+                if (!(co_await synthesizeRewriteOperation(pending->stateVersion))) setProposalStatus(ProposalUiStatus::Failed, lastError());
             }
         }
         if (m_ambientCheckPending) m_ambientDebounce.start();
@@ -3211,6 +3115,8 @@ void HostController::onNativeRuntimeChanged() {
         else if (m_graniteAdapter->state() != bridge::GraniteRuntimeState::Busy) static_cast<void>(m_graniteAdapter->unload());
     }
     emit modelEngineStatusChanged(); emit intentChanged();
+
+    co_return;
 }
 
 bool HostController::isNativeGraniteInstalled() const {
@@ -3371,7 +3277,7 @@ QString HostController::modelEngineStatus() const {
             status = QStringLiteral("Working: %1 is processing a request.").arg(qs(info.modelId));
             break;
         case bridge::GraniteRuntimeState::Failed:
-            status = QStringLiteral("Unavailable: ") + qs(m_graniteAdapter->lastError());
+            status = QStringLiteral("Unavailable. Retry explicitly or keep the original prompt.");
             break;
     }
     if (!m_modelStatusDetail.isEmpty()) {
@@ -3471,9 +3377,9 @@ void HostController::refreshAvailableModels() {
     }));
 }
 
-void HostController::onHealthFinished(const HealthResult& result) {
+AsyncTask<void> HostController::onHealthFinished(HealthResult result) {
     m_healthCheckInFlight = false;
-    if (nativeGraniteSelected() && !usesTransportOverride()) { refreshAvailableModels(); return; }
+    if (nativeGraniteSelected() && !usesTransportOverride()) { refreshAvailableModels(); co_return; }
     m_availableModels.clear();
     if (result.models.has_value()) {
         if (result.models->ok()) {
@@ -3529,16 +3435,18 @@ void HostController::onHealthFinished(const HealthResult& result) {
     if (m_healthRecheckRequested) {
         static_cast<void>(m_graniteAdapter->unload());
         refreshAvailableModels();
-        return;
+        co_return;
     }
     if (m_discoveryQueued && m_graniteAdapter->state() != bridge::GraniteRuntimeState::Busy) {
-        if (auto st = startDiscovery(false); !st.ok()) {
+        if (auto st = (co_await startDiscovery(false)); !st.ok()) {
             setLastError(st.error());
         }
     }
     if (m_ambientCheckPending && m_graniteAdapter->state() == bridge::GraniteRuntimeState::Ready) {
         m_ambientDebounce.start();
     }
+
+    co_return;
 }
 
 bool HostController::pinActiveModelDigest() {
@@ -4062,9 +3970,7 @@ void HostController::startAmbientCheck() {
             setAmbientStatus(QStringLiteral("The last background check failed: ") + plainError(result.response.error()));
         }
         if (m_discoveryQueued) {
-            if (auto st = startDiscovery(); !st.ok()) {
-                setLastError(st.error());
-            }
+            resumeDiscovery();
         }
         if (m_ambientObservation.has_value() && (!m_ambientCheck.has_value() ||
                                                  m_ambientCheck->textHash != m_ambientObservation->textHash)) {
@@ -4091,22 +3997,22 @@ void HostController::startAmbientCheck() {
     }));
 }
 
-bool HostController::openFromAmbient() {
-    return runCommand("openFromAmbient", [&]() -> Status {
-        if (!isAmbientActive() || !m_ambientObservation.has_value()) {
-            return makeError(ErrorCode::PreconditionFailed, "There's no prompt from another app to open.");
+AsyncTask<core::Status> HostController::openFromAmbientOperation(std::optional<AmbientObservation> observationSnapshot) {
+
+        if (!isAmbientActive() || !observationSnapshot.has_value()) {
+            co_return makeError(ErrorCode::PreconditionFailed, "There's no prompt from another app to open.");
         }
         if (!m_repository) {
-            return storageUnavailable();
+            co_return storageUnavailable();
         }
-        const AmbientObservation observation = *m_ambientObservation;
+        const AmbientObservation observation = *observationSnapshot;
         const std::string text = ss(observation.prompt);
 
         if (m_selectingInsertionTarget) {
             m_selectingInsertionTarget = false;
             if (!m_revisionState || !m_currentProposal || m_proposalStatus != ProposalUiStatus::ReadyForReview) {
                 showCardInternal(false);
-                return makeError(ErrorCode::StaleVersion, "The rewrite changed while choosing its destination. Review it before inserting.");
+                co_return makeError(ErrorCode::StaleVersion, "The rewrite changed while choosing its destination. Review it before inserting.");
             }
             m_captureSource = CaptureSource::Ambient;
             m_captureTarget = observation;
@@ -4114,7 +4020,7 @@ bool HostController::openFromAmbient() {
             emit captureSourceChanged();
             showCardInternal(false);
             setAnalysisStatus(m_analysisStatus, QStringLiteral("Destination connected. Your rewrite and answers are unchanged; finish review, then Approve & Insert."));
-            return Status::success();
+            co_return Status::success();
         }
 
         if (isBlank(text) && observation.field.kind == FieldKind::GuiEditor) {
@@ -4126,14 +4032,14 @@ bool HostController::openFromAmbient() {
             emit captureSourceChanged();
             emit ambientDraftUpdated(QString());
             showCardInternal(false);
-            return Status::success();
+            co_return Status::success();
         }
 
         // Each ambient capture is its own session unless it is the prompt already open.
         if (!m_revisionState || m_revisionState->isDraftDirty() || m_revisionState->currentRevision().text() != text) {
             resetSessionState();
-            if (auto st = ensureSession(text, nowMs()); !st.ok()) {
-                return st;
+            if (auto st = (co_await ensureSession(text, nowMs())); !st.ok()) {
+                co_return st;
             }
             invalidateDownstreamPipeline();
         }
@@ -4156,25 +4062,25 @@ bool HostController::openFromAmbient() {
                     PipelineTicket ticket = makeTicket();
                     ticket.analysisGroup = std::make_shared<AnalysisGroup>(m_analysisGroupTimeoutMs);
                     ticket.analysisGroup->id = newOpaqueId("grp_");
-                    if (auto st = beginAttempt(ticket, "discovery"); !st.ok()) {
-                        return st;
+                    if (auto st = (co_await beginAttempt(ticket, "discovery")); !st.ok()) {
+                        co_return st;
                     }
                     auto response = std::move(parsed).value();
                     response.model = m_ambientCheck->model;
                     armAnalysisDeadline(ticket);
-                    acceptDiscovery(ticket, response);
+                    (co_await acceptDiscovery(ticket, response));
                     rebound = true;
                 }
             }
             if (!rebound) {
-                if (auto st = startDiscovery(); !st.ok()) {
+                if (auto st = (co_await startDiscovery()); !st.ok()) {
                     setLastError(st.error());
                 }
             }
         }
         showCardInternal(false);
-        return Status::success();
-    });
+        co_return Status::success();
+
 }
 
 void HostController::dismissAmbientBadge() {
@@ -4210,7 +4116,7 @@ bool HostController::markModelReadyForTesting(const bridge::GraniteModelInfo& in
 bool HostController::waitForIdleForTesting(int timeoutMs) {
     QElapsedTimer timer;
     timer.start();
-    while (m_inFlight > 0 || m_nativeWarming || m_promptTriageLoad.has_value()) {
+    while (m_inFlight > 0 || m_nativeWarming || m_promptTriageLoad.has_value() || storageBusy() || m_historyRefreshRunning || (m_storage && m_storage->pending() > 0)) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
         if (timer.elapsed() > timeoutMs) {
             return false;
@@ -4221,4 +4127,360 @@ bool HostController::waitForIdleForTesting(int timeoutMs) {
 }
 #endif
 
+quint64 HostController::openFromAmbient() {
+    const auto observation = m_ambientObservation;
+    return enqueueStorageCommand("openFromAmbient", [=, this]() { return openFromAmbientOperation(observation); });
+}
+
+quint64 HostController::purgeHistory() {
+    return enqueueStorageCommand("purgeHistory", [=, this]() { return purgeHistoryOperation(); });
+}
+
+quint64 HostController::deleteSession(QString sessionId) {
+    return enqueueStorageCommand("deleteSession", [=, this]() { return deleteSessionOperation(sessionId); });
+}
+
+quint64 HostController::restoreSession(QString sessionId, quint64 expectedVersion) {
+    return enqueueStorageCommand("restoreSession", [=, this]() { return restoreSessionOperation(sessionId, expectedVersion); });
+}
+
+quint64 HostController::restoreSessionForReview(QString sessionId, quint64 expectedVersion) {
+    return enqueueStorageCommand("restoreSessionForReview", [=, this]() { return restoreSessionForReviewOperation(sessionId, expectedVersion); });
+}
+
+quint64 HostController::restoreRevision(QString revisionId, quint64 expectedVersion) {
+    return enqueueStorageCommand("restoreRevision", [=, this]() { return restoreRevisionOperation(revisionId, expectedVersion); });
+}
+
+quint64 HostController::discardProposal(quint64 expectedVersion) {
+    return enqueueStorageCommand("discardProposal", [=, this]() { return discardProposalOperation(expectedVersion); });
+}
+
+quint64 HostController::approveAndCopyRewrite(quint64 expectedVersion) {
+    return enqueueStorageCommand("approveAndCopyRewrite", [=, this]() { return approveAndCopyRewriteOperation(expectedVersion); });
+}
+
+quint64 HostController::acknowledgeConstraint(QString constraintId, bool acknowledged, quint64 expectedVersion) {
+    return enqueueStorageCommand("acknowledgeConstraint", [=, this]() { return acknowledgeConstraintOperation(constraintId, acknowledged, expectedVersion); });
+}
+
+quint64 HostController::synthesizeRewrite(quint64 expectedVersion) {
+    return enqueueStorageCommand("synthesizeRewrite", [=, this]() { return synthesizeRewriteOperation(expectedVersion); });
+}
+
+quint64 HostController::setRewriteProfile(QString profile, quint64 expectedVersion) {
+    return enqueueStorageCommand("setRewriteProfile", [=, this]() { return setRewriteProfileOperation(profile, expectedVersion); });
+}
+
+quint64 HostController::switchToManual(quint64 expectedVersion) {
+    return enqueueStorageCommand("switchToManual", [=, this]() { return switchToManualOperation(expectedVersion); });
+}
+
+quint64 HostController::skipCurrentItem(quint64 expectedVersion) {
+    return enqueueStorageCommand("skipCurrentItem", [=, this]() { return skipCurrentItemOperation(expectedVersion); });
+}
+
+quint64 HostController::resolveActiveAssumption(bool accepted, quint64 expectedVersion) {
+    return enqueueStorageCommand("resolveActiveAssumption", [=, this]() { return resolveActiveAssumptionOperation(accepted, expectedVersion); });
+}
+
+quint64 HostController::keepOriginalPrompt(quint64 expectedVersion) {
+    return enqueueStorageCommand("keepOriginalPrompt", [=, this]() { return keepOriginalPromptOperation(expectedVersion); });
+}
+
+quint64 HostController::submitCustomIntent(QString customText, quint64 expectedVersion) {
+    return enqueueStorageCommand("submitCustomIntent", [=, this]() { return submitCustomIntentOperation(customText, expectedVersion); });
+}
+
+quint64 HostController::confirmChoice(QString alternativeId, quint64 expectedVersion) {
+    return enqueueStorageCommand("confirmChoice", [=, this]() { return confirmChoiceOperation(alternativeId, expectedVersion); });
+}
+
+quint64 HostController::analyzePrompt(QString text, quint64 expectedVersion) {
+    return enqueueStorageCommand("analyzePrompt", [=, this]() { return analyzePromptOperation(text, expectedVersion); });
+}
+
+quint64 HostController::cancelAnalysis(quint64 expectedVersion) {
+    return enqueueStorageCommand("cancelAnalysis", [=, this]() { return cancelAnalysisOperation(expectedVersion); });
+}
+
+quint64 HostController::hardBypass(QString text, quint64 expectedVersion) {
+    return enqueueStorageCommand("hardBypass", [=, this]() { return hardBypassOperation(text, expectedVersion); });
+}
+
+quint64 HostController::commitPrompt(QString text, quint64 expectedVersion) {
+    return enqueueStorageCommand("commitPrompt", [=, this]() { return commitPromptOperation(text, expectedVersion); });
+}
+
+AsyncTask<void> HostController::initStorage(QString dbPathOverride) {
+    m_databasePath = dbPathOverride;
+    if (m_databasePath.isEmpty()) m_databasePath = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) + QStringLiteral("/history.db");
+    ++m_storageEpoch;
+    m_repository.reset();
+    m_storage = std::make_unique<StorageService>(this);
+    auto status = co_await m_storage->open(m_databasePath, true);
+    if (!status.ok()) { failStorage(status.error()); co_return; }
+    m_repository = std::make_unique<AsyncRepository>(*m_storage);
+    m_repository->guardFactory = [this](bool durableMutation) -> AsyncRepository::Guard {
+        const QPointer<HostController> owner(this);
+        const auto version = stateVersion(); const auto serial = m_liveEditSerial; const auto session = currentSessionId();
+        const auto pipeline = m_pipelineSerial; const auto epoch = m_storageEpoch;
+        return [owner, version, serial, session, pipeline, epoch, durableMutation](bool success, const core::Error* error) -> Status {
+            if (!owner) throw StorageCancelled{};
+            if (owner->m_storageEpoch != epoch) return makeError(ErrorCode::StaleVersion, "History recovery superseded this result");
+            if (error && (error->code == ErrorCode::DbError || (durableMutation && error->code == ErrorCode::StaleVersion))) owner->failStorage(*error);
+            if (owner->m_storageFault) return storageUnavailable();
+            if (owner->stateVersion() != version || owner->m_liveEditSerial != serial || owner->currentSessionId() != session || owner->m_pipelineSerial != pipeline) {
+                auto stale = makeError(ErrorCode::StaleVersion, "The prompt changed while history was saving. Your current draft is preserved.");
+                if (success && durableMutation) owner->failStorage(stale);
+                return stale;
+            }
+            return Status::success();
+        };
+    };
+    const QPointer<HostController> storageOwner(this);
+    const auto storageEpoch = m_storageEpoch;
+    m_repository->errorHandler = [storageOwner, storageEpoch](const core::Error& error) {
+        if (storageOwner && storageOwner->m_storageEpoch == storageEpoch) storageOwner->failStorage(error);
+    };
+    m_draftDebounce.disconnect(this); m_draftMaxWait.disconnect(this);
+    m_draftDebounce.setSingleShot(true); m_draftDebounce.setInterval(150);
+    m_draftMaxWait.setSingleShot(true); m_draftMaxWait.setInterval(1000);
+    connect(&m_draftDebounce, &QTimer::timeout, this, [this]() { flushDraftEdits(); });
+    connect(&m_draftMaxWait, &QTimer::timeout, this, [this]() { flushDraftEdits(); });
+    emit storageChanged();
+    refreshStorageStats();
+}
+
+void HostController::failStorage(const core::Error& error) {
+    m_lastInternalDiagnostic = qs(error.message).left(1024);
+    const bool firstFailure = !m_storageFault;
+    m_storageFault = true;
+    if (firstFailure && m_repository && m_revisionState)
+        m_repository->invalidateApprovals(core::SessionId(currentSessionId()));
+    if (m_pendingDraft) {
+        auto requests = std::move(m_pendingDraft->requests); m_pendingDraft->requests.clear();
+        finishDraftRequests(std::move(requests), storageUnavailable());
+    }
+    m_databaseStats = QStringLiteral("History couldn't be saved. Your draft is preserved. Retry history before analyzing or approving.");
+    m_draftDebounce.stop(); m_draftMaxWait.stop();
+    invalidateDownstreamPipeline();
+    emit storageChanged(); emit storageBusyChanged();
+    finishQuitWhenRuntimesStopped();
+}
+
+quint64 HostController::enqueueStorageCommand(const char* name, std::function<AsyncTask<Status>()> operation) {
+    if ((!isStorageAvailable() && std::string_view(name) != "retryStorage") || m_hostState == HostState::Quitting || m_storageCommands.size() + static_cast<size_t>(m_commandRunning) >= 128 ||
+        m_nextStorageRequest == core::RevisionState::kMaxStateVersion) {
+        setLastError(QStringLiteral("History is unavailable or busy. Your draft is preserved; retry explicitly.")); return 0;
+    }
+    const auto id = ++m_nextStorageRequest;
+    m_storageCommands.push_back(std::make_shared<StorageCommand>(StorageCommand{id, m_liveEditSerial, QLatin1String(name), std::move(operation)}));
+    emit storageBusyChanged(); QTimer::singleShot(0, this, [this]() { pumpStorageCommands(); }); return id;
+}
+void HostController::pumpStorageCommands() {
+    if (m_commandRunning || m_storageCommands.empty()) return;
+    auto command = m_storageCommands.front(); m_storageCommands.pop_front(); m_commandRunning = true;
+    runStorageCommand(std::move(command));
+}
+AsyncTask<void> HostController::runStorageCommand(std::shared_ptr<StorageCommand> command) {
+    Status status = Status::success();
+    try {
+        const bool recovery = command->name == QLatin1String("retryStorage");
+        if (!recovery) status = co_await flushDraftEdits();
+        if (status.ok() && command->editSerial != m_liveEditSerial)
+            status = makeError(ErrorCode::StaleVersion, "The draft changed while this action was queued. Your current text is preserved.");
+        if (status.ok() && (!m_storageFault || recovery) && m_hostState != HostState::Quitting) status = co_await command->operation();
+        else if (status.ok()) status = storageUnavailable();
+    } catch (const StorageCancelled&) { co_return; }
+    catch (...) { status = makeError(ErrorCode::Internal, "The action couldn't finish. Your draft is preserved; retry explicitly."); }
+    finishStorageCommand(command->id, command->name, status);
+    m_commandRunning = false; emit storageBusyChanged();
+    QTimer::singleShot(0, this, [this]() { pumpStorageCommands(); finishQuitWhenRuntimesStopped(); });
+}
+void HostController::finishStorageCommand(quint64 id, const QString& name, const Status& status) {
+    if (id >= m_latestStorageFeedback) {
+        m_latestStorageFeedback = id;
+        if (!status.ok()) setLastError(status.error()); else clearLastError();
+    }
+    m_commandResults.insert(id, status.ok());
+    if (m_commandResults.size() > 512) {
+        auto smallest = m_commandResults.keyBegin(); quint64 oldest = *smallest;
+        for (auto it = m_commandResults.keyBegin(); it != m_commandResults.keyEnd(); ++it) oldest = std::min(oldest, *it);
+        m_commandResults.remove(oldest);
+    }
+    emit storageCommandFinished(id, name, status.ok(), status.ok() ? QString{} : QString::fromUtf8(core::toString(status.error().code)),
+        status.ok() ? QString{} : plainError(status.error()));
+}
+quint64 HostController::noteDraftEdited(quint64 expectedVersion) {
+    if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) { setLastError(status.error()); return 0; }
+    if (m_hostState == HostState::Quitting || m_nextStorageRequest == core::RevisionState::kMaxStateVersion) return 0;
+    const auto id = ++m_nextStorageRequest; ++m_liveEditSerial;
+    m_followAmbientDraft = false;
+    if (m_captureSource == CaptureSource::Widget || m_captureOpenPending) m_widgetDraftEdited = true;
+    if (!m_revisionState) { invalidateDownstreamPipeline(); finishStorageCommand(id, "noteDraftEdited", Status::success()); return id; }
+    auto next = *m_revisionState;
+    if (auto status = next.noteDraftEdit(expectedVersion); !status.ok()) { finishStorageCommand(id, "noteDraftEdited", status); return 0; }
+    *m_revisionState = next;
+    invalidateDownstreamPipeline(); emit stateVersionChanged();
+    if (!m_pendingDraft) m_pendingDraft = DraftBatch{next, expectedVersion, {}};
+    m_pendingDraft->next = next;
+    auto& requests = m_pendingDraft->requests;
+    if (!requests.empty() && requests.back().second + 1 == id) requests.back().second = id;
+    else requests.emplace_back(id, id);
+    if (m_storageFault) {
+        finishStorageCommand(id, "noteDraftEdited", storageUnavailable()); m_pendingDraft->requests.clear();
+    } else {
+        m_draftDebounce.start(); if (!m_draftMaxWait.isActive()) m_draftMaxWait.start();
+    }
+    emit storageBusyChanged(); return id;
+}
+void HostController::finishDraftRequests(std::vector<std::pair<quint64, quint64>> requests, Status status) {
+    if (requests.empty()) return;
+    auto completion = std::make_shared<DraftCompletion>(DraftCompletion{std::move(requests), 0, 0, std::move(status)});
+    completion->next = completion->ranges.front().first;
+    ++m_draftNotifications; emit storageBusyChanged();
+    publishDraftCompletions(std::move(completion));
+}
+void HostController::publishDraftCompletions(std::shared_ptr<DraftCompletion> completion) {
+    // Large AX bursts use bounded memory and yield between batches of completion signals.
+    for (int budget = 0; budget < 64 && completion->range < completion->ranges.size(); ++budget) {
+        const auto id = completion->next++;
+        if (id == completion->ranges[completion->range].second) {
+            ++completion->range;
+            if (completion->range < completion->ranges.size()) completion->next = completion->ranges[completion->range].first;
+        }
+        finishStorageCommand(id, "noteDraftEdited", completion->status);
+    }
+    if (completion->range == completion->ranges.size()) {
+        --m_draftNotifications; emit storageBusyChanged(); finishQuitWhenRuntimesStopped();
+    } else QTimer::singleShot(0, this, [this, completion]() { publishDraftCompletions(completion); });
+}
+
+AsyncTask<Status> HostController::flushDraftEdits() {
+    m_draftDebounce.stop(); m_draftMaxWait.stop();
+    while (!m_storageFault) {
+        if (m_draftFlushTask && !m_draftFlushTask->done()) {
+            auto active = *m_draftFlushTask;
+            auto status = co_await active; if (!status.ok()) co_return status;
+        } else if (m_pendingDraft) {
+            auto batch = std::move(*m_pendingDraft); m_pendingDraft.reset();
+            m_draftFlushTask = writeDraftBatch(std::move(batch));
+        } else co_return Status::success();
+    }
+    co_return storageUnavailable();
+}
+AsyncTask<Status> HostController::writeDraftBatch(DraftBatch batch) {
+    m_draftWriting = true;
+    auto status = co_await m_storage->call(&storage::PromptRepository::advanceDraftStateRange, batch.next, batch.expectedVersion, nowMs());
+    m_draftWriting = false;
+    if (!status.ok()) failStorage(status.error());
+    finishDraftRequests(std::move(batch.requests), status);
+    emit storageBusyChanged(); finishQuitWhenRuntimesStopped();
+    co_return status;
+}
+
+int HostController::sessionCount() const { return static_cast<int>(m_recentSessions.size()); }
+QVariantList HostController::getRecentSessions() { return m_recentSessions; }
+QVariantList HostController::getSessionHistory(const QString& sessionId) { return m_historyCache.value(sessionId); }
+void HostController::refreshStorageStats() {
+    if (!m_repository || m_storageFault) { emit storageChanged(); return; }
+    if (m_historyRefreshRunning) { m_historyRefreshAgain = true; return; }
+    loadHistoryCache();
+}
+AsyncTask<void> HostController::loadHistoryCache() {
+    m_historyRefreshRunning = true;
+    do {
+        m_historyRefreshAgain = false;
+        const auto epoch = m_storageEpoch;
+        auto snapshot = co_await m_storage->history();
+        if (epoch != m_storageEpoch) { m_historyRefreshRunning = false; refreshStorageStats(); co_return; }
+        if (!snapshot.ok()) { m_historyRefreshRunning = false; failStorage(snapshot.error()); co_return; }
+        m_recentSessions.clear(); m_historyCache.clear(); size_t count = 0;
+        for (const auto& entry : snapshot.value().sessions) {
+            const auto& session = entry.record; QVariantList history;
+            for (const auto& rec : entry.revisions) {
+                const auto& rev = rec.revision;
+                history.append(QVariantMap{{"revisionId", qs(rev.revisionId().value())}, {"sessionId", qs(rev.sessionId().value())},
+                    {"parentRevisionId", rev.parentRevisionId() ? qs(rev.parentRevisionId()->value()) : QString{}},
+                    {"text", qs(rev.text())}, {"sequence", static_cast<qulonglong>(rec.sequence)},
+                    {"origin", QString::fromUtf8(storage::toString(rec.origin))}, {"createdAtMs", static_cast<qlonglong>(rev.createdAtMs())},
+                    {"formattedTime", QDateTime::fromMSecsSinceEpoch(rev.createdAtMs()).toString("HH:mm:ss")}});
+            }
+            count += entry.revisions.size(); m_historyCache.insert(qs(session.id.value()), history);
+            const auto* latest = entry.revisions.empty() ? nullptr : &entry.revisions.back().revision;
+            m_recentSessions.append(QVariantMap{{"sessionId", qs(session.id.value())}, {"createdAtMs", static_cast<qlonglong>(session.createdAtMs)},
+                {"formattedTime", QDateTime::fromMSecsSinceEpoch(session.createdAtMs).toString("yyyy-MM-dd HH:mm:ss")},
+                {"revisionCount", static_cast<int>(entry.revisions.size())}, {"latestPrompt", latest ? qs(latest->text()) : QString{}},
+                {"latestRevisionId", latest ? qs(latest->revisionId().value()) : QString{}}});
+        }
+        m_databaseStats = QStringLiteral("%1 saved session(s), %2 revision(s), schema version %3").arg(m_recentSessions.size()).arg(count).arg(snapshot.value().schema);
+        emit storageChanged(); emit sessionListChanged();
+    } while (m_historyRefreshAgain && !m_storageFault);
+    m_historyRefreshRunning = false;
+    finishQuitWhenRuntimesStopped();
+}
+quint64 HostController::retryStorage(const QString& draftText, quint64 expectedVersion) {
+    if (!m_storageFault || m_commandRunning || m_draftWriting || !m_storageCommands.empty()) return 0;
+    return enqueueStorageCommand("retryStorage", [=, this]() { return retryStorageOperation(draftText, expectedVersion); });
+}
+AsyncTask<Status> HostController::retryStorageOperation(QString draftText, quint64 expectedVersion) {
+    if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
+    m_pendingDraft.reset();
+    const auto session = currentSessionId();
+    const auto editSerial = m_liveEditSerial;
+    const auto previousVersion = stateVersion();
+    // Recovery remains unavailable to other commands and draft flushes until reconciliation commits.
+    co_await initStorage(m_databasePath);
+    if (!m_repository) co_return storageUnavailable();
+    if (editSerial != m_liveEditSerial) co_return makeError(ErrorCode::StaleVersion, "Draft changed during recovery; retry with the current text");
+    if (!session.empty()) {
+        auto restored = co_await m_storage->call(&storage::PromptRepository::restoreSession, core::SessionId(session));
+        if (!restored.ok()) { failStorage(restored.error()); co_return restored.error(); }
+        const auto& r = restored.value();
+        const auto largestVersion = std::max<std::uint64_t>(previousVersion, r.session.stateVersion);
+        if (largestVersion >= core::RevisionState::kMaxStateVersion)
+            co_return makeError(ErrorCode::InvalidInput, "The session version is exhausted");
+        const auto target = largestVersion + 1;
+        const auto delta = target - r.session.stateVersion;
+        if (r.session.draftEditGeneration > core::RevisionState::kMaxStateVersion - delta)
+            co_return makeError(ErrorCode::InvalidInput, "The draft generation is exhausted");
+        core::RevisionState reconciled(r.latestRevision.revision, r.session.highestRevisionSeq, target - 1,
+            r.session.draftEditGeneration + delta - 1, r.session.proposalEditGeneration);
+        if (auto status = reconciled.noteDraftEdit(target - 1); !status.ok()) co_return status;
+        auto saved = co_await m_storage->call(&storage::PromptRepository::advanceDraftStateRange,
+            reconciled, r.session.stateVersion, nowMs());
+        if (!saved.ok()) { failStorage(saved.error()); co_return saved; }
+        if (editSerial != m_liveEditSerial) co_return makeError(ErrorCode::StaleVersion, "Draft changed during recovery; retry with the current text");
+        m_revisionState = std::make_unique<core::RevisionState>(std::move(reconciled));
+    }
+    m_pendingDraft.reset();
+    m_storageFault = false;
+    m_capturedDraftText = draftText; emit capturedDraftTextChanged(); emit draftCaptured(draftText); emit stateVersionChanged();
+    refreshStorageStats(); emit storageChanged();
+    co_return Status::success();
+}
+
+AsyncTask<void> HostController::resumeDiscovery(bool allowReconnect) {
+    auto status = co_await startDiscovery(allowReconnect);
+    if (!status.ok()) setLastError(status.error());
+}
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+bool HostController::waitForCommandForTesting(quint64 id, int timeoutMs) {
+    if (!id) return false;
+    QElapsedTimer clock; clock.start();
+    while ((!m_commandResults.contains(id) || m_historyRefreshRunning) && clock.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(); QThread::msleep(1);
+    }
+    return m_commandResults.value(id, false);
+}
+bool HostController::waitForStorageForTesting(int timeoutMs) {
+    QElapsedTimer clock; clock.start();
+    while ((!m_repository && !m_storageFault) || m_historyRefreshRunning) {
+        if (clock.elapsed() >= timeoutMs) return false;
+        QCoreApplication::processEvents(); QThread::msleep(1);
+    }
+    return true;
+}
+#endif
 } // namespace roclint::host

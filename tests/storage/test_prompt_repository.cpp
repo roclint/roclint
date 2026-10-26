@@ -358,10 +358,33 @@ void testStateCompareAndSwapAndArtifactFailuresRollBackTogether() {
     ROCLINT_CHECK(rollback.repo->getCurrentApproval(session).value()->id == approval.id);
 }
 
+void testCoalescedDraftRangeIsAtomic() {
+    Store store; fx::Chain chain; seed(*store.repo, chain);
+    const SessionId session(chain.session);
+    auto draft = RevisionState(root(chain.session));
+    for (int i = 0; i < 8; ++i) ROCLINT_CHECK(draft.noteDraftEdit(draft.stateVersion()).ok());
+    ROCLINT_CHECK(store.repo->advanceDraftStateRange(draft, 1, 500).ok());
+    const auto stored = store.repo->getSession(session).value();
+    ROCLINT_CHECK(stored.stateVersion == 9 && stored.draftEditGeneration == 8);
+    ROCLINT_CHECK(store.repo->getHistory(session).value().size() == 1);
+    ROCLINT_CHECK(!store.repo->getCurrentApproval(session).value());
+    ROCLINT_CHECK(!store.repo->advanceDraftStateRange(draft, 1, 501).ok());
+    ROCLINT_CHECK(store.repo->getSession(session).value() == stored);
+    auto wrongGeneration = RevisionState(root(chain.session), 1, 9, 8, 1);
+    ROCLINT_CHECK(wrongGeneration.noteDraftEdit(9).ok());
+    ROCLINT_CHECK(!store.repo->advanceDraftStateRange(wrongGeneration, 9, 502).ok());
+    ROCLINT_CHECK(store.repo->getSession(session).value() == stored);
+    auto wrongRevision = RevisionState(PromptRevision(session, RevisionId("rev_other"), std::nullopt, "other", 100), 1, 9, 8, 0);
+    ROCLINT_CHECK(wrongRevision.noteDraftEdit(9).ok());
+    ROCLINT_CHECK(!store.repo->advanceDraftStateRange(wrongRevision, 9, 503).ok());
+    ROCLINT_CHECK(store.repo->getSession(session).value() == stored);
+}
+
 } // namespace
 
 int main() {
     std::cout << "[Test PromptRepository] Starting...\n";
+    testCoalescedDraftRangeIsAtomic();
     testRootRevisionsInTwoSessionsDoNotCollide();
     testRevisionWritesUseOptimisticConcurrency();
     testCrossSessionRejectionInMemory();

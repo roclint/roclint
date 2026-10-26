@@ -249,13 +249,28 @@ int main(int argc, char* argv[]) {
                         if (autoEnhance && controller->isRewriteEnabled() && controller->proposalStatus() == QLatin1String("NONE"))
                             controller->synthesizeRewrite(controller->stateVersion());
                     });
-                QTimer::singleShot(0, window, [window]() { QMetaObject::invokeMethod(window, "analyzeNow"); });
+                if (initialPrompt.isEmpty()) {
+                    const auto started = std::make_shared<bool>(false);
+                    const auto start = [window, controller, started]() {
+                        if (*started || !controller->isStorageAvailable()) return;
+                        *started = true; QMetaObject::invokeMethod(window, "analyzeNow");
+                    };
+                    QObject::connect(controller, &roclint::host::HostController::storageChanged, window, start);
+                    QTimer::singleShot(0, window, start);
+                }
             }
 
             if (!initialPrompt.isEmpty() && !dryRun) {
-                QTimer::singleShot(150, window, [window, initialPrompt]() {
+                const auto editorAssigned = std::make_shared<bool>(false);
+                const auto started = std::make_shared<bool>(false);
+                const auto start = [window, controller, editorAssigned, started]() {
+                    if (!*editorAssigned || *started || !controller->isStorageAvailable()) return;
+                    *started = true; QMetaObject::invokeMethod(window, "analyzeNow");
+                };
+                QObject::connect(controller, &roclint::host::HostController::storageChanged, window, start);
+                QTimer::singleShot(150, window, [window, initialPrompt, editorAssigned, start]() {
                     QMetaObject::invokeMethod(window, "setEditorText", Q_ARG(QVariant, initialPrompt));
-                    QMetaObject::invokeMethod(window, "analyzeNow");
+                    *editorAssigned = true; start();
                 });
             }
 
@@ -359,7 +374,8 @@ int main(int argc, char* argv[]) {
         std::cout << "[Roclint Host] Host State: " << controller->hostStateString().toStdString() << std::endl;
         std::cout << "[Roclint Host] Qt Version: " << qVersion() << std::endl;
         std::cout << "[Roclint Host] Dry-run passed. QML root object verified. Exiting cleanly." << std::endl;
-        return 0;
+        QTimer::singleShot(0, controller.get(), &roclint::host::HostController::requestQuit);
+        return app.exec();
     }
 
     // Model discovery runs on a worker thread; the UI is usable while it completes.

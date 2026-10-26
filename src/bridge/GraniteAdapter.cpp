@@ -1,4 +1,5 @@
 #include "roclint/bridge/GraniteAdapter.hpp"
+#include "roclint/bridge/ModelResponseEnvelope.hpp"
 #include "roclint/core/crypto/Sha256.hpp"
 
 #include "roclint/core/Json.hpp"
@@ -34,7 +35,7 @@ Result<std::string> readText(const json::Value& obj, std::string_view key, bool 
         return makeError(ErrorCode::InvalidInput, "Field '" + std::string(key) + "' exceeds the size limit");
     }
     std::string text = core::normalizeLineEndings(v->asString());
-    if (required && text.find_first_not_of(" \t\n") == std::string::npos) {
+    if (required && trimModelWhitespace(text).empty()) {
         return makeError(ErrorCode::InvalidInput, "Field '" + std::string(key) + "' must not be blank");
     }
     return text;
@@ -366,7 +367,9 @@ Result<GraniteOptionDiscoveryResponse> parseDiscoveryResponse(std::string_view j
                                                       " bytes exceeds the 64 KB limit");
     }
 
-    auto parsed = json::parse(jsonResponse, json::ParseLimits{kMaxDiscoveryResponseBytes, 16});
+    auto envelope = normalizeModelResponseEnvelope(jsonResponse, kMaxDiscoveryResponseBytes);
+    if (!envelope.ok()) return envelope.error();
+    auto parsed = json::parse(envelope.value(), json::ParseLimits{kMaxDiscoveryResponseBytes, 16});
     if (!parsed.ok()) {
         return parsed.error();
     }
@@ -461,13 +464,9 @@ Result<GraniteOptionDiscoveryResponse> parseDiscoveryResponse(std::string_view j
         if (!cqVal->isString()) {
             return makeError(ErrorCode::InvalidInput, "Field 'clarification_question' must be a string");
         }
-        std::string text = core::normalizeLineEndings(cqVal->asString());
-        if (text.find_first_not_of(" \t\n") == std::string::npos) {
-            if (!analysis.missingDecisions.empty() && !analysis.missingDecisions.front().question.empty()) {
-                text = analysis.missingDecisions.front().question;
-            } else {
-                return makeError(ErrorCode::InvalidInput, "Field 'clarification_question' must not be blank");
-            }
+        std::string text = core::normalizeLineEndings(trimModelWhitespace(cqVal->asString()));
+        if (text.empty()) {
+            return makeError(ErrorCode::InvalidInput, "Field 'clarification_question' must not be blank");
         }
         core::analysis::MissingDecision md;
         md.id = core::analysis::mintMissingDecisionId(analysis.missingDecisions.size());

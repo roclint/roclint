@@ -700,6 +700,34 @@ Status PromptRepository::advanceSessionState(const core::RevisionState& next, st
     });
 }
 
+Status PromptRepository::advanceDraftStateRange(const core::RevisionState& next, std::uint64_t expectedVersion, std::int64_t nowMs) {
+    return guarded([&]() -> Status {
+        if (nowMs < 0 || !next.isDraftDirty() || next.stateVersion() <= expectedVersion || next.stateVersion() > core::RevisionState::kMaxStateVersion)
+            fail(ErrorCode::InvalidInput, "Invalid draft version range");
+        Transaction tx(db_);
+        const auto& revision = next.currentRevision();
+        auto current = getSession(revision.sessionId());
+        if (!current.ok()) return current.error();
+        const auto delta = next.stateVersion() - expectedVersion;
+        if (current.value().stateVersion != expectedVersion || current.value().highestRevisionSeq != next.highestIssuedSequence() ||
+            next.draftEditGeneration() < current.value().draftEditGeneration ||
+            next.draftEditGeneration() - current.value().draftEditGeneration != delta ||
+            next.proposalEditGeneration() != current.value().proposalEditGeneration)
+            fail(ErrorCode::StaleVersion, "Draft state changed before it could be saved");
+        auto latest = getLatestRevision(revision.sessionId());
+        if (!latest.ok()) return latest.error();
+        if (!latest.value() || latest.value()->revision.revisionId() != revision.revisionId())
+            fail(ErrorCode::StaleVersion, "Draft revision changed before it could be saved");
+        Statement update(db_.rawHandle(), "UPDATE sessions SET state_version=?1, draft_edit_generation=?2, updated_at=?3 WHERE session_id=?4 AND state_version=?5;");
+        update.unsignedInt(1, next.stateVersion()).unsignedInt(2, next.draftEditGeneration()).integer(3, nowMs)
+            .text(4, revision.sessionId().value()).unsignedInt(5, expectedVersion); update.run();
+        if (sqlite3_changes(db_.rawHandle()) != 1) fail(ErrorCode::StaleVersion, "Draft write lost its version check");
+        Statement approvals(db_.rawHandle(), "UPDATE approvals SET is_current=0 WHERE session_id=?1;");
+        approvals.text(1, revision.sessionId().value()); approvals.run();
+        tx.commit(); return Status::success();
+    });
+}
+
 Status PromptRepository::recordProposalGeneration(const core::SessionId& sessionId,
                                                   std::uint64_t proposalEditGeneration,
                                                   std::int64_t nowMs) {

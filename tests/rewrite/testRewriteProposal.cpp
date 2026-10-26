@@ -128,6 +128,35 @@ void testNeedsClarificationIsNotApprovable() {
     ROCLINT_CHECK(r.rejectionReason == "Which parser?");
 }
 
+void testRewriteParserResilience() {
+    fx::Chain c;
+    roclint::bridge::GraniteRewriteRequest req;
+    req.sessionId = c.session; req.revisionId = c.revision;
+    req.originalText = fx::kChainPrompt; req.analysis = c.snapshot; req.confirmedIntent = c.intent;
+    const auto parse = [&](const std::string& output) {
+        return roclint::bridge::GraniteRewriteAdapter::parseRewriteResponse(output, req,
+            ProfileRegistry::defaultProfile(), fx::testModel(), 1);
+    };
+    const std::string valid = R"({"status":"rewritten","rewritten_prompt":"  Keep structure.\n"})";
+    for (const auto& output : {valid, "```json\n" + valid + "\n```", " \t```\r\n" + valid + "\r\n```\n"}) {
+        const auto result = parse(output);
+        ROCLINT_CHECK(result.ok());
+        ROCLINT_CHECK(result.value().rewrittenText == "  Keep structure.\n");
+    }
+    const auto question = parse(R"({"status":"needs_clarification","question":" \r\nWhich parser?\t "})");
+    ROCLINT_CHECK(question.ok() && question.value().clarificationQuestion == "Which parser?");
+    for (const auto& output : {std::string("{}"), std::string(R"({"status":null})"),
+            std::string(R"({"status":42})"), std::string(R"({"status":""})"), std::string(R"({"status":"success"})"),
+            std::string(R"({"status":"rewritten"})"), std::string(R"({"status":"rewritten","rewritten_prompt":null})"),
+            std::string(R"({"status":"rewritten","rewritten_prompt":""})"),
+            std::string(R"({"status":"needs_clarification","question":" \n\t\r\f\u000b"})"),
+            std::string(R"({"status":"needs_clarification","question":null})"),
+            std::string(R"({"status":"needs_clarification"})"), std::string(R"({"status":"rewritten","status":"rewritten"})"),
+            "Here: " + valid, valid + " Done.", "```json\n" + valid, valid.substr(0, valid.size() - 1),
+            "```json\n" + valid + "\n```\n```\n{}\n```", std::string(65537, ' ')})
+        ROCLINT_CHECK(!parse(output).ok());
+}
+
 void testAccessibleDiff() {
     ROCLINT_CHECK(RewriteValidator::computeAccessibleDiff("a\nb\nc", "a\nB\nc\nd") ==
                   "  a\n~ was: b\n~ now: B\n  c\n+ d\n");
@@ -146,6 +175,7 @@ int main() {
     testForgedOrStaleProposalsAreRejected();
     testNeedsClarificationIsNotApprovable();
     testAccessibleDiff();
+    testRewriteParserResilience();
     std::cout << "[Test RewriteProposal] All tests PASSED.\n";
     return 0;
 }

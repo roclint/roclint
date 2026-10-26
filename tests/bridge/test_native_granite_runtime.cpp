@@ -159,6 +159,7 @@ void controllerResidencyTests() {
     settings.setValue(QStringLiteral("models/nativeDirectory"), QStringLiteral("late"));
     {
         HostController host(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(host.waitForStorageForTesting());
         host.setLegacyDiscoveryForTesting(true);
         ROCLINT_CHECK(host.graniteResidencyPreset() == "BALANCED");
         ROCLINT_CHECK(host.modelRuntimeState() == "UNLOADED" && host.stateVersion() == 0);
@@ -194,7 +195,7 @@ void controllerResidencyTests() {
 
         // An active semantic future protects the model even under pressure and long idle input.
         warm();
-        ROCLINT_CHECK(host.analyzePrompt(QStringLiteral("Review this prompt."), 0));
+        ROCLINT_CHECK(host.waitForCommandForTesting(host.analyzePrompt(QStringLiteral("Review this prompt."), 0)));
         host.setResidencyInputsForTesting(P::kBalancedUnloadMs, true);
         ROCLINT_CHECK(host.nativeGraniteResidency() == "HOT");
         ROCLINT_CHECK(host.waitForIdleForTesting(5000));
@@ -210,6 +211,7 @@ void controllerResidencyTests() {
     }
     {
         HostController restored(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(restored.waitForStorageForTesting());
         restored.setLegacyDiscoveryForTesting(true);
         ROCLINT_CHECK(restored.graniteResidencyPreset() == "LOW_MEMORY");
         ROCLINT_CHECK(restored.modelRuntimeState() == "UNLOADED" && restored.stateVersion() == 0);
@@ -375,6 +377,7 @@ void installerTests() {
 // P3-A / F-02: acceleratorName() must match the backend that was compiled into the native runtime.
 void acceleratorNameTests() {
     roclint::host::HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
     const auto name = controller.acceleratorName();
     ROCLINT_CHECK(!name.isEmpty());
     // The compiled manifest backend is set by CMakeLists.txt (METAL / VULKAN / CPU).
@@ -445,6 +448,7 @@ int liveHostPipeline(int argc, char** argv) {
         settings.setValue(QStringLiteral("models/active"), QStringLiteral("native-granite:Q8_0"));
     }
     roclint::host::HostController host(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(host.waitForStorageForTesting());
     ROCLINT_CHECK(host.setNativeWorkerForTesting(QString::fromLocal8Bit(argv[5])));
     QObject::connect(&host, &roclint::host::HostController::analysisStatusChanged, [&]() {
         std::cout << host.analysisStatus().toStdString() << ": " << host.analysisMessage().toStdString() << std::endl;
@@ -456,7 +460,7 @@ int liveHostPipeline(int argc, char** argv) {
         prompt = QString::fromUtf8(input.readAll());
     }
     QElapsedTimer timer; timer.start();
-    ROCLINT_CHECK(host.analyzePrompt(prompt, 0));
+    ROCLINT_CHECK(host.waitForCommandForTesting(host.analyzePrompt(prompt, 0)));
     waitUntil([&]() { return !host.isAnalyzing(); }, 400000);
     std::cout << "elapsed_ms=" << timer.elapsed() << "; granite=" << host.modelRuntimeState().toStdString()
               << "; error=" << host.lastError().toStdString() << std::endl;

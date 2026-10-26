@@ -118,6 +118,8 @@ public:
     // Compare-and-swap one accepted current-session mutation; text revision remains immutable.
     [[nodiscard]] core::Status advanceSessionState(const core::RevisionState& next,
                                                    std::uint64_t expectedVersion, std::int64_t nowMs);
+    [[nodiscard]] core::Status advanceDraftStateRange(const core::RevisionState& next,
+                                                       std::uint64_t expectedVersion, std::int64_t nowMs);
     // Persists an advanced proposal edit generation; generations never move backwards.
     [[nodiscard]] core::Status recordProposalGeneration(const core::SessionId& sessionId,
                                                         std::uint64_t proposalEditGeneration,

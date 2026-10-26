@@ -6,6 +6,8 @@
 #include <sqlite3.h>
 #include <string>
 #include <string_view>
+#include <atomic>
+#include <memory>
 
 namespace roclint::storage {
 
@@ -25,8 +27,11 @@ public:
 
     // Opens the database (UTF-8 path) and sets and verifies foreign_keys=ON, journal_mode=WAL
     // ("memory" for in-memory databases), synchronous=NORMAL, and busy_timeout=5000.
+    // With a cancellation flag, a cancellable handler replaces the native busy timeout after initialization.
     [[nodiscard]] core::Status open(const std::filesystem::path& path);
     void close() noexcept;
+    // Set before open; storage workers cancel busy waits and long-running statements cooperatively.
+    void setCancellationFlag(std::shared_ptr<std::atomic_bool> flag) { cancellation_ = std::move(flag); }
 
     [[nodiscard]] bool isOpen() const noexcept { return db_ != nullptr; }
     [[nodiscard]] bool isInMemory() const noexcept { return inMemory_; }
@@ -41,6 +46,7 @@ private:
 
     sqlite3* db_{nullptr};
     bool inMemory_{false};
+    std::shared_ptr<std::atomic_bool> cancellation_;
 };
 
 } // namespace roclint::storage

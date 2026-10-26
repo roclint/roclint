@@ -1,4 +1,5 @@
 #include "roclint/bridge/GraniteRewriteAdapter.hpp"
+#include "roclint/bridge/ModelResponseEnvelope.hpp"
 
 #include "roclint/core/Json.hpp"
 #include "roclint/core/crypto/Sha256.hpp"
@@ -128,7 +129,9 @@ Result<rw::RewriteProposal> GraniteRewriteAdapter::parseRewriteResponse(std::str
     if (modelOutput.size() > kMaxRewriteResponseBytes) {
         return makeError(ErrorCode::InvalidInput, "Rewrite response exceeds the 64 KB limit");
     }
-    auto parsed = json::parse(modelOutput, json::ParseLimits{kMaxRewriteResponseBytes, 8});
+    auto envelope = normalizeModelResponseEnvelope(modelOutput, kMaxRewriteResponseBytes);
+    if (!envelope.ok()) return envelope.error();
+    auto parsed = json::parse(envelope.value(), json::ParseLimits{kMaxRewriteResponseBytes, 8});
     if (!parsed.ok()) {
         return parsed.error();
     }
@@ -159,18 +162,18 @@ Result<rw::RewriteProposal> GraniteRewriteAdapter::parseRewriteResponse(std::str
 
     if (status.value() == "needs_clarification") {
         auto question = json::requireString(root, "question");
-        if (!question.ok() || question.value().empty()) {
+        if (!question.ok() || trimModelWhitespace(question.value()).empty()) {
             return makeError(ErrorCode::InvalidInput, "needs_clarification reply must include a question");
         }
         proposal.status = rw::ProposalStatus::NeedsClarification;
-        proposal.clarificationQuestion = core::normalizeLineEndings(question.value());
+        proposal.clarificationQuestion = core::normalizeLineEndings(trimModelWhitespace(question.value()));
     } else if (status.value() == "rewritten") {
         auto text = json::requireString(root, "rewritten_prompt");
         if (!text.ok()) {
             return text.error();
         }
         proposal.rewrittenText = core::normalizeLineEndings(text.value());
-        if (proposal.rewrittenText.find_first_not_of(" \t\n") == std::string::npos) {
+        if (trimModelWhitespace(proposal.rewrittenText).empty()) {
             return makeError(ErrorCode::InvalidInput, "Model returned an empty rewrite");
         }
         proposal.status = rw::ProposalStatus::ProposalReady;

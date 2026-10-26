@@ -2,16 +2,21 @@
 #include "support/check.hpp"
 
 #include <QTemporaryDir>
+#include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QThread>
 #include <iostream>
 
 using roclint::host::CardVisibility;
 using roclint::host::HostController;
 using roclint::host::HostState;
 
-int main(int /*argc*/, char* /*argv*/[]) {
+int main(int argc, char* argv[]) {
+    QCoreApplication app(argc, argv);
     std::cout << "[Roclint Host Lifecycle Test] Starting...\n";
 
     HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
 
     controller.setLegacyDiscoveryForTesting(true);
 
@@ -133,8 +138,12 @@ int main(int /*argc*/, char* /*argv*/[]) {
     ROCLINT_CHECK(!controller.isDashboardVisible());
     ROCLINT_CHECK(hideRequests == hidesBeforeQuit + 1);
     ROCLINT_CHECK(hideDashboardRequests == dashHidesBeforeQuit + 1);
+    { QElapsedTimer deadline; deadline.start();
+      while (!quitRequests && deadline.elapsed() < 5000) { QCoreApplication::processEvents(); QThread::msleep(1); } }
     ROCLINT_CHECK(quitRequests == 1);
     controller.requestQuit();
+    { QElapsedTimer deadline; deadline.start();
+      while (!quitRequests && deadline.elapsed() < 5000) { QCoreApplication::processEvents(); QThread::msleep(1); } }
     ROCLINT_CHECK(quitRequests == 1);
 
     const int showsAfterQuit = showRequests;
@@ -152,6 +161,7 @@ int main(int /*argc*/, char* /*argv*/[]) {
     // 10. Runtime and scorer status are reported honestly before any model is connected.
     {
         HostController fresh(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(fresh.waitForStorageForTesting());
         fresh.setLegacyDiscoveryForTesting(true);
         ROCLINT_CHECK(fresh.isStorageAvailable());
         ROCLINT_CHECK(fresh.modelRuntimeState() == "UNLOADED");
@@ -174,10 +184,11 @@ int main(int /*argc*/, char* /*argv*/[]) {
         QTemporaryDir dir;
         ROCLINT_CHECK(dir.isValid());
         HostController broken(dir.path() + QStringLiteral("/missing/sub/dir/history.db"));
+    ROCLINT_CHECK(broken.waitForStorageForTesting());
         broken.setLegacyDiscoveryForTesting(true);
         ROCLINT_CHECK(!broken.isStorageAvailable());
-        ROCLINT_CHECK(broken.databaseStats().contains(QStringLiteral("unavailable")));
-        ROCLINT_CHECK(!broken.commitPrompt(QStringLiteral("hello"), 0));
+        ROCLINT_CHECK(broken.storageNeedsRecovery());
+        ROCLINT_CHECK(!broken.waitForCommandForTesting(broken.commitPrompt(QStringLiteral("hello"), 0)));
         ROCLINT_CHECK(!broken.lastError().isEmpty());
         ROCLINT_CHECK(broken.stateVersion() == 0);
         std::cout << "  [PASS] Storage failure is explicit; commands refuse to run.\n";

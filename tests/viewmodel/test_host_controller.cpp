@@ -14,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <stdexcept>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -151,22 +152,22 @@ void connectRuntime(HostController& c, const ScriptedRuntime& runtime) {
 }
 
 void analyzeAndAnswer(HostController& c) {
-    ROCLINT_CHECK(c.analyzePrompt(kPrompt, c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, c.stateVersion())));
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
     ROCLINT_CHECK(c.analysisStatus() == "READY");
     ROCLINT_CHECK(c.interventionVerdict() == "CLARIFY");
     ROCLINT_CHECK(c.activeItemId() == "grp_0");
     ROCLINT_CHECK(c.activeAlternatives().size() == 2);
     ROCLINT_CHECK(!c.hasConfirmedIntent());
-    ROCLINT_CHECK(c.confirmChoice(QStringLiteral("alt_0_0"), c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.confirmChoice(QStringLiteral("alt_0_0"), c.stateVersion())));
     ROCLINT_CHECK(c.interventionVerdict() == "QUIET");
     ROCLINT_CHECK(c.hasConfirmedIntent());
     ROCLINT_CHECK(c.isRewriteEnabled());
 }
 
 void synthesize(HostController& c) {
-    c.setRewriteProfile(QStringLiteral("GENERIC@1"), c.stateVersion());
-    ROCLINT_CHECK(c.synthesizeRewrite(c.stateVersion()));
+    c.waitForCommandForTesting(c.setRewriteProfile(QStringLiteral("GENERIC@1"), c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
     ROCLINT_CHECK(c.proposalStatus() == "READY_FOR_REVIEW");
     ROCLINT_CHECK(c.hasProposal());
@@ -185,8 +186,9 @@ QString clipboardText() {
 
 void testLineEndingsAreNormalizedOnCommit() {
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
-    ROCLINT_CHECK(c.commitPrompt(QStringLiteral("line one\r\nline two\rline three"), 0));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(QStringLiteral("line one\r\nline two\rline three"), 0)));
     ROCLINT_CHECK(c.currentRevisionText() == "line one\nline two\nline three");
     ROCLINT_CHECK(c.stateVersion() == 1);
     ROCLINT_CHECK(c.currentRevisionId() == QStringLiteral("rev_") + c.currentSessionIdString() + QStringLiteral("_1"));
@@ -198,14 +200,15 @@ void testLineEndingsAreNormalizedOnCommit() {
 
 void testStaleExpectedVersionIsRejected() {
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
-    ROCLINT_CHECK(!c.commitPrompt(QStringLiteral("first"), 7));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.commitPrompt(QStringLiteral("first"), 7)));
     ROCLINT_CHECK(c.stateVersion() == 0);
-    ROCLINT_CHECK(c.commitPrompt(QStringLiteral("first"), 0));
-    ROCLINT_CHECK(!c.commitPrompt(QStringLiteral("second"), 0));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(QStringLiteral("first"), 0)));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.commitPrompt(QStringLiteral("second"), 0)));
     ROCLINT_CHECK(!c.lastError().isEmpty());
     ROCLINT_CHECK(c.currentRevisionText() == "first");
-    ROCLINT_CHECK(!c.noteDraftEdited(99));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.noteDraftEdited(99)));
     ROCLINT_CHECK(!c.isDraftDirty());
     std::cout << "  [PASS] Commands with a stale expected version are rejected.\n";
 }
@@ -214,12 +217,13 @@ void testEditAndCommitClearDownstreamState() {
     ScriptedRuntime runtime;
     {
         HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
         c.setLegacyDiscoveryForTesting(true);
         connectRuntime(c, runtime);
         analyzeAndAnswer(c);
         synthesize(c);
 
-        ROCLINT_CHECK(c.noteDraftEdited(c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.noteDraftEdited(c.stateVersion())));
         ROCLINT_CHECK(c.isDraftDirty());
         ROCLINT_CHECK(c.analysisStatus() == "IDLE");
         ROCLINT_CHECK(!c.analysisForTesting().has_value());
@@ -234,12 +238,13 @@ void testEditAndCommitClearDownstreamState() {
     }
     {
         HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
         c.setLegacyDiscoveryForTesting(true);
         connectRuntime(c, runtime);
         analyzeAndAnswer(c);
         synthesize(c);
         const auto version = c.stateVersion();
-        ROCLINT_CHECK(c.commitPrompt(kPrompt + QStringLiteral(" Keep the public API."), version));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(kPrompt + QStringLiteral(" Keep the public API."), version)));
         ROCLINT_CHECK(c.stateVersion() == version + 1);
         ROCLINT_CHECK(!c.analysisForTesting().has_value());
         ROCLINT_CHECK(!c.confirmedIntentForTesting().has_value());
@@ -252,28 +257,29 @@ void testEditAndCommitClearDownstreamState() {
 void testRewriteRefusesWithoutIntentOrWithDirtyDraft() {
     ScriptedRuntime runtime;
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     connectRuntime(c, runtime);
     setClipboard(QStringLiteral("untouched"));
 
     // No analysis at all.
-    ROCLINT_CHECK(c.commitPrompt(kPrompt, 0));
-    ROCLINT_CHECK(!c.synthesizeRewrite(c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(kPrompt, 0)));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
     ROCLINT_CHECK(!c.lastError().isEmpty());
 
     // Analysis is waiting on a question: no confirmed intent yet.
-    ROCLINT_CHECK(c.analyzePrompt(kPrompt, c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, c.stateVersion())));
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
     ROCLINT_CHECK(c.isClarifying());
-    ROCLINT_CHECK(!c.synthesizeRewrite(c.stateVersion()));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
     ROCLINT_CHECK(!c.hasProposal());
 
     // Intent confirmed, then the draft is edited.
-    ROCLINT_CHECK(c.confirmChoice(QStringLiteral("alt_0_0"), c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.confirmChoice(QStringLiteral("alt_0_0"), c.stateVersion())));
     ROCLINT_CHECK(c.hasConfirmedIntent());
-    ROCLINT_CHECK(c.noteDraftEdited(c.stateVersion()));
-    ROCLINT_CHECK(!c.synthesizeRewrite(c.stateVersion()));
-    ROCLINT_CHECK(!c.approveAndCopyRewrite(c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.noteDraftEdited(c.stateVersion())));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.approveAndCopyRewrite(c.stateVersion())));
 
     ROCLINT_CHECK(c.lastCopiedText().isEmpty());
     ROCLINT_CHECK(clipboardText() == "untouched");
@@ -286,14 +292,15 @@ void testRewriteRefusesWithoutIntentOrWithDirtyDraft() {
 void testConfirmChoiceRejectsForeignAlternative() {
     ScriptedRuntime runtime;
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     connectRuntime(c, runtime);
-    ROCLINT_CHECK(c.analyzePrompt(kPrompt, 0));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, 0)));
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
     ROCLINT_CHECK(c.isClarifying());
 
-    ROCLINT_CHECK(!c.confirmChoice(QStringLiteral("alt_1_0"), c.stateVersion()));
-    ROCLINT_CHECK(!c.confirmChoice(QStringLiteral("injected"), c.stateVersion()));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.confirmChoice(QStringLiteral("alt_1_0"), c.stateVersion())));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.confirmChoice(QStringLiteral("injected"), c.stateVersion())));
     ROCLINT_CHECK(!c.lastError().isEmpty());
     ROCLINT_CHECK(c.roundsCompleted() == 0);
     ROCLINT_CHECK(c.isClarifying());
@@ -305,6 +312,7 @@ void testApproveAndCopyPersistsBeforeCopying() {
     ScriptedRuntime runtime;
     runtime.rewriteText = kUnverifiedRewrite;
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     connectRuntime(c, runtime);
     analyzeAndAnswer(c);
@@ -321,37 +329,37 @@ void testApproveAndCopyPersistsBeforeCopying() {
     // The intent wording is not mechanically present, so a human must review it first.
     ROCLINT_CHECK(c.pendingReviewCount() == 1);
     ROCLINT_CHECK(!c.canApprove());
-    ROCLINT_CHECK(!c.approveAndCopyRewrite(c.stateVersion()));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.approveAndCopyRewrite(c.stateVersion())));
     ROCLINT_CHECK(clipboardText() == "before");
-    ROCLINT_CHECK(!c.acknowledgeConstraint(QStringLiteral("rewrite_nonempty"), true, c.stateVersion()));
-    ROCLINT_CHECK(c.acknowledgeConstraint(QStringLiteral("intent_item_grp_0"), true, c.stateVersion()));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.acknowledgeConstraint(QStringLiteral("rewrite_nonempty"), true, c.stateVersion())));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.acknowledgeConstraint(QStringLiteral("intent_item_grp_0"), true, c.stateVersion())));
     ROCLINT_CHECK(c.pendingReviewCount() == 0);
     ROCLINT_CHECK(c.canApprove());
 
     const auto session = SessionId(c.currentSessionIdString().toStdString());
     bool approvalStoredBeforeCopy = false;
     QObject::connect(&c, &HostController::promptCopied, [&](const QString&) {
-        auto current = c.repositoryForTesting()->getCurrentApproval(session);
+        auto current = c.repositoryForTesting()->getCurrentApproval(session).waitForTesting();
         approvalStoredBeforeCopy = current.ok() && current.value().has_value();
     });
 
-    ROCLINT_CHECK(c.approveAndCopyRewrite(c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.approveAndCopyRewrite(c.stateVersion())));
     ROCLINT_CHECK(approvalStoredBeforeCopy);
     ROCLINT_CHECK(c.hasApproval());
     ROCLINT_CHECK(c.approvalLabel() == "Wording reviewed");
     ROCLINT_CHECK(c.lastCopiedText() == QString::fromStdString(kUnverifiedRewrite));
     ROCLINT_CHECK(clipboardText() == QString::fromStdString(kUnverifiedRewrite));
 
-    auto stored = c.repositoryForTesting()->getCurrentApproval(session);
+    auto stored = c.repositoryForTesting()->getCurrentApproval(session).waitForTesting();
     ROCLINT_CHECK(stored.ok() && stored.value().has_value());
     ROCLINT_CHECK(stored.value()->approvedText == kUnverifiedRewrite);
     ROCLINT_CHECK(stored.value()->proposalHash == c.proposalForTesting()->proposalHash);
 
     // Changing the rewrite style discards the proposal and its approval.
-    c.setRewriteProfile(QStringLiteral("ANTHROPIC_STRUCTURED@1"), c.stateVersion());
+    c.waitForCommandForTesting(c.setRewriteProfile(QStringLiteral("ANTHROPIC_STRUCTURED@1"), c.stateVersion()));
     ROCLINT_CHECK(!c.hasProposal());
     ROCLINT_CHECK(!c.hasApproval());
-    auto after = c.repositoryForTesting()->getCurrentApproval(session);
+    auto after = c.repositoryForTesting()->getCurrentApproval(session).waitForTesting();
     ROCLINT_CHECK(after.ok() && !after.value().has_value());
     std::cout << "  [PASS] Approve & Copy validates, persists the approval, then copies.\n";
 }
@@ -360,16 +368,17 @@ void testStaleDiscoveryResultIsDiscarded() {
     ScriptedRuntime runtime;
     runtime.discoveryDelay = std::chrono::milliseconds(300);
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     connectRuntime(c, runtime);
-    ROCLINT_CHECK(c.analyzePrompt(kPrompt, 0));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, 0)));
     ROCLINT_CHECK(c.isAnalyzing());
-    ROCLINT_CHECK(c.noteDraftEdited(c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.noteDraftEdited(c.stateVersion())));
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
 
     ROCLINT_CHECK(!c.analysisForTesting().has_value());
     ROCLINT_CHECK(!c.isClarifying());
-    auto attempts = c.repositoryForTesting()->getModelAttempts(SessionId(c.currentSessionIdString().toStdString()));
+    auto attempts = c.repositoryForTesting()->getModelAttempts(SessionId(c.currentSessionIdString().toStdString())).waitForTesting();
     ROCLINT_CHECK(attempts.ok() && attempts.value().size() == 1);
     ROCLINT_CHECK(attempts.value()[0].status == roclint::storage::AttemptStatus::DiscardedStale);
     ROCLINT_CHECK(attempts.value()[0].transport == "test_override_transport");
@@ -382,6 +391,7 @@ void testOutboundPromptsCarryNoLocalContext() {
     const QString dbPath = dir.path() + QStringLiteral("/history.db");
     ScriptedRuntime runtime;
     HostController c(dbPath);
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     connectRuntime(c, runtime);
     analyzeAndAnswer(c);
@@ -411,22 +421,24 @@ void testApprovalSurvivesReopen() {
     std::string proposalHash;
     {
         HostController c(dbPath);
+    ROCLINT_CHECK(c.waitForStorageForTesting());
         c.setLegacyDiscoveryForTesting(true);
         connectRuntime(c, runtime);
         analyzeAndAnswer(c);
         synthesize(c);
         // A discarded earlier proposal advances the generation; the restored one must still bind.
-        ROCLINT_CHECK(c.discardProposal(c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.discardProposal(c.stateVersion())));
         synthesize(c);
         ROCLINT_CHECK(c.pendingReviewCount() == 0);
-        ROCLINT_CHECK(c.approveAndCopyRewrite(c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.approveAndCopyRewrite(c.stateVersion())));
         sessionId = c.currentSessionIdString();
         proposalHash = c.proposalForTesting()->proposalHash;
     }
     {
         HostController c(dbPath);
+    ROCLINT_CHECK(c.waitForStorageForTesting());
         c.setLegacyDiscoveryForTesting(true);
-        ROCLINT_CHECK(c.restoreSession(sessionId, c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.restoreSession(sessionId, c.stateVersion())));
         ROCLINT_CHECK(c.analysisStatus() == "READY");
         ROCLINT_CHECK(c.hasConfirmedIntent());
         ROCLINT_CHECK(c.hasProposal());
@@ -436,23 +448,25 @@ void testApprovalSurvivesReopen() {
         ROCLINT_CHECK(c.approvalLabel() == "Wording reviewed");
 
         // Restoring the open session again keeps the stored approval current.
-        ROCLINT_CHECK(c.restoreSession(sessionId, c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.restoreSession(sessionId, c.stateVersion())));
         ROCLINT_CHECK(c.hasApproval());
-        auto stored = c.repositoryForTesting()->getCurrentApproval(SessionId(sessionId.toStdString()));
+        auto stored = c.repositoryForTesting()->getCurrentApproval(SessionId(sessionId.toStdString())).waitForTesting();
         ROCLINT_CHECK(stored.ok() && stored.value().has_value());
     }
     {
         // A proposal discarded before quitting is not resurrected.
         HostController c(dbPath);
+    ROCLINT_CHECK(c.waitForStorageForTesting());
         c.setLegacyDiscoveryForTesting(true);
-        ROCLINT_CHECK(c.restoreSession(sessionId, c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.restoreSession(sessionId, c.stateVersion())));
         connectRuntime(c, runtime);
-        ROCLINT_CHECK(c.discardProposal(c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.discardProposal(c.stateVersion())));
     }
     {
         HostController c(dbPath);
+    ROCLINT_CHECK(c.waitForStorageForTesting());
         c.setLegacyDiscoveryForTesting(true);
-        ROCLINT_CHECK(c.restoreSession(sessionId, c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.restoreSession(sessionId, c.stateVersion())));
         ROCLINT_CHECK(c.hasConfirmedIntent());
         ROCLINT_CHECK(!c.hasProposal());
         ROCLINT_CHECK(!c.hasApproval());
@@ -462,8 +476,9 @@ void testApprovalSurvivesReopen() {
 
 void testHardBypassCopiesCommittedText() {
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
-    ROCLINT_CHECK(c.hardBypass(QStringLiteral("ship it\r\nnow"), 0));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.hardBypass(QStringLiteral("ship it\r\nnow"), 0)));
     ROCLINT_CHECK(c.lastCopiedText() == "ship it\nnow");
     ROCLINT_CHECK(clipboardText() == "ship it\nnow");
     ROCLINT_CHECK(c.stateVersion() == 2); // Root creation, then explicit bypass invalidation.
@@ -474,35 +489,37 @@ void testHardBypassCopiesCommittedText() {
 void testManualModeDisablesRewrite() {
     ScriptedRuntime runtime;
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     connectRuntime(c, runtime);
-    ROCLINT_CHECK(c.analyzePrompt(kPrompt, 0));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, 0)));
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
-    ROCLINT_CHECK(c.switchToManual(c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.switchToManual(c.stateVersion())));
     ROCLINT_CHECK(c.isManual());
     ROCLINT_CHECK(!c.hasConfirmedIntent());
     ROCLINT_CHECK(!c.isRewriteEnabled());
-    ROCLINT_CHECK(!c.synthesizeRewrite(c.stateVersion()));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
     std::cout << "  [PASS] Manual mode never produces an intent or a rewrite.\n";
 }
 
 void testAnalysisReconnectsToTheRuntime() {
     FakeOllama ollama;
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     ROCLINT_CHECK(c.setModelRuntimeUrlForTesting(ollama.url()));
     ROCLINT_CHECK(c.modelRuntimeState() == "UNLOADED");
     c.setActiveModel(QStringLiteral("granite4.2:8b"));
 
     // An explicit model selection starts connecting; analysis waits for it, then runs.
-    ROCLINT_CHECK(c.analyzePrompt(kPrompt, 0));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, 0)));
     ROCLINT_CHECK(c.isAnalyzing());
     ROCLINT_CHECK(c.waitForIdleForTesting(15000));
     ROCLINT_CHECK(c.modelRuntimeState() == "READY");
     ROCLINT_CHECK(c.analysisStatus() == "READY");
     ROCLINT_CHECK(c.isClarifying());
     ROCLINT_CHECK(c.activeAlternatives().size() == 2);
-    auto attempts = c.repositoryForTesting()->getModelAttempts(SessionId(c.currentSessionIdString().toStdString()));
+    auto attempts = c.repositoryForTesting()->getModelAttempts(SessionId(c.currentSessionIdString().toStdString())).waitForTesting();
     ROCLINT_CHECK(attempts.ok() && attempts.value().size() == 1);
     ROCLINT_CHECK(attempts.value()[0].status == roclint::storage::AttemptStatus::Succeeded);
     ROCLINT_CHECK(attempts.value()[0].transport == bridge::kLoopbackOllamaTransport);
@@ -513,21 +530,23 @@ void testAnalysisRecoversAfterRuntimeFailure() {
     FakeOllama ollama;
     ollama.available = false;
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     ROCLINT_CHECK(c.setModelRuntimeUrlForTesting(ollama.url()));
     c.setActiveModel(QStringLiteral("granite4.2:8b"));
 
-    ROCLINT_CHECK(c.analyzePrompt(kPrompt, 0));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, 0)));
     ROCLINT_CHECK(c.waitForIdleForTesting(15000));
     ROCLINT_CHECK(c.modelRuntimeState() == "FAILED");
     ROCLINT_CHECK(c.analysisStatus() == "FAILED");
-    ROCLINT_CHECK(c.lastError().contains(QStringLiteral("HTTP 503")));
+    ROCLINT_CHECK(!c.lastError().contains(QStringLiteral("HTTP 503")));
+    ROCLINT_CHECK(c.lastError().contains(QStringLiteral("Retry explicitly")));
     ROCLINT_CHECK(c.activeAlternatives().isEmpty());
 
     // Once the runtime is back, the next request reconnects instead of repeating the old failure.
     ollama.available = true;
     const int checksBefore = ollama.tagRequests;
-    ROCLINT_CHECK(c.analyzePrompt(kPrompt, c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, c.stateVersion())));
     ROCLINT_CHECK(c.waitForIdleForTesting(15000));
     ROCLINT_CHECK(ollama.tagRequests > checksBefore);
     ROCLINT_CHECK(c.modelRuntimeState() == "READY");
@@ -544,13 +563,14 @@ void testUnreachableRuntimeExplainsWhatToDo() {
         freePort = probe.serverPort();
     }
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     ROCLINT_CHECK(c.setModelRuntimeUrlForTesting(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(freePort))));
     c.setActiveModel(QStringLiteral("granite4.2:8b"));
-    ROCLINT_CHECK(c.analyzePrompt(kPrompt, 0));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, 0)));
     ROCLINT_CHECK(c.waitForIdleForTesting(15000));
     ROCLINT_CHECK(c.analysisStatus() == "FAILED");
-    ROCLINT_CHECK(c.lastError().contains(QStringLiteral("Make sure Ollama is running")));
+    ROCLINT_CHECK(c.lastError().contains(QStringLiteral("Retry")));
     ROCLINT_CHECK(!c.lastError().contains(QStringLiteral("FAILED")));
     ROCLINT_CHECK(!c.isClarifying());
     std::cout << "  [PASS] An unreachable runtime fails visibly with an actionable message.\n";
@@ -558,69 +578,98 @@ void testUnreachableRuntimeExplainsWhatToDo() {
 
 void testMalformedModelReplyIsExplainedPlainly() {
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     c.setTransportOverrideForTesting([](std::string_view) -> Result<std::string> {
         return std::string(R"({"status": "needs_clarification", "choice_groups": [], "clarification_question": ""})");
     });
     ROCLINT_CHECK(c.markModelReadyForTesting(modelInfo()));
-    ROCLINT_CHECK(c.analyzePrompt(kPrompt, 0));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, 0)));
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
     ROCLINT_CHECK(c.analysisStatus() == "FAILED");
     ROCLINT_CHECK(c.lastError().startsWith(QStringLiteral("The local model returned an unusable reply.")));
-    ROCLINT_CHECK(c.lastError().contains(QStringLiteral("Try again or rephrase")));
+    ROCLINT_CHECK(c.lastError().contains(QStringLiteral("Retry explicitly")));
+    ROCLINT_CHECK(!c.lastError().contains(QStringLiteral("Detail:")));
+    ROCLINT_CHECK(!c.lastError().contains(QStringLiteral("clarification_question")));
+    ROCLINT_CHECK(c.currentRevisionText().toStdString() == kPrompt.toStdString());
     ROCLINT_CHECK(!c.isClarifying());
     ROCLINT_CHECK(c.modelRuntimeState() == "READY");
     std::cout << "  [PASS] A malformed model reply fails visibly with a plain explanation.\n";
 }
 
+void testModelDiagnosticsStayInternal() {
+    for (int scenario = 0; scenario < 3; ++scenario) {
+        HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+        c.setTransportOverrideForTesting([scenario](std::string_view) -> Result<std::string> {
+            if (scenario == 0) return std::string(R"({"status":"RAW_DIAGNOSTIC_SENTINEL"})");
+            if (scenario == 1) return std::string(R"({"error":"RAW_DIAGNOSTIC_SENTINEL"})");
+            throw std::runtime_error("RAW_DIAGNOSTIC_SENTINEL");
+        });
+        ROCLINT_CHECK(c.markModelReadyForTesting(modelInfo()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, 0)));
+        ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+        ROCLINT_CHECK(c.analysisStatus() == "FAILED");
+        ROCLINT_CHECK(c.currentRevisionText() == kPrompt);
+        ROCLINT_CHECK(c.lastError().contains("Retry explicitly"));
+        ROCLINT_CHECK(!c.lastError().contains("RAW_DIAGNOSTIC_SENTINEL"));
+        ROCLINT_CHECK(!c.analysisMessage().contains("RAW_DIAGNOSTIC_SENTINEL"));
+        for (const auto& item : c.availableModels())
+            ROCLINT_CHECK(!item.toMap().value("status").toString().contains("RAW_DIAGNOSTIC_SENTINEL"));
+    }
+}
+
 void testDelayedCommandsCannotMutateTheNewState() {
     ScriptedRuntime runtime;
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     connectRuntime(c, runtime);
-    ROCLINT_CHECK(c.analyzePrompt(kPrompt, 0));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, 0)));
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
     const auto beforeChoice = c.stateVersion();
-    ROCLINT_CHECK(c.confirmChoice(QStringLiteral("alt_0_0"), beforeChoice));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.confirmChoice(QStringLiteral("alt_0_0"), beforeChoice)));
     ROCLINT_CHECK(c.stateVersion() == beforeChoice + 1);
     const auto intent = *c.confirmedIntentForTesting();
-    ROCLINT_CHECK(!c.skipCurrentItem(beforeChoice));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.skipCurrentItem(beforeChoice)));
     ROCLINT_CHECK(c.lastErrorCode() == "STALE_VERSION");
-    ROCLINT_CHECK(!c.switchToManual(beforeChoice));
-    ROCLINT_CHECK(!c.synthesizeRewrite(beforeChoice));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.switchToManual(beforeChoice)));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.synthesizeRewrite(beforeChoice)));
     ROCLINT_CHECK(c.stateVersion() == beforeChoice + 1 && *c.confirmedIntentForTesting() == intent);
     synthesize(c);
     const auto beforeApproval = c.stateVersion();
-    ROCLINT_CHECK(!c.approveAndCopyRewrite(beforeChoice));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.approveAndCopyRewrite(beforeChoice)));
     ROCLINT_CHECK(!c.hasApproval());
-    ROCLINT_CHECK(c.approveAndCopyRewrite(beforeApproval));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.approveAndCopyRewrite(beforeApproval)));
     const auto approvedVersion = c.stateVersion();
     ROCLINT_CHECK(approvedVersion == beforeApproval + 1);
     const auto copied = QGuiApplication::clipboard()->text();
-    ROCLINT_CHECK(!c.approveAndCopyRewrite(beforeApproval));
-    ROCLINT_CHECK(!c.discardProposal(beforeApproval));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.approveAndCopyRewrite(beforeApproval)));
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.discardProposal(beforeApproval)));
     ROCLINT_CHECK(c.stateVersion() == approvedVersion && c.hasApproval());
     ROCLINT_CHECK(QGuiApplication::clipboard()->text() == copied);
-    ROCLINT_CHECK(c.repositoryForTesting()->getSession(SessionId(c.currentSessionIdString().toStdString())).value().stateVersion == approvedVersion);
+    ROCLINT_CHECK(c.repositoryForTesting()->getSession(SessionId(c.currentSessionIdString().toStdString())).waitForTesting().value().stateVersion == approvedVersion);
 
     // Another repository writer advances the stored state while this controller still sees its old version.
-    const auto restored = c.repositoryForTesting()->restoreSession(SessionId(c.currentSessionIdString().toStdString())).value();
+    const auto restored = c.repositoryForTesting()->restoreSession(SessionId(c.currentSessionIdString().toStdString())).waitForTesting().value();
     RevisionState external(restored.latestRevision.revision, restored.session.highestRevisionSeq, restored.session.stateVersion,
                            restored.session.draftEditGeneration, restored.session.proposalEditGeneration);
     ROCLINT_CHECK(external.advanceState(approvedVersion).ok());
-    ROCLINT_CHECK(c.repositoryForTesting()->advanceSessionState(external, approvedVersion, 100).ok());
-    ROCLINT_CHECK(!c.discardProposal(approvedVersion));
-    ROCLINT_CHECK(c.stateVersion() == approvedVersion && c.hasProposal());
+    ROCLINT_CHECK(c.repositoryForTesting()->advanceSessionState(external, approvedVersion, 100).waitForTesting().ok());
+    ROCLINT_CHECK(!c.waitForCommandForTesting(c.discardProposal(approvedVersion)));
+    ROCLINT_CHECK(c.stateVersion() == approvedVersion && !c.hasApproval() && c.storageNeedsRecovery());
 }
 
 void testAnalysisGroupDeadlineAndExplicitRetry() {
     ScriptedRuntime runtime;
     runtime.discoveryDelay = std::chrono::milliseconds(300);
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     connectRuntime(c, runtime);
     c.setAnalysisGroupTimeoutForTesting(60);
-    ROCLINT_CHECK(c.analyzePrompt(kPrompt, 0));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, 0)));
     QElapsedTimer elapsed; elapsed.start();
     while (c.analysisStatus() != "FAILED" && elapsed.elapsed() < 1000) {
         QCoreApplication::processEvents(); QThread::msleep(1);
@@ -628,7 +677,7 @@ void testAnalysisGroupDeadlineAndExplicitRetry() {
     ROCLINT_CHECK(c.analysisStatus() == "FAILED" && elapsed.elapsed() < 250);
     ROCLINT_CHECK(!c.finalSnapshotForTesting() && !c.hasConfirmedIntent());
     const auto firstVersion = c.stateVersion();
-    auto attempts = c.repositoryForTesting()->getModelAttempts(SessionId(c.currentSessionIdString().toStdString()));
+    auto attempts = c.repositoryForTesting()->getModelAttempts(SessionId(c.currentSessionIdString().toStdString())).waitForTesting();
     ROCLINT_CHECK(attempts.ok() && attempts.value().size() == 1);
     ROCLINT_CHECK(attempts.value().front().status == roclint::storage::AttemptStatus::Failed);
     ROCLINT_CHECK(attempts.value().front().errorMessage.find("ANALYSIS_GROUP_DEADLINE") != std::string::npos);
@@ -637,11 +686,11 @@ void testAnalysisGroupDeadlineAndExplicitRetry() {
     runtime.discoveryDelay = std::chrono::milliseconds(0);
     c.setTransportOverrideForTesting(runtime.transport());
     c.setAnalysisGroupTimeoutForTesting(1500);
-    ROCLINT_CHECK(c.analyzePrompt(kPrompt, c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, c.stateVersion())));
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
     ROCLINT_CHECK(c.analysisStatus() == "READY" && c.finalSnapshotForTesting());
     ROCLINT_CHECK(c.stateVersion() > firstVersion && !c.hasConfirmedIntent());
-    attempts = c.repositoryForTesting()->getModelAttempts(SessionId(c.currentSessionIdString().toStdString()));
+    attempts = c.repositoryForTesting()->getModelAttempts(SessionId(c.currentSessionIdString().toStdString())).waitForTesting();
     ROCLINT_CHECK(attempts.ok() && attempts.value().size() == 2);
     int failed = 0, succeeded = 0;
     for (const auto& attempt : attempts.value()) {
@@ -679,9 +728,10 @@ void testSubmitClarificationDeferral() {
     {
         ScriptedRuntime runtime;
         HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
         c.setLegacyDiscoveryForTesting(true);
         connectRuntime(c, runtime);
-        ROCLINT_CHECK(c.analyzePrompt(kPrompt, c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, c.stateVersion())));
         ROCLINT_CHECK(c.waitForIdleForTesting(5000));
         ROCLINT_CHECK(c.interventionVerdict() == "CLARIFY");
         ROCLINT_CHECK(c.activeItemId() == "grp_0");
@@ -695,7 +745,7 @@ void testSubmitClarificationDeferral() {
             wasAutoSelected = autoSelected;
         });
 
-        ROCLINT_CHECK(c.submitClarification(QStringLiteral("idk lol"), c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.submitClarification(QStringLiteral("idk lol"), c.stateVersion())));
         ROCLINT_CHECK(wasAutoSelected);
         ROCLINT_CHECK(deferredMsg.contains("Auto-selected: Lower latency per call (Julia 84% confident)"));
         ROCLINT_CHECK(c.ambientStatus().contains("Auto-selected: Lower latency per call (Julia 84% confident)"));
@@ -713,9 +763,10 @@ void testSubmitClarificationDeferral() {
     {
         ScriptedRuntime runtime;
         HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
         c.setLegacyDiscoveryForTesting(true);
         connectRuntime(c, runtime);
-        ROCLINT_CHECK(c.analyzePrompt(kPrompt, c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, c.stateVersion())));
         ROCLINT_CHECK(c.waitForIdleForTesting(5000));
         ROCLINT_CHECK(c.interventionVerdict() == "CLARIFY");
         ROCLINT_CHECK(c.activeItemId() == "grp_0");
@@ -729,7 +780,7 @@ void testSubmitClarificationDeferral() {
             wasAutoSelected = autoSelected;
         });
 
-        ROCLINT_CHECK(c.submitClarification(QStringLiteral("you decide"), c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.submitClarification(QStringLiteral("you decide"), c.stateVersion())));
         ROCLINT_CHECK(!wasAutoSelected);
         ROCLINT_CHECK(deferredMsg == "Kept original — Julia wasn't confident enough to auto-pick");
         ROCLINT_CHECK(c.ambientStatus() == "Kept original — Julia wasn't confident enough to auto-pick");
@@ -746,9 +797,10 @@ void testSubmitClarificationDeferral() {
     {
         ScriptedRuntime runtime;
         HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
         c.setLegacyDiscoveryForTesting(true);
         connectRuntime(c, runtime);
-        ROCLINT_CHECK(c.analyzePrompt(kPrompt, c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, c.stateVersion())));
         ROCLINT_CHECK(c.waitForIdleForTesting(5000));
         ROCLINT_CHECK(c.interventionVerdict() == "CLARIFY");
         ROCLINT_CHECK(c.activeItemId() == "grp_0");
@@ -760,7 +812,7 @@ void testSubmitClarificationDeferral() {
             deferralFired = true;
         });
 
-        ROCLINT_CHECK(c.submitClarification(QStringLiteral("Optimize for memory footprint"), c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.submitClarification(QStringLiteral("Optimize for memory footprint"), c.stateVersion())));
         ROCLINT_CHECK(!deferralFired);
         ROCLINT_CHECK(c.interventionVerdict() == "QUIET");
         ROCLINT_CHECK(c.hasConfirmedIntent());
@@ -777,9 +829,10 @@ void testSubmitClarificationDeferral() {
 void testChoicePolarityUnderRuleConflict() {
     ScriptedRuntime runtime;
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     connectRuntime(c, runtime);
-    ROCLINT_CHECK(c.analyzePrompt(kPrompt, c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kPrompt, c.stateVersion())));
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
     ROCLINT_CHECK(c.interventionVerdict() == "CLARIFY");
     ROCLINT_CHECK(c.activeItemId() == "grp_0");
@@ -789,7 +842,7 @@ void testChoicePolarityUnderRuleConflict() {
     c.setRecommendedOptionForTesting(QStringLiteral("[Safe Rule-Compliant Override] Lower latency per call"), 0.85);
 
     // Verify submitClarification auto-selects the safe override
-    ROCLINT_CHECK(c.submitClarification(QStringLiteral("idk"), c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.submitClarification(QStringLiteral("idk"), c.stateVersion())));
     ROCLINT_CHECK(c.interventionVerdict() == "QUIET");
     ROCLINT_CHECK(c.hasConfirmedIntent());
     ROCLINT_CHECK(c.confirmedIntentForTesting().has_value());
@@ -803,10 +856,11 @@ void testChoicePolarityUnderRuleConflict() {
 
 void testStrictNegativeGuardrailsPassThrough() {
     HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
 
     const QString prompt = QStringLiteral("Implement private in-flight promise deduplicator. Do not alter the public interface in apiClient.ts.");
-    ROCLINT_CHECK(c.commitPrompt(prompt, 0));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(prompt, 0)));
     ROCLINT_CHECK(c.currentRevisionText() == prompt);
     ROCLINT_CHECK(c.stateVersion() == 1);
     std::cout << "  [PASS] Strict negative guardrails on affirmative tasks pass through cleanly.\n";
@@ -833,6 +887,7 @@ int main(int argc, char* argv[]) {
     testAnalysisRecoversAfterRuntimeFailure();
     testUnreachableRuntimeExplainsWhatToDo();
     testMalformedModelReplyIsExplainedPlainly();
+    testModelDiagnosticsStayInternal();
     testDelayedCommandsCannotMutateTheNewState();
     testAnalysisGroupDeadlineAndExplicitRetry();
     testSubmitClarificationDeferral();

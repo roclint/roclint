@@ -20,8 +20,15 @@ FocusScope {
         else clarifyPanel.forceActiveFocus();
     }
     function focusReview() { diffView.forceActiveFocus(); }
+    property var pendingDecisions: ({})
     Connections {
         target: rootWindow.hc ? hostController : null
+        function onStorageCommandFinished(requestId, name, succeeded, errorCode, message) {
+            if (!rootWindow.pendingDecisions[requestId]) return;
+            delete rootWindow.pendingDecisions[requestId];
+            if (succeeded) customAnswer.text = "";
+            rootWindow.maybeSuggestRewrite(succeeded);
+        }
         function onInterventionChanged() {
             if (rootWindow.manualResolution)
                 Qt.callLater(function() { if (customAnswer.visible) customAnswer.forceActiveFocus(); });
@@ -63,7 +70,11 @@ FocusScope {
         }
     }
 
-    function afterDecision(succeeded) {
+    function afterDecision(requestId) {
+        if (requestId) pendingDecisions[requestId] = true;
+        return requestId;
+    }
+    function maybeSuggestRewrite(succeeded) {
         if (succeeded && hc && hostController.hasConfirmedIntent && hostController.isRewriteEnabled && hostController.proposalStatus === "NONE") {
             const version = hostController.stateVersion;
             Qt.callLater(function() {
@@ -89,25 +100,7 @@ FocusScope {
 
     function handleAnswerSubmit(text) {
         if (!rootWindow.hc) return;
-        const defer = isDeferral(text);
-        if (defer) {
-            if (hostController.recommendedConfidence >= 0.70 && hostController.activeItemKind === "CHOICE_GROUP") {
-                const opt = hostController.recommendedOption.length > 0
-                    ? hostController.recommendedOption
-                    : (hostController.activeAlternatives.length > 0 ? hostController.activeAlternatives[0].label : "recommended option");
-                const pct = Math.round(hostController.recommendedConfidence * 100);
-                rootWindow.showToast(qsTr("Auto-selected: %1 (Julia %2% confident)").arg(opt).arg(pct));
-            } else {
-                rootWindow.showToast(qsTr("Kept original — Julia wasn't confident enough to auto-pick"));
-            }
-            if (rootWindow.afterDecision(hostController.submitClarification(text, true, hostController.stateVersion))) {
-                customAnswer.text = "";
-            }
-        } else {
-            if (rootWindow.afterDecision(hostController.submitClarification(text, false, hostController.stateVersion))) {
-                customAnswer.text = "";
-            }
-        }
+        rootWindow.afterDecision(hostController.submitClarification(text, isDeferral(text), hostController.stateVersion));
     }
 
     function kindTitle(kind) {
@@ -546,7 +539,7 @@ FocusScope {
                 ActionButton {
                     label: qsTr("Suggest a rewrite")
                     primary: true
-                    active: rootWindow.hc && hostController.isRewriteEnabled
+                    active: rootWindow.hc && !hostController.storageBusy && hostController.isStorageAvailable && hostController.isRewriteEnabled
                     onClicked: hostController.synthesizeRewrite(hostController.stateVersion)
                 }
                 }
