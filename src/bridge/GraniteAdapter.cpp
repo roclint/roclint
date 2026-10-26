@@ -292,6 +292,7 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
            "result.\n";
     out += "- Use \"needs_clarification\" only when prompt_text is empty, unreadable, or not a request at all. Never "
            "use it just because details are missing.\n";
+    out += "- When status is \"needs_clarification\", clarification_question must be a concrete question asking what to build or clarify (never blank). When status is \"options_generated\" or \"no_ambiguity\", clarification_question must be \"\".\n";
     out += "- Workspace grounding: You may ground options in the provided workspace_files and workspace_symbols. Do not invent arbitrary files or requirements outside the prompt and workspace.\n";
     out += "- Tone adaptation: If is_non_technical is true, provide clean, jargon-free option labels focusing on high-level goals, UX flow, or architectural scope without exposing raw code syntax. If is_non_technical is false, use precise technical engineering options.\n";
     out += "- When S1 flags material ambiguity, provide exactly two mutually exclusive concrete alternatives (option [1] vs option [2]) that decisively settle the user's intent.\n";
@@ -453,11 +454,24 @@ Result<GraniteOptionDiscoveryResponse> parseDiscoveryResponse(std::string_view j
     }
 
     if (response.outcome == DiscoveryOutcome::NeedsClarification) {
-        auto question = readText(root, "clarification_question", true);
-        if (!question.ok()) return question.error();
+        const json::Value* cqVal = root.find("clarification_question");
+        if (cqVal == nullptr || cqVal->isNull()) {
+            return makeError(ErrorCode::InvalidInput, "Missing required field 'clarification_question'");
+        }
+        if (!cqVal->isString()) {
+            return makeError(ErrorCode::InvalidInput, "Field 'clarification_question' must be a string");
+        }
+        std::string text = core::normalizeLineEndings(cqVal->asString());
+        if (text.find_first_not_of(" \t\n") == std::string::npos) {
+            if (!analysis.missingDecisions.empty() && !analysis.missingDecisions.front().question.empty()) {
+                text = analysis.missingDecisions.front().question;
+            } else {
+                return makeError(ErrorCode::InvalidInput, "Field 'clarification_question' must not be blank");
+            }
+        }
         core::analysis::MissingDecision md;
         md.id = core::analysis::mintMissingDecisionId(analysis.missingDecisions.size());
-        md.question = std::move(question).value();
+        md.question = std::move(text);
         md.blocking = true;
         analysis.missingDecisions.push_back(std::move(md));
     }

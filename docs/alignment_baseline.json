@@ -166,6 +166,7 @@
     "include/roclint/core",
     "include/roclint/core/crypto",
     "include/roclint/core/prompt_state",
+    "include/roclint/core/schema",
     "include/roclint/intent",
     "include/roclint/review",
     "include/roclint/rewrite",
