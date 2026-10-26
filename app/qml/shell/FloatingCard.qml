@@ -1018,7 +1018,7 @@ Window {
                                     font.bold: true
                                     font.pixelSize: 8
                                     color: (rootWindow.targetLocalFile && rootWindow.targetLocalFile.length > 0) ? rootWindow.fgColor :
-                                           ((hostController.recommendedOption.length > 0 && hostController.recommendedConfidence >= 0.70) ? "#7EE787" : rootWindow.mutedTextColor)
+                                           ((hostController.recommendedOption.length > 0 && hostController.recommendedConfidence >= 0.70) ? "#F59E0B" : rootWindow.mutedTextColor)
                                     elide: Text.ElideMiddle
                                     Layout.maximumWidth: Math.min(220, Math.max(90, rootWindow.width - 450))
                                 }
@@ -1955,7 +1955,7 @@ Window {
                                 readonly property bool isRecommended: (hostController.recommendedOption.length > 0) &&
                                     (hostController.recommendedOption === fileName || hostController.recommendedOption === modelData) &&
                                     (hostController.recommendedConfidence >= 0.70)
-                                color: fItemMouse.containsMouse ? rootWindow.dimColor : (isSelected ? rootWindow.inputBgColor : (isRecommended ? "#0F281E" : "transparent"))
+                                color: fItemMouse.containsMouse ? rootWindow.dimColor : (isSelected ? rootWindow.inputBgColor : (isRecommended ? "#261400" : "transparent"))
 
                                 RowLayout {
                                     anchors.fill: parent
@@ -1967,7 +1967,7 @@ Window {
                                         text: isSelected ? "●" : (isRecommended ? "★" : "○")
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
-                                        color: isSelected ? "#FFB000" : (isRecommended ? "#7EE787" : rootWindow.dimColor)
+                                        color: isSelected ? "#FFB000" : (isRecommended ? "#F59E0B" : rootWindow.dimColor)
                                     }
 
                                     ColumnLayout {
@@ -1982,7 +1982,7 @@ Window {
                                                 font.family: rootWindow.monoFont
                                                 font.bold: isSelected || isRecommended
                                                 font.pixelSize: 9
-                                                color: isSelected ? "#FFB000" : (isRecommended ? "#7EE787" : rootWindow.fgColor)
+                                                color: isSelected ? "#FFB000" : (isRecommended ? "#F59E0B" : rootWindow.fgColor)
                                                 elide: Text.ElideRight
                                             }
                                             Rectangle {
@@ -1990,8 +1990,8 @@ Window {
                                                 implicitWidth: recPillText.implicitWidth + 8
                                                 implicitHeight: 14
                                                 radius: 2
-                                                color: "#1E3A2F"
-                                                border.color: "#7EE787"
+                                                color: "#261400"
+                                                border.color: "#F59E0B"
                                                 Text {
                                                     id: recPillText
                                                     anchors.centerIn: parent
@@ -1999,7 +1999,7 @@ Window {
                                                     font.family: rootWindow.monoFont
                                                     font.pixelSize: 7
                                                     font.bold: true
-                                                    color: "#7EE787"
+                                                    color: "#F59E0B"
                                                 }
                                             }
                                         }
