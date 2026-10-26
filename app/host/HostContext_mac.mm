@@ -86,6 +86,8 @@ void installOutsideClickMonitor(QWindow* window, std::function<void()> onOutside
         NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window->winId());
         NSWindow* nsWindow = [view window];
         const NSTimeInterval installTime = [NSDate timeIntervalSinceReferenceDate];
+        NSRunningApplication* hostApp = [[NSWorkspace sharedWorkspace] frontmostApplication];
+        const pid_t hostPid = hostApp ? [hostApp processIdentifier] : 0;
         g_outsideClickMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown)
             handler:^(NSEvent* event) {
                 (void)event;
@@ -98,6 +100,13 @@ void installOutsideClickMonitor(QWindow* window, std::function<void()> onOutside
                     if (NSPointInRect(mouseLoc, [nsWindow frame])) {
                         return; // Click is inside the floating card window; do not dismiss
                     }
+                }
+                // If the click occurred while interacting inside the same host application (e.g. Cursor / VS Code),
+                // keep the floating HUD active so the user can navigate between prompt boxes and editor fields.
+                NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+                const pid_t frontPid = front ? [front processIdentifier] : 0;
+                if (hostPid > 0 && frontPid == hostPid) {
+                    return;
                 }
                 if (onOutsideClick) {
                     dispatch_async(dispatch_get_main_queue(), ^{

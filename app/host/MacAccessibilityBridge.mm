@@ -287,13 +287,18 @@ private:
             AXUIElementRef current = static_cast<AXUIElementRef>(value);
             if (m_focused == nullptr || !CFEqual(m_focused, current)) {
                 CFRelease(value);
+                m_consecutiveFocusMisses = 0;
                 this->onFocusChanged();
                 return;
             }
             CFRelease(value);
+            m_consecutiveFocusMisses = 0;
         } else if (m_focused != nullptr) {
-            detachFocused();
-            emit fieldLost();
+            if (++m_consecutiveFocusMisses >= 5) {
+                detachFocused();
+                emit fieldLost();
+                m_consecutiveFocusMisses = 0;
+            }
             return;
         }
 
@@ -333,6 +338,7 @@ private:
             CFRelease(m_focused);
             m_focused = nullptr;
         }
+        m_consecutiveFocusMisses = 0;
         m_lastSignature.clear();
     }
 
@@ -388,10 +394,14 @@ private:
             if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
                 qInfo() << "[MacAX] onFocusChanged: no focused UI element";
             }
-            detachFocused();
-            emit fieldLost();
+            if (++m_consecutiveFocusMisses >= 5) {
+                detachFocused();
+                emit fieldLost();
+                m_consecutiveFocusMisses = 0;
+            }
             return;
         }
+        m_consecutiveFocusMisses = 0;
         AXUIElementRef element = static_cast<AXUIElementRef>(value);
         if (m_focused != nullptr && CFEqual(m_focused, element)) {
             CFRelease(element);
@@ -627,6 +637,7 @@ private:
     quint64 m_token{0};
     QString m_lastSignature;
     CFRunLoopTimerRef m_pollTimer{nullptr};
+    int m_consecutiveFocusMisses{0};
 };
 
 void axCallback(AXObserverRef, AXUIElementRef, CFStringRef notification, void* refcon) {

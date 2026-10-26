@@ -3720,8 +3720,16 @@ void HostController::onFieldObserved(const ObservedField& field) {
     if (field.kind == FieldKind::GuiEditor && prompt.trimmed().isEmpty()) {
         // An empty composer is still a valid destination for a draft authored in the HUD.
         m_ambientDebounce.stop();
-        setAmbientBadge(false);
-        m_ambientObservation = AmbientObservation{field, prompt, core::crypto::Sha256::hexDigest(ss(prompt))};
+        if (!m_ambientObservation.has_value() || m_ambientObservation->prompt.trimmed().isEmpty()) {
+            setAmbientBadge(false);
+            m_ambientObservation = AmbientObservation{field, prompt, core::crypto::Sha256::hexDigest(ss(prompt))};
+        } else {
+            // Keep the non-empty draft prompt from the previous field in this session,
+            // but update the target field to this newly focused destination box.
+            auto updated = *m_ambientObservation;
+            updated.field = field;
+            m_ambientObservation = std::move(updated);
+        }
         followAmbientDraft();
         setAmbientStatus(QStringLiteral("Ready to capture a prompt in %1.").arg(field.appDisplayName));
         if (m_captureOpenPending &&
@@ -3740,13 +3748,18 @@ void HostController::onFieldObserved(const ObservedField& field) {
     }
 
     AmbientObservation observation{field, prompt, core::crypto::Sha256::hexDigest(ss(prompt))};
-    const bool fieldChanged = !m_ambientObservation.has_value() ||
-                              m_ambientObservation->field.fieldToken != field.fieldToken ||
-                              m_ambientObservation->field.processId != field.processId ||
-                              m_ambientObservation->field.fieldRect != field.fieldRect;
-    const bool textChanged = fieldChanged || m_ambientObservation->textHash != observation.textHash;
-    if (fieldChanged && m_ambientBadgeVisible) {
+    const bool fieldTokenChanged = !m_ambientObservation.has_value() ||
+                                   m_ambientObservation->field.fieldToken != field.fieldToken ||
+                                   m_ambientObservation->field.processId != field.processId;
+    const bool rectChanged = m_ambientObservation.has_value() &&
+                             m_ambientObservation->field.fieldRect != field.fieldRect;
+    const bool textChanged = fieldTokenChanged || m_ambientObservation->textHash != observation.textHash;
+    if (fieldTokenChanged && m_ambientBadgeVisible) {
         setAmbientBadge(false);
+    } else if (rectChanged && m_ambientBadgeVisible) {
+        // Smoothly update badge coordinates without hiding it
+        m_ambientObservation->field.fieldRect = field.fieldRect;
+        setAmbientBadge(true, m_ambientBadgeLabel);
     }
     m_ambientObservation = std::move(observation);
     followAmbientDraft();
