@@ -93,6 +93,35 @@ class JuliaPromptTriageTests(unittest.TestCase):
         self.assertIn(result["choice_decision"]["recommended_option"], candidates)
         self.assertTrue(0.0 <= result["choice_decision"]["confidence"] <= 1.0)
 
+    def test_calibration_rules_polarity(self):
+        engine = Engine()
+        # 1. Concrete numeric spec is clamped clear
+        r1 = worker.triage(engine, {
+            "triage_plan_version": 2,
+            "prompt": "Increase the hero lede font size to 1.25rem and line-height to 1.7 in styles.css.",
+            "state": {"prompt": "Increase the hero lede font size to 1.25rem and line-height to 1.7 in styles.css.", "workspace_matches": ["styles.css"]}
+        })
+        scores1 = {item["category"]: item["score"] for item in r1["category_scores"]}
+        self.assertLess(scores1["ACTION"], 0.20)
+        self.assertLess(scores1["RULE"], 0.20)
+
+        # 2. Subjective aesthetic modifiers trigger action ambiguity >= 0.70
+        r3 = worker.triage(engine, {
+            "triage_plan_version": 2,
+            "prompt": "Make the card components on the home page look much nicer and more modern."
+        })
+        scores3 = {item["category"]: item["score"] for item in r3["category_scores"]}
+        self.assertGreaterEqual(scores3["ACTION"], 0.70)
+
+        # 3. Form submission in static workspace triggers target ambiguity >= 0.70
+        r5 = worker.triage(engine, {
+            "triage_plan_version": 2,
+            "prompt": "Wire up the contact form so submissions get sent and saved.",
+            "state": {"prompt": "Wire up the contact form so submissions get sent and saved.", "workspace_matches": ["contact.html"]}
+        })
+        scores5 = {item["category"]: item["score"] for item in r5["category_scores"]}
+        self.assertGreaterEqual(scores5["TARGET"], 0.70)
+
     def test_complete_prompt_tail_is_classified_without_mutating_the_request(self):
         engine = Engine()
         prompt = "Background. " * 400 + "Return only JSON. Also add an explanation outside the JSON."
