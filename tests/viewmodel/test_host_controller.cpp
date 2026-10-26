@@ -651,6 +651,129 @@ void testAnalysisGroupDeadlineAndExplicitRetry() {
     ROCLINT_CHECK(failed == 1 && succeeded == 1);
 }
 
+void testSubmitClarificationDeferral() {
+    // 1. isDeferralPhrase detection
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("   ")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("idk")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("IDK")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral(" idk ")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("idk lol")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("idk tbh")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("you pick")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("u pick")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("you decide")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("?")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("??")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("...")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("doesn't matter")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("doesnt matter")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("either")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("both")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("no preference")));
+    ROCLINT_CHECK(HostController::isDeferralPhrase(QStringLiteral("any")));
+    ROCLINT_CHECK(!HostController::isDeferralPhrase(QStringLiteral("I prefer lower latency")));
+    ROCLINT_CHECK(!HostController::isDeferralPhrase(QStringLiteral("idkwhat")));
+
+    // 2. High confidence auto-selects recommended option
+    {
+        ScriptedRuntime runtime;
+        HostController c(QStringLiteral(":memory:"));
+        c.setLegacyDiscoveryForTesting(true);
+        connectRuntime(c, runtime);
+        ROCLINT_CHECK(c.analyzePrompt(kPrompt, c.stateVersion()));
+        ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+        ROCLINT_CHECK(c.interventionVerdict() == "CLARIFY");
+        ROCLINT_CHECK(c.activeItemId() == "grp_0");
+
+        c.setRecommendedOptionForTesting(QStringLiteral("Lower latency per call"), 0.84);
+
+        QString deferredMsg;
+        bool wasAutoSelected = false;
+        QObject::connect(&c, &HostController::clarificationDeferred, [&](const QString& msg, bool autoSelected) {
+            deferredMsg = msg;
+            wasAutoSelected = autoSelected;
+        });
+
+        ROCLINT_CHECK(c.submitClarification(QStringLiteral("idk lol"), c.stateVersion()));
+        ROCLINT_CHECK(wasAutoSelected);
+        ROCLINT_CHECK(deferredMsg.contains("Auto-selected: Lower latency per call (Julia 84% confident)"));
+        ROCLINT_CHECK(c.ambientStatus().contains("Auto-selected: Lower latency per call (Julia 84% confident)"));
+        ROCLINT_CHECK(c.interventionVerdict() == "QUIET");
+        ROCLINT_CHECK(c.hasConfirmedIntent());
+        ROCLINT_CHECK(c.confirmedIntentForTesting().has_value());
+        const auto& intent = c.confirmedIntentForTesting().value();
+        const auto decision = intent.getDecision("grp_0");
+        ROCLINT_CHECK(decision.has_value());
+        ROCLINT_CHECK(decision->kind == intent::IntentResolutionKind::SelectedAlternative);
+        ROCLINT_CHECK(decision->chosenAlternativeId == "alt_0_0");
+    }
+
+    // 3. Low confidence falls back to keeping original
+    {
+        ScriptedRuntime runtime;
+        HostController c(QStringLiteral(":memory:"));
+        c.setLegacyDiscoveryForTesting(true);
+        connectRuntime(c, runtime);
+        ROCLINT_CHECK(c.analyzePrompt(kPrompt, c.stateVersion()));
+        ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+        ROCLINT_CHECK(c.interventionVerdict() == "CLARIFY");
+        ROCLINT_CHECK(c.activeItemId() == "grp_0");
+
+        c.setRecommendedOptionForTesting(QStringLiteral("Lower latency per call"), 0.55);
+
+        QString deferredMsg;
+        bool wasAutoSelected = true;
+        QObject::connect(&c, &HostController::clarificationDeferred, [&](const QString& msg, bool autoSelected) {
+            deferredMsg = msg;
+            wasAutoSelected = autoSelected;
+        });
+
+        ROCLINT_CHECK(c.submitClarification(QStringLiteral("you decide"), c.stateVersion()));
+        ROCLINT_CHECK(!wasAutoSelected);
+        ROCLINT_CHECK(deferredMsg == "Kept original — Julia wasn't confident enough to auto-pick");
+        ROCLINT_CHECK(c.ambientStatus() == "Kept original — Julia wasn't confident enough to auto-pick");
+        ROCLINT_CHECK(c.interventionVerdict() == "QUIET");
+        ROCLINT_CHECK(c.hasConfirmedIntent());
+        ROCLINT_CHECK(c.confirmedIntentForTesting().has_value());
+        const auto& intent = c.confirmedIntentForTesting().value();
+        const auto decision = intent.getDecision("grp_0");
+        ROCLINT_CHECK(decision.has_value());
+        ROCLINT_CHECK(decision->kind == intent::IntentResolutionKind::UseOriginal);
+    }
+
+    // 4. Non-deferral submits genuine custom intent
+    {
+        ScriptedRuntime runtime;
+        HostController c(QStringLiteral(":memory:"));
+        c.setLegacyDiscoveryForTesting(true);
+        connectRuntime(c, runtime);
+        ROCLINT_CHECK(c.analyzePrompt(kPrompt, c.stateVersion()));
+        ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+        ROCLINT_CHECK(c.interventionVerdict() == "CLARIFY");
+        ROCLINT_CHECK(c.activeItemId() == "grp_0");
+
+        c.setRecommendedOptionForTesting(QStringLiteral("Lower latency per call"), 0.90);
+
+        bool deferralFired = false;
+        QObject::connect(&c, &HostController::clarificationDeferred, [&](const QString&, bool) {
+            deferralFired = true;
+        });
+
+        ROCLINT_CHECK(c.submitClarification(QStringLiteral("Optimize for memory footprint"), c.stateVersion()));
+        ROCLINT_CHECK(!deferralFired);
+        ROCLINT_CHECK(c.interventionVerdict() == "QUIET");
+        ROCLINT_CHECK(c.hasConfirmedIntent());
+        ROCLINT_CHECK(c.confirmedIntentForTesting().has_value());
+        const auto& intent = c.confirmedIntentForTesting().value();
+        const auto decision = intent.getDecision("grp_0");
+        ROCLINT_CHECK(decision.has_value());
+        ROCLINT_CHECK(decision->kind == intent::IntentResolutionKind::CustomText);
+        ROCLINT_CHECK(decision->customText == "Optimize for memory footprint");
+    }
+    std::cout << "  [PASS] Free-text clarification deferrals auto-select or fall back cleanly.\n";
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -674,6 +797,7 @@ int main(int argc, char* argv[]) {
     testMalformedModelReplyIsExplainedPlainly();
     testDelayedCommandsCannotMutateTheNewState();
     testAnalysisGroupDeadlineAndExplicitRetry();
+    testSubmitClarificationDeferral();
     std::cout << "[Test Host Controller] All tests PASSED.\n";
     return 0;
 }

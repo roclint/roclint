@@ -1733,6 +1733,86 @@ bool HostController::submitCustomIntent(const QString& customText, quint64 expec
     });
 }
 
+bool HostController::isDeferralPhrase(const QString& text) {
+    const QString t = text.trimmed().toLower();
+    if (t.isEmpty()) {
+        return true;
+    }
+    static const QSet<QString> kExact = {
+        QStringLiteral("idk"),
+        QStringLiteral("you pick"),
+        QStringLiteral("u pick"),
+        QStringLiteral("you decide"),
+        QStringLiteral("doesn't matter"),
+        QStringLiteral("doesnt matter"),
+        QStringLiteral("either"),
+        QStringLiteral("both"),
+        QStringLiteral("?"),
+        QStringLiteral("??"),
+        QStringLiteral("..."),
+        QStringLiteral("no preference"),
+        QStringLiteral("any")
+    };
+    if (kExact.contains(t) || t.startsWith(QStringLiteral("idk "))) {
+        return true;
+    }
+    return false;
+}
+
+bool HostController::submitClarification(const QString& text, quint64 expectedVersion) {
+    return submitClarification(text, isDeferralPhrase(text), expectedVersion);
+}
+
+bool HostController::submitClarification(const QString& text, bool isDeferral, quint64 expectedVersion) {
+    if (!isDeferral && !isDeferralPhrase(text)) {
+        return submitCustomIntent(text, expectedVersion);
+    }
+
+    if (m_recommendedConfidence >= 0.70 &&
+        (!m_activeAlternatives.isEmpty() || m_currentDecision.activeItemKind == intent::ActiveItemKind::ChoiceGroup)) {
+        QString chosenAltId;
+        QString chosenLabel;
+        for (const auto& altVar : m_activeAlternatives) {
+            const auto map = altVar.toMap();
+            const QString id = map.value(QStringLiteral("id")).toString();
+            const QString label = map.value(QStringLiteral("label")).toString();
+            if (!m_recommendedOption.isEmpty() &&
+                (id.compare(m_recommendedOption, Qt::CaseInsensitive) == 0 ||
+                 label.compare(m_recommendedOption, Qt::CaseInsensitive) == 0 ||
+                 label.contains(m_recommendedOption, Qt::CaseInsensitive) ||
+                 m_recommendedOption.contains(label, Qt::CaseInsensitive))) {
+                chosenAltId = id;
+                chosenLabel = label;
+                break;
+            }
+        }
+        if (chosenAltId.isEmpty() && !m_activeAlternatives.isEmpty()) {
+            const auto map = m_activeAlternatives.first().toMap();
+            chosenAltId = map.value(QStringLiteral("id")).toString();
+            chosenLabel = !m_recommendedOption.isEmpty() ? m_recommendedOption : map.value(QStringLiteral("label")).toString();
+        } else if (chosenLabel.isEmpty() && !m_recommendedOption.isEmpty()) {
+            chosenLabel = m_recommendedOption;
+        }
+
+        if (!chosenAltId.isEmpty()) {
+            const int pct = qRound(m_recommendedConfidence * 100.0);
+            const QString message = QStringLiteral("Auto-selected: %1 (Julia %2% confident)").arg(chosenLabel).arg(pct);
+            setAmbientStatus(message);
+            emit clarificationDeferred(message, true);
+            return confirmChoice(chosenAltId, expectedVersion);
+        }
+    }
+
+    // Otherwise, treat same as "Keep my original wording"
+    const QString message = QStringLiteral("Kept original — Julia wasn't confident enough to auto-pick");
+    setAmbientStatus(message);
+    emit clarificationDeferred(message, false);
+    if (m_currentDecision.activeItemKind == intent::ActiveItemKind::ChoiceGroup) {
+        return keepOriginalPrompt(expectedVersion);
+    }
+    return skipCurrentItem(expectedVersion);
+}
+
 bool HostController::keepOriginalPrompt(quint64 expectedVersion) {
     return applyTransition("keepOriginalPrompt", expectedVersion, [&](intent::WorkingIntentState& state) {
         return intent::InterventionStateMachine::applyKeepOriginal(*m_currentAnalysis, m_currentDecision, state);

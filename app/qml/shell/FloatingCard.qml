@@ -174,6 +174,7 @@ Window {
         }
         // Delivery controls visibility. A clipboard fallback must leave the failed draft open.
         function onPromptInjected(text, appName) { rootWindow.dismissCard(); }
+        function onClarificationDeferred(message, autoSelected) { rootWindow.showToast(message); }
     }
 
     function setEditorText(text) {

@@ -77,6 +77,39 @@ FocusScope {
         return afterDecision(hostController.confirmChoice(id, hostController.stateVersion));
     }
 
+    function isDeferral(text) {
+        const t = text.trim().toLowerCase();
+        const exact = [
+            "", "idk", "you pick", "u pick", "you decide",
+            "doesn't matter", "doesnt matter", "either", "both",
+            "?", "??", "...", "no preference", "any"
+        ];
+        return exact.indexOf(t) !== -1 || t.startsWith("idk ");
+    }
+
+    function handleAnswerSubmit(text) {
+        if (!rootWindow.hc) return;
+        const defer = isDeferral(text);
+        if (defer) {
+            if (hostController.recommendedConfidence >= 0.70 && hostController.activeItemKind === "CHOICE_GROUP") {
+                const opt = hostController.recommendedOption.length > 0
+                    ? hostController.recommendedOption
+                    : (hostController.activeAlternatives.length > 0 ? hostController.activeAlternatives[0].label : "recommended option");
+                const pct = Math.round(hostController.recommendedConfidence * 100);
+                rootWindow.showToast(qsTr("Auto-selected: %1 (Julia %2% confident)").arg(opt).arg(pct));
+            } else {
+                rootWindow.showToast(qsTr("Kept original — Julia wasn't confident enough to auto-pick"));
+            }
+            if (rootWindow.afterDecision(hostController.submitClarification(text, true, hostController.stateVersion))) {
+                customAnswer.text = "";
+            }
+        } else {
+            if (rootWindow.afterDecision(hostController.submitClarification(text, false, hostController.stateVersion))) {
+                customAnswer.text = "";
+            }
+        }
+    }
+
     function kindTitle(kind) {
         if (kind === "CHOICE_GROUP") return qsTr("This could mean more than one thing");
         if (kind === "ASSUMPTION") return qsTr("Is this assumption right?");
@@ -386,18 +419,14 @@ FocusScope {
                                 }
                             }
                             onAccepted: {
-                                if (text.trim().length > 0 && rootWindow.afterDecision(hostController.submitCustomIntent(text, hostController.stateVersion))) {
-                                    text = "";
-                                }
+                                handleAnswerSubmit(text);
                             }
                         }
                         ActionButton {
                             label: qsTr("Use this answer")
                             active: customAnswer.text.trim().length > 0
                             onClicked: {
-                                if (rootWindow.afterDecision(hostController.submitCustomIntent(customAnswer.text, hostController.stateVersion))) {
-                                    customAnswer.text = "";
-                                }
+                                handleAnswerSubmit(customAnswer.text);
                             }
                         }
                     }

@@ -408,6 +408,11 @@ public:
     [[nodiscard]] bridge::S1TriageAdapter& s1AdapterForTesting() noexcept { return m_s1Adapter; }
     [[nodiscard]] bool waitForIdleForTesting(int timeoutMs);
     void setAnalysisGroupTimeoutForTesting(int timeoutMs) { m_analysisGroupTimeoutMs = timeoutMs > 0 ? timeoutMs : 1; }
+    void setRecommendedOptionForTesting(const QString& option, double confidence) {
+        m_recommendedOption = option;
+        m_recommendedConfidence = confidence;
+        emit recommendedOptionChanged();
+    }
     bool setNativeWorkerForTesting(const QString& worker) { return m_native->setWorkerForTesting(worker); }
     void setResidencyInputsForTesting(std::optional<qint64> idleMs, std::optional<bool> lowMemory) {
         m_residencyIdleOverride = idleMs; m_residencyPressureOverride = lowMemory; applyResidencyPolicy();
@@ -458,6 +463,9 @@ public slots:
     Q_INVOKABLE bool cancelAnalysis(quint64 expectedVersion);
     Q_INVOKABLE bool confirmChoice(const QString& alternativeId, quint64 expectedVersion);
     Q_INVOKABLE bool submitCustomIntent(const QString& customText, quint64 expectedVersion);
+    Q_INVOKABLE bool submitClarification(const QString& text, bool isDeferral, quint64 expectedVersion);
+    Q_INVOKABLE bool submitClarification(const QString& text, quint64 expectedVersion);
+    [[nodiscard]] static bool isDeferralPhrase(const QString& text);
     Q_INVOKABLE bool keepOriginalPrompt(quint64 expectedVersion);
     Q_INVOKABLE bool resolveActiveAssumption(bool accepted, quint64 expectedVersion);
     Q_INVOKABLE bool skipCurrentItem(quint64 expectedVersion);
@@ -551,6 +559,7 @@ signals:
     void ambientBadgeChanged();
     void ambientStatusChanged();
     void recommendedOptionChanged();
+    void clarificationDeferred(const QString& message, bool autoSelected);
     void promptInjected(const QString& text, const QString& appName);
     // Ambient delivery failed and the text went to the clipboard instead.
     void deliveryFellBack(const QString& message);
