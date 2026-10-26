@@ -265,6 +265,10 @@ void configureNonActivatingPanel(QWindow* window) {
 }
 
 void configureHostProcess() {}
+void showNonActivatingWindow(QWindow* window) {
+    if (!window) return;
+    window->show();
+}
 void installOutsideClickMonitor(QWindow*, std::function<void()>) {}
 void uninstallOutsideClickMonitor() {}
 #endif

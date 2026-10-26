@@ -176,17 +176,19 @@ int main(int argc, char* argv[]) {
                     const auto placement = roclint::host::ScreenPlacement::determineTargetPosition(window->width(), window->height());
                     window->setPosition(placement.x, placement.y);
                 }
-                // showNormal() also restores a minimized card; show() keeps the minimized state
-                window->showNormal();
-                window->raise();
-                if (!controller->isAmbientActive() && !controller->isAmbientAttached()) {
-                    window->requestActivate();
-                } else {
+                if (controller->isAmbientAttached()) {
+                    roclint::host::showNonActivatingWindow(window);
                     roclint::host::installOutsideClickMonitor(window, [controller]() {
                         if (controller->isAmbientAttached()) {
                             controller->hideCard();
                         }
                     });
+                } else {
+                    window->showNormal();
+                    window->raise();
+                    if (!controller->isAmbientActive()) {
+                        window->requestActivate();
+                    }
                 }
             });
 

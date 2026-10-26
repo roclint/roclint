@@ -32,6 +32,7 @@ HostContextObservation captureFrontmostNative() {
 
 void configureNonActivatingPanel(QWindow* window) {
     if (!window) return;
+    window->setFlag(Qt::WindowDoesNotAcceptFocus, true);
     @autoreleasepool {
         NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window->winId());
         NSWindow* nsWindow = [view window];
@@ -39,8 +40,31 @@ void configureNonActivatingPanel(QWindow* window) {
             [nsWindow setStyleMask:([nsWindow styleMask] | NSWindowStyleMaskNonactivatingPanel)];
             [nsWindow setCollectionBehavior:(NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary)];
             [nsWindow setHidesOnDeactivate:NO];
+            if ([nsWindow isKindOfClass:[NSPanel class]]) {
+                [(NSPanel*)nsWindow setBecomesKeyOnlyIfNeeded:YES];
+            }
             [nsWindow setLevel:NSFloatingWindowLevel];
         }
+    }
+}
+
+void showNonActivatingWindow(QWindow* window) {
+    if (!window) return;
+    window->setFlag(Qt::WindowDoesNotAcceptFocus, true);
+    @autoreleasepool {
+        NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window->winId());
+        NSWindow* nsWindow = [view window];
+        if (nsWindow) {
+            [nsWindow setStyleMask:([nsWindow styleMask] | NSWindowStyleMaskNonactivatingPanel)];
+            [nsWindow setCollectionBehavior:(NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary)];
+            [nsWindow setHidesOnDeactivate:NO];
+            if ([nsWindow isKindOfClass:[NSPanel class]]) {
+                [(NSPanel*)nsWindow setBecomesKeyOnlyIfNeeded:YES];
+            }
+            [nsWindow setLevel:NSFloatingWindowLevel];
+            [nsWindow orderFrontRegardless];
+        }
+        window->setVisible(true);
     }
 }
 

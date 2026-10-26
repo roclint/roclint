@@ -60,6 +60,7 @@ public:
 
 void configureNonActivatingPanel(QWindow* window);
 void configureHostProcess();
+void showNonActivatingWindow(QWindow* window);
 void installOutsideClickMonitor(QWindow* window, std::function<void()> onOutsideClick);
 void uninstallOutsideClickMonitor();
 
