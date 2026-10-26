@@ -101,6 +101,7 @@ int main(int argc, char* argv[]) {
     app.setApplicationVersion(QString::fromUtf8(coreVersion.data(), static_cast<qsizetype>(coreVersion.size())));
     app.setOrganizationName(QStringLiteral("roclint"));
     app.setQuitOnLastWindowClosed(false);
+    roclint::host::configureHostProcess();
 
     // One resident host per user: a second instance would fight over the hotkey and the database.
     std::unique_ptr<QLockFile> instanceLock;
@@ -160,6 +161,7 @@ int main(int argc, char* argv[]) {
         if (!window) return;
 
         if (objUrl == cardUrl) {
+            roclint::host::configureNonActivatingPanel(window);
             if (customWidth > 0) {
                 window->setWidth(customWidth);
             }
@@ -167,17 +169,32 @@ int main(int argc, char* argv[]) {
                 window->setHeight(customHeight);
             }
             QObject::connect(controller, &roclint::host::HostController::showCardRequested,
-                             window, [window](int, int) {
-                const auto placement = roclint::host::ScreenPlacement::determineTargetPosition(window->width(), window->height());
-                window->setPosition(placement.x, placement.y);
+                             window, [window, controller](int x, int y) {
+                if (x >= 0 && y >= 0) {
+                    window->setPosition(x, y);
+                } else {
+                    const auto placement = roclint::host::ScreenPlacement::determineTargetPosition(window->width(), window->height());
+                    window->setPosition(placement.x, placement.y);
+                }
                 // showNormal() also restores a minimized card; show() keeps the minimized state
                 window->showNormal();
                 window->raise();
-                window->requestActivate();
+                if (!controller->isAmbientAttached()) {
+                    window->requestActivate();
+                } else {
+                    roclint::host::installOutsideClickMonitor(window, [controller]() {
+                        if (controller->isAmbientAttached()) {
+                            controller->hideCard();
+                        }
+                    });
+                }
             });
 
             QObject::connect(controller, &roclint::host::HostController::hideCardRequested,
-                             window, [window]() { window->hide(); });
+                             window, [window]() {
+                roclint::host::uninstallOutsideClickMonitor();
+                window->hide();
+            });
 
             // If closed via window controls or system event, hide instead of quitting
             QObject::connect(window, &QQuickWindow::closing,
@@ -307,6 +324,21 @@ int main(int argc, char* argv[]) {
                     QCoreApplication::quit();
                 });
             }
+        } else if (objUrl == badgeUrl) {
+            roclint::host::configureNonActivatingPanel(window);
+            QObject::connect(controller, &roclint::host::HostController::ambientBadgeChanged,
+                             window, [window, controller]() {
+                if (controller->isAmbientBadgeVisible()) {
+                    window->setPosition(controller->ambientBadgeX(), controller->ambientBadgeY());
+                    if (!window->isVisible()) {
+                        window->show();
+                    }
+                } else {
+                    if (window->isVisible()) {
+                        window->hide();
+                    }
+                }
+            });
         }
     });
 

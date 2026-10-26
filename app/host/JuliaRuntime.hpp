@@ -67,7 +67,12 @@ public:
     void load(const QString& directory, const QString& python, bool install = false);
     void stop();
     [[nodiscard]] quint64 evaluate(const core::analysis::NormalizedAnalysis& analysis, const QString& prompt, const RequestContext& context);
-    [[nodiscard]] quint64 classifyPrompt(const QString& prompt, const RequestContext& context);
+    [[nodiscard]] quint64 classifyPrompt(const QString& prompt, const RequestContext& context,
+                                         const QJsonObject& metadata = QJsonObject(),
+                                         const QStringList& candidateChoices = QStringList());
+
+    [[nodiscard]] QString lastRecommendedOption() const { return lastRecommendedOption_; }
+    [[nodiscard]] double lastChoiceConfidence() const { return lastChoiceConfidence_; }
 
 signals:
     void stateChanged();
@@ -126,6 +131,8 @@ private:
     quint64 processGeneration_{0};
     QString state_{QStringLiteral("NOT_LOADED")};
     QString detail_{QStringLiteral("Julia is not loaded. Download it or choose its local model folder.")};
+    QString lastRecommendedOption_;
+    double lastChoiceConfidence_{0.0};
 };
 
 } // namespace roclint::host

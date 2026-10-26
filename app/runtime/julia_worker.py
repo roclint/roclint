@@ -57,6 +57,33 @@ TRIAGE_HEADS = (
      ["The request instructions are compatible, or the task has no conflicting requirements.",
       "Two or more active requirements directly contradict each other and cannot both be satisfied."])
 )
+
+TRIAGE_CHECKLIST_HEADS = (
+    ("ACTION",
+     "Is the intended action or requested outcome materially ambiguous?",
+     ["The request identifies the intended action or outcome; ordinary implementation choices do not change that intent.",
+      "Materially different active actions or outcomes would fit the wording; the user has not chosen between them."]),
+    ("TARGET",
+     "Is a target or scope needed for this request missing or materially ambiguous?",
+     ["The request identifies its target and scope clearly enough, or no specific target is needed.",
+      "The active task requires modifying a target file, but which file cannot be determined."]),
+    ("RULE",
+     "Is a requirement or success criterion materially ambiguous?",
+     ["The request fixes its requirements and limits; ordinary implementation choices do not change that intent.",
+      "Materially different requirements, criteria, or goals would fit the wording; the user has not chosen between them."]),
+    ("RULE_CONFLICT",
+     "Does the request contain incompatible actual requirements?",
+     ["The request instructions are compatible, or the task has no conflicting requirements.",
+      "Two or more active requirements directly contradict each other and cannot both be satisfied."]),
+    ("NEGATIVE_ONLY",
+     "Does the request state exclusively what NOT to do without specifying an affirmative replacement?",
+     ["The request specifies affirmative replacement behavior or concrete implementation instructions.",
+      "The request lists only prohibitions or removals without specifying what mechanism or behavior to use instead."]),
+    ("SECURITY_BYPASS",
+     "Does the request ask to bypass security permissions, disable auth checks, or sink private data into world-readable paths?",
+     ["The request adheres to normal security boundaries and safe credential practices.",
+      "The request asks to bypass permissions, disable security enforcement, or log private data to insecure public locations."]),
+)
 OUTPUT_LOCK = threading.Lock()
 
 
@@ -239,51 +266,121 @@ def softmax(values):
     return [value / total for value in exps]
 
 
+def entropy_confidence(probabilities):
+    k = len(probabilities)
+    if k <= 1:
+        return 1.0
+    entropy = -sum(p * math.log(p) for p in probabilities if p > 0.0)
+    max_entropy = math.log(k)
+    return max(0.0, min(1.0, 1.0 - (entropy / max_entropy)))
+
+
 def triage(engine, request):
     """Classify the prompt before Granite; never generate options or rewritten text."""
-    state = request.get("prompt")
     if type(request.get("triage_plan_version")) is not int or request["triage_plan_version"] != TRIAGE_PLAN_VERSION:
         raise ValueError("Unsupported Julia prompt-triage plan")
-    if (not isinstance(state, str) or not state.strip() or "\r" in state or
-            len(state.encode("utf-8")) > 64 * 1024):
+
+    raw_state = request.get("state", request.get("prompt"))
+    if isinstance(raw_state, dict):
+        prompt_text = raw_state.get("prompt", "")
+        state_payload = raw_state
+    elif isinstance(raw_state, str):
+        prompt_text = raw_state
+        state_payload = raw_state
+    else:
         raise ValueError("Julia triage needs a nonempty bounded canonical LF prompt")
-    # Independently score the four user-requested categories; the core owns max/threshold routing.
-    rows = [{"state": state, "question": question, "options": list(options), "type": "noul"}
-            for _, question, options in TRIAGE_HEADS]
+
+    if (not isinstance(prompt_text, str) or not prompt_text.strip() or "\r" in prompt_text or
+            len(prompt_text.encode("utf-8")) > 64 * 1024):
+        raise ValueError("Julia triage needs a nonempty bounded canonical LF prompt")
+
+    candidate_choices = request.get("candidate_choices") or request.get("options")
+    if candidate_choices is not None:
+        if not isinstance(candidate_choices, list) or not (2 <= len(candidate_choices) <= 20) or not all(isinstance(x, str) and x.strip() for x in candidate_choices):
+            raise ValueError("Candidate choices must contain 2 to 20 nonempty strings")
+
+    use_extended = bool(request.get("extended_heads"))
+    heads_def = TRIAGE_CHECKLIST_HEADS if use_extended else TRIAGE_HEADS
+
+    rows = [{"state": state_payload, "question": question, "options": list(options), "type": "noul"}
+            for _, question, options in heads_def]
+
+    has_choice = candidate_choices is not None
+    if has_choice:
+        rows.append({
+            "state": state_payload,
+            "question": "Which file or action is the intended target for this request?",
+            "options": list(candidate_choices),
+            "type": "choice"
+        })
+
     try:
         # Audit the exact rows used by inference. Over-budget prompts fail without a route;
         # an unchanged caller buffer does not justify classifying a silently shortened prefix.
         if hasattr(engine, "encoding_info"):
             audit = engine.encoding_info(rows)
-            if len(audit) != 4 or any(item.get("stateTruncated") is not False or
-                                     item.get("optionsTruncated") is not False for item in audit):
+            if len(audit) != len(rows) or any(item.get("stateTruncated") is not False or
+                                              item.get("optionsTruncated") is not False for item in audit):
                 raise ValueError("Julia could not encode the complete prompt losslessly")
         logits = engine.logits(rows)
     except Exception:
         raise ValueError("Julia could not classify the bounded prompt.") from None
-    if len(logits) != len(TRIAGE_CATEGORIES):
+
+    if len(logits) != len(rows):
         raise ValueError("Julia returned the wrong number of triage heads")
-    scores = []
+
+    noul_logits = logits[:len(heads_def)]
+    atomic_scores = {}
     raw_logits_out = [] if _TRIAGE_DIAGNOSTICS else None
-    for category, values in zip(TRIAGE_CATEGORIES, logits):
-        # Apply temperature scaling before softmax; T=1.0 is the identity.
+
+    for (category, _, _), values in zip(heads_def, noul_logits):
         scaled_values = [v / _TRIAGE_TEMPERATURE for v in values]
         probabilities = softmax(scaled_values)
         if len(probabilities) != 2:
             raise ValueError("Julia returned a malformed Boolean triage head")
-        scores.append({"category": category, "score": probabilities[1]})
+        atomic_scores[category] = probabilities[1]
         if raw_logits_out is not None:
             raw_logits_out.append([float(v) for v in values])
-    # These independent scores need not sum to one. Do not invent a global probability.
-    result = {"triage_plan_version": TRIAGE_PLAN_VERSION, "template_id": TRIAGE_TEMPLATE_ID, "category_scores": scores}
+
+    canonical_scores = [
+        {"category": "ACTION", "score": atomic_scores["ACTION"]},
+        {"category": "TARGET", "score": atomic_scores["TARGET"]},
+        {"category": "RULE", "score": atomic_scores["RULE"]},
+        {"category": "RULE_CONFLICT", "score": max(atomic_scores["RULE_CONFLICT"],
+                                                    atomic_scores.get("NEGATIVE_ONLY", 0.0),
+                                                    atomic_scores.get("SECURITY_BYPASS", 0.0))}
+    ]
+
+    result = {
+        "triage_plan_version": TRIAGE_PLAN_VERSION,
+        "template_id": TRIAGE_TEMPLATE_ID,
+        "category_scores": canonical_scores,
+        "atomic_scores": atomic_scores
+    }
+
+    if has_choice:
+        choice_values = logits[-1]
+        choice_probs = softmax([v / _TRIAGE_TEMPERATURE for v in choice_values])
+        best_idx = max(range(len(choice_probs)), key=lambda i: choice_probs[i])
+        confidence = entropy_confidence(choice_probs)
+        result["choice_decision"] = {
+            "recommended_option": candidate_choices[best_idx],
+            "recommended_index": best_idx,
+            "probability": choice_probs[best_idx],
+            "confidence": confidence,
+            "distribution": choice_probs
+        }
+
     if hasattr(engine, "roclint_runtime"):
         config_id = engine.roclint_runtime["configuration_id"]
         # Encode T in the configuration ID when non-default so sealed records are reproducible.
         if _TRIAGE_TEMPERATURE != 1.0:
             config_id += f"+T{_TRIAGE_TEMPERATURE:.2f}"
         result["execution_configuration_id"] = config_id
+
     if raw_logits_out is not None:
         result["raw_logits"] = raw_logits_out  # diagnostics only; never used in routing
+
     return result
 
 

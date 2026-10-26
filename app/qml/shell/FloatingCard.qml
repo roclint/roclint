@@ -5,13 +5,29 @@ import QtQuick.Layouts
 Window {
     id: rootWindow
     title: qsTr("ROCLINT // RETROFUTURIST POSTER HUD")
-    width: 820
-    height: 520
-    minimumWidth: 520
-    minimumHeight: 360
+    property bool isDetailedExpanded: false
+    readonly property bool isAmbientMode: hc && hostController.isAmbientAttached
+
+    width: !isAmbientMode ? 820 : (isDetailedExpanded ? 820 : 620)
+    height: !isAmbientMode ? 520 : (isDetailedExpanded ? 520 : 250)
+    minimumWidth: !isAmbientMode ? 520 : (isDetailedExpanded ? 520 : 420)
+    minimumHeight: !isAmbientMode ? 360 : (isDetailedExpanded ? 360 : 200)
     visible: false
-    flags: Qt.FramelessWindowHint | (pinToTop ? Qt.WindowStaysOnTopHint : 0)
+    flags: Qt.FramelessWindowHint | ((pinToTop || isAmbientMode) ? Qt.WindowStaysOnTopHint : 0) | (isAmbientMode ? (Qt.WindowDoesNotAcceptFocus | Qt.Tool) : 0)
     color: "transparent"
+
+    function toggleDetailedExpanded() {
+        isDetailedExpanded = !isDetailedExpanded;
+        if (isAmbientMode) {
+            const targetW = isDetailedExpanded ? 820 : 620;
+            const targetH = isDetailedExpanded ? 520 : 250;
+            width = targetW;
+            height = targetH;
+            const pt = hostController.calculateAmbientAnchor(targetW, targetH);
+            x = pt.x;
+            y = pt.y;
+        }
+    }
 
     readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property string monoFont: isMac ? "Menlo" : "Consolas"
@@ -125,10 +141,19 @@ Window {
     onActiveChanged: {
         if (active) {
             hasBeenActive = true;
-        } else if (hasBeenActive && visible && !pinToTop && !(hc && hostController.isAmbientCapture)) {
+        } else if (hasBeenActive && visible) {
             hasBeenActive = false;
-            dismissCard();
+            if (hc && (hostController.isAmbientAttached || hostController.isAmbientCapture)) {
+                dismissCard();
+            } else if (!pinToTop) {
+                dismissCard();
+            }
         }
+    }
+
+    Shortcut {
+        sequence: "Escape"
+        onActivated: rootWindow.dismissCard()
     }
 
     Connections {
@@ -161,8 +186,13 @@ Window {
         if (hc) hostController.hideCard(); else rootWindow.hide();
     }
     function executeHardBypass() {
-        if (hc && promptInput.text.trim().length)
-            hostController.hardBypass(promptInput.text, hostController.stateVersion);
+        if (!hc) return;
+        const text = promptInput.text.trim().length ? promptInput.text : hostController.currentRevisionText;
+        if (text.trim().length) {
+            hostController.hardBypass(text, hostController.stateVersion);
+        } else {
+            dismissCard();
+        }
     }
     function sendAsTyped() { executeHardBypass(); }
     function revertToDraft() { if (hc) hostController.discardProposal(hostController.stateVersion); promptInput.forceActiveFocus(); }
@@ -190,6 +220,9 @@ Window {
     function commitChoice(choiceNumber) { reviewFlow.chooseAlternative(choiceNumber - 1); }
     function applyScope() {
         if (!hc || !activeProject.path) { showToast(qsTr("CHOOSE A WORKSPACE FIRST")); return; }
+        if ((!targetLocalFile || targetLocalFile.length === 0) && hostController.recommendedOption.length > 0 && hostController.recommendedConfidence >= 0.70) {
+            targetLocalFile = hostController.recommendedOption;
+        }
         const preamble = hostController.scopePreamble(activeProject.path, activeScope, targetLocalFile);
         if (!preamble.length) return;
         let draft = promptInput.text;
@@ -256,7 +289,14 @@ Window {
 
     onVisibleChanged: {
         if (visible) {
-            promptInput.forceActiveFocus();
+            if (isAmbientMode) {
+                isDetailedExpanded = false;
+                if (hostController.currentRevisionText.length) {
+                    rootWindow.setEditorText(hostController.currentRevisionText);
+                }
+            } else {
+                promptInput.forceActiveFocus();
+            }
         } else {
             hasBeenActive = false;
         }
@@ -663,6 +703,40 @@ Window {
                             }
                         }
 
+                        // Progressive Expansion Toggle [ ⤢ SHOW MORE ] / [ ⤡ SHOW LESS ]
+                        Rectangle {
+                            id: expandToggleButton
+                            visible: rootWindow.isAmbientMode
+                            implicitWidth: expandToggleText.implicitWidth + 12
+                            implicitHeight: 20
+                            Layout.preferredWidth: implicitWidth
+                            Layout.preferredHeight: 20
+                            height: 20
+                            width: implicitWidth
+                            color: expandToggleMouse.containsMouse ? rootWindow.dimColor : "transparent"
+                            border.color: rootWindow.borderColor
+                            border.width: 1
+                            radius: 3
+
+                            Text {
+                                id: expandToggleText
+                                anchors.centerIn: parent
+                                text: rootWindow.isDetailedExpanded ? "[ ⤡ SHOW LESS ]" : "[ ⤢ SHOW MORE ]"
+                                font.family: rootWindow.monoFont
+                                font.bold: true
+                                font.pixelSize: 8
+                                color: rootWindow.fgColor
+                            }
+
+                            HudMouseArea {
+                                id: expandToggleMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: rootWindow.toggleDetailedExpanded()
+                            }
+                        }
+
                         // Pin Toggle [PIN] / [PINNED] - Fixed width to prevent shifting/overlapping adjacent items
                         Rectangle {
                             id: pinButton
@@ -929,15 +1003,22 @@ Window {
 
                                 Text {
                                     readonly property string displayFileName: {
-                                        if (!rootWindow.targetLocalFile || rootWindow.targetLocalFile.length === 0) return "Select file...";
-                                        var parts = rootWindow.targetLocalFile.split("/");
-                                        return parts[parts.length - 1];
+                                        if (rootWindow.targetLocalFile && rootWindow.targetLocalFile.length > 0) {
+                                            var parts = rootWindow.targetLocalFile.split("/");
+                                            return parts[parts.length - 1];
+                                        }
+                                        if (hostController.recommendedOption.length > 0 && hostController.recommendedConfidence >= 0.70) {
+                                            var rparts = hostController.recommendedOption.split("/");
+                                            return "Auto: " + rparts[rparts.length - 1];
+                                        }
+                                        return "Select file...";
                                     }
                                     text: displayFileName + " " + (typeof fileDropdown !== "undefined" && fileDropdown.visible ? "▴" : "▾")
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
-                                    color: rootWindow.fgColor
+                                    color: (rootWindow.targetLocalFile && rootWindow.targetLocalFile.length > 0) ? rootWindow.fgColor :
+                                           ((hostController.recommendedOption.length > 0 && hostController.recommendedConfidence >= 0.70) ? "#7EE787" : rootWindow.mutedTextColor)
                                     elide: Text.ElideMiddle
                                     Layout.maximumWidth: Math.min(220, Math.max(90, rootWindow.width - 450))
                                 }
@@ -1049,10 +1130,11 @@ Window {
 
                         // Prompt Terminal Canvas (Double Bounded Inset)
                         Rectangle {
-                            Layout.minimumHeight: 150
+                            visible: !rootWindow.hc || !hostController.isAmbientAttached
+                            Layout.minimumHeight: visible ? 150 : 0
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            Layout.fillHeight: true
+                            Layout.fillHeight: visible
                             color: rootWindow.inputBgColor
                             border.color: promptInput.activeFocus ? rootWindow.fgColor : rootWindow.borderColor
                             border.width: 1
@@ -1218,6 +1300,7 @@ Window {
                 }
                 IntentReviewPanel {
                     id: reviewFlow
+                    visible: true
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     currentTheme: rootWindow.currentTheme
@@ -1230,6 +1313,7 @@ Window {
                 // 3. TELEMETRY STRIP (Real System & Compiler Metrics)
                 // =============================================================
                 Rectangle {
+                    visible: !rootWindow.isAmbientMode || rootWindow.isDetailedExpanded
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     Layout.preferredHeight: 22
@@ -1260,10 +1344,10 @@ Window {
                             color: rootWindow.fgColor
                         }
 
-                        Text { text: "│"; visible: rootWindow.width >= 620; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
+                        Text { text: "│"; visible: rootWindow.width >= 620 && (!rootWindow.hc || !hostController.isAmbientAttached); font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
 
                         Text {
-                            visible: rootWindow.width >= 620
+                            visible: rootWindow.width >= 620 && (!rootWindow.hc || !hostController.isAmbientAttached)
                             text: rootWindow.hc ? hostController.deliveryLabel : "CLIPBOARD"
                             font.family: rootWindow.monoFont
                             font.pixelSize: 8
@@ -1360,8 +1444,25 @@ Window {
                             color: rootWindow.mutedTextColor
                         }
 
+                        // Progressive Expansion Link in Footer
                         Text {
-                            visible: rootWindow.width >= 580 && rootWindow.hc && hostController.inferenceSpeed.length > 0 && rootWindow.toastMessage.length === 0
+                            visible: rootWindow.isAmbientMode && !rootWindow.isDetailedExpanded && rootWindow.toastMessage.length === 0
+                            text: "[ ⤢ SHOW MORE ]"
+                            font.family: rootWindow.monoFont
+                            font.bold: true
+                            font.pixelSize: 8
+                            color: expandFooterMouse.containsMouse ? rootWindow.fgColor : rootWindow.mutedTextColor
+                            HudMouseArea {
+                                id: expandFooterMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: rootWindow.toggleDetailedExpanded()
+                            }
+                        }
+
+                        Text {
+                            visible: (!rootWindow.isAmbientMode || rootWindow.isDetailedExpanded) && rootWindow.width >= 580 && rootWindow.hc && hostController.inferenceSpeed.length > 0 && rootWindow.toastMessage.length === 0
                             text: "SPEED: " + (rootWindow.hc ? hostController.inferenceSpeed : "")
                             font.family: rootWindow.monoFont
                             font.bold: true
@@ -1410,10 +1511,11 @@ Window {
                                     id: b1Text
                                     anchors.centerIn: parent
                                     text: {
+                                        if (rootWindow.hc && hostController.isAmbientAttached) return "[ SEND AS-IS ]";
                                         if (rootWindow.isCompiledPreview) return "[ ↺ EDIT DRAFT ]";
                                         const insert = rootWindow.hc && hostController.isAmbientCapture;
-                                        return rootWindow.width >= 720 ? (insert ? "[ INSERT AS-IS ]" : "[ COPY AS-IS ]")
-                                                                      : (insert ? "[ INSERT ]" : "[ COPY ]");
+                                        return rootWindow.width >= 720 ? (insert ? "[ SEND AS-IS ]" : "[ COPY AS-IS ]")
+                                                                      : (insert ? "[ SEND AS-IS ]" : "[ COPY ]");
                                     }
                                     font.family: rootWindow.monoFont
                                     font.bold: true
@@ -1426,7 +1528,9 @@ Window {
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        if (rootWindow.isCompiledPreview) {
+                                        if (rootWindow.hc && hostController.isAmbientAttached) {
+                                            rootWindow.executeHardBypass();
+                                        } else if (rootWindow.isCompiledPreview) {
                                             rootWindow.revertToDraft();
                                         } else {
                                             rootWindow.executeHardBypass();
@@ -1456,11 +1560,11 @@ Window {
                                     anchors.centerIn: parent
                                     text: {
                                         if (rootWindow.hc && hostController.isAnalyzing) return "[ CANCEL ANALYSIS ]";
-                                        if (rootWindow.isCompiledPreview) return (hostController.canApprove ? (hostController.isAmbientCapture ? "[ APPROVE & INSERT ]" : (hostController.isAmbientActive ? "[ CONNECT EDITOR ]" : "[ APPROVE & COPY ]")) : "[ REVIEW REWRITE ]");
+                                        if (rootWindow.isCompiledPreview) return (hostController.canApprove ? ((hostController.isAmbientCapture || hostController.isAmbientAttached) ? "[ ENHANCE & REPLACE ]" : (hostController.isAmbientActive ? "[ CONNECT EDITOR ]" : "[ APPROVE & COPY ]")) : "[ REVIEW REWRITE ]");
                                         if (rootWindow.hc && hostController.isOriginalRoute) return "[ SEND ORIGINAL ]";
                                         if (rootWindow.hasAmbiguity) return rootWindow.width >= 720 ? "[ 1-2: RESOLVE ]" : "[ RESOLVE ]";
                                         if (typeof hostController !== "undefined" && hostController.hasConfirmedIntent && !hostController.isIntentStale) {
-                                            return rootWindow.width >= 720 ? "[ ⏎ SYNTHESIZE REWRITE ]" : "[ ⏎ REWRITE ]";
+                                            return rootWindow.width >= 720 ? ((hostController.isAmbientCapture || hostController.isAmbientAttached) ? "[ ⏎ ENHANCE & REPLACE ]" : "[ ⏎ SYNTHESIZE REWRITE ]") : "[ ⏎ REWRITE ]";
                                         }
                                         if (rootWindow.needsManualAnswer) return "[ ANSWER REMAINING ]";
                                         return rootWindow.width >= 720 ? "[ ANALYZE PROMPT ]" : "[ ANALYZE ]";
@@ -1848,7 +1952,10 @@ Window {
                                     return parts[parts.length - 1];
                                 }
                                 readonly property bool isSelected: rootWindow.targetLocalFile === fileName || rootWindow.targetLocalFile === modelData
-                                color: fItemMouse.containsMouse ? rootWindow.dimColor : (isSelected ? rootWindow.inputBgColor : "transparent")
+                                readonly property bool isRecommended: (hostController.recommendedOption.length > 0) &&
+                                    (hostController.recommendedOption === fileName || hostController.recommendedOption === modelData) &&
+                                    (hostController.recommendedConfidence >= 0.70)
+                                color: fItemMouse.containsMouse ? rootWindow.dimColor : (isSelected ? rootWindow.inputBgColor : (isRecommended ? "#0F281E" : "transparent"))
 
                                 RowLayout {
                                     anchors.fill: parent
@@ -1857,23 +1964,44 @@ Window {
                                     spacing: 8
 
                                     Text {
-                                        text: isSelected ? "●" : "○"
+                                        text: isSelected ? "●" : (isRecommended ? "★" : "○")
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
-                                        color: isSelected ? "#FFB000" : rootWindow.dimColor
+                                        color: isSelected ? "#FFB000" : (isRecommended ? "#7EE787" : rootWindow.dimColor)
                                     }
 
                                     ColumnLayout {
                                         spacing: 1
                                         Layout.fillWidth: true
                                         Layout.minimumWidth: 0
-                                        Text {
-                                            text: fileName
-                                            font.family: rootWindow.monoFont
-                                            font.bold: isSelected
-                                            font.pixelSize: 9
-                                            color: isSelected ? "#FFB000" : rootWindow.fgColor
-                                            elide: Text.ElideRight
+                                        RowLayout {
+                                            spacing: 6
+                                            Layout.fillWidth: true
+                                            Text {
+                                                text: fileName
+                                                font.family: rootWindow.monoFont
+                                                font.bold: isSelected || isRecommended
+                                                font.pixelSize: 9
+                                                color: isSelected ? "#FFB000" : (isRecommended ? "#7EE787" : rootWindow.fgColor)
+                                                elide: Text.ElideRight
+                                            }
+                                            Rectangle {
+                                                visible: isRecommended
+                                                implicitWidth: recPillText.implicitWidth + 8
+                                                implicitHeight: 14
+                                                radius: 2
+                                                color: "#1E3A2F"
+                                                border.color: "#7EE787"
+                                                Text {
+                                                    id: recPillText
+                                                    anchors.centerIn: parent
+                                                    text: "[ RECOMMENDED " + Math.round(hostController.recommendedConfidence * 100) + "% ]"
+                                                    font.family: rootWindow.monoFont
+                                                    font.pixelSize: 7
+                                                    font.bold: true
+                                                    color: "#7EE787"
+                                                }
+                                            }
                                         }
                                         Text {
                                             text: modelData

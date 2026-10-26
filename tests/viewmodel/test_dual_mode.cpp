@@ -142,6 +142,7 @@ void testAmbientRouteWhenPermissionGranted() {
     h.c().toggleCard();
     ROCLINT_CHECK(h.c().isCardVisible());
     ROCLINT_CHECK(h.c().isAmbientCapture());
+    ROCLINT_CHECK(h.c().isAmbientAttached());
     ROCLINT_CHECK(h.c().captureTargetName() == "Cursor");
     ROCLINT_CHECK(h.c().deliveryLabel() == "Delivers into Cursor");
     ROCLINT_CHECK(h.c().currentRevisionText() == kPrompt);
@@ -175,6 +176,7 @@ void testWidgetFallbackWhenPermissionDenied() {
     h.c().toggleCard();
     ROCLINT_CHECK(h.c().isCardVisible());
     ROCLINT_CHECK(!h.c().isAmbientCapture());
+    ROCLINT_CHECK(!h.c().isAmbientAttached());
     ROCLINT_CHECK(h.c().capturedDraftText().isEmpty());
     ROCLINT_CHECK(h.c().deliveryLabel() == "Delivers to clipboard");
     h.c().hideCard();

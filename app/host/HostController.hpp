@@ -125,6 +125,8 @@ class HostController : public QObject {
     Q_PROPERTY(QVariantList assumptionReviews READ assumptionReviews NOTIFY interventionChanged)
     Q_PROPERTY(QString rankingStatus READ rankingStatus NOTIFY interventionChanged)
     Q_PROPERTY(QString diagnosticMessage READ diagnosticMessage NOTIFY interventionChanged)
+    Q_PROPERTY(QString recommendedOption READ recommendedOption NOTIFY recommendedOptionChanged)
+    Q_PROPERTY(double recommendedConfidence READ recommendedConfidence NOTIFY recommendedOptionChanged)
 
     Q_PROPERTY(bool hasConfirmedIntent READ hasConfirmedIntent NOTIFY intentChanged)
     Q_PROPERTY(bool isIntentStale READ isIntentStale NOTIFY intentChanged)
@@ -148,10 +150,12 @@ class HostController : public QObject {
     Q_PROPERTY(QString approvalLabel READ approvalLabel NOTIFY approvalChanged)
 
     Q_PROPERTY(bool accessibilityTrusted READ isAccessibilityTrusted NOTIFY accessibilityTrustedChanged)
+    Q_PROPERTY(bool hasAmbientPermissions READ isAccessibilityTrusted NOTIFY accessibilityTrustedChanged)
     Q_PROPERTY(QString accessibilityStatus READ accessibilityStatus NOTIFY accessibilityTrustedChanged)
     Q_PROPERTY(bool ambientModeEnabled READ isAmbientModeEnabled WRITE setAmbientModeEnabled NOTIFY ambientModeEnabledChanged)
     Q_PROPERTY(bool isAmbientActive READ isAmbientActive NOTIFY ambientModeEnabledChanged)
     Q_PROPERTY(bool isAmbientCapture READ isAmbientCapture NOTIFY captureSourceChanged)
+    Q_PROPERTY(bool isAmbientAttached READ isAmbientAttached NOTIFY captureSourceChanged)
     Q_PROPERTY(QString captureTargetName READ captureTargetName NOTIFY captureSourceChanged)
     Q_PROPERTY(QString deliveryLabel READ deliveryLabel NOTIFY captureSourceChanged)
     Q_PROPERTY(bool ambientBadgeVisible READ isAmbientBadgeVisible NOTIFY ambientBadgeChanged)
@@ -209,7 +213,7 @@ class HostController : public QObject {
 
 public:
     // Debounce between the last observed keystroke and an ambient check.
-    static constexpr int kAmbientDebounceMs = 300;
+    static constexpr int kAmbientDebounceMs = 150;
     static constexpr int kAmbientMinWords = 1;
     static constexpr int kAmbientMaxChars = 4000;
 
@@ -309,6 +313,9 @@ public:
     void setAmbientModeEnabled(bool enabled);
     [[nodiscard]] bool isAmbientActive() const;
     [[nodiscard]] bool isAmbientCapture() const noexcept { return m_captureSource == CaptureSource::Ambient; }
+    [[nodiscard]] bool isAmbientAttached() const noexcept {
+        return isAmbientActive() && m_captureSource == CaptureSource::Ambient && m_captureTarget.has_value();
+    }
     [[nodiscard]] QString captureTargetName() const;
     [[nodiscard]] QString deliveryLabel() const;
     [[nodiscard]] bool isAmbientBadgeVisible() const noexcept { return m_ambientBadgeVisible; }
@@ -316,6 +323,8 @@ public:
     [[nodiscard]] int ambientBadgeY() const noexcept { return m_ambientBadgePos.y(); }
     [[nodiscard]] QString ambientBadgeLabel() const { return m_ambientBadgeLabel; }
     [[nodiscard]] QString ambientStatus() const { return m_ambientStatus; }
+    [[nodiscard]] QString recommendedOption() const { return m_recommendedOption; }
+    [[nodiscard]] double recommendedConfidence() const noexcept { return m_recommendedConfidence; }
 
     [[nodiscard]] QString scorerEngine() const;
     [[nodiscard]] QString scorerStatus() const;
@@ -502,6 +511,7 @@ public slots:
     Q_INVOKABLE bool pinActiveModelDigest();
     Q_INVOKABLE void downloadModel(const QString& modelTag);
     Q_INVOKABLE void cancelModelDownload();
+    Q_INVOKABLE QPoint calculateAmbientAnchor(int width, int height);
 
 signals:
     void cardVisibilityChanged();
@@ -539,6 +549,7 @@ signals:
     void ambientDraftUpdated(const QString& text);
     void ambientBadgeChanged();
     void ambientStatusChanged();
+    void recommendedOptionChanged();
     void promptInjected(const QString& text, const QString& appName);
     // Ambient delivery failed and the text went to the clipboard instead.
     void deliveryFellBack(const QString& message);
@@ -785,6 +796,8 @@ private:
     std::optional<core::analysis::PromptTriage> m_promptTriage;
     core::analysis::PromptTriageRoute m_promptTriageLastRoute{core::analysis::PromptTriageRoute::Original};
     std::shared_ptr<AnalysisGroup> m_routedAnalysisGroup;
+    QString m_recommendedOption;
+    double m_recommendedConfidence{0.0};
 #ifdef ROCLINT_ENABLE_TEST_MOCKS
     bool m_promptTriageRouting{true};
 #endif

@@ -115,6 +115,9 @@ const QHash<QString, HostContextCategory>& identityTable() {
         {QStringLiteral("com.microsoft.vscode"), C::CodeEditor},
         {QStringLiteral("com.microsoft.vscodeinsiders"), C::CodeEditor},
         {QStringLiteral("com.todesktop.230313mzl4wgnlh"), C::CodeEditor},
+        {QStringLiteral("com.todesktop.230313mzl4w4u92"), C::CodeEditor},
+        {QStringLiteral("com.google.antigravity-ide"), C::CodeEditor},
+        {QStringLiteral("com.google.antigravity"), C::CodeEditor},
         {QStringLiteral("com.apple.dt.xcode"), C::CodeEditor},
         {QStringLiteral("com.sublimetext.4"), C::CodeEditor},
         {QStringLiteral("com.jetbrains.clion"), C::CodeEditor},
@@ -203,9 +206,26 @@ HostContextCategory HostContextDetector::mapIdentityToCategory(const QString& id
 }
 
 bool HostContextDetector::isAmbientEligibleApp(const QString& identifier) {
+    const QString id = identifier.trimmed().toLower();
+    if (id.isEmpty()) {
+        return false;
+    }
+    if (id.contains(QLatin1String("antigravity")) ||
+        id.contains(QLatin1String("cursor")) ||
+        id.contains(QLatin1String("todesktop")) ||
+        id.contains(QLatin1String("codex")) ||
+        id.contains(QLatin1String("claude")) ||
+        id.contains(QLatin1String("vscode")) ||
+        id.contains(QLatin1String("windsurf")) ||
+        id.contains(QLatin1String("terminal")) ||
+        id.contains(QLatin1String("iterm")) ||
+        id.contains(QLatin1String("ghostty")) ||
+        id.contains(QLatin1String("warp"))) {
+        return true;
+    }
     static const QSet<QString> identities = {
         QStringLiteral("chatgpt.exe"), QStringLiteral("codex.exe"),
-        QStringLiteral("cursor.exe"), QStringLiteral("antigravity.exe"),
+        QStringLiteral("cursor.exe"), QStringLiteral("antigravity.exe"), QStringLiteral("claude.exe"),
         QStringLiteral("windsurf.exe"), QStringLiteral("code.exe"),
         QStringLiteral("code - insiders.exe"), QStringLiteral("devenv.exe"),
         QStringLiteral("idea64.exe"), QStringLiteral("clion64.exe"),
@@ -213,12 +233,40 @@ bool HostContextDetector::isAmbientEligibleApp(const QString& identifier) {
         QStringLiteral("rider64.exe"), QStringLiteral("goland64.exe"),
         QStringLiteral("studio64.exe"), QStringLiteral("zed.exe"),
         QStringLiteral("windowsterminal.exe"),
-        QStringLiteral("com.todesktop.230313mzl4wgnlh"), QStringLiteral("com.google.antigravity"),
+        QStringLiteral("com.todesktop.230313mzl4wgnlh"), QStringLiteral("com.todesktop.230313mzl4w4u92"),
+        QStringLiteral("com.google.antigravity"), QStringLiteral("com.google.antigravity-ide"),
+        QStringLiteral("com.openai.codex"), QStringLiteral("com.anthropic.claude"),
         QStringLiteral("com.microsoft.vscode"), QStringLiteral("com.microsoft.vscodeinsiders"),
         QStringLiteral("com.apple.terminal"), QStringLiteral("com.googlecode.iterm2"),
         QStringLiteral("com.mitchellh.ghostty"), QStringLiteral("dev.warp.warp-stable"),
     };
-    return identities.contains(identifier.trimmed().toLower());
+    return identities.contains(id);
 }
+
+#if !defined(Q_OS_MAC)
+#if defined(Q_OS_WIN)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
+void configureNonActivatingPanel(QWindow* window) {
+    if (!window) return;
+#if defined(Q_OS_WIN)
+    HWND hwnd = reinterpret_cast<HWND>(window->winId());
+    if (hwnd) {
+        SetWindowLong(hwnd, GWL_EXSTYLE, GetWindowLong(hwnd, GWL_EXSTYLE) | WS_EX_NOACTIVATE | WS_EX_TOPMOST);
+    }
+#endif
+}
+
+void configureHostProcess() {}
+void installOutsideClickMonitor(QWindow*, std::function<void()>) {}
+void uninstallOutsideClickMonitor() {}
+#endif
 
 } // namespace roclint::host

@@ -54,6 +54,45 @@ class JuliaPromptTriageTests(unittest.TestCase):
         self.assertNotIn("rewritten_prompt", result)
         self.assertNotIn("route", result)  # The core owns the threshold and routing decision.
 
+    def test_triage_with_structured_state_and_extended_checklist_heads(self):
+        engine = Engine()
+        state_dict = {
+            "prompt": "Update the card clamping logic so it stays inside the screen margin...",
+            "workspace_matches": ["FloatingCard.qml", "ScreenPlacement.cpp"],
+            "symbol_fanout_callers": 4
+        }
+        result = worker.triage(engine, {
+            "triage_plan_version": 2,
+            "state": state_dict,
+            "extended_heads": True
+        })
+        self.assertEqual(engine.calls, 1)
+        self.assertEqual(len(engine.rows), 6)  # 6 atomic heads
+        self.assertTrue(all(row["state"] == state_dict for row in engine.rows))
+        self.assertTrue(all(row["type"] == "noul" for row in engine.rows))
+        self.assertIn("atomic_scores", result)
+        self.assertEqual(len(result["atomic_scores"]), 6)
+        self.assertIn("NEGATIVE_ONLY", result["atomic_scores"])
+        self.assertIn("SECURITY_BYPASS", result["atomic_scores"])
+        # Canonical categories are always 4
+        self.assertEqual(len(result["category_scores"]), 4)
+
+    def test_triage_with_candidate_choices_computes_entropy_confidence(self):
+        engine = Engine()
+        candidates = ["FloatingCard.qml", "ScreenPlacement.cpp"]
+        result = worker.triage(engine, {
+            "triage_plan_version": 2,
+            "prompt": "Fix clamping bounds.",
+            "candidate_choices": candidates
+        })
+        self.assertEqual(engine.calls, 1)
+        self.assertEqual(len(engine.rows), 5)  # 4 heads + 1 choice
+        self.assertEqual(engine.rows[-1]["type"], "choice")
+        self.assertEqual(engine.rows[-1]["options"], candidates)
+        self.assertIn("choice_decision", result)
+        self.assertIn(result["choice_decision"]["recommended_option"], candidates)
+        self.assertTrue(0.0 <= result["choice_decision"]["confidence"] <= 1.0)
+
     def test_complete_prompt_tail_is_classified_without_mutating_the_request(self):
         engine = Engine()
         prompt = "Background. " * 400 + "Return only JSON. Also add an explanation outside the JSON."

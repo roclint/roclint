@@ -2,6 +2,8 @@
 #include "roclint/storage/PayloadCodec.hpp"
 
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QUuid>
 
 namespace roclint::host {
@@ -72,7 +74,33 @@ void HostController::continuePromptTriageLoad() {
     }
     const JuliaRuntime::RequestContext context{qs(ticket.analysisGroup->id), qs(ticket.attemptId),
         qs(ticket.sessionId), qs(ticket.revisionId), ticket.stateVersion};
-    const auto id = m_julia->classifyPrompt(qs(m_revisionState->currentRevision().text()), context);
+
+    const QString promptText = qs(m_revisionState->currentRevision().text());
+    QJsonObject metadata;
+    metadata[QStringLiteral("prompt")] = promptText;
+
+    QStringList candidateChoices;
+    if (!m_projectFiles.isEmpty()) {
+        QStringList workspaceMatches;
+        for (const auto& file : m_projectFiles) {
+            const QFileInfo fi(file);
+            const QString baseName = fi.fileName();
+            const QString baseStem = fi.completeBaseName();
+            if (promptText.contains(baseName, Qt::CaseInsensitive) ||
+                (!baseStem.isEmpty() && baseStem.length() > 3 && promptText.contains(baseStem, Qt::CaseInsensitive))) {
+                workspaceMatches.append(file);
+                if (workspaceMatches.size() >= 10) break;
+            }
+        }
+        if (!workspaceMatches.isEmpty()) {
+            metadata[QStringLiteral("workspace_matches")] = QJsonArray::fromStringList(workspaceMatches);
+            if (workspaceMatches.size() >= 2 && workspaceMatches.size() <= 20) {
+                candidateChoices = workspaceMatches;
+            }
+        }
+    }
+
+    const auto id = m_julia->classifyPrompt(promptText, context, metadata, candidateChoices);
     if (!id) {
         completeAttempt(ticket, storage::AttemptStatus::Failed, "Julia did not accept the S1 request");
         setAnalysisStatus(AnalysisStatus::Failed, QStringLiteral("Julia could not classify this prompt. Retry explicitly.")); return;
@@ -114,6 +142,14 @@ void HostController::onPromptClassified(quint64 id, const an::PromptTriage* tria
     m_promptTriage = *triage;
     m_promptTriageLastRoute = route.value();
     m_routedAnalysisGroup = ticket.analysisGroup;
+
+    const auto recOpt = m_julia->lastRecommendedOption();
+    const auto recConf = m_julia->lastChoiceConfidence();
+    if (m_recommendedOption != recOpt || !qFuzzyCompare(m_recommendedConfidence, recConf)) {
+        m_recommendedOption = recOpt;
+        m_recommendedConfidence = recConf;
+        emit recommendedOptionChanged();
+    }
     if (route.value() == an::PromptTriageRoute::Original) {
         ticket.analysisGroup->terminal = true;
         an::NormalizedAnalysis empty;

@@ -34,7 +34,22 @@ void testScreenPlacement() {
     auto fallback = ScreenPlacement::calculateClampedPosition(QPoint(960, 540), cardW, cardH, QRect(), 12);
     ROCLINT_CHECK(fallback.x == 100);
     ROCLINT_CHECK(fallback.y == 100);
-    std::cout << "  [PASS] Card placement clamps to the screen.\n";
+
+    // Anchor positioning for Grammarly-style corner badge
+    const QRect promptRect(500, 300, 600, 200);
+    auto anchorBadge = ScreenPlacement::calculateAnchorPosition(promptRect, 140, 26, screenBounds, 12);
+    ROCLINT_CHECK(anchorBadge.x == promptRect.right() - 140 - 6);
+    ROCLINT_CHECK(anchorBadge.y == promptRect.bottom() - 26 - 4);
+    ROCLINT_CHECK(!anchorBadge.clamped);
+
+    // Anchoring near bottom-right screen border clamps inside margins
+    const QRect nearEdgePrompt(1850, 1000, 200, 100);
+    auto edgeBadge = ScreenPlacement::calculateAnchorPosition(nearEdgePrompt, 140, 26, screenBounds, 12);
+    ROCLINT_CHECK(edgeBadge.x <= screenBounds.left() + screenBounds.width() - 140 - 12);
+    ROCLINT_CHECK(edgeBadge.y <= screenBounds.top() + screenBounds.height() - 26 - 12);
+    ROCLINT_CHECK(edgeBadge.clamped);
+
+    std::cout << "  [PASS] Card and anchor placement clamp to the screen.\n";
 }
 
 void testHostContextDisclosureAndClear() {

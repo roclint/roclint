@@ -1,6 +1,8 @@
 #include "IAccessibilityBridge.hpp"
 #include "TerminalAdapter.hpp"
 
+#include <QDebug>
+
 #if defined(Q_OS_MAC)
 
 #import <AppKit/AppKit.h>
@@ -9,6 +11,7 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <iostream>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -25,8 +28,17 @@ constexpr CFIndex kMaxReadChars = 16000;
 
 bool isElectronBundle(const QString& bundleId) {
     const QString b = bundleId.toLower();
-    return b == QLatin1String("com.todesktop.230313mzl4wgnlh") || b == QLatin1String("com.microsoft.vscode") ||
-           b == QLatin1String("com.google.antigravity") || b == QLatin1String("com.microsoft.vscodeinsiders");
+    return b == QLatin1String("com.todesktop.230313mzl4wgnlh") ||
+           b == QLatin1String("com.todesktop.230313mzl4w4u92") ||
+           b == QLatin1String("com.google.antigravity") ||
+           b == QLatin1String("com.google.antigravity-ide") ||
+           b == QLatin1String("com.microsoft.vscode") ||
+           b == QLatin1String("com.microsoft.vscodeinsiders") ||
+           b.contains(QLatin1String("codex")) ||
+           b.contains(QLatin1String("claude")) ||
+           b.contains(QLatin1String("antigravity")) ||
+           b.contains(QLatin1String("todesktop")) ||
+           b.contains(QLatin1String("cursor"));
 }
 
 bool isTerminalBundle(const QString& bundleId) {
@@ -125,8 +137,51 @@ public:
         perform(^{ this->performInjection(copy); });
     }
 
+    void refreshFocusedField(quint64 requestId = 0) override {
+        perform(^{
+            if (!m_observing || m_loop == nullptr) return;
+            @autoreleasepool {
+                NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+                const pid_t frontPid = front ? front.processIdentifier : 0;
+                if (frontPid > 0 && frontPid != getpid() && frontPid != m_pid) {
+                    this->onAppActivated(frontPid);
+                }
+            }
+            if (m_app == nullptr) return;
+            CFTypeRef value = nullptr;
+            if (AXUIElementCopyAttributeValue(m_app, kAXFocusedUIElementAttribute, &value) == kAXErrorSuccess && value != nullptr) {
+                AXUIElementRef element = static_cast<AXUIElementRef>(value);
+                if (m_focused == nullptr || !CFEqual(m_focused, element)) {
+                    detachFocused();
+                    m_focused = element;
+                    ++m_token;
+                    const QString role = copyStringAttribute(element, kAXRoleAttribute);
+                    m_eligible = role == QLatin1String("AXTextArea") || role == QLatin1String("AXTextField") ||
+                                 role == QLatin1String("AXComboBox") || isTerminalBundle(m_bundleId);
+                    if (m_eligible) {
+                        AXObserverAddNotification(m_observer, element, kAXValueChangedNotification, this);
+                        AXObserverAddNotification(m_observer, element, kAXSelectedTextChangedNotification, this);
+                    }
+                } else {
+                    CFRelease(element);
+                }
+            }
+            if (m_focused != nullptr && m_eligible) {
+                auto field = readField();
+                if (field.has_value()) {
+                    field->refreshRequestId = requestId;
+                    m_lastSignature = field->text + QChar(0x1F) + QString::number(field->caretOffset) + QChar(0x1F) +
+                                      QString::number(field->fieldToken);
+                    emit fieldObserved(*field);
+                }
+            }
+        });
+    }
+
     void onNotification(CFStringRef notification) {
-        if (CFEqual(notification, kAXFocusedUIElementChangedNotification)) {
+        if (CFEqual(notification, kAXFocusedUIElementChangedNotification) ||
+            CFEqual(notification, kAXFocusedWindowChangedNotification) ||
+            CFEqual(notification, kAXMainWindowChangedNotification)) {
             onFocusChanged();
         } else {
             readAndEmit();
@@ -164,14 +219,81 @@ private:
 
     void applyObserving(bool observing) {
         m_observing = observing && m_trusted.load();
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            qInfo() << "[MacAX] applyObserving: observing=" << observing << "trusted=" << m_trusted.load();
+        }
         if (!m_observing) {
+            stopHeartbeat();
             detachApp();
             emit fieldLost();
             return;
         }
+        startHeartbeat();
         @autoreleasepool {
             NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
             onAppActivated(front ? front.processIdentifier : 0);
+        }
+    }
+
+    void stopHeartbeat() {
+        if (m_pollTimer != nullptr) {
+            CFRunLoopTimerInvalidate(m_pollTimer);
+            CFRelease(m_pollTimer);
+            m_pollTimer = nullptr;
+        }
+    }
+
+    void startHeartbeat() {
+        stopHeartbeat();
+        if (!m_observing || m_loop == nullptr) {
+            return;
+        }
+        m_pollTimer = CFRunLoopTimerCreateWithHandler(
+            nullptr, CFAbsoluteTimeGetCurrent() + 0.1, 0.1, 0, 0,
+            ^(CFRunLoopTimerRef) {
+                this->onHeartbeat();
+            });
+        CFRunLoopAddTimer(m_loop, m_pollTimer, kCFRunLoopDefaultMode);
+    }
+
+    void onHeartbeat() {
+        if (!m_observing || m_loop == nullptr) {
+            return;
+        }
+
+        // 1. Detect if the frontmost active application changed
+        @autoreleasepool {
+            NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+            const pid_t frontPid = front ? front.processIdentifier : 0;
+            if (frontPid > 0 && frontPid != getpid() && frontPid != m_pid) {
+                this->onAppActivated(frontPid);
+                return;
+            }
+        }
+
+        if (m_app == nullptr) {
+            return;
+        }
+
+        // 2. Detect if the focused element changed (e.g. user clicked into another window/project or field)
+        CFTypeRef value = nullptr;
+        if (AXUIElementCopyAttributeValue(m_app, kAXFocusedUIElementAttribute, &value) == kAXErrorSuccess && value != nullptr) {
+            AXUIElementRef current = static_cast<AXUIElementRef>(value);
+            if (m_focused == nullptr || !CFEqual(m_focused, current)) {
+                CFRelease(value);
+                this->onFocusChanged();
+                return;
+            }
+            CFRelease(value);
+        } else if (m_focused != nullptr) {
+            detachFocused();
+            emit fieldLost();
+            return;
+        }
+
+        // 3. Read and emit latest draft/caret/geometry changes
+        if (m_focused != nullptr && m_eligible) {
+            readAndEmit();
         }
     }
 
@@ -180,6 +302,10 @@ private:
         if (m_observer != nullptr) {
             if (m_app != nullptr) {
                 AXObserverRemoveNotification(m_observer, m_app, kAXFocusedUIElementChangedNotification);
+                AXObserverRemoveNotification(m_observer, m_app, kAXFocusedWindowChangedNotification);
+                AXObserverRemoveNotification(m_observer, m_app, kAXMainWindowChangedNotification);
+                AXObserverRemoveNotification(m_observer, m_app, kAXValueChangedNotification);
+                AXObserverRemoveNotification(m_observer, m_app, kAXSelectedTextChangedNotification);
             }
             CFRunLoopRemoveSource(m_loop, AXObserverGetRunLoopSource(m_observer), kCFRunLoopDefaultMode);
             CFRelease(m_observer);
@@ -215,6 +341,9 @@ private:
             m_bundleId = app.bundleIdentifier ? QString::fromNSString(app.bundleIdentifier) : QString();
             m_displayName = app.localizedName ? QString::fromNSString(app.localizedName) : m_bundleId;
         }
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            qInfo() << "[MacAX] Target app:" << m_displayName << "bundleId=" << m_bundleId << "isElectron=" << isElectronBundle(m_bundleId);
+        }
         m_app = AXUIElementCreateApplication(pid);
         if (m_app == nullptr) {
             return;
@@ -222,13 +351,16 @@ private:
         if (isElectronBundle(m_bundleId)) {
             // Chromium builds its accessibility tree only when asked.
             AXUIElementSetAttributeValue(m_app, CFSTR("AXManualAccessibility"), kCFBooleanTrue);
-            AXUIElementSetAttributeValue(m_app, CFSTR("AXEnhancedUserInterface"), kCFBooleanTrue);
         }
         if (AXObserverCreate(pid, axCallback, &m_observer) != kAXErrorSuccess || m_observer == nullptr) {
             m_observer = nullptr;
             return;
         }
         AXObserverAddNotification(m_observer, m_app, kAXFocusedUIElementChangedNotification, this);
+        AXObserverAddNotification(m_observer, m_app, kAXFocusedWindowChangedNotification, this);
+        AXObserverAddNotification(m_observer, m_app, kAXMainWindowChangedNotification, this);
+        AXObserverAddNotification(m_observer, m_app, kAXValueChangedNotification, this);
+        AXObserverAddNotification(m_observer, m_app, kAXSelectedTextChangedNotification, this);
         CFRunLoopAddSource(m_loop, AXObserverGetRunLoopSource(m_observer), kCFRunLoopDefaultMode);
         onFocusChanged();
         if (isElectronBundle(m_bundleId)) {
@@ -247,6 +379,11 @@ private:
         CFTypeRef value = nullptr;
         if (AXUIElementCopyAttributeValue(m_app, kAXFocusedUIElementAttribute, &value) != kAXErrorSuccess ||
             value == nullptr) {
+            if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+                qInfo() << "[MacAX] onFocusChanged: no focused UI element";
+            }
+            detachFocused();
+            emit fieldLost();
             return;
         }
         AXUIElementRef element = static_cast<AXUIElementRef>(value);
@@ -260,6 +397,9 @@ private:
         const QString role = copyStringAttribute(element, kAXRoleAttribute);
         m_eligible = role == QLatin1String("AXTextArea") || role == QLatin1String("AXTextField") ||
                      role == QLatin1String("AXComboBox") || isTerminalBundle(m_bundleId);
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            qInfo() << "[MacAX] onFocusChanged: role=" << role << "eligible=" << m_eligible;
+        }
         if (!m_eligible) {
             emit fieldLost();
             return;
@@ -310,6 +450,26 @@ private:
             }
             CFRelease(rangeValue);
         }
+
+        CFTypeRef posValue = nullptr;
+        CFTypeRef sizeValue = nullptr;
+        CGPoint pt{};
+        CGSize sz{};
+        bool hasPos = false;
+        bool hasSize = false;
+        if (AXUIElementCopyAttributeValue(m_focused, kAXPositionAttribute, &posValue) == kAXErrorSuccess && posValue != nullptr) {
+            hasPos = AXValueGetValue(static_cast<AXValueRef>(posValue), static_cast<AXValueType>(kAXValueCGPointType), &pt);
+            CFRelease(posValue);
+        }
+        if (AXUIElementCopyAttributeValue(m_focused, kAXSizeAttribute, &sizeValue) == kAXErrorSuccess && sizeValue != nullptr) {
+            hasSize = AXValueGetValue(static_cast<AXValueRef>(sizeValue), static_cast<AXValueType>(kAXValueCGSizeType), &sz);
+            CFRelease(sizeValue);
+        }
+        if (hasPos && hasSize && sz.width > 0 && sz.height > 0) {
+            f.fieldRect = QRect(static_cast<int>(pt.x), static_cast<int>(pt.y),
+                                static_cast<int>(sz.width), static_cast<int>(sz.height));
+        }
+
         f.text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
         f.text.replace(QLatin1Char('\r'), QLatin1Char('\n'));
         if (f.caretOffset > f.text.size()) {
@@ -324,11 +484,18 @@ private:
             return;
         }
         const QString signature = field->text + QChar(0x1F) + QString::number(field->caretOffset) + QChar(0x1F) +
-                                  QString::number(field->fieldToken);
+                                  QString::number(field->fieldToken) + QChar(0x1F) +
+                                  QString::number(field->fieldRect.x()) + QChar(0x1F) +
+                                  QString::number(field->fieldRect.y()) + QChar(0x1F) +
+                                  QString::number(field->fieldRect.width()) + QChar(0x1F) +
+                                  QString::number(field->fieldRect.height());
         if (signature == m_lastSignature) {
             return;
         }
         m_lastSignature = signature;
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            qInfo() << "[MacAX] readAndEmit: text=" << field->text << "fieldRect=" << field->fieldRect;
+        }
         emit fieldObserved(*field);
     }
 
@@ -427,6 +594,7 @@ private:
             return;
         }
         postKey(kVK_ANSI_A, kCGEventFlagMaskCommand);
+        usleep(25000);
         const bool pasted = paste(r.text);
         const auto after = readField();
         const bool ok = pasted && after.has_value() && after->text == r.text;
@@ -452,6 +620,7 @@ private:
     bool m_eligible{false};
     quint64 m_token{0};
     QString m_lastSignature;
+    CFRunLoopTimerRef m_pollTimer{nullptr};
 };
 
 void axCallback(AXObserverRef, AXUIElementRef, CFStringRef notification, void* refcon) {

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QString>
+#include <QWindow>
+#include <functional>
 #include <optional>
 
 namespace roclint::host {
@@ -55,5 +57,10 @@ public:
     static void resetMock();
 #endif
 };
+
+void configureNonActivatingPanel(QWindow* window);
+void configureHostProcess();
+void installOutsideClickMonitor(QWindow* window, std::function<void()> onOutsideClick);
+void uninstallOutsideClickMonitor();
 
 } // namespace roclint::host

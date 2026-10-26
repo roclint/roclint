@@ -344,7 +344,9 @@ quint64 JuliaRuntime::evaluate(const core::analysis::NormalizedAnalysis& analysi
     return id;
 }
 
-quint64 JuliaRuntime::classifyPrompt(const QString& prompt, const RequestContext& context) {
+quint64 JuliaRuntime::classifyPrompt(const QString& prompt, const RequestContext& context,
+                                     const QJsonObject& metadata,
+                                     const QStringList& candidateChoices) {
     if (!ready_ || !promptTriageSupported_ || stopping_ || !handshaken_ || context.stateVersion == 0 ||
         context.stateVersion > kMaxId || prompt.trimmed().isEmpty() || prompt.contains(QLatin1Char('\r')) ||
         prompt.toUtf8().size() > 64 * 1024) return 0;
@@ -355,8 +357,21 @@ quint64 JuliaRuntime::classifyPrompt(const QString& prompt, const RequestContext
             if (!((byte >= 'a' && byte <= 'z') || (byte >= 'A' && byte <= 'Z') ||
                   (byte >= '0' && byte <= '9') || byte == '_' || byte == '-' || byte == '.')) return 0;
     }
-    const auto id = send(QStringLiteral("triage"), {{QStringLiteral("prompt"), prompt},
-        {QStringLiteral("triage_plan_version"), 2}}, {}, kTriageTimeoutMs, &context);
+    QJsonObject payload;
+    payload[QStringLiteral("triage_plan_version")] = 2;
+    payload[QStringLiteral("prompt")] = prompt;
+    if (!metadata.isEmpty()) {
+        payload[QStringLiteral("state")] = metadata;
+        payload[QStringLiteral("extended_heads")] = true;
+    }
+    if (!candidateChoices.isEmpty()) {
+        QJsonArray choicesArray;
+        for (const auto& choice : candidateChoices) {
+            choicesArray.append(choice);
+        }
+        payload[QStringLiteral("candidate_choices")] = choicesArray;
+    }
+    const auto id = send(QStringLiteral("triage"), payload, {}, kTriageTimeoutMs, &context);
     if (id) setState(QStringLiteral("TRIAGING"), QStringLiteral("Julia is classifying the frozen prompt before Granite."));
     return id;
 }
@@ -494,6 +509,15 @@ void JuliaRuntime::receive(const QJsonObject& object) {
         }
         const auto sealed = core::analysis::sealPromptTriage(std::move(triage), ss(request.prompt));
         if (!sealed.ok()) { reject(); return; }
+
+        lastRecommendedOption_.clear();
+        lastChoiceConfidence_ = 0.0;
+        if (result.contains(QStringLiteral("choice_decision"))) {
+            const auto cd = result.value(QStringLiteral("choice_decision")).toObject();
+            lastRecommendedOption_ = cd.value(QStringLiteral("recommended_option")).toString();
+            lastChoiceConfidence_ = cd.value(QStringLiteral("confidence")).toDouble(0.0);
+        }
+
         setState(QStringLiteral("READY"), QStringLiteral("Julia classified the prompt locally. Scores do not confirm user intent."));
         emit promptClassified(id, sealed.value());
         return;

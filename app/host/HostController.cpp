@@ -1,4 +1,5 @@
 #include "HostController.hpp"
+#include <iostream>
 #include <QJsonArray>
 #include <utility>
 #include <QKeySequence>
@@ -211,7 +212,7 @@ HostController::HostController(const QString& dbPathOverride,
         m_activeModel = settings.value(QStringLiteral("models/active"), m_activeModel).toString();
         m_modelDirectory = settings.value(QStringLiteral("models/directory")).toString();
         m_nativeDirectory = settings.value(QStringLiteral("models/nativeDirectory"), m_modelsBaseDirectory + QStringLiteral("/s2")).toString();
-        m_ambientModeEnabled = settings.value(QStringLiteral("ambient/enabled"), false).toBool();
+        m_ambientModeEnabled = settings.value(QStringLiteral("ambient/enabled"), true).toBool();
         m_hostContextEnabled = settings.value(QStringLiteral("invocation/hostContextEnabled"), true).toBool();
         m_invocationShortcut = settings.value(QStringLiteral("invocation/shortcut"), m_invocationShortcut).toString();
         const QString savedProfile = settings.value(QStringLiteral("rewrite/profile"), m_rewriteProfile).toString();
@@ -431,6 +432,12 @@ void HostController::showCard() {
         showCardInternal(false);
         return;
     }
+    if (isAmbientActive() && m_ambientObservation.has_value() &&
+        (m_ambientObservation->field.appIdentifier.compare(frontmost.bundleOrExecutableId, Qt::CaseInsensitive) == 0 ||
+         frontmost.bundleOrExecutableId.isEmpty())) {
+        openFromAmbient();
+        return;
+    }
     if (isAmbientActive() && isAmbientEligibleApp(frontmost.bundleOrExecutableId)) {
         beginCaptureInvocation(frontmost);
         return;
@@ -463,8 +470,9 @@ void HostController::beginCaptureInvocation(const HostContextObservation& frontm
 #else
             true; // Platforms without a tagged refresh keep their passive-observation fallback.
 #endif
-        if (refreshed && current.bundleOrExecutableId.compare(m_captureRequestedApp, Qt::CaseInsensitive) == 0 &&
-            m_ambientObservation->field.appIdentifier.compare(m_captureRequestedApp, Qt::CaseInsensitive) == 0) {
+        if (refreshed &&
+            (current.bundleOrExecutableId.compare(m_captureRequestedApp, Qt::CaseInsensitive) == 0 || current.bundleOrExecutableId.isEmpty()) &&
+            (m_ambientObservation->field.appIdentifier.compare(m_captureRequestedApp, Qt::CaseInsensitive) == 0 || m_captureRequestedApp.isEmpty())) {
             openFromAmbient(); return;
         }
         setCaptureSource(CaptureSource::Widget);
@@ -484,7 +492,14 @@ void HostController::showCardInternal(bool captureClipboard) {
     }
     setAmbientBadge(false);
 
-    const auto placement = ScreenPlacement::determineTargetPosition(820, 520);
+    PlacementResult placement;
+    if (isAmbientAttached() && m_captureTarget.has_value()) {
+        const auto& f = m_captureTarget->field;
+        const QRect targetRect = !f.fieldRect.isNull() ? f.fieldRect : f.caretRect;
+        placement = ScreenPlacement::determineAnchorPosition(targetRect, 620, 250);
+    } else {
+        placement = ScreenPlacement::determineTargetPosition(820, 520);
+    }
     setCardVisibility(CardVisibility::Focused);
     emit showCardRequested(placement.x, placement.y);
 }
@@ -500,6 +515,17 @@ void HostController::hideCard() {
     emit hideCardRequested();
 }
 
+QPoint HostController::calculateAmbientAnchor(int width, int height) {
+    if (isAmbientAttached() && m_captureTarget.has_value()) {
+        const auto& f = m_captureTarget->field;
+        const QRect targetRect = !f.fieldRect.isNull() ? f.fieldRect : f.caretRect;
+        const auto p = ScreenPlacement::determineAnchorPosition(targetRect, width, height);
+        return QPoint(p.x, p.y);
+    }
+    const auto p = ScreenPlacement::determineTargetPosition(width, height);
+    return QPoint(p.x, p.y);
+}
+
 void HostController::toggleCard() {
     const auto frontmost = HostContextDetector::captureFrontmost();
     if (m_selectingInsertionTarget && !isAmbientEligibleApp(frontmost.bundleOrExecutableId)) {
@@ -507,18 +533,25 @@ void HostController::toggleCard() {
         showCardInternal(false);
         return;
     }
+    if (isCardVisible() && isAmbientAttached() && !m_selectingInsertionTarget) {
+        hideCard();
+        return;
+    }
     if (isAmbientActive() && isAmbientEligibleApp(frontmost.bundleOrExecutableId)) {
         beginCaptureInvocation(frontmost);
-    } else if (isAmbientActive() && m_ambientObservation.has_value() &&
-        frontmost.bundleOrExecutableId.compare(m_ambientObservation->field.appIdentifier, Qt::CaseInsensitive) == 0) {
-        openFromAmbient();
-    } else if (isCardVisible()) {
-        hideCard();
-    } else if (isAmbientActive() && m_ambientObservation.has_value()) {
-        openFromAmbient();
-    } else {
-        showCard();
+        return;
     }
+    if (isAmbientActive() && m_ambientObservation.has_value() &&
+        (m_ambientObservation->field.appIdentifier.compare(frontmost.bundleOrExecutableId, Qt::CaseInsensitive) == 0 ||
+         frontmost.bundleOrExecutableId.isEmpty())) {
+        openFromAmbient();
+        return;
+    }
+    if (isCardVisible()) {
+        hideCard();
+        return;
+    }
+    showCard();
 }
 
 void HostController::showDashboard() {
@@ -847,6 +880,11 @@ void HostController::invalidateDownstreamPipeline() {
     ++m_pipelineSerial;
     m_promptTriageLoad.reset();
     m_promptTriage.reset();
+    if (!m_recommendedOption.isEmpty() || m_recommendedConfidence > 0.0) {
+        m_recommendedOption.clear();
+        m_recommendedConfidence = 0.0;
+        emit recommendedOptionChanged();
+    }
     if (m_routedAnalysisGroup) m_routedAnalysisGroup->terminal = true;
     m_routedAnalysisGroup.reset();
     m_pendingNativeRewrite.reset();
@@ -3549,23 +3587,27 @@ void HostController::setCaptureSource(CaptureSource source) {
 }
 
 void HostController::setAmbientBadge(bool visible, const QString& label) {
-    if (m_ambientBadgeVisible == visible && (label.isEmpty() || label == m_ambientBadgeLabel)) {
-        return;
-    }
-    m_ambientBadgeVisible = visible;
-    if (!label.isEmpty()) {
-        m_ambientBadgeLabel = label;
-    }
+    QPoint newPos = m_ambientBadgePos;
     if (visible && m_ambientObservation.has_value()) {
         const auto& f = m_ambientObservation->field;
-        if (!f.caretRect.isNull()) {
-            m_ambientBadgePos = QPoint(f.caretRect.right() + 8, f.caretRect.bottom() + 6);
-        } else if (!f.fieldRect.isNull()) {
-            m_ambientBadgePos = QPoint(f.fieldRect.right() - 180, f.fieldRect.top() - 30);
+        if (!f.fieldRect.isNull()) {
+            const auto placement = ScreenPlacement::determineAnchorPosition(f.fieldRect, 140, 26);
+            newPos = QPoint(placement.x, placement.y);
+        } else if (!f.caretRect.isNull()) {
+            newPos = QPoint(f.caretRect.right() + 8, f.caretRect.bottom() + 6);
         } else {
-            m_ambientBadgePos = QPoint(40, 40);
+            newPos = QPoint(40, 40);
         }
     }
+
+    const QString newLabel = !label.isEmpty() ? label : m_ambientBadgeLabel;
+    if (m_ambientBadgeVisible == visible && m_ambientBadgePos == newPos && m_ambientBadgeLabel == newLabel) {
+        return;
+    }
+
+    m_ambientBadgeVisible = visible;
+    m_ambientBadgeLabel = newLabel;
+    m_ambientBadgePos = newPos;
     emit ambientBadgeChanged();
 }
 
@@ -3661,6 +3703,9 @@ void HostController::onFieldObserved(const ObservedField& field) {
     } else {
         prompt = field.text;
     }
+    if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+        qInfo() << "[HostController] onFieldObserved: app=" << field.appDisplayName << "prompt=" << prompt;
+    }
     prompt = qs(core::normalizeLineEndings(ss(prompt)));
     if (field.kind == FieldKind::GuiEditor && prompt.trimmed().isEmpty()) {
         // An empty composer is still a valid destination for a draft authored in the HUD.
@@ -3669,8 +3714,9 @@ void HostController::onFieldObserved(const ObservedField& field) {
         m_ambientObservation = AmbientObservation{field, prompt, core::crypto::Sha256::hexDigest(ss(prompt))};
         followAmbientDraft();
         setAmbientStatus(QStringLiteral("Ready to capture a prompt in %1.").arg(field.appDisplayName));
-        if (m_captureOpenPending && field.refreshRequestId == m_captureOpenGeneration &&
-            field.appIdentifier.compare(m_captureRequestedApp, Qt::CaseInsensitive) == 0) {
+        if (m_captureOpenPending &&
+            (field.refreshRequestId == m_captureOpenGeneration || field.refreshRequestId == 0) &&
+            (field.appIdentifier.compare(m_captureRequestedApp, Qt::CaseInsensitive) == 0 || m_captureRequestedApp.isEmpty())) {
             m_captureOpenPending = false;
             ++m_captureOpenGeneration;
             openFromAmbient();
@@ -3684,14 +3730,20 @@ void HostController::onFieldObserved(const ObservedField& field) {
     }
 
     AmbientObservation observation{field, prompt, core::crypto::Sha256::hexDigest(ss(prompt))};
-    const bool textChanged = !m_ambientObservation.has_value() || m_ambientObservation->textHash != observation.textHash ||
-                             m_ambientObservation->field.fieldToken != field.fieldToken ||
-                             m_ambientObservation->field.processId != field.processId;
+    const bool fieldChanged = !m_ambientObservation.has_value() ||
+                              m_ambientObservation->field.fieldToken != field.fieldToken ||
+                              m_ambientObservation->field.processId != field.processId ||
+                              m_ambientObservation->field.fieldRect != field.fieldRect;
+    const bool textChanged = fieldChanged || m_ambientObservation->textHash != observation.textHash;
+    if (fieldChanged && m_ambientBadgeVisible) {
+        setAmbientBadge(false);
+    }
     m_ambientObservation = std::move(observation);
     followAmbientDraft();
     setAmbientStatus(QStringLiteral("Watching %1.").arg(field.appDisplayName));
-    if (m_captureOpenPending && field.refreshRequestId == m_captureOpenGeneration &&
-        field.appIdentifier.compare(m_captureRequestedApp, Qt::CaseInsensitive) == 0) {
+    if (m_captureOpenPending &&
+        (field.refreshRequestId == m_captureOpenGeneration || field.refreshRequestId == 0) &&
+        (field.appIdentifier.compare(m_captureRequestedApp, Qt::CaseInsensitive) == 0 || m_captureRequestedApp.isEmpty())) {
         m_captureOpenPending = false;
         ++m_captureOpenGeneration;
         openFromAmbient();
@@ -3705,7 +3757,6 @@ void HostController::onFieldObserved(const ObservedField& field) {
                         m_ambientBadgeLabel);
         return;
     }
-    setAmbientBadge(false);
     m_ambientDebounce.start();
 }
 
@@ -3716,10 +3767,9 @@ void HostController::onAmbientDebounce() {
     }
     const std::string& hash = m_ambientObservation->textHash;
     if (promptTriageRoutingEnabled()) {
-        // An ambient capture has not frozen a PromptRevision. Ask the user to open it first;
-        // the normal S1-first flow then owns all model calls and their provenance.
         m_ambientCheckPending = false;
-        setAmbientBadge(m_ambientDismissed.count(hash) == 0, QStringLiteral("Check prompt"));
+        const auto s1 = m_s1Adapter.triagePrompt(ss(m_ambientObservation->prompt));
+        setAmbientBadge(s1.isExecutable() && m_ambientDismissed.count(hash) == 0, QStringLiteral("Check prompt"));
         return;
     }
     if ((m_ambientCheck.has_value() && m_ambientCheck->textHash == hash) || m_ambientDismissed.count(hash) > 0) {
@@ -3910,7 +3960,7 @@ bool HostController::openFromAmbient() {
 
         if (!m_currentAnalysis) {
             bool rebound = false;
-            if (!promptTriageRoutingEnabled() && m_ambientCheck.has_value() && m_ambientCheck->textHash == observation.textHash &&
+            if (m_ambientCheck.has_value() && m_ambientCheck->textHash == observation.textHash &&
                 !m_ambientCheck->rawReply.empty()) {
                 // The background check already asked the model; bind its exact reply to the frozen revision.
                 auto parsed = bridge::parseDiscoveryResponse(m_ambientCheck->rawReply, currentSessionId(),
