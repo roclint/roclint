@@ -179,7 +179,7 @@ int main(int argc, char* argv[]) {
                 // showNormal() also restores a minimized card; show() keeps the minimized state
                 window->showNormal();
                 window->raise();
-                if (!controller->isAmbientAttached()) {
+                if (!controller->isAmbientActive() && !controller->isAmbientAttached()) {
                     window->requestActivate();
                 } else {
                     roclint::host::installOutsideClickMonitor(window, [controller]() {

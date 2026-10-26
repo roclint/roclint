@@ -143,7 +143,8 @@ public:
             @autoreleasepool {
                 NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
                 const pid_t frontPid = front ? front.processIdentifier : 0;
-                if (frontPid > 0 && frontPid != getpid() && frontPid != m_pid) {
+                if (frontPid == getpid()) return; // Don't switch target app or drop focus if Roclint itself is frontmost
+                if (frontPid > 0 && frontPid != m_pid) {
                     this->onAppActivated(frontPid);
                 }
             }
@@ -265,7 +266,12 @@ private:
         @autoreleasepool {
             NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
             const pid_t frontPid = front ? front.processIdentifier : 0;
-            if (frontPid > 0 && frontPid != getpid() && frontPid != m_pid) {
+            if (frontPid == getpid()) {
+                // User is interacting with Roclint (clicking the badge or reviewing the HUD).
+                // Do NOT query m_app for focus or drop the target editor session!
+                return;
+            }
+            if (frontPid > 0 && frontPid != m_pid) {
                 this->onAppActivated(frontPid);
                 return;
             }

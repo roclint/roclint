@@ -65,8 +65,8 @@ void installOutsideClickMonitor(QWindow* window, std::function<void()> onOutside
         g_outsideClickMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown)
             handler:^(NSEvent* event) {
                 (void)event;
-                // Ignore click events during the initial 250ms opening window (avoids capturing the triggering click)
-                if ([NSDate timeIntervalSinceReferenceDate] - installTime < 0.25) {
+                // Ignore click events during the initial 400ms opening window (avoids capturing the triggering click)
+                if ([NSDate timeIntervalSinceReferenceDate] - installTime < 0.40) {
                     return;
                 }
                 if (nsWindow) {
