@@ -448,6 +448,7 @@ public slots:
     void syncDashboardVisibility(bool visible);
 
     // Draft lifecycle. expectedVersion is the stateVersion the caller last observed.
+    Q_INVOKABLE void pauseAmbientFollowing();
     Q_INVOKABLE bool noteDraftEdited(quint64 expectedVersion);
     Q_INVOKABLE bool commitPrompt(const QString& text, quint64 expectedVersion);
     Q_INVOKABLE bool hardBypass(const QString& text, quint64 expectedVersion);

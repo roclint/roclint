@@ -543,7 +543,7 @@ void HostController::toggleCard() {
         showCardInternal(false);
         return;
     }
-    if (isCardVisible() && (isAmbientAttached() || isAmbientActive()) && !m_selectingInsertionTarget) {
+    if (isCardVisible() && isAmbientAttached() && !m_selectingInsertionTarget) {
         hideCard();
         return;
     }
@@ -814,6 +814,13 @@ Status HostController::freezeDraftIfNeeded(const std::string& canonicalText, std
         return Status::success();
     }
     return commitRevision(canonicalText, expectedVersion, storage::RevisionOrigin::DraftFreeze);
+}
+
+void HostController::pauseAmbientFollowing() {
+    m_followAmbientDraft = false;
+    m_widgetDraftEdited = true;
+    if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
+        qInfo() << "[Roclint follow] Ambient following paused by user HUD interaction";
 }
 
 bool HostController::noteDraftEdited(quint64 expectedVersion) {
@@ -3644,11 +3651,11 @@ void HostController::followAmbientDraft() {
     }
     if (!isCardVisible() || !m_ambientObservation || m_pendingDelivery) return;
     const auto observed = *m_ambientObservation;
+    const bool preserveHud = m_widgetDraftEdited || m_selectingInsertionTarget || m_currentProposal.has_value();
     // Chromium can expose the editor after the initial bounded invocation. Bind it without
     // another hotkey; a draft already typed into the HUD remains the user's authoritative text.
     if (!isAmbientCapture() && !m_captureOpenPending && !m_captureRequestedApp.isEmpty() &&
         observed.field.appIdentifier.compare(m_captureRequestedApp, Qt::CaseInsensitive) == 0) {
-        const bool preserveHud = m_widgetDraftEdited || m_selectingInsertionTarget || m_currentProposal.has_value();
         if (!preserveHud && m_revisionState && !noteDraftEdited(stateVersion())) return;
         m_widgetDraftEdited = preserveHud;
         m_captureSource = CaptureSource::Ambient;
@@ -3666,6 +3673,10 @@ void HostController::followAmbientDraft() {
         return;
     }
     if (!isAmbientCapture() || !m_followAmbientDraft || !m_captureTarget) return;
+    if (preserveHud) {
+        m_followAmbientDraft = false;
+        return;
+    }
     const auto& previous = *m_captureTarget;
     // Before a HUD edit or an explicit clarification decision, follow the focused draft.
     // Identity changes invalidate prior analysis/approval even when the words happen to match.
@@ -3720,10 +3731,12 @@ void HostController::onFieldObserved(const ObservedField& field) {
     if (field.kind == FieldKind::GuiEditor && prompt.trimmed().isEmpty()) {
         // An empty composer is still a valid destination for a draft authored in the HUD.
         m_ambientDebounce.stop();
-        if (!m_ambientObservation.has_value() || m_ambientObservation->prompt.trimmed().isEmpty()) {
+        if (!m_ambientObservation.has_value() || m_ambientObservation->prompt.trimmed().isEmpty() ||
+            m_ambientObservation->field.fieldToken == field.fieldToken) {
             setAmbientBadge(false);
             m_ambientObservation = AmbientObservation{field, prompt, core::crypto::Sha256::hexDigest(ss(prompt))};
         } else {
+            // A different destination field (box Y) was focused in the same app session.
             // Keep the non-empty draft prompt from the previous field in this session,
             // but update the target field to this newly focused destination box.
             auto updated = *m_ambientObservation;

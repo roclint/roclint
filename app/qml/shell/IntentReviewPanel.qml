@@ -333,7 +333,11 @@ FocusScope {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: { parent.forceActiveFocus(); rootWindow.confirmAlternative(modelData.id); }
+                                onClicked: {
+                                    parent.forceActiveFocus();
+                                    if (rootWindow.hc) hostController.pauseAmbientFollowing();
+                                    rootWindow.confirmAlternative(modelData.id);
+                                }
                             }
                         }
                     }
@@ -366,6 +370,21 @@ FocusScope {
                             color: rootWindow.fgColor
                             placeholderTextColor: rootWindow.mutedTextColor
                             background: Rectangle { color: rootWindow.inputBgColor; border.color: rootWindow.borderColor; radius: 4 }
+                            onActiveFocusChanged: {
+                                if (activeFocus) {
+                                    if (rootWindow.Window.window) rootWindow.Window.window.requestActivate();
+                                    if (rootWindow.hc) hostController.pauseAmbientFollowing();
+                                }
+                            }
+                            onTextEdited: {
+                                if (rootWindow.hc) hostController.pauseAmbientFollowing();
+                            }
+                            TapHandler {
+                                onTapped: {
+                                    if (rootWindow.Window.window) rootWindow.Window.window.requestActivate();
+                                    if (rootWindow.hc) hostController.pauseAmbientFollowing();
+                                }
+                            }
                             onAccepted: {
                                 if (text.trim().length > 0 && rootWindow.afterDecision(hostController.submitCustomIntent(text, hostController.stateVersion))) {
                                     text = "";

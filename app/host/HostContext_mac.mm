@@ -32,7 +32,6 @@ HostContextObservation captureFrontmostNative() {
 
 void configureNonActivatingPanel(QWindow* window) {
     if (!window) return;
-    window->setFlag(Qt::WindowDoesNotAcceptFocus, true);
     @autoreleasepool {
         NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window->winId());
         NSWindow* nsWindow = [view window];
@@ -50,8 +49,12 @@ void configureNonActivatingPanel(QWindow* window) {
 
 void showNonActivatingWindow(QWindow* window) {
     if (!window) return;
+    // Temporarily suppress Qt's default [NSApp activateIgnoringOtherApps:YES] and
+    // makeKeyAndOrderFront during setVisible(true), then restore keyboard focus acceptance
+    // so user controls (e.g. text inputs in FloatingCard) can receive key events when clicked.
     window->setFlag(Qt::WindowDoesNotAcceptFocus, true);
     window->setVisible(true);
+    window->setFlag(Qt::WindowDoesNotAcceptFocus, false);
     @autoreleasepool {
         NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window->winId());
         NSWindow* nsWindow = [view window];
