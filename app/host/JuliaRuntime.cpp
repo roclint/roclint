@@ -512,10 +512,14 @@ void JuliaRuntime::receive(const QJsonObject& object) {
 
         lastRecommendedOption_.clear();
         lastChoiceConfidence_ = 0.0;
+        lastChoicePolarity_.clear();
         if (result.contains(QStringLiteral("choice_decision"))) {
             const auto cd = result.value(QStringLiteral("choice_decision")).toObject();
             lastRecommendedOption_ = cd.value(QStringLiteral("recommended_option")).toString();
             lastChoiceConfidence_ = cd.value(QStringLiteral("confidence")).toDouble(0.0);
+        }
+        if (result.contains(QStringLiteral("choice_polarity"))) {
+            lastChoicePolarity_ = result.value(QStringLiteral("choice_polarity")).toString();
         }
 
         setState(QStringLiteral("READY"), QStringLiteral("Julia classified the prompt locally. Scores do not confirm user intent."));

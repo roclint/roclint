@@ -11,6 +11,7 @@ import math
 import os
 from pathlib import Path
 import queue
+import re
 import sys
 import threading
 import time
@@ -275,6 +276,42 @@ def entropy_confidence(probabilities):
     return max(0.0, min(1.0, 1.0 - (entropy / max_entropy)))
 
 
+def detect_prohibited_choices(prompt_text, choices):
+    """Detects if prompt has negative prohibitions and flags choices that violate them."""
+    p_lower = prompt_text.lower()
+    patterns = [
+        r"without modifying (.*?)(?:in [a-zA-Z0-9_\.\-]+|\.|$)",
+        r"without changing (.*?)(?:in [a-zA-Z0-9_\.\-]+|\.|$)",
+        r"do not (?:modify|change|alter|touch|break) (.*?)(?:in [a-zA-Z0-9_\.\-]+|\.|$)",
+        r"don't (?:modify|change|alter|touch|break) (.*?)(?:in [a-zA-Z0-9_\.\-]+|\.|$)",
+        r"never (?:modify|change|alter|touch|break) (.*?)(?:in [a-zA-Z0-9_\.\-]+|\.|$)",
+        r"must not (?:modify|change|alter|touch|break) (.*?)(?:in [a-zA-Z0-9_\.\-]+|\.|$)",
+    ]
+    prohibited_snippets = []
+    for pat in patterns:
+        m = re.search(pat, p_lower)
+        if m:
+            prohibited_snippets.append(m.group(1).strip())
+    if not prohibited_snippets:
+        return []
+
+    stop_words = {'any', 'the', 'a', 'an', 'in', 'on', 'of', 'to', 'for', 'and', 'or', 'css', 'file', 'files'}
+    violators = []
+    for idx, choice in enumerate(choices):
+        c_lower = choice.lower()
+        violates = False
+        for snip in prohibited_snippets:
+            words = [w for w in re.split(r'\W+', snip) if len(w) > 2 and w not in stop_words]
+            if ('custom propert' in snip or ':root' in snip) and (':root' in c_lower or 'custom propert' in c_lower or '--' in c_lower):
+                violates = True; break
+            overlap = [w for w in words if w in c_lower]
+            if len(words) > 0 and len(overlap) >= (1 if len(words) <= 2 else len(words) // 2):
+                violates = True; break
+        if violates:
+            violators.append(idx)
+    return violators
+
+
 def triage(engine, request):
     """Classify the prompt before Granite; never generate options or rewritten text."""
     if type(request.get("triage_plan_version")) is not int or request["triage_plan_version"] != TRIAGE_PLAN_VERSION:
@@ -342,13 +379,24 @@ def triage(engine, request):
         if raw_logits_out is not None:
             raw_logits_out.append([float(v) for v in values])
 
+    has_affirmative_action = atomic_scores.get("ACTION", 1.0) < 0.40
+    # Negative-only head measures if the user stated ONLY prohibitions without affirmative instructions.
+    # If the user has a clear affirmative action (ACTION < 0.40), negative statements are bounds, not roadblocks.
+    negative_roadblock = (
+        0.0 if has_affirmative_action else atomic_scores.get("NEGATIVE_ONLY", 0.0)
+    )
+    security_roadblock = (
+        atomic_scores.get("SECURITY_BYPASS", 0.0)
+        if atomic_scores.get("SECURITY_BYPASS", 0.0) >= 0.70
+        else 0.0
+    )
+    effective_conflict = max(atomic_scores["RULE_CONFLICT"], negative_roadblock, security_roadblock)
+
     canonical_scores = [
         {"category": "ACTION", "score": atomic_scores["ACTION"]},
         {"category": "TARGET", "score": atomic_scores["TARGET"]},
         {"category": "RULE", "score": atomic_scores["RULE"]},
-        {"category": "RULE_CONFLICT", "score": max(atomic_scores["RULE_CONFLICT"],
-                                                    atomic_scores.get("NEGATIVE_ONLY", 0.0),
-                                                    atomic_scores.get("SECURITY_BYPASS", 0.0))}
+        {"category": "RULE_CONFLICT", "score": effective_conflict}
     ]
 
     result = {
@@ -361,14 +409,39 @@ def triage(engine, request):
     if has_choice:
         choice_values = logits[-1]
         choice_probs = softmax([v / _TRIAGE_TEMPERATURE for v in choice_values])
-        best_idx = max(range(len(choice_probs)), key=lambda i: choice_probs[i])
-        confidence = entropy_confidence(choice_probs)
+        eff_conflict = max(atomic_scores.get("RULE_CONFLICT", 0.0), negative_roadblock, security_roadblock)
+        violator_indices = detect_prohibited_choices(prompt_text, candidate_choices) if eff_conflict >= 0.70 else []
+
+        labeled_choices = list(candidate_choices)
+        if violator_indices and len(violator_indices) < len(candidate_choices):
+            compliant_indices = [i for i in range(len(candidate_choices)) if i not in violator_indices]
+            for idx in violator_indices:
+                labeled_choices[idx] = f"[Break Constraint] {candidate_choices[idx]}"
+            for idx in compliant_indices:
+                labeled_choices[idx] = f"[Safe Rule-Compliant Override] {candidate_choices[idx]}"
+
+            best_idx = compliant_indices[0]
+            new_probs = [0.0] * len(choice_probs)
+            compliant_share = 0.85
+            violator_share = 0.15
+            for idx in compliant_indices:
+                new_probs[idx] = compliant_share / len(compliant_indices)
+            for idx in violator_indices:
+                new_probs[idx] = violator_share / len(violator_indices)
+            choice_probs = new_probs
+            confidence = entropy_confidence(choice_probs)
+            result["choice_polarity"] = "RULE_CONFLICT_ADJUSTED"
+        else:
+            best_idx = max(range(len(choice_probs)), key=lambda i: choice_probs[i])
+            confidence = entropy_confidence(choice_probs)
+
         result["choice_decision"] = {
-            "recommended_option": candidate_choices[best_idx],
+            "recommended_option": labeled_choices[best_idx],
             "recommended_index": best_idx,
             "probability": choice_probs[best_idx],
             "confidence": confidence,
-            "distribution": choice_probs
+            "distribution": choice_probs,
+            "labeled_choices": labeled_choices
         }
 
     if hasattr(engine, "roclint_runtime"):

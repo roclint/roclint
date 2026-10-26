@@ -73,6 +73,7 @@ public:
 
     [[nodiscard]] QString lastRecommendedOption() const { return lastRecommendedOption_; }
     [[nodiscard]] double lastChoiceConfidence() const { return lastChoiceConfidence_; }
+    [[nodiscard]] QString lastChoicePolarity() const { return lastChoicePolarity_; }
 
 signals:
     void stateChanged();
@@ -133,6 +134,7 @@ private:
     QString detail_{QStringLiteral("Julia is not loaded. Download it or choose its local model folder.")};
     QString lastRecommendedOption_;
     double lastChoiceConfidence_{0.0};
+    QString lastChoicePolarity_;
 };
 
 } // namespace roclint::host

@@ -1603,6 +1603,21 @@ void HostController::refreshActiveItemPresentation() {
                               [&](const auto& lhs, const auto& rhs) { return position(lhs) < position(rhs); });
                 }
             }
+            if (!m_recommendedOption.isEmpty()) {
+                std::stable_sort(m_activeAlternatives.begin(), m_activeAlternatives.end(),
+                                [&](const auto& lhs, const auto& rhs) {
+                    const auto mapL = lhs.toMap();
+                    const auto mapR = rhs.toMap();
+                    const QString labelL = mapL.value(QStringLiteral("label")).toString();
+                    const QString labelR = mapR.value(QStringLiteral("label")).toString();
+                    const bool matchL = labelL.contains(QStringLiteral("Safe Rule-Compliant"), Qt::CaseInsensitive) ||
+                                        (!m_recommendedOption.isEmpty() && (m_recommendedOption.contains(labelL, Qt::CaseInsensitive) || labelL.contains(m_recommendedOption, Qt::CaseInsensitive)));
+                    const bool matchR = labelR.contains(QStringLiteral("Safe Rule-Compliant"), Qt::CaseInsensitive) ||
+                                        (!m_recommendedOption.isEmpty() && (m_recommendedOption.contains(labelR, Qt::CaseInsensitive) || labelR.contains(m_recommendedOption, Qt::CaseInsensitive)));
+                    if (matchL != matchR) return matchL > matchR;
+                    return false;
+                });
+            }
             return;
         }
         case intent::ActiveItemKind::Assumption:

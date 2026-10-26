@@ -150,7 +150,41 @@ void HostController::onPromptClassified(quint64 id, const an::PromptTriage* tria
         m_recommendedConfidence = recConf;
         emit recommendedOptionChanged();
     }
-    if (route.value() == an::PromptTriageRoute::Original) {
+
+    auto effectiveRoute = route.value();
+    if (effectiveRoute == an::PromptTriageRoute::Clarify) {
+        const double actionScore = triage->categoryScores[0];
+        const double targetScore = triage->categoryScores[1];
+        const double ruleScore   = triage->categoryScores[2];
+        const double conflictScore = triage->categoryScores[3];
+
+        // If Action and Target are clear (<= 0.50) and Rule is bounded (<= 0.70),
+        // but conflictScore is elevated: check if this is an affirmative prompt with strict negative guardrails
+        // rather than an actual unresolvable conflict.
+        if (targetScore < 0.50 && actionScore < 0.50 && ruleScore < 0.70 && conflictScore >= 0.60) {
+            const QString text = qs(m_revisionState->currentRevision().text()).toLower();
+            const bool hasStrictGuardrail = text.contains(QStringLiteral("do not ")) ||
+                                            text.contains(QStringLiteral("don't ")) ||
+                                            text.contains(QStringLiteral("must not ")) ||
+                                            text.contains(QStringLiteral("keep the ")) ||
+                                            text.contains(QStringLiteral("preserve "));
+            const bool hasAffirmativeGoal = text.contains(QStringLiteral("implement ")) ||
+                                            text.contains(QStringLiteral("refactor ")) ||
+                                            text.contains(QStringLiteral("decouple ")) ||
+                                            text.contains(QStringLiteral("add ")) ||
+                                            text.contains(QStringLiteral("create ")) ||
+                                            text.contains(QStringLiteral("update ")) ||
+                                            text.contains(QStringLiteral("goal:")) ||
+                                            text.contains(QStringLiteral("desired behavior:"));
+            if (hasStrictGuardrail && hasAffirmativeGoal) {
+                if (m_recommendedOption.isEmpty() && m_activeAlternatives.isEmpty()) {
+                    effectiveRoute = an::PromptTriageRoute::Original;
+                }
+            }
+        }
+    }
+
+    if (effectiveRoute == an::PromptTriageRoute::Original) {
         ticket.analysisGroup->terminal = true;
         an::NormalizedAnalysis empty;
         empty.sessionId = ticket.sessionId; empty.baseRevisionId = ticket.revisionId;
@@ -158,7 +192,7 @@ void HostController::onPromptClassified(quint64 id, const an::PromptTriage* tria
         if (applyAnalysis(std::move(empty), {}, {}, std::nullopt, *triage))
             setAnalysisStatus(AnalysisStatus::Ready, QStringLiteral("Prompt is clear (S1 score %1) — original wording retained (Granite skipped to save battery/latency).")
                 .arg(triage->ambiguityScore, 0, 'f', 3));
-    } else if (route.value() == an::PromptTriageRoute::UncertainBuffer) {
+    } else if (effectiveRoute == an::PromptTriageRoute::UncertainBuffer) {
         ticket.analysisGroup->terminal = true;
         an::NormalizedAnalysis empty;
         empty.sessionId = ticket.sessionId; empty.baseRevisionId = ticket.revisionId;

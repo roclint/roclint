@@ -774,6 +774,44 @@ void testSubmitClarificationDeferral() {
     std::cout << "  [PASS] Free-text clarification deferrals auto-select or fall back cleanly.\n";
 }
 
+void testChoicePolarityUnderRuleConflict() {
+    ScriptedRuntime runtime;
+    HostController c(QStringLiteral(":memory:"));
+    c.setLegacyDiscoveryForTesting(true);
+    connectRuntime(c, runtime);
+    ROCLINT_CHECK(c.analyzePrompt(kPrompt, c.stateVersion()));
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(c.interventionVerdict() == "CLARIFY");
+    ROCLINT_CHECK(c.activeItemId() == "grp_0");
+    ROCLINT_CHECK(c.activeAlternatives().size() == 2);
+
+    // Set recommended option to the safe rule-compliant override
+    c.setRecommendedOptionForTesting(QStringLiteral("[Safe Rule-Compliant Override] Lower latency per call"), 0.85);
+
+    // Verify submitClarification auto-selects the safe override
+    ROCLINT_CHECK(c.submitClarification(QStringLiteral("idk"), c.stateVersion()));
+    ROCLINT_CHECK(c.interventionVerdict() == "QUIET");
+    ROCLINT_CHECK(c.hasConfirmedIntent());
+    ROCLINT_CHECK(c.confirmedIntentForTesting().has_value());
+    const auto& intent = c.confirmedIntentForTesting().value();
+    const auto decision = intent.getDecision("grp_0");
+    ROCLINT_CHECK(decision.has_value());
+    ROCLINT_CHECK(decision->kind == intent::IntentResolutionKind::SelectedAlternative);
+    ROCLINT_CHECK(decision->chosenAlternativeId == "alt_0_0");
+    std::cout << "  [PASS] Choice polarity prioritizes and auto-selects safe rule-compliant options.\n";
+}
+
+void testStrictNegativeGuardrailsPassThrough() {
+    HostController c(QStringLiteral(":memory:"));
+    c.setLegacyDiscoveryForTesting(true);
+
+    const QString prompt = QStringLiteral("Implement private in-flight promise deduplicator. Do not alter the public interface in apiClient.ts.");
+    ROCLINT_CHECK(c.commitPrompt(prompt, 0));
+    ROCLINT_CHECK(c.currentRevisionText() == prompt);
+    ROCLINT_CHECK(c.stateVersion() == 1);
+    std::cout << "  [PASS] Strict negative guardrails on affirmative tasks pass through cleanly.\n";
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -798,6 +836,8 @@ int main(int argc, char* argv[]) {
     testDelayedCommandsCannotMutateTheNewState();
     testAnalysisGroupDeadlineAndExplicitRetry();
     testSubmitClarificationDeferral();
+    testChoicePolarityUnderRuleConflict();
+    testStrictNegativeGuardrailsPassThrough();
     std::cout << "[Test Host Controller] All tests PASSED.\n";
     return 0;
 }
