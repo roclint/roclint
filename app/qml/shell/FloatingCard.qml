@@ -6,14 +6,14 @@ Window {
     id: rootWindow
     title: qsTr("ROCLINT // RETROFUTURIST POSTER HUD")
     property bool isDetailedExpanded: false
-    readonly property bool isAmbientMode: hc && hostController.isAmbientAttached
+    readonly property bool isAmbientMode: hc && (hostController.isAmbientAttached || hostController.isAmbientActive)
 
     width: !isAmbientMode ? 820 : (isDetailedExpanded ? 820 : 620)
     height: !isAmbientMode ? 520 : (isDetailedExpanded ? 520 : 250)
     minimumWidth: !isAmbientMode ? 520 : (isDetailedExpanded ? 520 : 420)
     minimumHeight: !isAmbientMode ? 360 : (isDetailedExpanded ? 360 : 200)
     visible: false
-    flags: Qt.FramelessWindowHint | ((pinToTop || isAmbientMode) ? Qt.WindowStaysOnTopHint : 0) | (isAmbientMode ? (Qt.WindowDoesNotAcceptFocus | Qt.Tool) : 0)
+    flags: Qt.Tool | Qt.FramelessWindowHint | ((pinToTop || isAmbientMode) ? Qt.WindowStaysOnTopHint : 0) | (isAmbientMode ? Qt.WindowDoesNotAcceptFocus : 0)
     color: "transparent"
 
     function toggleDetailedExpanded() {

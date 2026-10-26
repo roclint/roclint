@@ -51,6 +51,7 @@ void configureNonActivatingPanel(QWindow* window) {
 void showNonActivatingWindow(QWindow* window) {
     if (!window) return;
     window->setFlag(Qt::WindowDoesNotAcceptFocus, true);
+    window->setVisible(true);
     @autoreleasepool {
         NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window->winId());
         NSWindow* nsWindow = [view window];
@@ -64,7 +65,6 @@ void showNonActivatingWindow(QWindow* window) {
             [nsWindow setLevel:NSFloatingWindowLevel];
             [nsWindow orderFrontRegardless];
         }
-        window->setVisible(true);
     }
 }
 

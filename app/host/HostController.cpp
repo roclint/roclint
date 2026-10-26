@@ -497,6 +497,10 @@ void HostController::showCardInternal(bool captureClipboard) {
         const auto& f = m_captureTarget->field;
         const QRect targetRect = !f.fieldRect.isNull() ? f.fieldRect : f.caretRect;
         placement = ScreenPlacement::determineAnchorPosition(targetRect, 620, 250);
+    } else if (isAmbientActive() && m_ambientObservation.has_value()) {
+        const auto& f = m_ambientObservation->field;
+        const QRect targetRect = !f.fieldRect.isNull() ? f.fieldRect : f.caretRect;
+        placement = ScreenPlacement::determineAnchorPosition(targetRect, 620, 250);
     } else {
         placement = ScreenPlacement::determineTargetPosition(820, 520);
     }
@@ -522,6 +526,12 @@ QPoint HostController::calculateAmbientAnchor(int width, int height) {
         const auto p = ScreenPlacement::determineAnchorPosition(targetRect, width, height);
         return QPoint(p.x, p.y);
     }
+    if (isAmbientActive() && m_ambientObservation.has_value()) {
+        const auto& f = m_ambientObservation->field;
+        const QRect targetRect = !f.fieldRect.isNull() ? f.fieldRect : f.caretRect;
+        const auto p = ScreenPlacement::determineAnchorPosition(targetRect, width, height);
+        return QPoint(p.x, p.y);
+    }
     const auto p = ScreenPlacement::determineTargetPosition(width, height);
     return QPoint(p.x, p.y);
 }
@@ -533,7 +543,7 @@ void HostController::toggleCard() {
         showCardInternal(false);
         return;
     }
-    if (isCardVisible() && isAmbientAttached() && !m_selectingInsertionTarget) {
+    if (isCardVisible() && (isAmbientAttached() || isAmbientActive()) && !m_selectingInsertionTarget) {
         hideCard();
         return;
     }
