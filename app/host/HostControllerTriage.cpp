@@ -131,13 +131,16 @@ AsyncTask<void> HostController::continuePromptTriageLoad() {
 }
 
 void HostController::onPromptClassified(quint64 id, const an::PromptTriage* triage, const QString& error) {
-    onPromptClassifiedAsync(id, triage ? std::optional(*triage) : std::nullopt, error);
-}
-AsyncTask<void> HostController::onPromptClassifiedAsync(quint64 id, std::optional<an::PromptTriage> triage, QString error) {
     auto found = m_pendingPromptTriage.find(id);
-    if (found == m_pendingPromptTriage.end()) co_return;
+    if (found == m_pendingPromptTriage.end()) return;
     auto ticket = std::move(found.value());
     m_pendingPromptTriage.erase(found); --m_inFlight;
+    queueModelCompletion("finishPromptTriage", [this, ticket = std::move(ticket),
+        triage = triage ? std::optional(*triage) : std::nullopt, error]() mutable {
+        return onPromptClassifiedAsync(std::move(ticket), std::move(triage), error);
+    });
+}
+AsyncTask<void> HostController::onPromptClassifiedAsync(PipelineTicket ticket, std::optional<an::PromptTriage> triage, QString error) {
     if (!isTicketCurrent(ticket, false)) {
         ticket.analysisGroup->terminal = true;
         completeAttempt(ticket, storage::AttemptStatus::DiscardedStale, "Prompt changed before S1 classification completed");

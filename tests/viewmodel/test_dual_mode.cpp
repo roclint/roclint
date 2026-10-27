@@ -672,11 +672,26 @@ void testPlatformBridgeStartsAndStopsWithoutObserving() {
 #endif
 }
 
+void testStaleBypassRetainsTypedErrorWithoutDelivery() {
+    Harness h;
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().commitPrompt(kPrompt,0)));
+    const auto oldVersion=h.c().stateVersion();
+    const auto newer=kPrompt+" Preserve behavior.";
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().commitPrompt(newer,oldVersion)));
+    const auto version=h.c().stateVersion();
+    setClipboard("Leave clipboard unchanged");
+    ROCLINT_CHECK(!h.c().waitForCommandForTesting(h.c().hardBypass("An older draft",oldVersion)));
+    ROCLINT_CHECK(h.c().lastErrorCode()=="STALE_VERSION" && h.c().isStorageAvailable());
+    ROCLINT_CHECK(h.c().stateVersion()==version && h.c().currentRevisionText()==newer);
+    ROCLINT_CHECK(h.bridge->injections.empty() && clipboardText()=="Leave clipboard unchanged");
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
+    testStaleBypassRetainsTypedErrorWithoutDelivery();
     std::cout << "[Test Dual Mode] Starting...\n";
     testAmbientRouteWhenPermissionGranted();
     testWidgetFallbackWhenPermissionDenied();

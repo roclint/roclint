@@ -832,8 +832,8 @@ AsyncTask<core::Status> HostController::commitPromptOperation(QString text, quin
 }
 
 AsyncTask<core::Status> HostController::hardBypassOperation(QString text, quint64 expectedVersion) {
-    if (!(co_await commitPromptOperation(text, expectedVersion))) {
-        co_return Status(makeError(ErrorCode::PreconditionFailed, "The preceding action could not finish"));
+    if (auto status = co_await commitPromptOperation(text, expectedVersion); !status.ok()) {
+        co_return status;
     }
 
         // The raw text goes out as typed: any analysis or rewrite in flight is dropped unused.
@@ -1270,7 +1270,13 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
     co_return Status::success();
 }
 
-AsyncTask<void> HostController::onDiscoveryFinished(PipelineTicket ticket,
+void HostController::onDiscoveryFinished(PipelineTicket ticket, core::Result<bridge::GraniteOptionDiscoveryResponse> result) {
+    queueModelCompletion("finishDiscovery", [this, ticket = std::move(ticket), result = std::move(result)]() mutable {
+        return onDiscoveryFinishedAsync(std::move(ticket), std::move(result));
+    });
+}
+
+AsyncTask<void> HostController::onDiscoveryFinishedAsync(PipelineTicket ticket,
                                          core::Result<bridge::GraniteOptionDiscoveryResponse> result) {
     if (m_healthRecheckRequested && !m_healthCheckInFlight) refreshAvailableModels();
     emit modelEngineStatusChanged();
@@ -1428,14 +1434,17 @@ void HostController::expireAnalysisGroup(const PipelineTicket& ticket) {
 }
 
 void HostController::onJuliaFinished(quint64 requestId, const bridge::SnapshotEvaluationResponse* response, const QString& error) {
-    onJuliaFinishedAsync(requestId, response ? std::optional(*response) : std::nullopt, error);
-}
-AsyncTask<void> HostController::onJuliaFinishedAsync(quint64 requestId, std::optional<bridge::SnapshotEvaluationResponse> response, QString error) {
     const auto it = m_pendingJulia.find(requestId);
-    if (it == m_pendingJulia.end()) co_return;
+    if (it == m_pendingJulia.end()) return;
     auto pending = std::move(it.value());
     m_pendingJulia.erase(it);
     --m_inFlight;
+    queueModelCompletion("finishJulia", [this, pending = std::move(pending),
+        response = response ? std::optional(*response) : std::nullopt, error]() mutable {
+        return onJuliaFinishedAsync(std::move(pending), std::move(response), error);
+    });
+}
+AsyncTask<void> HostController::onJuliaFinishedAsync(PendingJuliaScore pending, std::optional<bridge::SnapshotEvaluationResponse> response, QString error) {
     if (pending.ticket.analysisGroup) {
         pending.ticket.analysisGroup->terminal = true;
         if (pending.ticket.analysisGroup->deadline.hasExpired()) response = std::nullopt;
@@ -2209,7 +2218,13 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
 
 }
 
-AsyncTask<void> HostController::onRewriteFinished(PipelineTicket ticket,
+void HostController::onRewriteFinished(PipelineTicket ticket, core::Result<rewrite::RewriteProposal> result) {
+    queueModelCompletion("finishRewrite", [this, ticket = std::move(ticket), result = std::move(result)]() mutable {
+        return onRewriteFinishedAsync(std::move(ticket), std::move(result));
+    });
+}
+
+AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
                                        core::Result<rewrite::RewriteProposal> result) {
     if (m_healthRecheckRequested && !m_healthCheckInFlight) refreshAvailableModels();
     emit modelEngineStatusChanged();
@@ -3091,11 +3106,17 @@ AsyncTask<void> HostController::onNativeRuntimeChanged() {
         }
         if (m_pendingNativeRewrite && m_graniteAdapter->state() == bridge::GraniteRuntimeState::Ready) {
             const auto pending = std::exchange(m_pendingNativeRewrite, std::nullopt);
-            setProposalStatus(ProposalUiStatus::None, {});
-            if (pending->stateVersion == stateVersion() && m_confirmedIntent && pending->intentId == m_confirmedIntent->id &&
-                pending->profileId == m_rewriteProfile && pending->configurationGeneration == m_configurationGeneration) {
-                if (!(co_await synthesizeRewriteOperation(pending->stateVersion))) setProposalStatus(ProposalUiStatus::Failed, lastError());
-            }
+            queueModelCompletion("resumeNativeRewrite", [this, pending]() -> AsyncTask<void> {
+                // Loading can finish while another command is persisting. Revalidate the
+                // captured request after taking its turn, before advancing proposal state.
+                if (pending->stateVersion == stateVersion() && m_confirmedIntent && pending->intentId == m_confirmedIntent->id &&
+                    pending->profileId == m_rewriteProfile && pending->configurationGeneration == m_configurationGeneration) {
+                    setProposalStatus(ProposalUiStatus::None, {});
+                    if (auto status = co_await synthesizeRewriteOperation(pending->stateVersion); !status.ok())
+                        setProposalStatus(ProposalUiStatus::Failed, plainError(status.error()));
+                }
+                co_return;
+            });
         }
         if (m_ambientCheckPending) m_ambientDebounce.start();
     } else if (state == QLatin1String("LOADING")) {
@@ -4269,15 +4290,29 @@ void HostController::failStorage(const core::Error& error) {
     finishQuitWhenRuntimesStopped();
 }
 
-quint64 HostController::enqueueStorageCommand(const char* name, std::function<AsyncTask<Status>()> operation) {
+quint64 HostController::enqueueStorageCommand(const char* name, std::function<AsyncTask<Status>()> operation, bool modelCompletion) {
     if ((!isStorageAvailable() && std::string_view(name) != "retryStorage") || m_hostState == HostState::Quitting || m_storageCommands.size() + static_cast<size_t>(m_commandRunning) >= 128 ||
         m_nextStorageRequest == core::RevisionState::kMaxStateVersion) {
         setLastError(QStringLiteral("History is unavailable or busy. Your draft is preserved; retry explicitly.")); return 0;
     }
     const auto id = ++m_nextStorageRequest;
-    m_storageCommands.push_back(std::make_shared<StorageCommand>(StorageCommand{id, m_liveEditSerial, QLatin1String(name), std::move(operation)}));
+    m_storageCommands.push_back(std::make_shared<StorageCommand>(StorageCommand{id, m_liveEditSerial, QLatin1String(name), std::move(operation), modelCompletion}));
     emit storageBusyChanged(); QTimer::singleShot(0, this, [this]() { pumpStorageCommands(); }); return id;
 }
+void HostController::queueModelCompletion(const char* name, std::function<AsyncTask<void>()> completion) {
+    // SQL is serialized by StorageService; publishing its corresponding controller version
+    // must also finish before a user command or another model continuation starts a write.
+    const auto accepted = enqueueStorageCommand(name, [completion = std::move(completion)]() -> AsyncTask<Status> {
+        co_await completion();
+        co_return Status::success();
+    }, true);
+    if (!accepted && m_hostState != HostState::Quitting) {
+        invalidateDownstreamPipeline();
+        setAnalysisStatus(AnalysisStatus::Failed,
+            QStringLiteral("Roclint couldn't save this result. Your draft is preserved; retry explicitly."));
+    }
+}
+
 void HostController::pumpStorageCommands() {
     if (m_commandRunning || m_storageCommands.empty()) return;
     auto command = m_storageCommands.front(); m_storageCommands.pop_front(); m_commandRunning = true;
@@ -4288,13 +4323,16 @@ AsyncTask<void> HostController::runStorageCommand(std::shared_ptr<StorageCommand
     try {
         const bool recovery = command->name == QLatin1String("retryStorage");
         if (!recovery) status = co_await flushDraftEdits();
-        if (status.ok() && command->editSerial != m_liveEditSerial)
+        if (status.ok() && !command->modelCompletion && command->editSerial != m_liveEditSerial)
             status = makeError(ErrorCode::StaleVersion, "The draft changed while this action was queued. Your current text is preserved.");
         if (status.ok() && (!m_storageFault || recovery) && m_hostState != HostState::Quitting) status = co_await command->operation();
         else if (status.ok()) status = storageUnavailable();
     } catch (const StorageCancelled&) { co_return; }
     catch (...) { status = makeError(ErrorCode::Internal, "The action couldn't finish. Your draft is preserved; retry explicitly."); }
-    finishStorageCommand(command->id, command->name, status);
+    // Internal model continuations validate their own immutable pipeline tickets. They must
+    // not clear a user's command error or publish a completion for an unrequested UI command.
+    if (!command->modelCompletion) finishStorageCommand(command->id, command->name, status);
+    else if (!status.ok() && status.error().code != ErrorCode::StaleVersion) setLastError(status.error());
     m_commandRunning = false; emit storageBusyChanged();
     QTimer::singleShot(0, this, [this]() { pumpStorageCommands(); finishQuitWhenRuntimesStopped(); });
 }

@@ -8,6 +8,7 @@
 #include <QThread>
 #include <QTimer>
 #include <iostream>
+#include <atomic>
 using roclint::host::HostController;
 using namespace roclint::core;
 namespace {
@@ -135,6 +136,67 @@ void testBusyFailureAndExplicitRecovery() {
     ROCLINT_CHECK(controller.waitForCommandForTesting(recovery));
     ROCLINT_CHECK(controller.stateVersion() > beforeRecovery && controller.capturedDraftText() == newer && controller.isDraftDirty());
 }
+void testModelPublicationSerializesWithUserCommand() {
+    QTemporaryDir directory; const auto path = directory.path() + "/history.db";
+    HostController controller(path); ready(controller);
+    std::atomic<bool> started{false}, release{false};
+    controller.setTransportOverrideForTesting([&](std::string_view) -> Result<std::string> {
+        started = true;
+        while (!release) QThread::msleep(1);
+        return std::string(R"({"status":"no_ambiguity","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""})");
+    });
+    ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(prompt,0)));
+    until([&]() { return started.load(); });
+    const auto capturedVersion = controller.stateVersion();
+    roclint::storage::Database blocker(std::filesystem::path(path.toStdString()));
+    ROCLINT_CHECK(blocker.execute("BEGIN IMMEDIATE").ok());
+    int ticks=0; QTimer heartbeat; heartbeat.start(2);
+    QObject::connect(&heartbeat,&QTimer::timeout,[&]() { ++ticks; });
+    release = true;
+    // Hold the model-result write in SQLite, then queue a gesture carrying the old version.
+    until([&]() { return controller.storageBusy(); });
+    const auto edit = controller.commitPrompt(prompt+" Preserve behavior.",capturedVersion);
+    ROCLINT_CHECK(edit);
+    QTimer::singleShot(150,[&]() { ROCLINT_CHECK(blocker.execute("ROLLBACK").ok()); });
+    ROCLINT_CHECK(!controller.waitForCommandForTesting(edit));
+    ROCLINT_CHECK(controller.lastErrorCode()=="STALE_VERSION");
+    ROCLINT_CHECK(controller.isStorageAvailable() && !controller.storageNeedsRecovery() && ticks>10);
+    ROCLINT_CHECK(controller.currentRevisionText()==prompt && controller.waitForIdleForTesting(5000));
+    // User explicitly retries with the published version; no command is replayed automatically.
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.commitPrompt(
+        prompt+" Preserve behavior.",controller.stateVersion())));
+    const auto stored=controller.repositoryForTesting()->getSession(
+        SessionId(controller.currentSessionIdString().toStdString())).waitForTesting();
+    ROCLINT_CHECK(stored.ok() && stored.value().stateVersion==controller.stateVersion());
+}
+
+void testModelCompletionWithFullCommandQueueDoesNotHang() {
+    HostController controller(":memory:"); ready(controller);
+    std::atomic<bool> started{false}, release{false}, returned{false};
+    controller.setTransportOverrideForTesting([&](std::string_view) -> Result<std::string> {
+        started = true; while (!release) QThread::msleep(1);
+        returned = true;
+        return std::string(R"({"status":"no_ambiguity"})");
+    });
+    ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(prompt,0)));
+    until([&]() { return started.load(); });
+    const auto version=controller.stateVersion();
+    std::vector<quint64> queued;
+    for (int i=0;i<128;++i) {
+        const auto id=controller.commitPrompt(prompt,version); ROCLINT_CHECK(id); queued.push_back(id);
+    }
+    release=true;
+    // Let the worker finish before pumping UI events; the bounded completion queue is full.
+    QElapsedTimer workerWait; workerWait.start();
+    while (!returned && workerWait.elapsed()<2000) QThread::msleep(1);
+    ROCLINT_CHECK(returned);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(5000));
+    for (const auto id:queued) ROCLINT_CHECK(controller.waitForCommandForTesting(id));
+    ROCLINT_CHECK(controller.isStorageAvailable() && !controller.hasProposal() && !controller.hasApproval());
+}
+
 void testQueuedCommandCannotReplaceNewerDraft() {
     HostController controller(":memory:"); ready(controller);
     const auto request = controller.commitPrompt("Earlier text", 0); ROCLINT_CHECK(request);
@@ -163,6 +225,7 @@ int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
     testContentionAndDraftBarrier(); testPendingApprovalCannotDeliverAfterEdit();
     testReentrantEditAtApprovalPublication(); testQueueBoundsAndCachedHistory(); testBusyFailureAndExplicitRecovery();
+    testModelPublicationSerializesWithUserCommand(); testModelCompletionWithFullCommandQueueDoesNotHang();
     testQueuedCommandCannotReplaceNewerDraft(); testShutdownDuringContention();
     std::cout << "Async persistence contention, ordering, recovery and shutdown passed.\n";
 }

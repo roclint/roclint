@@ -721,12 +721,14 @@ private:
     AsyncTask<core::Status> startPromptTriage();
     AsyncTask<void> continuePromptTriageLoad();
     void onPromptClassified(quint64 requestId, const core::analysis::PromptTriage* triage, const QString& error);
-    AsyncTask<void> onPromptClassifiedAsync(quint64 requestId, std::optional<core::analysis::PromptTriage> triage, QString error);
+    AsyncTask<void> onPromptClassifiedAsync(PipelineTicket ticket, std::optional<core::analysis::PromptTriage> triage, QString error);
     [[nodiscard]] bool promptTriageRoutingEnabled() const noexcept;
     [[nodiscard]] bool usesTransportOverride() const noexcept;
-    AsyncTask<void> onDiscoveryFinished(PipelineTicket ticket,
+    void onDiscoveryFinished(PipelineTicket ticket, core::Result<bridge::GraniteOptionDiscoveryResponse> result);
+    AsyncTask<void> onDiscoveryFinishedAsync(PipelineTicket ticket,
                              core::Result<bridge::GraniteOptionDiscoveryResponse> result);
-    AsyncTask<void> onRewriteFinished(PipelineTicket ticket,
+    void onRewriteFinished(PipelineTicket ticket, core::Result<core::rewrite::RewriteProposal> result);
+    AsyncTask<void> onRewriteFinishedAsync(PipelineTicket ticket,
                            core::Result<core::rewrite::RewriteProposal> result);
     AsyncTask<void> onHealthFinished(HealthResult result);
     AsyncTask<void> rebuildFromRestore(storage::RestoredSession restored);
@@ -736,7 +738,7 @@ private:
                        std::optional<bridge::SnapshotEvaluationResponse> evaluation = std::nullopt,
                        std::optional<core::analysis::PromptTriage> triage = std::nullopt);
     void onJuliaFinished(quint64 requestId, const bridge::SnapshotEvaluationResponse* response, const QString& error);
-    AsyncTask<void> onJuliaFinishedAsync(quint64 requestId, std::optional<bridge::SnapshotEvaluationResponse> response, QString error);
+    AsyncTask<void> onJuliaFinishedAsync(PendingJuliaScore pending, std::optional<bridge::SnapshotEvaluationResponse> response, QString error);
     void armAnalysisDeadline(const PipelineTicket& ticket);
     void expireAnalysisGroup(const PipelineTicket& ticket);
     void invalidateScorerConfiguration();
@@ -800,9 +802,11 @@ private:
     HostContextObservation m_hostContext;
     QString m_capturedDraftText;
 
-    struct StorageCommand { quint64 id; quint64 editSerial; QString name; std::function<AsyncTask<core::Status>()> operation; };
+    struct StorageCommand { quint64 id; quint64 editSerial; QString name; std::function<AsyncTask<core::Status>()> operation; bool modelCompletion{false}; };
     struct DraftBatch { core::RevisionState next; quint64 expectedVersion; std::vector<std::pair<quint64, quint64>> requests; };
-    quint64 enqueueStorageCommand(const char* name, std::function<AsyncTask<core::Status>()> operation);
+    quint64 enqueueStorageCommand(const char* name, std::function<AsyncTask<core::Status>()> operation,
+        bool modelCompletion = false);
+    void queueModelCompletion(const char* name, std::function<AsyncTask<void>()> completion);
     void pumpStorageCommands();
     AsyncTask<void> runStorageCommand(std::shared_ptr<StorageCommand> command);
     AsyncTask<core::Status> flushDraftEdits();
