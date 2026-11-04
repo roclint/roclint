@@ -16,6 +16,7 @@
 #include <QThread>
 
 #include <iostream>
+#include <atomic>
 #include <cstdlib>
 #include <QTimer>
 #ifdef Q_OS_WIN
@@ -102,7 +103,8 @@ int protocolWorker(const QString& rawMode) {
         }
         auto response = envelope;
         response.remove(QStringLiteral("payload"));
-        response.insert(QStringLiteral("type"), operation == QLatin1String("hello") ? QStringLiteral("hello_ack") : QStringLiteral("result"));
+        response.insert(QStringLiteral("type"), operation == QLatin1String("hello") ? QStringLiteral("hello_ack") :
+            operation == QLatin1String("runtime_status") ? QStringLiteral("runtime_status") : QStringLiteral("result"));
         response.insert(QStringLiteral("ok"), true);
         response.insert(QStringLiteral("result"), result);
         response.insert(QStringLiteral("latency_ms"), 1.0);
@@ -231,7 +233,8 @@ void testJuliaProtocol() {
     bool delayDone = false;
     QTimer::singleShot(250, [&]() { delayDone = true; });
     waitUntil([&]() { return delayDone; });
-    ROCLINT_CHECK(completed == before && runtime.isReady());
+    waitUntil([&]() { return runtime.isReady(); });
+    ROCLINT_CHECK(completed == before);
     ROCLINT_CHECK(runtime.evaluate(analysis, "prompt", context) != 0);
     waitUntil([&]() { return completed == before + 1; });
 
@@ -253,7 +256,7 @@ void testJuliaProtocol() {
     QElapsedTimer shutdownTimer;
     shutdownTimer.start();
     runtime.stop();
-    ROCLINT_CHECK(runtime.state() == QLatin1String("STOPPING"));
+    waitUntil([&]() { return runtime.state() == QLatin1String("STOPPING"); });
     waitUntil([&]() { return !runtime.isRunning(); });
     ROCLINT_CHECK(shutdownTimer.elapsed() >= 1800 && shutdownTimer.elapsed() < 4000);
 #ifdef Q_OS_WIN
@@ -373,7 +376,9 @@ void testJuliaControllerLifecycle() {
         bool quit = false;
         QObject::connect(&controller, &HostController::quitRequested, [&]() { quit = true; });
         controller.requestQuit();
-        ROCLINT_CHECK(!quit && controller.juliaState() == QLatin1String("STOPPING"));
+        ROCLINT_CHECK(!quit);
+        waitUntil([&]() { return controller.juliaState() == QLatin1String("STOPPING"); });
+        ROCLINT_CHECK(!quit);
         waitUntil([&]() { return quit; });
         ROCLINT_CHECK(controller.juliaState() == QLatin1String("NOT_LOADED"));
     }
@@ -440,6 +445,102 @@ void testSharedDiscoveryJuliaDeadline() {
     settings.remove(QStringLiteral("scoring/juliaDirectory"));
 }
 
+void testExplicitSelectiveReview() {
+    namespace an = roclint::core::analysis;
+    QSettings settings;
+    settings.setValue("scoring/juliaPython", QCoreApplication::applicationFilePath());
+    settings.setValue("scoring/engine", "julia");
+    settings.setValue("scoring/juliaDirectory", "clear");
+    QTemporaryDir history;
+    const QString database = history.filePath("selective.db");
+    struct Case { const char* prompt; const char* reply; const char* outcome; };
+    const Case cases[] = {
+        {"Change the button to blue.", R"({"status":"no_ambiguity","assistance_kind":"none"})", "READY"},
+        {"Make my website cool.", R"({"status":"options_generated","assistance_kind":"creative","choice_groups":[{"dimension":"visual_direction","question":"Explore a direction?","material":true,"alternatives":[{"label":"Bold and playful","why_material":"Emphasis","evidence":["cool"]},{"label":"Calm and minimal","why_material":"Emphasis","evidence":["cool"]}]}]})", "OPTIONAL_HELP"},
+        {"The submit button doesn't work.", R"({"status":"options_generated","assistance_kind":"clarification","choice_groups":[{"dimension":"symptom","question":"What happens when you click Submit?","material":true,"alternatives":[{"label":"Nothing happens","why_material":"Observed symptom","evidence":["doesn't work"]},{"label":"An error appears","why_material":"Observed symptom","evidence":["doesn't work"]},{"label":"The wrong result appears","why_material":"Observed symptom","evidence":["doesn't work"]}]}]})", "QUESTION"},
+        {"Add a search bar.", R"({"status":"options_generated","assistance_kind":"clarification","missing_decisions":[{"question":"What should it search?","blocking":true}]})", "QUESTION"},
+        {"Improve this code without changing its API.", R"({"status":"no_ambiguity","assistance_kind":"none"})", "READY"},
+        {"Give it a fresh look.", R"({"status":"options_generated","assistance_kind":"creative","choice_groups":[{"question":"Explore a direction?","material":true,"alternatives":[{"label":"Bold","why_material":"Visual emphasis","evidence":["modern"]},{"label":"Calm","why_material":"Visual emphasis","evidence":["modern"]}]}]})", "UNAVAILABLE"},
+
+        {"Add login, photo uploads, comments, and mobile support.", R"({"status":"options_generated","assistance_kind":"decomposition","choice_groups":[{"dimension":"sequence","question":"Would you like a staged plan for all four features?","material":true,"alternatives":[{"label":"Plan stages for all features","why_material":"Sequence","evidence":["login, photo uploads, comments, and mobile support"]},{"label":"Keep the complete request together","why_material":"Sequence","evidence":["login, photo uploads, comments, and mobile support"]}]}]})", "OPTIONAL_HELP"}
+    };
+    QString savedSession;
+    for (const auto& item : cases) {
+        HostController c(database);
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.refreshJuliaModel();
+        waitUntil([&]() { return c.juliaState() == "READY"; });
+        std::atomic<int> calls{0};
+        c.setTransportOverrideForTesting([&](std::string_view instruction) -> roclint::core::Result<std::string> {
+            ++calls;
+            if (instruction.find("<instructions>") != std::string_view::npos)
+                return fx::rewriteReply(item.prompt);
+            ROCLINT_CHECK(instruction.find("explicitly requested deeper review") != std::string_view::npos);
+            return std::string(item.reply);
+        });
+        ROCLINT_CHECK(c.markModelReadyForTesting(fx::testModel()));
+        // Scripted S1 stays low. Automatic checking must not invoke Granite.
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(item.prompt, 0)));
+        ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+        ROCLINT_CHECK(calls == 0 && c.isOriginalRoute() && !c.hasProposal());
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.reviewPrompt(item.prompt, c.stateVersion())));
+        ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+        ROCLINT_CHECK(calls == 1 && c.currentRevisionText() == item.prompt && !c.hasApproval());
+        const auto& snapshot = *c.finalSnapshotForTesting();
+        ROCLINT_CHECK(snapshot.payloadVersion == 5 && snapshot.reviewPolicy.trigger == an::ReviewTrigger::ExplicitReview);
+        ROCLINT_CHECK(snapshot.promptTriage->ambiguityScore == .20 && c.reviewOutcome() == item.outcome);
+        ROCLINT_CHECK(!c.analysisMessage().contains("S1 score") && !c.analysisMessage().contains("0.70"));
+        if (c.reviewOutcome() == "UNAVAILABLE") {
+            ROCLINT_CHECK(!c.isOptionalHelp() && c.isManual() && !c.isRewriteEnabled());
+            ROCLINT_CHECK(c.analysisMessage().contains("couldn't offer a reliable suggestion"));
+            ROCLINT_CHECK(!c.analysisMessage().contains("UNGROUNDED") && !c.analysisMessage().contains("available."));
+            ROCLINT_CHECK(c.reviewDiagnostics().contains("UNGROUNDED"));
+        }
+        if (c.reviewOutcome() == "OPTIONAL_HELP") {
+            ROCLINT_CHECK(c.isOptionalHelp());
+            ROCLINT_CHECK(c.waitForCommandForTesting(c.keepOriginalPrompt(c.stateVersion())));
+            ROCLINT_CHECK(c.currentRevisionText() == item.prompt && !c.hasProposal() && calls == 1);
+        }
+        if (c.reviewOutcome() == "READY") {
+            // Clicking Improve wording is sufficient authorization; there is no fake choice.
+            ROCLINT_CHECK(c.isRewriteEnabled() && c.confirmedIntentForTesting()->items.empty());
+            ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
+            ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+            ROCLINT_CHECK(calls == 2 && c.hasProposal() && !c.hasApproval());
+        }
+        if (std::string_view(item.outcome) == "OPTIONAL_HELP") savedSession = c.currentSessionIdString();
+        c.requestQuit(); waitUntil([&]() { return c.juliaState() == "NOT_LOADED"; });
+    }
+    {
+        HostController restored(database);
+        ROCLINT_CHECK(restored.waitForStorageForTesting());
+        ROCLINT_CHECK(restored.waitForCommandForTesting(restored.restoreSession(savedSession, 0)));
+        ROCLINT_CHECK(restored.isOptionalHelp() && restored.finalSnapshotForTesting()->reviewPolicy.trigger == an::ReviewTrigger::ExplicitReview);
+        ROCLINT_CHECK(restored.finalSnapshotForTesting()->promptTriage->ambiguityScore == .20);
+    }
+    {
+        HostController stale(":memory:");
+        ROCLINT_CHECK(stale.waitForStorageForTesting());
+        stale.refreshJuliaModel(); waitUntil([&]() { return stale.juliaState() == "READY"; });
+        std::atomic<int> started{0};
+        stale.setTransportOverrideForTesting([&](std::string_view) -> roclint::core::Result<std::string> {
+            ++started; QThread::msleep(80);
+            return std::string(R"({"status":"no_ambiguity","assistance_kind":"none"})");
+        });
+        ROCLINT_CHECK(stale.markModelReadyForTesting(fx::testModel()));
+        ROCLINT_CHECK(stale.waitForCommandForTesting(stale.reviewPrompt("Keep this draft.", 0)));
+        waitUntil([&]() { return started > 0; });
+        ROCLINT_CHECK(stale.waitForCommandForTesting(stale.noteDraftEdited(stale.stateVersion())));
+        ROCLINT_CHECK(stale.waitForIdleForTesting(5000));
+        ROCLINT_CHECK(stale.isDraftDirty() && !stale.finalSnapshotForTesting() && !stale.hasProposal() && !stale.hasApproval());
+        const auto attempts = stale.repositoryForTesting()->getModelAttempts(roclint::core::SessionId(stale.currentSessionIdString().toStdString())).waitForTesting();
+        ROCLINT_CHECK(attempts.ok() && attempts.value().back().status == roclint::storage::AttemptStatus::DiscardedStale);
+        stale.requestQuit(); waitUntil([&]() { return stale.juliaState() == "NOT_LOADED"; });
+    }
+    settings.remove("scoring/juliaPython"); settings.remove("scoring/juliaDirectory");
+    std::cout << "  [PASS] Explicit low-score review, six assistance fixtures, original wording, optional help and history.\n";
+}
+
 void testS1FirstControllerRouting() {
     namespace an = roclint::core::analysis;
     QSettings settings;
@@ -447,7 +548,8 @@ void testS1FirstControllerRouting() {
     settings.setValue(QStringLiteral("scoring/engine"), QStringLiteral("julia"));
     QTemporaryDir history;
     QString clearSession;
-    for (const auto* mode : {"clear", "valid", "assumption_only", "late_cancel", "bad_triage", "slow_triage", "s1_timeout", "no_options", "crash_triage"}) {
+    QString noQuestionsSession;
+    for (const auto* mode : {"clear", "valid", "creative", "assumption_only", "late_cancel", "bad_triage", "slow_triage", "s1_timeout", "no_options", "empty_options", "crash_triage"}) {
         settings.setValue(QStringLiteral("scoring/juliaDirectory"), QString::fromLatin1(mode));
         HostController controller(history.filePath(QString::fromLatin1(mode) + ".db"));
     ROCLINT_CHECK(controller.waitForStorageForTesting());
@@ -469,6 +571,10 @@ void testS1FirstControllerRouting() {
             ROCLINT_CHECK(instruction.find("ACTION") != std::string_view::npos);
             if (std::string_view(mode) == "no_options")
                 return std::string(R"({"status":"no_ambiguity","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[]})");
+            if (std::string_view(mode) == "empty_options")
+                return std::string(R"({"status":"options_generated","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[]})");
+            if (std::string_view(mode) == "creative")
+                return std::string(R"({"status":"options_generated","choice_groups":[{"dimension":"visual_direction","question":"How expressive should the playful style be?","material":true,"alternatives":[{"label":"Bold layout with playful visual accents","why_material":"Changes visual emphasis","evidence":["modern and playful"]},{"label":"Minimal layout with subtle playful details","why_material":"Keeps a restrained hierarchy","evidence":["modern and playful"]}]}]})");
             if (std::string_view(mode) == "assumption_only")
                 return std::string(R"({"status":"no_ambiguity","choice_groups":[],"assumptions":[{"statement":"Faster means lower single-call latency.","material":true,"evidence":["runs faster"]}],"missing_decisions":[],"conflicts":[]})");
             return std::string(R"({"status":"options_generated","choice_groups":[{"dimension":"performance",
@@ -477,7 +583,9 @@ void testS1FirstControllerRouting() {
                 {"label":"Higher throughput","why_material":"Changes the optimization","evidence":["runs faster"]}]}]})");
         });
         ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
-        const auto prompt = QString::fromStdString(fx::kChainPrompt);
+        const auto prompt = std::string_view(mode) == "creative"
+            ? QStringLiteral("Target file: about.html.\nMake the homepage feel modern and playful.")
+            : QString::fromStdString(fx::kChainPrompt);
         ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(prompt, 0)));
         ROCLINT_CHECK(graniteCalls == 0); // S1 must complete first.
         if (std::string_view(mode) == "late_cancel") {
@@ -488,10 +596,20 @@ void testS1FirstControllerRouting() {
         if (std::string_view(mode) == "clear") {
             ROCLINT_CHECK(graniteCalls == 0 && controller.isOriginalRoute());
             ROCLINT_CHECK(controller.currentRevisionText() == prompt && controller.analysisStatus() == "READY");
-            ROCLINT_CHECK(controller.finalSnapshotForTesting()->payloadVersion == 4);
-            ROCLINT_CHECK(!controller.isRewriteEnabled());
-            ROCLINT_CHECK(!controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
+            ROCLINT_CHECK(controller.finalSnapshotForTesting()->payloadVersion == 5);
+            ROCLINT_CHECK(controller.isRewriteEnabled() && !controller.hasProposal() && rewriteCalls == 0);
             clearSession = controller.currentSessionIdString();
+        } else if (std::string_view(mode) == "no_options") {
+            ROCLINT_CHECK(graniteCalls == 1 && controller.isOriginalRoute() && controller.analysisStatus() == "READY");
+            ROCLINT_CHECK(controller.currentRevisionText() == prompt && controller.analysisMessage().contains("original wording is unchanged"));
+            ROCLINT_CHECK(controller.finalSnapshotForTesting()->promptTriage->ambiguityScore == .70);
+            ROCLINT_CHECK(!controller.finalSnapshotForTesting()->discoveryAttemptId.empty());
+            ROCLINT_CHECK(controller.isRewriteEnabled() && !controller.hasProposal() && !controller.hasApproval() && rewriteCalls == 0);
+            noQuestionsSession = controller.currentSessionIdString();
+        } else if (std::string_view(mode) == "creative") {
+            ROCLINT_CHECK(graniteCalls == 1 && controller.isClarifying() && !controller.isOriginalRoute());
+            ROCLINT_CHECK(controller.activeDimension() == "visual_direction" && controller.activeAlternatives().size() == 2);
+            ROCLINT_CHECK(controller.currentRevisionText() == prompt && !controller.isRewriteEnabled() && rewriteCalls == 0);
         } else if (std::string_view(mode) == "valid" || std::string_view(mode) == "assumption_only") {
             ROCLINT_CHECK(graniteCalls == 1 && !controller.isOriginalRoute());
             ROCLINT_CHECK(controller.finalSnapshotForTesting()->promptTriage->ambiguityScore == .70);
@@ -505,7 +623,7 @@ void testS1FirstControllerRouting() {
             ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
             ROCLINT_CHECK(controller.waitForIdleForTesting(5000));
             ROCLINT_CHECK(rewriteCalls == 1 && controller.hasProposal() && !controller.hasApproval());
-        } else if (std::string_view(mode) == "slow_triage" || std::string_view(mode) == "no_options") {
+        } else if (std::string_view(mode) == "slow_triage" || std::string_view(mode) == "empty_options") {
             ROCLINT_CHECK(graniteCalls == 1 && !controller.finalSnapshotForTesting() && !controller.isOriginalRoute());
             ROCLINT_CHECK(controller.analysisStatus() == "FAILED");
         } else {
@@ -524,6 +642,8 @@ void testS1FirstControllerRouting() {
             ROCLINT_CHECK(attempts.front().modelDetail.find("prompt_triage_payload=") != std::string::npos);
         }
         for (const auto& attempt : attempts) ROCLINT_CHECK(attempt.status != roclint::storage::AttemptStatus::InProgress);
+        if (std::string_view(mode) == "no_options")
+            ROCLINT_CHECK(attempts.size() == 2 && attempts.back().stage == "discovery" && attempts.back().status == roclint::storage::AttemptStatus::Succeeded);
         if (std::string_view(mode) == "slow_triage") {
             ROCLINT_CHECK(attempts.size() == 2 && attempts.back().stage == "discovery");
             ROCLINT_CHECK(attempts.back().status == roclint::storage::AttemptStatus::Failed);
@@ -554,10 +674,17 @@ void testS1FirstControllerRouting() {
         ROCLINT_CHECK(missing.analysisStatus() == "FAILED" && !missing.isOriginalRoute() && !missing.finalSnapshotForTesting());
     }
     {
+        HostController restored(history.filePath("no_options.db"));
+        ROCLINT_CHECK(restored.waitForStorageForTesting());
+        ROCLINT_CHECK(restored.waitForCommandForTesting(restored.restoreSession(noQuestionsSession, 0)));
+        ROCLINT_CHECK(restored.isOriginalRoute() && restored.isRewriteEnabled() && !restored.hasProposal() && !restored.hasApproval());
+        ROCLINT_CHECK(restored.finalSnapshotForTesting()->promptTriage->ambiguityScore == .70);
+    }
+    {
         HostController restored(history.filePath("clear.db"));
     ROCLINT_CHECK(restored.waitForStorageForTesting());
         ROCLINT_CHECK(restored.waitForCommandForTesting(restored.restoreSession(clearSession, 0)));
-        ROCLINT_CHECK(restored.isOriginalRoute() && !restored.isRewriteEnabled());
+        ROCLINT_CHECK(restored.isOriginalRoute() && restored.isRewriteEnabled());
         ROCLINT_CHECK(restored.currentRevisionText() == QString::fromStdString(fx::kChainPrompt));
     }
     settings.remove(QStringLiteral("scoring/juliaPython"));
@@ -702,6 +829,7 @@ int main(int argc, char** argv) {
     testJuliaControllerLifecycle();
     testSharedDiscoveryJuliaDeadline();
     testS1FirstControllerRouting();
+    testExplicitSelectiveReview();
     std::cout << "[Upstream Compatibility] Real asynchronous file lists, explicit confined scope, original shortcut and runtime bindings passed.\n";
     return 0;
 }

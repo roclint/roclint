@@ -290,7 +290,7 @@ void testApprovedRewriteIsInjectedInPlace() {
     ROCLINT_CHECK(request.fieldToken == 7);
     ROCLINT_CHECK(request.kind == FieldKind::GuiEditor);
     ROCLINT_CHECK(pumpUntil([&]() { return !injected.isEmpty(); }));
-    ROCLINT_CHECK(!h.c().isCardVisible());
+    ROCLINT_CHECK(h.c().isCardVisible());
     ROCLINT_CHECK(injected == QString::fromStdString(kRewrite));
     ROCLINT_CHECK(clipboardText() == "untouched");
     auto approval = h.c().repositoryForTesting()->getCurrentApproval(SessionId(h.c().currentSessionIdString().toStdString())).waitForTesting();
@@ -339,7 +339,8 @@ void testConnectingEditorPreservesManualRewriteAndAnswers() {
     ROCLINT_CHECK(h.bridge->injections[0].text == QString::fromStdString(kRewrite));
     ROCLINT_CHECK(h.bridge->injections[0].fieldToken == 88 && h.bridge->injections[0].expectedCurrentText == field.text);
     ROCLINT_CHECK(clipboardText() == "Keep this clipboard");
-    ROCLINT_CHECK(pumpUntil([&]() { return !h.c().isCardVisible(); }));
+    ROCLINT_CHECK(pumpUntil([&]() { return !h.c().lastCopiedText().isEmpty(); }));
+    ROCLINT_CHECK(h.c().isCardVisible());
 }
 
 void testInjectionFailureFallsBackToClipboard() {
@@ -359,6 +360,19 @@ void testInjectionFailureFallsBackToClipboard() {
     ROCLINT_CHECK(h.c().lastError().contains(QStringLiteral("clipboard")));
     ROCLINT_CHECK(fallback.contains(QStringLiteral("Cursor")));
     std::cout << "  [PASS] A failed injection falls back to the clipboard and says so.\n";
+}
+
+void testExplicitHideSurvivesDeliveryCompletion() {
+    for (const auto outcome : {InjectionOutcome::Injected, InjectionOutcome::Failed}) {
+        Harness h; reachApprovableRewrite(h);
+        h.bridge->nextOutcome = outcome;
+        QObject::connect(h.controller.get(), &HostController::approvalChanged, [&]() {
+            if (h.c().hasApproval()) h.c().hideCard();
+        });
+        ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().approveAndCopyRewrite(h.c().stateVersion())));
+        ROCLINT_CHECK(pumpUntil([&]() { return !h.c().lastCopiedText().isEmpty(); }));
+        ROCLINT_CHECK(!h.c().isCardVisible());
+    }
 }
 
 void testHardBypassInWidgetMode() {
@@ -393,7 +407,7 @@ void testHardBypassInAmbientMode() {
     ROCLINT_CHECK(!h.c().analysisForTesting().has_value());
     ROCLINT_CHECK(!h.c().isClarifying());
     pumpFor(100);
-    ROCLINT_CHECK(!h.c().isCardVisible());
+    ROCLINT_CHECK(h.c().isCardVisible());
     ROCLINT_CHECK(*h.calls == callsBefore);
     ROCLINT_CHECK(*h.rewriteCalls == 0);
     ROCLINT_CHECK(clipboardText() == "untouched");
@@ -418,7 +432,8 @@ void testCodexShortPromptCapturePreservesWhitespace() {
     ROCLINT_CHECK(h.c().isCardVisible());
     ROCLINT_CHECK(h.bridge->injections.size() == 1);
     ROCLINT_CHECK(h.bridge->injections[0].expectedCurrentText == field.text);
-    ROCLINT_CHECK(pumpUntil([&]() { return !h.c().isCardVisible(); }));
+    ROCLINT_CHECK(pumpUntil([&]() { return !h.c().lastCopiedText().isEmpty(); }));
+    ROCLINT_CHECK(h.c().isCardVisible());
     ROCLINT_CHECK(*h.rewriteCalls == 0);
     std::cout << "  [PASS] Codex short drafts retain whitespace and their insertion target.\n";
 }
@@ -447,7 +462,8 @@ void testDeliveryRemainsBoundWhenOtherFieldsReceiveFocus() {
     const auto& request = h.bridge->injections.front();
     ROCLINT_CHECK(request.fieldToken == 7 && request.expectedCurrentText == kPrompt);
     ROCLINT_CHECK(request.text == QString::fromStdString(kRewrite));
-    ROCLINT_CHECK(pumpUntil([&]() { return !h.c().isCardVisible(); }));
+    ROCLINT_CHECK(pumpUntil([&]() { return !h.c().lastCopiedText().isEmpty(); }));
+    ROCLINT_CHECK(h.c().isCardVisible());
 }
 
 void testTypingIsObservedWhileWidgetRemainsOpen() {
@@ -531,6 +547,74 @@ void testOpenHudFollowsFocusedDraftUntilHudEdit() {
     ROCLINT_CHECK(h.bridge->injections.back().expectedCurrentText == otherField.text); // Retain the stale guard.
 }
 
+void testSourceEditSupersedesReviewWithoutChangingDestination() {
+    Harness h; reachApprovableRewrite(h);
+    h.c().pauseAmbientFollowing(); // Reviewing a decision does not author a replacement draft.
+    int updates = 0; QString visible;
+    QObject::connect(h.controller.get(), &HostController::ambientDraftUpdated, [&](const QString& text) { ++updates; visible = text; });
+    h.bridge->lose();
+    h.bridge->observe(cursorField(kPrompt));
+    ROCLINT_CHECK(h.c().hasProposal() && updates == 0); // Mere focus return keeps review intact.
+    h.bridge->observe(cursorField("An unrelated prompt box", 99));
+    ROCLINT_CHECK(h.c().hasProposal() && updates == 0);
+    auto source = cursorField(kPrompt + " Preserve behavior.");
+    h.bridge->observe(source);
+    ROCLINT_CHECK(updates == 1 && visible == source.text && h.c().isDraftDirty());
+    ROCLINT_CHECK(!h.c().hasProposal() && !h.c().hasConfirmedIntent() && !h.c().hasApproval());
+    ROCLINT_CHECK(h.c().currentRevisionText() == kPrompt && h.c().isCardVisible());
+    source.text += " Keep the interface."; h.bridge->observe(source);
+    ROCLINT_CHECK(updates == 2 && visible == source.text); // Capture edits do not become HUD-owned edits.
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().noteDraftEdited(h.c().stateVersion())));
+    source.text += " Another source change."; h.bridge->observe(source);
+    ROCLINT_CHECK(updates == 2); // Actual HUD edits remain authoritative.
+}
+
+void testClearingBoundComposerInvalidatesEachReviewStage() {
+    for (int stage=0; stage<3; ++stage) {
+        Harness h;
+        bool delivered = false;
+        QObject::connect(h.controller.get(), &HostController::promptInjected, [&](const QString&, const QString&) { delivered = true; });
+        if (stage == 0) {
+            h.c().setAmbientModeEnabled(true); h.bridge->observe(cursorField(kPrompt));
+            ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().openFromAmbient()));
+            ROCLINT_CHECK(h.c().waitForIdleForTesting(3000));
+            ROCLINT_CHECK(h.c().isClarifying());
+        } else {
+            reachApprovableRewrite(h);
+            if (stage == 2) {
+                ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().approveAndCopyRewrite(h.c().stateVersion())));
+                ROCLINT_CHECK(pumpUntil([&]() { return delivered; }));
+            }
+        }
+        int updates=0; QString visible="not cleared";
+        QObject::connect(h.controller.get(), &HostController::ambientDraftUpdated, [&](const QString& text) { ++updates; visible=text; });
+        const auto calls=*h.calls;
+        h.bridge->observe(cursorField(QString()));
+        ROCLINT_CHECK(updates == 1 && visible.isEmpty() && h.c().isDraftDirty());
+        ROCLINT_CHECK(!h.c().hasProposal() && !h.c().hasApproval() && !h.c().hasConfirmedIntent() && h.c().isCardVisible());
+        ROCLINT_CHECK(h.c().currentRevisionText() == kPrompt && *h.calls == calls);
+    }
+    std::cout << "  [PASS] Clearing the same connected composer invalidates clarification, review and approval without hiding the HUD.\n";
+}
+
+void testIndependentClipboardReviewDoesNotAdoptSourceChanges() {
+    Harness h;
+    h.c().setAmbientModeEnabled(true);
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().analyzePrompt(kPrompt, 0)));
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(3000));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().confirmChoice("alt_0_0", h.c().stateVersion())));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().synthesizeRewrite(h.c().stateVersion())));
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(3000));
+    h.c().showCard();
+    ROCLINT_CHECK(!h.c().isAmbientCapture() && h.c().hasProposal());
+    int updates=0;
+    QObject::connect(h.controller.get(), &HostController::ambientDraftUpdated, [&](const QString&) { ++updates; });
+    h.bridge->observe(cursorField("make")); h.bridge->observe(cursorField(QString()));
+    ROCLINT_CHECK(updates == 0 && h.c().hasProposal() && h.c().isCardVisible() && !h.c().isDraftDirty());
+    ROCLINT_CHECK(h.c().currentRevisionText() == kPrompt && h.c().deliveryLabel() == "Delivers to clipboard");
+    std::cout << "  [PASS] An independent clipboard review remains authoritative when a different app's composer changes.\n";
+}
+
 void testEmptyComposerIsStillAnInsertionTarget() {
     Harness h;
     h.c().setAmbientModeEnabled(true);
@@ -550,6 +634,20 @@ void testEmptyComposerIsStillAnInsertionTarget() {
     ROCLINT_CHECK(h.bridge->injections[0].text == "A draft authored in the HUD");
 }
 
+void testStaleBypassRetainsTypedErrorWithoutDelivery() {
+    Harness h;
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().commitPrompt(kPrompt,0)));
+    const auto oldVersion=h.c().stateVersion();
+    const auto newer=kPrompt+" Preserve behavior.";
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().commitPrompt(newer,oldVersion)));
+    const auto version=h.c().stateVersion();
+    setClipboard("Leave clipboard unchanged");
+    ROCLINT_CHECK(!h.c().waitForCommandForTesting(h.c().hardBypass("An older draft",oldVersion)));
+    ROCLINT_CHECK(h.c().lastErrorCode()=="STALE_VERSION" && h.c().isStorageAvailable());
+    ROCLINT_CHECK(h.c().stateVersion()==version && h.c().currentRevisionText()==newer);
+    ROCLINT_CHECK(h.bridge->injections.empty() && clipboardText()=="Leave clipboard unchanged");
+}
+
 void testInvocationWaitsForFreshFieldInsteadOfCachedTarget() {
     Harness h;
     h.c().setAmbientModeEnabled(true);
@@ -566,7 +664,20 @@ void testInvocationWaitsForFreshFieldInsteadOfCachedTarget() {
     ROCLINT_CHECK(pumpUntil([&]() { return h.c().isCardVisible(); }));
     ROCLINT_CHECK(h.c().isAmbientCapture() && h.c().isCardVisible());
     ROCLINT_CHECK(h.c().currentRevisionText() == kPrompt);
-    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().hardBypass(QStringLiteral("Changed in the HUD"), h.c().stateVersion())));
+    const auto beforeDeliveryVersion = h.c().stateVersion();
+    const auto bypassId = h.c().hardBypass(QStringLiteral("Changed in the HUD"), beforeDeliveryVersion);
+    const bool bypassCompleted = h.c().waitForCommandForTesting(bypassId);
+    if (!bypassCompleted) {
+        // A completed model result may legitimately advance the version before this queued
+        // gesture starts. It must reject cleanly without treating that as a database failure.
+        ROCLINT_CHECK(h.c().lastErrorCode() == "STALE_VERSION");
+        ROCLINT_CHECK(h.c().isStorageAvailable() && h.bridge->injections.empty());
+        ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
+        // Explicit simulated user retry; the controller must never replay delivery itself.
+        ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().hardBypass(
+            QStringLiteral("Changed in the HUD"), h.c().stateVersion())));
+    }
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000) && h.c().isStorageAvailable());
     ROCLINT_CHECK(h.bridge->injections.front().fieldToken == 27);
     ROCLINT_CHECK(h.bridge->injections.front().expectedCurrentText == kPrompt);
     roclint::host::HostContextDetector::resetMock();
@@ -672,26 +783,11 @@ void testPlatformBridgeStartsAndStopsWithoutObserving() {
 #endif
 }
 
-void testStaleBypassRetainsTypedErrorWithoutDelivery() {
-    Harness h;
-    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().commitPrompt(kPrompt,0)));
-    const auto oldVersion=h.c().stateVersion();
-    const auto newer=kPrompt+" Preserve behavior.";
-    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().commitPrompt(newer,oldVersion)));
-    const auto version=h.c().stateVersion();
-    setClipboard("Leave clipboard unchanged");
-    ROCLINT_CHECK(!h.c().waitForCommandForTesting(h.c().hardBypass("An older draft",oldVersion)));
-    ROCLINT_CHECK(h.c().lastErrorCode()=="STALE_VERSION" && h.c().isStorageAvailable());
-    ROCLINT_CHECK(h.c().stateVersion()==version && h.c().currentRevisionText()==newer);
-    ROCLINT_CHECK(h.bridge->injections.empty() && clipboardText()=="Leave clipboard unchanged");
-}
-
 } // namespace
 
 int main(int argc, char* argv[]) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
-    testStaleBypassRetainsTypedErrorWithoutDelivery();
     std::cout << "[Test Dual Mode] Starting...\n";
     testAmbientRouteWhenPermissionGranted();
     testWidgetFallbackWhenPermissionDenied();
@@ -702,6 +798,7 @@ int main(int argc, char* argv[]) {
     testApprovedRewriteIsInjectedInPlace();
     testConnectingEditorPreservesManualRewriteAndAnswers();
     testInjectionFailureFallsBackToClipboard();
+    testExplicitHideSurvivesDeliveryCompletion();
     testHardBypassInWidgetMode();
     testHardBypassInAmbientMode();
     testTerminalDraftIsCapturedAndReplaced();
@@ -710,8 +807,12 @@ int main(int argc, char* argv[]) {
     testDeliveryRemainsBoundWhenOtherFieldsReceiveFocus();
     testTypingIsObservedWhileWidgetRemainsOpen();
     testOpenHudFollowsFocusedDraftUntilHudEdit();
+    testSourceEditSupersedesReviewWithoutChangingDestination();
+    testClearingBoundComposerInvalidatesEachReviewStage();
+    testIndependentClipboardReviewDoesNotAdoptSourceChanges();
     testInvocationRefreshesFieldBeforeStealingFocus();
     testEmptyComposerIsStillAnInsertionTarget();
+    testStaleBypassRetainsTypedErrorWithoutDelivery();
     testInvocationWaitsForFreshFieldInsteadOfCachedTarget();
     testLateEditorBindsWithoutAnotherHotkeyAndPreservesHudEdits();
     testRestoringHistoryPausesLiveFollowing();

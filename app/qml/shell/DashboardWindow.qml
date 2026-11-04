@@ -1518,9 +1518,10 @@ Window {
                                                 HudMouseArea {
                                                     anchors.fill: parent
                                                     cursorShape: Qt.PointingHandCursor
+                                                    objectName: "ambientEnableAction"
                                                     onClicked: {
                                                         if (typeof hostController !== "undefined") {
-                                                            hostController.setAmbientModeEnabled(true);
+                                                            hostController.ambientModeEnabled = true;
                                                             dashboardWindow.showToast("DIRECT INJECTION: ENABLED");
                                                         }
                                                     }
@@ -1546,9 +1547,10 @@ Window {
                                                 HudMouseArea {
                                                     anchors.fill: parent
                                                     cursorShape: Qt.PointingHandCursor
+                                                    objectName: "ambientDisableAction"
                                                     onClicked: {
                                                         if (typeof hostController !== "undefined") {
-                                                            hostController.setAmbientModeEnabled(false);
+                                                            hostController.ambientModeEnabled = false;
                                                             dashboardWindow.showToast("DIRECT INJECTION: DISABLED (CLIPBOARD MODE)");
                                                         }
                                                     }

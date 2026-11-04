@@ -5,7 +5,7 @@
   "model_revision": "c40945d71cd90f249a56985e8155551a9188dc30",
   "runtime_repository": "https://github.com/ggml-org/llama.cpp.git",
   "runtime_revision": "da2ee1e7a640445fc562fe5529598cee1917e0f5",
-  "configuration_id": "granite.cpu.mmap.ctx8192.threads4.t1.p095.s42.jinja.json0ws.rejection.balanced.v6",
+  "configuration_id": "granite.cpu.mmap.ctx8192.threads4.t1.p095.s42.jinja.json0ws.rejection.review_polish.v8",
   "context_tokens": 8192,
   "input_tokens": 6144,
   "output_tokens": 2048,
@@ -14,14 +14,14 @@
   "backend": "cpu",
   "sampling": {"temperature": 1.0, "top_p": 0.95, "seed": 42, "grammar_strategy": "llama_common_rejection_v1"},
   "sampling_reference": "https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md",
-  "analysis_instruction_contract": "granite.discovery.balanced.v6",
-  "rewrite_instruction_contract": "granite.rewrite.format.v3",
+  "analysis_instruction_contract": "granite.discovery.selective.v7",
+  "rewrite_instruction_contract": "granite.rewrite.format.v5",
   "output_format": "compact_json",
   "grammar_transform": "json_gbnf_space_empty_v1",
   "profiles": {
-    "CPU": {"backend": "cpu", "gpu_layers": 0, "configuration_id": "granite.cpu.mmap.ctx8192.threads4.t1.p095.s42.jinja.json0ws.rejection.balanced.v6"},
-    "VULKAN": {"backend": "vulkan", "gpu_layers": 99, "configuration_id": "granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.balanced.v6"},
-    "METAL": {"backend": "metal", "gpu_layers": 99, "configuration_id": "granite.metal.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.balanced.v6"}
+    "CPU": {"backend": "cpu", "gpu_layers": 0, "configuration_id": "granite.cpu.mmap.ctx8192.threads4.t1.p095.s42.jinja.json0ws.rejection.review_polish.v8"},
+    "VULKAN": {"backend": "vulkan", "gpu_layers": 99, "configuration_id": "granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v8"},
+    "METAL": {"backend": "metal", "gpu_layers": 99, "configuration_id": "granite.metal.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v8"}
   },
   "model_license": "Apache-2.0",
   "template_policy": "embedded GGUF Jinja template; thinking disabled; input special tokens treated as text",

@@ -5,7 +5,14 @@ import QtQuick.Layouts
 // Added to the original HUD; authoritative state and transitions stay in HostController.
 FocusScope {
     id: rootWindow
+    objectName: "intentReviewPanel"
     property real viewportHeight: 520
+    property bool showDiagnostics: false
+    signal reviewRequested()
+    signal revealReviewItem(var item)
+    property string diagnosticMetrics: ""
+    readonly property bool previewActive: hc && (hostController.proposalStatus === "READY_FOR_REVIEW" || hostController.proposalStatus === "GENERATING")
+    readonly property color questionTone: hc && hostController.isOptionalHelp ? borderColor : warnColor
     implicitHeight: workflowColumn.implicitHeight
     readonly property bool ambient: hc && hostController.isAmbientCapture
     readonly property bool manualResolution: hc && hostController.isManual && hostController.interventionReason === "CLARIFICATION_BUDGET_EXCEEDED"
@@ -19,11 +26,26 @@ FocusScope {
         if (manualResolution) customAnswer.forceActiveFocus();
         else clarifyPanel.forceActiveFocus();
     }
-    function focusReview() { diffView.forceActiveFocus(); }
+    function focusReview() {
+        for (let i = 0; i < constraintRepeater.count; ++i) {
+            const row = constraintRepeater.itemAt(i);
+            if (row && row.pending) {
+                row.reviewCheck.forceActiveFocus(Qt.TabFocusReason);
+                revealReviewItem(row);
+                return;
+            }
+        }
+        diffView.forceActiveFocus(Qt.TabFocusReason);
+        revealReviewItem(diffView);
+    }
+    property bool reviewPresented: false
+    Component.onCompleted: reviewPresented = hc && hostController.proposalStatus === "READY_FOR_REVIEW"
+    property int reviewRefresh: 0
     property var pendingDecisions: ({})
     Connections {
         target: rootWindow.hc ? hostController : null
         function onStorageCommandFinished(requestId, name, succeeded, errorCode, message) {
+            if (name === "acknowledgeConstraint" && !succeeded) rootWindow.reviewRefresh++;
             if (!rootWindow.pendingDecisions[requestId]) return;
             delete rootWindow.pendingDecisions[requestId];
             if (succeeded) customAnswer.text = "";
@@ -36,8 +58,13 @@ FocusScope {
                 Qt.callLater(function() { if (clarifyPanel.visible) clarifyPanel.forceActiveFocus(); });
         }
         function onRewriteProposalChanged() {
-            if (hostController.proposalStatus === "READY_FOR_REVIEW")
-                Qt.callLater(function() { if (reviewPanel.visible) diffView.forceActiveFocus(); });
+            // Acknowledgements must not scroll the user back to the heading.
+            if (hostController.proposalStatus !== "READY_FOR_REVIEW") { rootWindow.reviewPresented = false; return; }
+            if (rootWindow.reviewPresented) return;
+            rootWindow.reviewPresented = true;
+            // Arrival never opens, resizes or activates the HUD. Review is an explicit gesture.
+            if (rootWindow.Window.window && rootWindow.Window.window.active)
+                Qt.callLater(function() { if (reviewPanel.visible) rootWindow.revealReviewItem(reviewHeading); });
         }
     }
     readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
@@ -104,7 +131,8 @@ FocusScope {
     }
 
     function kindTitle(kind) {
-        if (kind === "CHOICE_GROUP") return qsTr("This could mean more than one thing");
+        if (hc && hostController.isOptionalHelp) return qsTr("Optional ideas");
+        if (kind === "CHOICE_GROUP") return qsTr("One detail to clarify");
         if (kind === "ASSUMPTION") return qsTr("Is this assumption right?");
         if (kind === "MISSING_DECISION") return qsTr("A detail is missing");
         if (kind === "CONFLICT") return qsTr("These requirements conflict");
@@ -239,6 +267,40 @@ FocusScope {
         id: workflowColumn
         width: parent.width
         spacing: 8
+        RowLayout {
+            Layout.fillWidth: true
+            ActionButton {
+                objectName: "reviewPromptButton"
+                visible: !rootWindow.previewActive
+                label: qsTr("Review prompt")
+                active: rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy && !hostController.isAnalyzing
+                onClicked: rootWindow.reviewRequested()
+            }
+            Item { Layout.fillWidth: true }
+            Text {
+                objectName: "reviewDiagnosticsButton"
+                text: rootWindow.showDiagnostics ? qsTr("Hide details") : qsTr("Technical details")
+                color: rootWindow.mutedTextColor
+                font.pixelSize: 11
+                font.underline: true
+                activeFocusOnTab: true
+                Accessible.role: Accessible.Button
+                Accessible.name: text
+                function activate() { rootWindow.showDiagnostics = !rootWindow.showDiagnostics; }
+                Accessible.onPressAction: activate()
+                Keys.onReturnPressed: activate()
+                Keys.onSpacePressed: activate()
+                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: parent.activate() }
+            }
+        }
+        Text {
+            visible: rootWindow.showDiagnostics && rootWindow.hc
+            Layout.fillWidth: true
+            wrapMode: Text.Wrap
+            text: rootWindow.hc ? hostController.reviewDiagnostics + "\n" + hostController.interventionReason + "\n" + hostController.rankingStatus + "\n" + rootWindow.diagnosticMetrics : ""
+            color: rootWindow.mutedTextColor
+            font.pixelSize: 11
+        }
             // Clarification panel
             Rectangle {
                 id: clarifyPanel
@@ -251,7 +313,7 @@ FocusScope {
                 Layout.minimumWidth: 0
                 implicitHeight: clarifyColumn.implicitHeight + 20
                 color: "transparent"
-                border.color: rootWindow.warnColor
+                border.color: rootWindow.questionTone
                 border.width: activeFocus ? 3 : 1
                 radius: 6
 
@@ -271,16 +333,16 @@ FocusScope {
                             font.family: rootWindow.sansFont
                             font.pixelSize: 13
                             font.bold: true
-                            color: rootWindow.warnColor
+                            color: rootWindow.hc && hostController.isOptionalHelp ? rootWindow.fgColor : rootWindow.warnColor
                         }
                         Text {
-                            text: rootWindow.manualResolution ? qsTr("Manual decision") : rootWindow.hc ? qsTr("%1 guided answer(s) left").arg(hostController.remainingBudget) : ""
+                            text: rootWindow.hc && hostController.isOptionalHelp ? qsTr("Optional") : rootWindow.manualResolution ? qsTr("Manual decision") : rootWindow.hc ? qsTr("%1 guided answer(s) left").arg(hostController.remainingBudget) : ""
                             font.family: rootWindow.monoFont
                             font.pixelSize: 10
                             color: rootWindow.mutedTextColor
                         }
                         Pill {
-                            visible: rootWindow.hc && (hostController.activeItemKind === "CHOICE_GROUP" || hostController.activeItemKind === "ASSUMPTION")
+                            visible: rootWindow.showDiagnostics && rootWindow.hc && (hostController.activeItemKind === "CHOICE_GROUP" || hostController.activeItemKind === "ASSUMPTION")
                             label: rootWindow.hc && hostController.isAmbiguityScored
                                    ? (hostController.activeItemKind === "ASSUMPTION" ? qsTr("UNCERTAINTY %1") : qsTr("RANKED %1")).arg(hostController.ambiguityScore.toFixed(2))
                                    : qsTr("UNRANKED")
@@ -446,8 +508,7 @@ FocusScope {
                 message: rootWindow.manualResolution
                          ? qsTr("The three guided questions are complete. A remaining decision is shown above; answer it in your own words to finish the rewrite.")
                          : rootWindow.hc && hostController.isManual
-                         ? qsTr("Roclint won't suggest options for this prompt (%1). Edit it yourself, or copy it as-is with Shift+Enter.")
-                               .arg(hostController.diagnosticMessage.length > 0 ? hostController.diagnosticMessage : hostController.interventionReason)
+                         ? qsTr("Roclint couldn't offer a reliable suggestion. Edit your prompt, review again, or keep your original wording.")
                          : ""
                 tone: rootWindow.mutedTextColor
             }
@@ -471,7 +532,7 @@ FocusScope {
                         objectName: "assumptionReview_" + modelData.id
                         textFormat: Text.PlainText
                         Layout.fillWidth: true
-                        text: modelData.statement + "\n" + modelData.state + " · " + modelData.scoring
+                        text: modelData.statement + "\n" + modelData.state + (rootWindow.showDiagnostics ? " · " + modelData.scoring : "")
                         color: rootWindow.mutedTextColor
                         wrapMode: Text.WordWrap
                         font.pixelSize: 11
@@ -483,7 +544,7 @@ FocusScope {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
                 spacing: 8
-                visible: rootWindow.hc && hostController.hasConfirmedIntent
+                visible: rootWindow.hc && hostController.hasConfirmedIntent && !rootWindow.previewActive
 
                 Text {
                     Layout.fillWidth: true
@@ -537,7 +598,7 @@ FocusScope {
                     }
                 }
                 ActionButton {
-                    label: qsTr("Suggest a rewrite")
+                    label: qsTr("Improve wording")
                     primary: true
                     active: rootWindow.hc && !hostController.storageBusy && hostController.isStorageAvailable && hostController.isRewriteEnabled
                     onClicked: hostController.synthesizeRewrite(hostController.stateVersion)
@@ -545,119 +606,74 @@ FocusScope {
                 }
             }
 
-            // Proposal review
+            // Natural-height review content: checks cannot be pushed outside a fixed rectangle.
             Rectangle {
                 id: reviewPanel
                 objectName: "reviewPanel"
                 readonly property string status: rootWindow.hc ? hostController.proposalStatus : "NONE"
                 readonly property string preview: rootWindow.hc ? hostController.streamingPreview : ""
-                readonly property bool hasPreview: status === "GENERATING" && preview.length > 0
                 visible: status !== "NONE"
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                Layout.preferredHeight: status === "READY_FOR_REVIEW" || hasPreview
-                                        ? Math.min(300, rootWindow.viewportHeight * 0.55)
-                                        : reviewMessage.implicitHeight + 20
+                implicitHeight: reviewBody.implicitHeight + 20
                 color: "transparent"
-                border.color: status === "READY_FOR_REVIEW" ? rootWindow.fgColor
+                border.color: status === "READY_FOR_REVIEW" ? rootWindow.borderColor
                             : status === "GENERATING" ? rootWindow.mutedTextColor : rootWindow.warnColor
                 border.width: 1
                 radius: 6
 
-                Text {
-                    id: reviewMessage
-                    visible: reviewPanel.status !== "READY_FOR_REVIEW" && !reviewPanel.hasPreview
-                    anchors.fill: parent
-                    anchors.margins: 10
-                    text: rootWindow.hc ? (reviewPanel.status === "NEEDS_CLARIFICATION"
-                                           ? qsTr("The model needs more detail before it can rewrite this: %1 Add it to your prompt and analyze again.").arg(hostController.proposalMessage)
-                                           : hostController.proposalMessage) : ""
-                    wrapMode: Text.WordWrap
-                    font.family: rootWindow.sansFont
-                    font.pixelSize: 12
-                    color: reviewPanel.status === "GENERATING" ? rootWindow.mutedTextColor : rootWindow.warnColor
-                }
-
-                // Live streaming preview — visible once chunks start arriving during generation.
-                ScrollView {
-                    visible: reviewPanel.hasPreview
-                    anchors.fill: parent
-                    anchors.margins: 10
-                    clip: true
-                    ScrollBar.vertical: HudScrollBar {}
+                ColumnLayout {
+                    id: reviewBody
+                    x: 10
+                    y: 10
+                    width: Math.max(0, parent.width - 20)
+                    spacing: 8
                     Text {
-                        width: parent.width
+                        id: reviewHeading
+                        objectName: "reviewHeading"
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        textFormat: Text.PlainText
+                        text: reviewPanel.status === "READY_FOR_REVIEW" ? qsTr("Review the changes and confirm your choice.")
+                            : rootWindow.hc ? hostController.proposalMessage : ""
+                        wrapMode: Text.Wrap
+                        font.family: rootWindow.sansFont
+                        font.pixelSize: 12
+                        font.bold: reviewPanel.status === "READY_FOR_REVIEW"
+                        color: rootWindow.fgColor
+                    }
+                    Text {
+                        visible: reviewPanel.status === "GENERATING" && text.length > 0
+                        Layout.fillWidth: true
                         text: reviewPanel.preview
+                        textFormat: Text.PlainText
                         wrapMode: Text.WrapAnywhere
                         font.family: rootWindow.monoFont
                         font.pixelSize: 12
                         color: rootWindow.mutedTextColor
                     }
-                }
-
-                ColumnLayout {
-                    visible: reviewPanel.status === "READY_FOR_REVIEW"
-                    anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 6
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        Text {
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            text: rootWindow.hc ? hostController.proposalMessage : ""
-                            wrapMode: Text.WordWrap
-                            font.family: rootWindow.sansFont
-                            font.pixelSize: 12
-                            font.bold: true
-                            color: rootWindow.fgColor
-                        }
-                        Pill {
-                            visible: rootWindow.hc && hostController.approvalLabel.length > 0
-                            label: rootWindow.hc ? hostController.approvalLabel : ""
-                            tone: rootWindow.addedColor
-                        }
-                    }
-
-                    ListView {
-                        id: diffView
-                        objectName: "diffView"
-                        activeFocusOnTab: true
-                        Accessible.name: qsTr("Changes in the suggested rewrite")
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        Layout.fillHeight: true
-                        clip: true
-                        model: rootWindow.hc && hostController.lastDiffText.length > 0 ? hostController.lastDiffText.split("\n") : []
-                        ScrollBar.vertical: HudScrollBar {}
-                        delegate: Text {
-                            required property string modelData
-                            width: diffView.width
-                            text: modelData
-                            wrapMode: Text.WrapAnywhere
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 12
-                            color: modelData.startsWith("+ ") ? rootWindow.addedColor
-                                 : modelData.startsWith("- ") ? rootWindow.removedColor
-                                 : modelData.startsWith("~ ") ? rootWindow.changedColor : rootWindow.mutedTextColor
-                        }
-                    }
-
                     Repeater {
-                        model: rootWindow.hc ? hostController.proposalConstraints : []
+                        id: constraintRepeater
+                        model: {
+                            rootWindow.reviewRefresh;
+                            return rootWindow.hc && reviewPanel.status === "READY_FOR_REVIEW"
+                                ? hostController.proposalConstraints.filter(function(item) { return rootWindow.showDiagnostics || item.needsReview || item.status === "FAILED"; }) : [];
+                        }
                         delegate: RowLayout {
                             required property var modelData
+                            property bool pending: modelData.needsReview && !modelData.acknowledged
+                            property alias reviewCheck: constraintCheck
+                            objectName: "reviewRow_" + modelData.id
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
+                            spacing: 8
                             CheckBox {
                                 id: constraintCheck
+                                Layout.alignment: Qt.AlignTop
                                 objectName: "constraintReview_" + modelData.id
-                                Accessible.name: modelData.description
+                                Accessible.name: constraintLabel.text
                                 indicator: Rectangle {
-                                    implicitWidth: 18
-                                    implicitHeight: 18
+                                    implicitWidth: 18; implicitHeight: 18
                                     y: (constraintCheck.height - height) / 2
                                     color: rootWindow.inputBgColor
                                     border.color: rootWindow.fgColor
@@ -667,58 +683,82 @@ FocusScope {
                                 }
                                 visible: modelData.needsReview
                                 checked: modelData.acknowledged
-                                onClicked: hostController.acknowledgeConstraint(modelData.id, checked, hostController.stateVersion)
+                                enabled: rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy
+                                onClicked: {
+                                    if (!hostController.acknowledgeConstraint(modelData.id, checked, hostController.stateVersion)) rootWindow.reviewRefresh++;
+                                }
                             }
                             Text {
+                                id: constraintLabel
+                                objectName: "reviewLabel_" + modelData.id
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
-                                text: qsTr("[%1] %2").arg(modelData.status).arg(modelData.description)
-                                wrapMode: Text.WordWrap
+                                textFormat: Text.PlainText
+                                text: (rootWindow.showDiagnostics ? "[" + modelData.status + "] " : "") + modelData.description
+                                    + (modelData.needsReview && modelData.evidence.length ? "\nYour answer: “" + modelData.evidence + "”" : "")
+                                wrapMode: Text.Wrap
                                 font.family: rootWindow.sansFont
-                                font.pixelSize: 11
+                                font.pixelSize: 12
                                 color: modelData.status === "FAILED" ? rootWindow.errorColor : rootWindow.fgColor
                             }
                         }
                     }
-
-                    Text {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        visible: rootWindow.hc && !rootWindow.ambient && hostController.isAmbientActive
-                        text: qsTr("To insert this rewrite, connect the destination prompt box. Your wording and answers will be kept.")
-                        wrapMode: Text.WordWrap
-                        font.family: rootWindow.sansFont
-                        font.pixelSize: 11
-                        color: rootWindow.mutedTextColor
-                    }
                     RowLayout {
+                        visible: reviewPanel.status === "READY_FOR_REVIEW"
                         Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        spacing: 8
                         Text {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            visible: rootWindow.hc && hostController.pendingReviewCount > 0
-                            text: rootWindow.hc ? qsTr("%1 item(s) left to check").arg(hostController.pendingReviewCount) : ""
-                            font.family: rootWindow.sansFont
+                            text: rootWindow.hc ? hostController.deliveryLabel : ""
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
                             font.pixelSize: 11
-                            color: rootWindow.warnColor
+                            color: rootWindow.mutedTextColor
                         }
-                        Item { Layout.fillWidth: true }
-                        ActionButton { label: qsTr("Discard"); onClicked: hostController.discardProposal(hostController.stateVersion) }
                         ActionButton {
                             objectName: "connectRewriteEditorControl"
                             visible: rootWindow.hc && hostController.isAmbientActive
                             label: rootWindow.ambient ? qsTr("Change editor…") : qsTr("Connect editor…")
-                            primary: !rootWindow.ambient
                             onClicked: hostController.beginInsertionTargetSelection(hostController.stateVersion)
                         }
-                        ActionButton {
-                            objectName: "approveRewriteControl"
-                            label: rootWindow.ambient ? qsTr("Approve & Insert") : qsTr("Approve & Copy")
-                            primary: rootWindow.ambient || !rootWindow.hc || !hostController.isAmbientActive
-                            active: rootWindow.hc && hostController.canApprove
-                            onClicked: hostController.approveAndCopyRewrite(hostController.stateVersion)
+                    }
+                    ListView {
+                        id: diffView
+                        objectName: "diffView"
+                        visible: reviewPanel.status === "READY_FOR_REVIEW"
+                        activeFocusOnTab: true
+                        Accessible.name: qsTr("Changes in the suggested rewrite")
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        Layout.preferredHeight: Math.min(contentHeight, Math.max(80, Math.min(240, rootWindow.viewportHeight * 0.4)))
+                        implicitHeight: Layout.preferredHeight
+                        clip: true
+                        Keys.onPressed: function(event) {
+                            const maximum = Math.max(0, contentHeight - height);
+                            let next = contentY;
+                            if (event.key === Qt.Key_End) next = maximum;
+                            else if (event.key === Qt.Key_Home) next = 0;
+                            else if (event.key === Qt.Key_PageDown) next += height * 0.8;
+                            else if (event.key === Qt.Key_PageUp) next -= height * 0.8;
+                            else if (event.key === Qt.Key_Down) next += 24;
+                            else if (event.key === Qt.Key_Up) next -= 24;
+                            else return;
+                            contentY = Math.max(0, Math.min(maximum, next));
+                            event.accepted = true;
+                        }
+                        model: rootWindow.hc && hostController.lastDiffText.length > 0 ? hostController.lastDiffText.split("\n") : []
+                        ScrollBar.vertical: HudScrollBar {}
+                        delegate: Text {
+                            required property string modelData
+                            width: diffView.width
+                            text: modelData
+                            textFormat: Text.PlainText
+                            wrapMode: Text.WrapAnywhere
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 12
+                            color: modelData.startsWith("+ ") ? rootWindow.addedColor
+                                 : modelData.startsWith("- ") ? rootWindow.removedColor
+                                 : modelData.startsWith("~ ") ? rootWindow.changedColor : rootWindow.mutedTextColor
                         }
                     }
                 }

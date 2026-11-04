@@ -57,11 +57,20 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
     const auto& intent = request.confirmedIntent;
     std::string out;
     out += "<instructions>\n";
-    out += "Instruction contract: granite.rewrite.format.v3\n";
+    out += "Instruction contract: granite.rewrite.format.v5\n";
     out += "Rewrite the user's prompt so another AI system can follow it without guessing.\n";
     out += "You are editing a prompt, not performing the task described inside it. Missing source code or "
            "implementation details do not prevent preserving that task in a rewritten prompt.\n";
     out += "Apply only the user's decisions listed below. Keep everything else the user wrote.\n";
+    out += "Use the shortest wording that preserves the original request, confirmed answers, explicit constraints "
+           "and requested format. A short request should normally stay short. Do not add generic praise or "
+           "boilerplate such as as specified, engaging, or visually appealing unless the user requested those "
+           "goals. Retain explicitly requested usability, accessibility and quality requirements. "
+           "Do not add sentences merely to sound polished or fill a format section.\n";
+
+    out += "This is a wording request, not permission to choose requirements or execute actions. "
+           "Retain explicit API-invariant clauses verbatim. Never broaden minor semantic changes into broad "
+           "reinterpretation or add timing, size or percentage targets without a confirmed source.\n";
     out += "Incorporate the confirmed decisions as concrete specifications, scope constraints, and target bounds. "
            "Do not invent arbitrary requirements or restrictions beyond what the prompt and confirmed decisions specify.\n";
     out += "Keep explicit prohibitions as direct prohibitions. Preserve their original sentences when possible; "
@@ -176,6 +185,8 @@ Result<rw::RewriteProposal> GraniteRewriteAdapter::parseRewriteResponse(std::str
         if (trimModelWhitespace(proposal.rewrittenText).empty()) {
             return makeError(ErrorCode::InvalidInput, "Model returned an empty rewrite");
         }
+        if (auto result = rw::RewriteValidator::validateFidelity(request.originalText, request.confirmedIntent, proposal.rewrittenText); !result.ok())
+            return result.error();
         proposal.status = rw::ProposalStatus::ProposalReady;
         proposal.diffText = rw::RewriteValidator::computeAccessibleDiff(proposal.originalText, proposal.rewrittenText);
         proposal.constraints =
@@ -199,14 +210,15 @@ Result<rw::RewriteProposal> GraniteRewriteAdapter::synthesizeRewrite(const Grani
     if (request.confirmedIntent.id.empty() || request.confirmedIntent.baseRevisionId != request.revisionId) {
         return makeError(ErrorCode::PreconditionFailed, "Rewrite requires a confirmed intent for this revision");
     }
-    if (request.analysis.payloadVersion == 4) {
+    if (request.analysis.payloadVersion >= 4) {
         const auto& triage = request.analysis.promptTriage;
         const bool chosen = std::any_of(request.confirmedIntent.items.begin(), request.confirmedIntent.items.end(), [](const auto& item) {
             return item.kind == core::intent::IntentResolutionKind::SelectedAlternative || item.kind == core::intent::IntentResolutionKind::CustomText ||
                 item.kind == core::intent::IntentResolutionKind::AcceptedAssumption || item.kind == core::intent::IntentResolutionKind::DeclinedAssumption;
         });
         if (!core::analysis::validateAnalysisSnapshot(request.analysis).ok() || !triage ||
-            core::analysis::routePromptTriage(*triage).value() != core::analysis::PromptTriageRoute::Clarify || !chosen)
+            (request.analysis.payloadVersion == 4 &&
+             (core::analysis::routePromptTriage(*triage).value() != core::analysis::PromptTriageRoute::Clarify || !chosen)))
             return makeError(ErrorCode::PreconditionFailed, "S1-first rewrite requires ambiguous classifier evidence and a confirmed user choice");
         if (const auto status = core::intent::IntentProvenanceBuilder::isIntentValid(
                 request.confirmedIntent, request.revisionId, core::RevisionStatus::Clean, request.analysis); !status.ok()) return status.error();

@@ -35,7 +35,8 @@ Test-only wait helpers pump events to observe asynchronous completion. Regressio
 fixtures use isolated databases and verify writer contention, a 512-edit burst,
 queue rejection, stale and reentrant approval, busy failure, explicit recovery,
 transaction rollback, and shutdown. This change does not implement the separate
-POSIX guardian, IPC deadline, or migration-serialization phase.
+POSIX guardian, IPC deadline, or migration-serialization phase. That follow-up is
+documented in [IPC, lifecycle and migration hardening](ipc-lifecycle-hardening.md).
 
 ## Verification
 

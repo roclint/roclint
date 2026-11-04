@@ -268,15 +268,12 @@ int main(int argc, char** argv) {
                 // Stream each decoded text piece to the host as a partial_result frame.
                 const auto streamToken = [&](std::string_view piece) {
                     if (work.cancelled->load() || stopping.load()) return;
-                    const QJsonObject partial{
-                        {QStringLiteral("type"),       QStringLiteral("partial_result")},
-                        {QStringLiteral("ok"),         true},
-                        {QStringLiteral("request_id"), work.request.value(QStringLiteral("request_id"))},
-                        {QStringLiteral("chunk"),      QString::fromUtf8(piece.data(), static_cast<qsizetype>(piece.size()))}};
-                    const auto frame = QJsonDocument(partial).toJson(QJsonDocument::Compact) + '\n';
-                    const std::lock_guard lock(outputMutex);
-                    static_cast<void>(std::fwrite(frame.constData(), 1, static_cast<std::size_t>(frame.size()), stdout));
-                    static_cast<void>(std::fflush(stdout));
+                    auto partial = work.request;
+                    partial.remove(QStringLiteral("payload"));
+                    partial.insert(QStringLiteral("type"), QStringLiteral("partial_result"));
+                    partial.insert(QStringLiteral("ok"), true);
+                    partial.insert(QStringLiteral("chunk"), QString::fromUtf8(piece.data(), static_cast<qsizetype>(piece.size())));
+                    emitFrame(partial);
                 };
                 const auto result = engine.execute(work.request.value(QStringLiteral("op")).toString(),
                                                    work.request.value(QStringLiteral("payload")).toObject(), control, streamToken);
@@ -288,7 +285,8 @@ int main(int argc, char** argv) {
                 response = reply(work.request, {}, QStringLiteral("Native Granite could not complete this local operation."), QStringLiteral("RUNTIME"));
             }
             const std::lock_guard lock(mutex);
-            if (!work.cancelled->load() && !stopping.load()) emitFrame(response);
+            if (!stopping.load()) emitFrame(work.cancelled->load()
+                ? reply(work.request, {}, QStringLiteral("Native operation was cancelled."), QStringLiteral("CANCELLED")) : response);
             pending.erase(requestId(work.request));
         }
         reader.join();

@@ -5,6 +5,8 @@
 #include <QDateTime>
 #include <QPointer>
 #include <QThread>
+#include <QLockFile>
+#include <QFileInfo>
 #include <atomic>
 #include <tuple>
 #include <mutex>
@@ -21,6 +23,7 @@ class StorageService {
     struct Worker : QObject {
         std::unique_ptr<storage::Database> database;
         std::unique_ptr<storage::PromptRepository> repository;
+        std::unique_ptr<QLockFile> ownership;
     };
     struct State {
         std::shared_ptr<std::atomic_bool> stopping = std::make_shared<std::atomic_bool>(false);
@@ -52,7 +55,7 @@ public:
         auto* thread = thread_;
         QMetaObject::invokeMethod(worker_, [worker = worker_, thread, state, receiver, completed]() {
             { const std::lock_guard lock(state->handleMutex); state->handle = nullptr; }
-            worker->repository.reset(); worker->database.reset();
+            worker->repository.reset(); worker->database.reset(); worker->ownership.reset();
             QMetaObject::invokeMethod(QCoreApplication::instance(), [state, receiver, completed]() {
                 state->closed = true;
                 if (receiver && completed) completed();
@@ -97,7 +100,21 @@ public:
         const auto state = state_;
         co_return co_await perform<core::Status>([path, recoverAttempts, stopping, state](Worker& worker) {
             { const std::lock_guard lock(state->handleMutex); state->handle = nullptr; }
-            worker.repository.reset(); worker.database = std::make_unique<storage::Database>();
+            worker.repository.reset(); worker.database.reset(); worker.ownership.reset();
+            if (path != QLatin1String(":memory:")) {
+                const QFileInfo info(path);
+                auto identity = info.canonicalFilePath();
+                if (identity.isEmpty()) {
+                    const auto parent = QFileInfo(info.absolutePath()).canonicalFilePath();
+                    if (parent.isEmpty()) return core::Status(core::makeError(core::ErrorCode::DbError, "History folder is unavailable"));
+                    identity = parent + QLatin1Char('/') + info.fileName();
+                }
+                worker.ownership = std::make_unique<QLockFile>(identity + QStringLiteral(".owner.lock"));
+                worker.ownership->setStaleLockTime(0);
+                if (!worker.ownership->tryLock(1000))
+                    return core::Status(core::makeError(core::ErrorCode::DbError, "Exclusive history ownership could not be established"));
+            }
+            worker.database = std::make_unique<storage::Database>();
             worker.database->setCancellationFlag(stopping);
             const auto target = path == QLatin1String(":memory:") ? std::filesystem::path(":memory:") : std::filesystem::path(path.toStdWString());
             if (auto status = worker.database->open(target); !status.ok()) return status;

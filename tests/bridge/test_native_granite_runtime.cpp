@@ -4,7 +4,9 @@
 #include "GraniteResidencyPolicy.hpp"
 #include "GraniteConfig.hpp"
 #include "HostController.hpp"
+#include "roclint/bridge/GraniteRewriteAdapter.hpp"
 #include "support/check.hpp"
+#include "support/wording_fixtures.hpp"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -83,6 +85,17 @@ int fixture(const QString& mode) {
             return 0;
         }
         response.insert(QStringLiteral("result"), result);
+        if (op == QLatin1String("granite_analyze") &&
+            (mode == QLatin1String("stream") || mode == QLatin1String("bad_stream") || mode == QLatin1String("unbound_stream"))) {
+            auto partial = response;
+            partial.remove(QStringLiteral("result"));
+            partial.insert(QStringLiteral("type"), QStringLiteral("partial_result"));
+            partial.insert(QStringLiteral("chunk"), QStringLiteral("token"));
+            if (mode == QLatin1String("bad_stream")) partial.insert(QStringLiteral("session_id"), "wrong_session");
+            if (mode == QLatin1String("unbound_stream")) partial = {{"type", "partial_result"}, {"request_id", response.value("request_id")}, {"chunk", "token"}};
+            for (int i = 0; i < 65; ++i) std::cout << QJsonDocument(partial).toJson(QJsonDocument::Compact).toStdString() << '\n';
+            std::cout << std::flush;
+        }
         const auto frame = QJsonDocument(response).toJson(QJsonDocument::Compact).toStdString() + "\n";
         if (mode == QLatin1String("partial")) {
             std::cerr << "dependency diagnostics\n";
@@ -229,6 +242,12 @@ void protocolTests() {
         ROCLINT_CHECK(compiled.value(QLatin1String(field)) == profile.value(QLatin1String(field)));
     for (const auto* field : {"model_family", "model_revision", "runtime_revision", "default_quantization", "candidates", "sampling", "sampling_reference", "output_format", "grammar_transform", "analysis_instruction_contract", "rewrite_instruction_contract"})
         ROCLINT_CHECK(compiled.value(QLatin1String(field)) == source.value(QLatin1String(field)));
+    ROCLINT_CHECK(roclint::bridge::buildDiscoveryPrompt({}).find(
+        source.value("analysis_instruction_contract").toString().toStdString()) != std::string::npos);
+    const auto rewriteProfile = roclint::core::rewrite::ProfileRegistry::getProfile("GENERIC@1");
+    ROCLINT_CHECK(rewriteProfile.has_value());
+    ROCLINT_CHECK(roclint::bridge::buildRewritePrompt({}, *rewriteProfile).find(
+        source.value("rewrite_instruction_contract").toString().toStdString()) != std::string::npos);
     ROCLINT_CHECK(compiled.value(QStringLiteral("default_quantization")).toString() == QLatin1String("Q8_0"));
     NativeGraniteRuntime runtime(nullptr, QCoreApplication::applicationFilePath());
     const auto load = [&](const QString& mode) {
@@ -240,6 +259,13 @@ void protocolTests() {
     ROCLINT_CHECK(!direct("Bound instructions.").ok()); // No GUI-thread inference/deadlock.
     auto future = generate(runtime);
     waitUntil([&]() { return future.isFinished(); });
+    ROCLINT_CHECK(future.result().ok());
+    int chunks = 0;
+    QObject::connect(&runtime, &NativeGraniteRuntime::partialResultReceived, [&](quint64, const QString& chunk) {
+        ROCLINT_CHECK(chunk == "token"); ++chunks;
+    });
+    load(QStringLiteral("stream")); future = generate(runtime);
+    waitUntil([&]() { return future.isFinished() && chunks == 65; });
     ROCLINT_CHECK(future.result().ok());
     ROCLINT_CHECK(runtime.modelInfo().transport == "local_native_llama_cpp");
     ROCLINT_CHECK(runtime.configurationDetail().contains(QStringLiteral("template_sha256=")));
@@ -262,7 +288,7 @@ void protocolTests() {
     waitUntil([&]() { return runtime.isReady() && runtime.residency() == QLatin1String("HOT"); });
     ROCLINT_CHECK(runtime.generationForTesting() == generation); // Reuse the owned helper/mapping; no unnecessary restart.
 
-    for (const auto& mode : {"bad_context", "bad_hash", "bad_version", "malformed", "oversize", "bad_utf8"}) {
+    for (const auto& mode : {"bad_context", "bad_hash", "bad_version", "malformed", "oversize", "bad_utf8", "bad_stream", "unbound_stream"}) {
         load(QString::fromLatin1(mode));
         future = generate(runtime);
         waitUntil([&]() { return future.isFinished() && runtime.state() == QLatin1String("FAILED"); });
@@ -289,9 +315,11 @@ void protocolTests() {
     auto staleFuture = QtConcurrent::run([unusedTransport]() { return unusedTransport("late instructions"); });
     waitUntil([&]() { return staleFuture.isFinished(); });
     ROCLINT_CHECK(!staleFuture.result().ok() && staleFuture.result().error().code == roclint::core::ErrorCode::StaleVersion);
+    waitUntil([&]() { return runtime.isReady(); }); // A cancel acknowledgement alone does not prove quiescence.
     future = generate(runtime);
     waitUntil([&]() { return future.isFinished(); });
-    ROCLINT_CHECK(future.result().ok() && runtime.isReady()); // The late old result was discarded.
+    waitUntil([&]() { return runtime.isReady(); });
+    ROCLINT_CHECK(future.result().ok()); // The late old result was discarded.
 
     load(QStringLiteral("crash_semantic")); future = generate(runtime);
     waitUntil([&]() { return future.isFinished() && runtime.isReady(); });
@@ -432,6 +460,35 @@ void decodeThreadLockSanityTest() {
 
 // Opt-in installed-model probe. It never observes desktop fields, uses isolated settings/history,
 // performs no downloads, and does not approve, insert or send generated content.
+int liveRewriteCorpus(char** argv) {
+    QCoreApplication::setOrganizationName("RoclintRewriteProbe"); QCoreApplication::setApplicationName("isolated");
+    NativeGraniteRuntime runtime(nullptr,QString::fromLocal8Bit(argv[3]));
+    runtime.load(QString::fromLocal8Bit(argv[2]),"Q8_0"); waitUntil([&]() { return runtime.isReady(); },180000);
+    roclint::bridge::GraniteAdapter adapter; ROCLINT_CHECK(adapter.beginLoading());
+    ROCLINT_CHECK(adapter.completeLoading(runtime.modelInfo()));
+    int index=0, failures=0;
+    for (const auto& item : fx::leanWordingCases()) {
+        const auto request=fx::wordingRequest(item,index);
+        NativeGraniteRuntime::RequestContext context{QString("wording_group_%1").arg(index),QString("wording_attempt_%1").arg(index),
+            QString::fromStdString(request.sessionId),QString::fromStdString(request.revisionId),1,
+            QString::fromStdString(request.originalText),QString::fromStdString(request.confirmedIntent.id),QString::fromStdString(request.rewriteProfileId)};
+        const auto transport=runtime.transportFor(context,"granite_rewrite",roclint::bridge::rewriteResponseSchema());
+        auto future=QtConcurrent::run([&adapter,request,transport]() {
+            return roclint::bridge::GraniteRewriteAdapter::synthesizeRewrite(request,adapter,transport,2000);
+        });
+        waitUntil([&]() { return future.isFinished(); },70000);
+        const auto result=future.result();
+        std::cout << "case=" << index << "; profile=" << item.profile << "; ok=" << result.ok() << '\n';
+        if (!result.ok()) { ++failures; std::cout << "diagnostic=" << result.error().message.substr(0,1024) << '\n'; }
+        else std::cout << "status=" << roclint::core::rewrite::toString(result.value().status) << "\nrewrite=" << result.value().rewrittenText << '\n';
+        std::cout.flush();
+        ++index;
+    }
+    runtime.stop(); waitUntil([&]() { return !runtime.isRunning(); });
+    std::cout << "Mechanical successes=" << index-failures << '/' << index << "; semantic assessment is separate.\n";
+    return failures ? 1 : 0;
+}
+
 int liveHostPipeline(int argc, char** argv) {
     QTemporaryDir settingsDirectory;
     ROCLINT_CHECK(settingsDirectory.isValid());
@@ -454,29 +511,58 @@ int liveHostPipeline(int argc, char** argv) {
         std::cout << host.analysisStatus().toStdString() << ": " << host.analysisMessage().toStdString() << std::endl;
     });
     auto prompt = QStringLiteral("Delete the old files.");
-    if (argc == 7) {
+    if (argc >= 7) {
         QFile input(QString::fromLocal8Bit(argv[6]));
         ROCLINT_CHECK(input.open(QIODevice::ReadOnly));
         prompt = QString::fromUtf8(input.readAll());
     }
+    if (argc == 8) {
+        static_cast<void>(host.getProjectFiles(QString::fromLocal8Bit(argv[7])));
+        ROCLINT_CHECK(host.waitForIdleForTesting(5000));
+    }
     QElapsedTimer timer; timer.start();
-    ROCLINT_CHECK(host.waitForCommandForTesting(host.analyzePrompt(prompt, 0)));
+    const bool explicitReview = qEnvironmentVariableIsSet("ROCLINT_LIVE_EXPLICIT_REVIEW");
+    ROCLINT_CHECK(host.waitForCommandForTesting(explicitReview ? host.reviewPrompt(prompt, 0) : host.analyzePrompt(prompt, 0)));
     waitUntil([&]() { return !host.isAnalyzing(); }, 400000);
     std::cout << "elapsed_ms=" << timer.elapsed() << "; granite=" << host.modelRuntimeState().toStdString()
               << "; error=" << host.lastError().toStdString() << std::endl;
     const auto snapshot = host.finalSnapshotForTesting();
+    if (host.analysisStatus() != QLatin1String("READY")) {
+        const auto attempts = host.repositoryForTesting()->getModelAttempts(
+            roclint::core::SessionId(host.currentSessionIdString().toStdString())).waitForTesting();
+        if (attempts.ok()) for (const auto& attempt : attempts.value())
+            std::cout << "attempt=" << attempt.stage << "; diagnostic=" << attempt.errorMessage.substr(0, 1024) << std::endl;
+    }
     ROCLINT_CHECK(host.analysisStatus() == QLatin1String("READY") && snapshot && snapshot->promptTriage);
-    ROCLINT_CHECK(snapshot->promptTriage->ambiguityScore >= roclint::core::analysis::kPromptTriageThreshold);
-    ROCLINT_CHECK(!snapshot->normalized.choiceGroups.empty());
+    std::cout << "s1_score=" << snapshot->promptTriage->ambiguityScore
+              << "; configuration=" << snapshot->promptTriage->configurationId << '\n';
+    if (host.isOriginalRoute()) {
+        ROCLINT_CHECK(host.isOriginalRoute() && !host.hasProposal());
+        std::cout << "No material clarification identified; original retained, optional wording help remains explicit.\n";
+    } else {
+        ROCLINT_CHECK(explicitReview || snapshot->promptTriage->ambiguityScore >= roclint::core::analysis::kPromptTriageThreshold);
+        std::cout << "outcome=" << host.reviewOutcome().toStdString() << std::endl;
+        std::cout << "verdict=" << host.interventionVerdict().toStdString() << "; diagnostic=" << host.diagnosticMessage().toStdString() << std::endl;
+        const auto policy = roclint::core::analysis::MaterialityPolicyV1::evaluatePrompt(snapshot->normalized, prompt.toStdString());
+        std::cout << "policy=" << roclint::core::analysis::toString(policy.primaryReasonCode) << std::endl;
+        for (const auto& group : policy.groupResults)
+            std::cout << "group=" << group.groupId << "; reason=" << roclint::core::analysis::toString(group.reasonCode)
+                      << "; diagnostic=" << group.diagnosticMessage.substr(0, 512) << std::endl;
+        ROCLINT_CHECK(host.isClarifying() && !host.activeQuestion().isEmpty());
+        std::cout << "question=" << host.activeQuestion().toStdString() << '\n';
+        for (const auto& option : host.activeAlternatives())
+            std::cout << "option=" << option.toMap().value(QStringLiteral("label")).toString().toStdString() << '\n';
+    }
     ROCLINT_CHECK(!host.hasProposal());
     ROCLINT_CHECK(host.waitForIdleForTesting(5000));
-    std::cout << "Installed Julia -> native Granite pipeline completed; review remains explicit.\n";
+    std::cout << "Installed-model routing completed; review remains explicit.\n";
     return 0;
 }
 
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
-    if ((argc == 6 || argc == 7) && std::string_view(argv[1]) == "--live-host-pipeline") return liveHostPipeline(argc, argv);
+    if (argc == 4 && std::string_view(argv[1]) == "--live-rewrite-corpus") return liveRewriteCorpus(argv);
+    if ((argc >= 6 && argc <= 8) && std::string_view(argv[1]) == "--live-host-pipeline") return liveHostPipeline(argc, argv);
     if (argc == 5 && std::string_view(argv[1]) == "--model-dir") return fixture(QString::fromLocal8Bit(argv[2]));
     grammarTests(); residencyPolicyTests(); protocolTests(); installerTests(); controllerResidencyTests();
     acceleratorNameTests(); speedMetricsClearOnStopTests(); decodeThreadLockSanityTest();

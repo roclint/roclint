@@ -134,10 +134,6 @@ public:
         perform(^{ this->applyObserving(observing); });
     }
 
-    void setCardVisible(bool visible) override {
-        m_cardVisible.store(visible);
-    }
-
     void inject(const InjectionRequest& request) override {
         const InjectionRequest copy = request;
         perform(^{ this->performInjection(copy); });
@@ -186,8 +182,11 @@ public:
     }
 
     void onNotification(CFStringRef notification) {
-        if (m_cardVisible.load()) {
-            return;
+        @autoreleasepool {
+            const pid_t frontPid = [[NSWorkspace sharedWorkspace] frontmostApplication].processIdentifier;
+            // A visible non-activating HUD does not own the editor's focus. Only
+            // read notifications for the actual foreground source application.
+            if (frontPid <= 0 || frontPid == getpid() || frontPid != m_pid) return;
         }
         if (CFEqual(notification, kAXFocusedUIElementChangedNotification) ||
             CFEqual(notification, kAXFocusedWindowChangedNotification) ||
@@ -275,9 +274,9 @@ private:
         @autoreleasepool {
             NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
             const pid_t frontPid = front ? front.processIdentifier : 0;
-            if (frontPid == getpid() || m_cardVisible.load() || [NSApp keyWindow] != nil) {
-                // User is interacting with Roclint (clicking the badge or reviewing the HUD/card).
-                // Do NOT query m_app for focus or drop the target editor session!
+            if (frontPid <= 0 || frontPid == getpid()) {
+                // Preserve the source target while Roclint itself is foreground.
+                // Visibility and an inactive retained key window are not focus.
                 return;
             }
             if (frontPid > 0 && frontPid != m_pid) {
@@ -519,7 +518,7 @@ private:
         }
         m_lastSignature = signature;
         if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
-            qInfo() << "[MacAX] readAndEmit: text=" << field->text << "fieldRect=" << field->fieldRect;
+            qInfo() << "[MacAX] readAndEmit: characters=" << field->text.size() << "fieldRect=" << field->fieldRect;
         }
         emit fieldObserved(*field);
     }
@@ -672,7 +671,6 @@ private:
     std::condition_variable m_ready;
     CFRunLoopRef m_loop{nullptr};
     std::atomic<bool> m_trusted{false};
-    std::atomic<bool> m_cardVisible{false};
     id m_activationToken{nil};
 
     // Run-loop thread state.

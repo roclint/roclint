@@ -236,13 +236,14 @@ void testDiscoveryExamplesUseValidGroundedPackets() {
             kSession, kRevision, input.value().asString());
         ROCLINT_CHECK(response.ok() && response.value().ungroundedEvidenceCount == 0);
         const auto& analysis = response.value().analysis;
-        if (count == 0 || count == 1 || count == 5) ROCLINT_CHECK(response.value().outcome == DiscoveryOutcome::NoAmbiguity);
+        if (count == 0 || count == 1 || count == 6) ROCLINT_CHECK(response.value().outcome == DiscoveryOutcome::NoAmbiguity);
         if (count == 2) ROCLINT_CHECK(analysis.choiceGroups.size() == 2);
         if (count == 3) ROCLINT_CHECK(analysis.choiceGroups.empty() && analysis.missingDecisions.size() == 1);
-        if (count == 4) ROCLINT_CHECK(analysis.choiceGroups.empty() && analysis.conflicts.size() == 1);
+        if (count == 4) ROCLINT_CHECK(analysis.choiceGroups.size() == 1 && analysis.choiceGroups.front().dimension == "visual_direction");
+        if (count == 5) ROCLINT_CHECK(analysis.choiceGroups.empty() && analysis.conflicts.size() == 1);
         ++count; position = responseEnd;
     }
-    ROCLINT_CHECK(count == 6);
+    ROCLINT_CHECK(count == 8);
 }
 
 void makeReady(GraniteAdapter& adapter) {
@@ -302,7 +303,7 @@ void testDiscoverOptionsThroughTransport() {
     ROCLINT_CHECK(!called);
 }
 
-void testEmptyGraniteReplyCannotOverrideAmbiguousClassifier() {
+void testAdvisoryClassifierDisagreementPreservesOriginal() {
     GraniteAdapter adapter;
     makeReady(adapter);
     GraniteOptionDiscoveryRequest request{kSession, kRevision, kPrompt, "UNKNOWN"};
@@ -320,7 +321,12 @@ void testEmptyGraniteReplyCannotOverrideAmbiguousClassifier() {
     const GraniteTransport empty = [](std::string_view) -> Result<std::string> {
         return std::string(R"({"status":"no_ambiguity","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""})");
     };
-    const auto rejected = adapter.discoverOptions(request, empty);
+    const auto clear = adapter.discoverOptions(request, empty);
+    ROCLINT_CHECK(clear.ok() && clear.value().outcome == DiscoveryOutcome::NoAmbiguity);
+    ROCLINT_CHECK(clear.value().analysis.choiceGroups.empty());
+    const auto rejected = adapter.discoverOptions(request, [](std::string_view) -> Result<std::string> {
+        return std::string(R"({"status":"options_generated","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""})");
+    });
     ROCLINT_CHECK(!rejected.ok() && rejected.error().code == ErrorCode::ValidationFailed);
     ROCLINT_CHECK(rejected.error().message.find("retry Analyze") != std::string::npos);
     ROCLINT_CHECK(adapter.state() == GraniteRuntimeState::Ready);
@@ -330,6 +336,73 @@ void testEmptyGraniteReplyCannotOverrideAmbiguousClassifier() {
     ROCLINT_CHECK(retry.ok() && !retry.value().analysis.choiceGroups.empty());
     request.promptTriage.reset(); // Retain the historical non-routed parser contract.
     ROCLINT_CHECK(adapter.discoverOptions(request, empty).ok());
+}
+
+void testSelectiveReviewContract() {
+    for (const auto& text : {std::string("Give the landing page a friendlier vibe."),
+            std::string("cool cool; caf\xc3\xa9 and \"quoted\" text."), std::string(64000, 'x') + " unique-tail"}) {
+        const auto boundSchema = discoveryResponseSchema(text);
+        ROCLINT_CHECK(boundSchema.size() <= 65536);
+        const auto bound = json::parse(boundSchema);
+        ROCLINT_CHECK(bound.ok());
+        const auto& branch = bound.value().find("oneOf")->asArray()[1];
+        const auto* strings = branch.find("properties")->find("choice_groups")->find("items")->find("properties")
+            ->find("alternatives")->find("items")->find("properties")->find("evidence")->find("items");
+        ROCLINT_CHECK(strings->find("enum") && strings->find("enum")->asArray().size() <= 32);
+        for (const auto& quote : strings->find("enum")->asArray())
+            ROCLINT_CHECK(analysis::findUniqueSpan(text, quote.asString()).status == analysis::SpanMatchStatus::ExactMatch);
+        ROCLINT_CHECK(buildDiscoveryPrompt({kSession, kRevision, text}).find("evidence_quotes") != std::string::npos);
+    }
+    const auto schema = json::parse(discoveryResponseSchema());
+    ROCLINT_CHECK(schema.ok() && schema.value().find("oneOf"));
+    ROCLINT_CHECK(schema.value().find("oneOf")->asArray().size() == 6);
+    for (const auto& branch : schema.value().find("oneOf")->asArray()) {
+        const auto* properties = branch.find("properties");
+        const auto kind = properties->find("assistance_kind")->find("const")->asString();
+        if (kind == "creative" || kind == "refinement" || kind == "decomposition") {
+            ROCLINT_CHECK(properties->find("choice_groups")->find("minItems")->asNumber() == 1);
+            ROCLINT_CHECK(properties->find("choice_groups")->find("maxItems")->asNumber() == 1);
+            for (const auto* field : {"assumptions", "missing_decisions", "conflicts"})
+                ROCLINT_CHECK(properties->find(field)->find("const")->asArray().empty());
+        }
+    }
+    using Kind = analysis::AssistanceKind;
+    const auto creative = R"({"status":"options_generated","assistance_kind":"creative","choice_groups":[{"question":"Explore a direction?","alternatives":[{"label":"Bold","why_material":"Visual emphasis","evidence":["modern"]},{"label":"Restrained","why_material":"Visual emphasis","evidence":["modern"]}]}]})";
+    const auto parsed = parse(creative, "Make it modern");
+    ROCLINT_CHECK(parsed.ok() && parsed.value().assistanceKind == Kind::Creative);
+    for (const auto* kind : {"unknown", "", "none"}) {
+        std::string malformed(creative); malformed.replace(malformed.find("creative"), 8, kind);
+        ROCLINT_CHECK(!parse(malformed, "Make it modern").ok());
+    }
+    for (const auto* value : {"null", "42"}) {
+        std::string malformed(creative); malformed.replace(malformed.find("\"creative\""), 10, value);
+        ROCLINT_CHECK(!parse(malformed, "Make it modern").ok());
+    }
+    ROCLINT_CHECK(!parse(R"({"status":"no_ambiguity","assistance_kind":"creative"})").ok());
+    std::string concealed(creative);
+    concealed.insert(concealed.size() - 1, R"(,"conflicts":[{"description":"Unresolved conflict","blocking":true}])");
+    ROCLINT_CHECK(!parse(concealed, "Make it modern").ok());
+    GraniteAdapter adapter; makeReady(adapter);
+    analysis::PromptTriage triage;
+    triage.sessionId = kSession; triage.revisionId = kRevision;
+    triage.stateVersion = 1; triage.requestGroupId = "group"; triage.attemptId = "triage";
+    triage.modelId = "fixture"; triage.modelRevision = "fixture"; triage.configurationId = "fixture";
+    triage.weightsSha256 = std::string(64, 'a'); triage.execution = analysis::TriageExecution::Mock;
+    triage.categoryScores = {.1, .1, .1, .1};
+    GraniteOptionDiscoveryRequest req{kSession, kRevision, kPrompt};
+    triage.revisionTextHash = crypto::Sha256::hexDigest(kPrompt);
+    const auto evidence = analysis::sealPromptTriage(triage, kPrompt);
+    ROCLINT_CHECK(evidence.ok());
+    req.promptTriage = evidence.value();
+    int calls = 0;
+    const GraniteTransport transport = [&](std::string_view) -> Result<std::string> { ++calls; return std::string(R"({"status":"no_ambiguity","assistance_kind":"none"})"); };
+    ROCLINT_CHECK(!adapter.discoverOptions(req, transport).ok() && calls == 0);
+    req.reviewTrigger = static_cast<analysis::ReviewTrigger>(99);
+    ROCLINT_CHECK(!adapter.discoverOptions(req, transport).ok() && calls == 0);
+    req.reviewTrigger = analysis::ReviewTrigger::ExplicitReview;
+    ROCLINT_CHECK(adapter.discoverOptions(req, transport).ok() && calls == 1);
+    ROCLINT_CHECK(buildDiscoveryPrompt(req).find("explicitly requested deeper review") != std::string::npos);
+    ROCLINT_CHECK(req.promptTriage->ambiguityScore == .1);
 }
 
 void testTransportFailureFailsRuntimeButMalformedOutputDoesNot() {
@@ -403,9 +476,10 @@ int main() {
     testDiscoveryPromptEmbedsTextAsEscapedJsonOnly();
     testDiscoveryExamplesUseValidGroundedPackets();
     testExplicitColorBoundsRejectGeneratedReversals();
+    testSelectiveReviewContract();
     testRuntimeLifecycle();
     testDiscoverOptionsThroughTransport();
-    testEmptyGraniteReplyCannotOverrideAmbiguousClassifier();
+    testAdvisoryClassifierDisagreementPreservesOriginal();
     testTransportFailureFailsRuntimeButMalformedOutputDoesNot();
     std::cout << "[Test GraniteAdapter] All tests PASSED.\n";
     return 0;

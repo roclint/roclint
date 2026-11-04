@@ -88,7 +88,8 @@ std::vector<GroupPresentation> buildPresentation(const NormalizedAnalysis& norma
 
 std::string computeSnapshotHash(const AnalysisSnapshot& snapshot) {
     crypto::CanonicalHasher hash(snapshot.payloadVersion == 2 ? "roclint.analysis_snapshot.v2" :
-        snapshot.payloadVersion == 3 ? "roclint.analysis_snapshot.v3" : "roclint.analysis_snapshot.v4");
+        snapshot.payloadVersion == 3 ? "roclint.analysis_snapshot.v3" :
+        snapshot.payloadVersion == 4 ? "roclint.analysis_snapshot.v4" : "roclint.analysis_snapshot.v5");
     hash.field(computeSnapshotHash(snapshot.normalized)).field(snapshot.normalized.id).field(snapshot.revisionTextHash)
         .field(snapshot.discoveryAttemptId).field(snapshot.scorerAttemptId).field(snapshot.presentationPolicyVersion);
     const auto& evaluation = snapshot.evaluation;
@@ -132,6 +133,8 @@ std::string computeSnapshotHash(const AnalysisSnapshot& snapshot) {
         hash.flag(snapshot.promptTriage.has_value());
         if (snapshot.promptTriage) hash.field(snapshot.promptTriage->id).field(computePromptTriageHash(*snapshot.promptTriage));
     }
+    if (snapshot.payloadVersion >= 5)
+        hash.number(static_cast<unsigned>(snapshot.reviewPolicy.trigger)).number(static_cast<unsigned>(snapshot.reviewPolicy.assistance));
     return hash.finalizeHex();
 }
 
@@ -141,12 +144,13 @@ bool isSnapshotSealed(const AnalysisSnapshot& snapshot) {
 }
 
 Status validateAnalysisSnapshot(const AnalysisSnapshot& snapshot) {
-    if (snapshot.payloadVersion != 2 && snapshot.payloadVersion != 3 && snapshot.payloadVersion != 4) return invalid("Unsupported final analysis version");
+    if (snapshot.payloadVersion != 2 && snapshot.payloadVersion != 3 && snapshot.payloadVersion != 4 && snapshot.payloadVersion != 5) return invalid("Unsupported final analysis version");
     if (!isSnapshotSealed(snapshot)) return invalid("Final analysis hash does not match its contents");
     const auto textHash = crypto::normalizeSha256Digest(snapshot.revisionTextHash);
     if (!textHash.ok() || textHash.value() != snapshot.revisionTextHash) return invalid("Missing canonical revision text hash");
     const auto& evaluation = snapshot.evaluation;
-    if (snapshot.payloadVersion == 4) {
+    if (snapshot.payloadVersion < 5 && snapshot.reviewPolicy != ReviewPolicy{}) return invalid("Historical analysis cannot claim a review policy");
+    if (snapshot.payloadVersion >= 4) {
         if (!snapshot.promptTriage || !validatePromptTriage(*snapshot.promptTriage).ok()) return invalid("Missing valid classifier evidence");
         const auto& triage = *snapshot.promptTriage;
         if (triage.sessionId != snapshot.normalized.sessionId || triage.revisionId != snapshot.normalized.baseRevisionId ||
@@ -159,15 +163,34 @@ Status validateAnalysisSnapshot(const AnalysisSnapshot& snapshot) {
                             routeRes.value() == PromptTriageRoute::UncertainBuffer);
         const bool empty = snapshot.normalized.choiceGroups.empty() && snapshot.normalized.assumptions.empty() &&
             snapshot.normalized.missingDecisions.empty() && snapshot.normalized.conflicts.empty();
-        if ((clear && (!snapshot.discoveryAttemptId.empty() || !empty)) ||
-            (!clear && (snapshot.discoveryAttemptId.empty() || empty))) return invalid("Final analysis does not follow the classifier route");
+        // Discovery may disagree with an advisory classifier flag. An empty
+        // result still requires a recorded discovery attempt; it grants no choice.
+        if (snapshot.payloadVersion == 4) {
+            if ((clear && (!snapshot.discoveryAttemptId.empty() || !empty)) ||
+                (!clear && snapshot.discoveryAttemptId.empty())) return invalid("Final analysis does not follow the classifier route");
+        } else {
+            const auto& policy = snapshot.reviewPolicy;
+            if (policy.trigger != ReviewTrigger::Automatic && policy.trigger != ReviewTrigger::ExplicitReview)
+                return invalid("Unknown review trigger");
+            if (policy.assistance < AssistanceKind::None || policy.assistance > AssistanceKind::Decomposition)
+                return invalid("Unknown assistance kind");
+            if ((policy.trigger == ReviewTrigger::ExplicitReview || !clear) && snapshot.discoveryAttemptId.empty())
+                return invalid("Review requires a discovery attempt");
+            if (policy.trigger == ReviewTrigger::Automatic && clear && (!empty || !snapshot.discoveryAttemptId.empty()))
+                return invalid("Automatic review does not follow the classifier route");
+            if (empty != (policy.assistance == AssistanceKind::None)) return invalid("Assistance does not match review contents");
+            if (isOptionalAssistance(policy.assistance) &&
+                (snapshot.normalized.choiceGroups.size() != 1 || !snapshot.normalized.choiceGroups.front().material ||
+                 !snapshot.normalized.conflicts.empty() || !snapshot.normalized.missingDecisions.empty() ||
+                 !snapshot.normalized.assumptions.empty())) return invalid("Optional help cannot conceal unresolved requirements");
+        }
         if (!snapshot.scorerAttemptId.empty() || !evaluation.success || evaluation.executionStatus != ExecutionStatus::NotRequested ||
             evaluation.engine != ScorerEngine::JuliaLocal || evaluation.executedEngine || evaluation.modelInferenceExecuted ||
             evaluation.modelVersion != "none" || !evaluation.errorMessage.empty() || !evaluation.degradedReason.empty() ||
             evaluation.totalLatencyMs != 0 || evaluation.analysisSnapshotId != snapshot.normalized.id ||
             evaluation.confidenceThreshold != kS1ConfidenceThreshold || evaluation.thresholdVersion != kS1ThresholdVersion ||
             evaluation.planVersion != 2 || !evaluation.groupScores.empty() || !evaluation.assumptionScores.empty() ||
-            snapshot.presentationPolicyVersion != "prompt_triage_presentation.v1" ||
+            snapshot.presentationPolicyVersion != (snapshot.payloadVersion == 4 ? "prompt_triage_presentation.v1" : "selective_review.v1") ||
             snapshot.presentation != buildPresentation(snapshot.normalized, evaluation)) return invalid("Routed analysis cannot claim alternative scoring");
         std::vector<std::string> expectedOrder;
         for (const auto index : orderedAssumptionIndices(snapshot.normalized))
@@ -282,12 +305,13 @@ Result<AnalysisSnapshot> buildAnalysisSnapshot(NormalizedAnalysis normalized, Sn
 
 Result<AnalysisSnapshot> buildRoutedAnalysisSnapshot(NormalizedAnalysis normalized, PromptTriage triage,
     std::string_view frozenPrompt, std::string discoveryAttemptId,
-    std::optional<SnapshotEvaluationResponse> evaluation) {
+    std::optional<SnapshotEvaluationResponse> evaluation, std::optional<ReviewPolicy> reviewPolicy) {
     if (!validatePromptTriage(triage).ok() || triage.revisionTextHash != crypto::Sha256::hexDigest(frozenPrompt) ||
         validateNormalizedAnalysis(normalized, frozenPrompt).status == AnalysisValidationStatus::Invalid)
         return invalid("Routed analysis does not match its frozen prompt").error();
     AnalysisSnapshot snapshot;
-    snapshot.payloadVersion = 4;
+    snapshot.payloadVersion = reviewPolicy ? 5 : 4;
+    if (reviewPolicy) snapshot.reviewPolicy = *reviewPolicy;
     snapshot.revisionTextHash = crypto::Sha256::hexDigest(frozenPrompt);
     snapshot.normalized = std::move(normalized);
     snapshot.promptTriage = std::move(triage);
@@ -300,7 +324,7 @@ Result<AnalysisSnapshot> buildRoutedAnalysisSnapshot(NormalizedAnalysis normaliz
         snapshot.evaluation.engine = ScorerEngine::JuliaLocal;
         snapshot.evaluation.executionStatus = ExecutionStatus::NotRequested;
     }
-    snapshot.presentationPolicyVersion = "prompt_triage_presentation.v1";
+    snapshot.presentationPolicyVersion = reviewPolicy ? "selective_review.v1" : "prompt_triage_presentation.v1";
     snapshot.presentation = buildPresentation(snapshot.normalized, snapshot.evaluation);
     for (const auto index : orderedAssumptionIndices(snapshot.normalized))
         if (snapshot.normalized.assumptions[index].material) snapshot.assumptionOrder.push_back(snapshot.normalized.assumptions[index].id);

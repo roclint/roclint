@@ -114,6 +114,9 @@ class HostController : public QObject {
     Q_PROPERTY(QString analysisStatus READ analysisStatus NOTIFY analysisStatusChanged)
     Q_PROPERTY(QString analysisMessage READ analysisMessage NOTIFY analysisStatusChanged)
     Q_PROPERTY(bool isAnalyzing READ isAnalyzing NOTIFY analysisStatusChanged)
+    Q_PROPERTY(QString reviewOutcome READ reviewOutcome NOTIFY interventionChanged)
+    Q_PROPERTY(QString reviewDiagnostics READ reviewDiagnostics NOTIFY interventionChanged)
+    Q_PROPERTY(bool isOptionalHelp READ isOptionalHelp NOTIFY interventionChanged)
 
     Q_PROPERTY(QString interventionVerdict READ interventionVerdict NOTIFY interventionChanged)
     Q_PROPERTY(QString interventionReason READ interventionReason NOTIFY interventionChanged)
@@ -278,6 +281,9 @@ public:
     [[nodiscard]] QString analysisMessage() const { return m_analysisMessage; }
     [[nodiscard]] bool isAnalyzing() const noexcept { return m_analysisStatus == AnalysisStatus::Analyzing; }
 
+    [[nodiscard]] QString reviewOutcome() const;
+    [[nodiscard]] QString reviewDiagnostics() const;
+    [[nodiscard]] bool isOptionalHelp() const;
     [[nodiscard]] QString interventionVerdict() const;
     [[nodiscard]] QString interventionReason() const;
     [[nodiscard]] bool isClarifying() const noexcept;
@@ -347,12 +353,14 @@ public:
     [[nodiscard]] QString juliaDiskStatus() const;
     [[nodiscard]] QString juliaMemoryStatus() const;
     [[nodiscard]] bool isOriginalRoute() const {
-        return m_currentSnapshot && m_currentSnapshot->promptTriage && m_revisionState && !m_revisionState->isDraftDirty() &&
-            m_promptTriageLastRoute == core::analysis::PromptTriageRoute::Original;
+        if (!m_currentSnapshot || !m_currentSnapshot->promptTriage || !m_revisionState || m_revisionState->isDraftDirty()) return false;
+        const auto& a = m_currentSnapshot->normalized;
+        return a.choiceGroups.empty() && a.assumptions.empty() && a.missingDecisions.empty() && a.conflicts.empty();
     }
     [[nodiscard]] bool isUncertainRoute() const {
         return m_currentSnapshot && m_currentSnapshot->promptTriage && m_revisionState && !m_revisionState->isDraftDirty() &&
-            m_promptTriageLastRoute == core::analysis::PromptTriageRoute::UncertainBuffer;
+            m_currentSnapshot->discoveryAttemptId.empty() &&
+            core::analysis::routePromptTriage(*m_currentSnapshot->promptTriage).value() == core::analysis::PromptTriageRoute::UncertainBuffer;
     }
     [[nodiscard]] bool usesLiveModel() const { return m_graniteAdapter->state() == bridge::GraniteRuntimeState::Ready || isInferring(); }
     [[nodiscard]] bool isInferring() const { return m_graniteAdapter->state() == bridge::GraniteRuntimeState::Busy; }
@@ -471,6 +479,7 @@ public slots:
 
     // Analysis and clarification.
     Q_INVOKABLE quint64 analyzePrompt(QString text, quint64 expectedVersion);
+    Q_INVOKABLE quint64 reviewPrompt(QString text, quint64 expectedVersion);
     Q_INVOKABLE quint64 cancelAnalysis(quint64 expectedVersion);
     Q_INVOKABLE quint64 confirmChoice(QString alternativeId, quint64 expectedVersion);
     Q_INVOKABLE quint64 submitCustomIntent(QString customText, quint64 expectedVersion);
@@ -596,6 +605,7 @@ private:
         int budgetMs;
         std::string id;
         bool terminal{false};
+        bool superseded{false};
         bool paused{false};
         qint64 remainingMs{0};
         // A timer armed by S1 may fire during Granite. Complete the active phase's attempt.
@@ -621,6 +631,7 @@ private:
         std::uint64_t draftEditGeneration{0};
         std::uint64_t proposalEditGeneration{0};
         std::uint64_t serial{0};
+        core::analysis::ReviewTrigger reviewTrigger{core::analysis::ReviewTrigger::Automatic};
         std::string attemptId;
         std::string configuration;
         bridge::GraniteModelInfo model;
@@ -661,9 +672,14 @@ private:
         quint64 requestId{0};
         QString text;
         QString appName;
+        quint64 fieldToken{0};
+        qint64 processId{0};
+        QString appIdentifier;
+        quint64 pipelineSerial{0};
     };
 
     bool setCardVisibility(CardVisibility visibility);
+    quint64 noteDraftEditedInternal(quint64 expectedVersion, bool editedInHud);
     bool setDashboardVisibility(bool visible);
     AsyncTask<void> initStorage(QString dbPathOverride);
     AsyncTask<core::Status> openFromAmbientOperation(std::optional<AmbientObservation> observationSnapshot);
@@ -683,7 +699,8 @@ private:
     AsyncTask<core::Status> keepOriginalPromptOperation(quint64 expectedVersion);
     AsyncTask<core::Status> submitCustomIntentOperation(QString customText, quint64 expectedVersion);
     AsyncTask<core::Status> confirmChoiceOperation(QString alternativeId, quint64 expectedVersion);
-    AsyncTask<core::Status> analyzePromptOperation(QString text, quint64 expectedVersion);
+    AsyncTask<core::Status> analyzePromptOperation(QString text, quint64 expectedVersion,
+        core::analysis::ReviewTrigger trigger = core::analysis::ReviewTrigger::Automatic);
     AsyncTask<core::Status> cancelAnalysisOperation(quint64 expectedVersion);
     AsyncTask<core::Status> hardBypassOperation(QString text, quint64 expectedVersion);
     AsyncTask<core::Status> commitPromptOperation(QString text, quint64 expectedVersion);
@@ -736,7 +753,8 @@ private:
     AsyncTask<bool> applyAnalysis(core::analysis::NormalizedAnalysis analysis, std::string discoveryAttemptId,
                        std::string scorerAttemptId = {},
                        std::optional<bridge::SnapshotEvaluationResponse> evaluation = std::nullopt,
-                       std::optional<core::analysis::PromptTriage> triage = std::nullopt);
+                       std::optional<core::analysis::PromptTriage> triage = std::nullopt,
+                       core::analysis::AssistanceKind assistance = core::analysis::AssistanceKind::None);
     void onJuliaFinished(quint64 requestId, const bridge::SnapshotEvaluationResponse* response, const QString& error);
     AsyncTask<void> onJuliaFinishedAsync(PendingJuliaScore pending, std::optional<bridge::SnapshotEvaluationResponse> response, QString error);
     void armAnalysisDeadline(const PipelineTicket& ticket);
@@ -882,6 +900,7 @@ private:
     QHash<quint64, PipelineTicket> m_pendingPromptTriage;
     std::optional<PipelineTicket> m_promptTriageLoad;
     std::optional<core::analysis::PromptTriage> m_promptTriage;
+    core::analysis::ReviewTrigger m_reviewTrigger{core::analysis::ReviewTrigger::Automatic};
     core::analysis::PromptTriageRoute m_promptTriageLastRoute{core::analysis::PromptTriageRoute::Original};
     std::shared_ptr<AnalysisGroup> m_routedAnalysisGroup;
     QString m_recommendedOption;

@@ -205,6 +205,21 @@ void testQueuedCommandCannotReplaceNewerDraft() {
     ROCLINT_CHECK(controller.stateVersion() == 0 && controller.sessionCount() == 0);
 }
 
+void testAnotherOwnerCannotInterruptLiveAttempts() {
+    QTemporaryDir directory; const auto path = directory.path() + "/history.db";
+    HostController first(path); ready(first);
+    ROCLINT_CHECK(first.waitForCommandForTesting(first.commitPrompt(prompt, 0)));
+    roclint::storage::ModelAttemptRecord attempt;
+    attempt.attemptId = "live_owned_attempt"; attempt.sessionId = first.currentSessionIdString().toStdString();
+    attempt.revisionId = first.currentRevisionId().toStdString(); attempt.stage = "discovery";
+    attempt.transport = "test_fixture"; attempt.startedAtMs = 1;
+    ROCLINT_CHECK(first.repositoryForTesting()->beginModelAttempt(attempt).waitForTesting().ok());
+    HostController second(path); ROCLINT_CHECK(second.waitForStorageForTesting());
+    ROCLINT_CHECK(!second.isStorageAvailable() && first.isStorageAvailable());
+    const auto attempts = first.repositoryForTesting()->getModelAttempts(SessionId(attempt.sessionId)).waitForTesting();
+    ROCLINT_CHECK(attempts.ok() && attempts.value().size() == 1 && attempts.value()[0].status == roclint::storage::AttemptStatus::InProgress);
+}
+
 void testShutdownDuringContention() {
     QTemporaryDir directory; const auto path = directory.path() + "/history.db";
     HostController controller(path); ready(controller);
@@ -226,6 +241,6 @@ int main(int argc, char** argv) {
     testContentionAndDraftBarrier(); testPendingApprovalCannotDeliverAfterEdit();
     testReentrantEditAtApprovalPublication(); testQueueBoundsAndCachedHistory(); testBusyFailureAndExplicitRecovery();
     testModelPublicationSerializesWithUserCommand(); testModelCompletionWithFullCommandQueueDoesNotHang();
-    testQueuedCommandCannotReplaceNewerDraft(); testShutdownDuringContention();
+    testQueuedCommandCannotReplaceNewerDraft(); testAnotherOwnerCannotInterruptLiveAttempts(); testShutdownDuringContention();
     std::cout << "Async persistence contention, ordering, recovery and shutdown passed.\n";
 }

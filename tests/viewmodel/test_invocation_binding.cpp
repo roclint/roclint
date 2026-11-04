@@ -49,6 +49,15 @@ void testScreenPlacement() {
     ROCLINT_CHECK(edgeBadge.y <= screenBounds.top() + screenBounds.height() - 26 - 12);
     ROCLINT_CHECK(edgeBadge.clamped);
 
+    // Reopening an expanded/resized HUD must use its retained dimensions.
+    for (const auto size : {QSize(620,250), QSize(820,520), QSize(560,400)}) {
+        const auto position=ScreenPlacement::calculateAnchorPosition(nearEdgePrompt,size.width(),size.height(),screenBounds,12);
+        ROCLINT_CHECK(screenBounds.adjusted(12,12,-12,-12).contains(QRect(QPoint(position.x,position.y),size)));
+        const QRect secondary(-1920,-200,1920,1080);
+        const auto other=ScreenPlacement::calculateAnchorPosition(QRect(-100,800,90,60),size.width(),size.height(),secondary,12);
+        ROCLINT_CHECK(secondary.adjusted(12,12,-12,-12).contains(QRect(QPoint(other.x,other.y),size)));
+    }
+
     std::cout << "  [PASS] Card and anchor placement clamp to the screen.\n";
 }
 

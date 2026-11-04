@@ -1,5 +1,7 @@
 #include "roclint/rewrite/RewriteValidator.hpp"
 
+#include <regex>
+
 #include "roclint/core/prompt_state/TextNormalization.hpp"
 
 #include <algorithm>
@@ -60,6 +62,55 @@ ValidationResult reject(ProposalStatus status, std::string reason) {
 }
 
 } // namespace
+
+Status RewriteValidator::validateFidelity(std::string_view original,
+                                          const intent::ConfirmedIntent& intent,
+                                          std::string_view rewritten) {
+    std::string authorized(original);
+    for (const auto& item : intent.items) {
+        if (item.kind == intent::IntentResolutionKind::SelectedAlternative ||
+            item.kind == intent::IntentResolutionKind::CustomText) {
+            authorized += "\n" + (item.kind == intent::IntentResolutionKind::CustomText ? item.customText : item.chosenValue);
+        }
+    }
+    const auto source = toLower(authorized);
+    const auto output = toLower(rewritten);
+    static const std::regex limited(R"(\b(minor|small|limited)\s+semantic\s+changes?\b)");
+    static const std::regex broadened(R"(\b(broad|unrestricted|major)\s+semantic\s+(changes?|reinterpretation)\b)");
+    const auto permitsBroadChanges = [&](const std::string& text) {
+        static const std::regex negated(R"((?:do\s+not|don't|never|avoid|prohibit|forbid|no)\s+(?:(?:allow|permit|make|any)\s+)?$)");
+        for (std::sregex_iterator it(text.begin(), text.end(), broadened), end; it != end; ++it) {
+            const auto position = static_cast<std::size_t>(it->position());
+            const auto prefix = text.substr(position > 80 ? position - 80 : 0, std::min<std::size_t>(80, position));
+            if (!std::regex_search(prefix, negated)) return true;
+        }
+        return false;
+    };
+    if (std::regex_search(source, limited) && !permitsBroadChanges(source) && permitsBroadChanges(output))
+        return makeError(ErrorCode::ValidationFailed, "Rewrite broadens the confirmed semantic-change limit");
+
+    // Exact protected clauses are conservative evidence. Failure asks for another wording,
+    // rather than claiming that a paraphrase has been semantically disproved.
+    static const std::regex apiInvariant(R"(\b(?:without changing (?:its|the|my|our|their|your|the public|the existing) api|do not (?:change|alter|modify) (?:its|the|my|our|their|your|the public|the existing) api)\b)");
+    for (std::sregex_iterator it(source.begin(), source.end(), apiInvariant), end; it != end; ++it) {
+        if (output.find(it->str()) == std::string::npos)
+            return makeError(ErrorCode::ValidationFailed, "Rewrite did not retain the explicit API invariant verbatim");
+    }
+    // New quantified timing/size/percentage requirements need a source in the prompt or
+    // a confirmed answer. Formatting numbers and unrelated identifiers are not targets.
+    static const std::regex quantity(R"(\b[0-9]+(?:\.[0-9]+)?\s*(?:ms|milliseconds?|seconds?|minutes?|kb|kib|mb|mib|gb|gib)\b|\b[0-9]+(?:\.[0-9]+)?\s*%)");
+    auto compact = [](std::string value) {
+        value.erase(std::remove_if(value.begin(), value.end(), [](unsigned char c) { return std::isspace(c); }), value.end());
+        return value;
+    };
+    std::set<std::string> allowed;
+    for (std::sregex_iterator it(source.begin(), source.end(), quantity), end; it != end; ++it) allowed.insert(compact(it->str()));
+    for (std::sregex_iterator it(output.begin(), output.end(), quantity), end; it != end; ++it) {
+        if (!allowed.contains(compact(it->str())))
+            return makeError(ErrorCode::ValidationFailed, "Rewrite introduced an unsupported quantified requirement");
+    }
+    return Status::success();
+}
 
 std::vector<ConstraintItem> RewriteValidator::deriveConstraints(const intent::ConfirmedIntent& intent,
                                                                 const RewriteProfileConfig& profile,
@@ -198,6 +249,8 @@ ValidationResult RewriteValidator::validateProposal(const RewriteProposal& propo
     if (proposal.diffText != computeAccessibleDiff(proposal.originalText, proposal.rewrittenText)) {
         return reject(ProposalStatus::Rejected, "Proposal diff was not computed locally from its texts");
     }
+    if (const auto status = validateFidelity(proposal.originalText, currentIntent, proposal.rewrittenText); !status.ok())
+        return reject(ProposalStatus::Rejected, status.error().message);
     if (proposal.constraints != deriveConstraints(currentIntent, *profile, proposal.rewrittenText)) {
         return reject(ProposalStatus::Rejected, "Proposal constraint claims are not reproducible by the validator");
     }

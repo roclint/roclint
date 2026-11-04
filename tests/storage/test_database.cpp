@@ -4,6 +4,9 @@
 
 #include <filesystem>
 #include <iostream>
+#include <thread>
+#include <barrier>
+#include <atomic>
 
 using namespace roclint::core;
 using namespace roclint::storage;
@@ -116,10 +119,39 @@ void testNewerSchemaIsRefused() {
     ROCLINT_CHECK(!repo.migrate().ok());
 }
 
+void testConcurrentMigrationsReadVersionUnderLock() {
+    const auto directory = freshDir(u8"roclint_migration_concurrency");
+    const auto path = directory / "history.db";
+    { Database initial(path); PromptRepository repo(initial); ROCLINT_CHECK(repo.migrateTo(3).ok()); }
+    std::barrier start(2); std::atomic_bool unlockedRead{false}; bool success[2]{false, false};
+    auto migrate = [&](int index) {
+        Database db(path); PromptRepository repo(db);
+        struct Trace { sqlite3* handle; std::atomic_bool* unlocked; } trace{db.rawHandle(), &unlockedRead};
+        sqlite3_trace_v2(db.rawHandle(), SQLITE_TRACE_STMT, [](unsigned, void* context, void* statement, void*) -> int {
+            auto* state = static_cast<Trace*>(context);
+            const auto* sql = sqlite3_sql(static_cast<sqlite3_stmt*>(statement));
+            if (sql && std::string_view(sql).starts_with("PRAGMA user_version;") && sqlite3_get_autocommit(state->handle))
+                state->unlocked->store(true);
+            return 0;
+        }, &trace);
+        start.arrive_and_wait(); success[index] = repo.migrate().ok();
+        sqlite3_trace_v2(db.rawHandle(), 0, nullptr, nullptr);
+    };
+    std::thread first(migrate, 0), second(migrate, 1); first.join(); second.join();
+    ROCLINT_CHECK(success[0] && success[1] && !unlockedRead.load());
+    { Database db(path); PromptRepository repo(db);
+      ROCLINT_CHECK(repo.getSchemaVersion().value() == PromptRepository::CURRENT_SCHEMA_VERSION);
+      ROCLINT_CHECK(db.queryText("SELECT COUNT(*) FROM pragma_foreign_key_check;").value() == "0");
+      ROCLINT_CHECK(db.execute("PRAGMA user_version=-1;").ok());
+      ROCLINT_CHECK(!repo.migrate().ok()); }
+    std::error_code error; fs::remove_all(directory, error);
+}
+
 } // namespace
 
 int main() {
     std::cout << "[Test Database] Starting...\n";
+    testConcurrentMigrationsReadVersionUnderLock();
     testInMemoryPragmas();
     testFilePragmasOnNonAsciiPath();
     testOpenFailureIsReported();

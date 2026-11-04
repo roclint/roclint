@@ -36,10 +36,67 @@ void testS1FirstArtifact() {
     ROCLINT_CHECK(!an::buildRoutedAnalysisSnapshot(empty, triage, fx::kChainPrompt, "invented_discovery").ok());
     const auto choices = fx::chainAnalysis(triage.sessionId, triage.revisionId);
     ROCLINT_CHECK(!an::buildRoutedAnalysisSnapshot(choices, triage, fx::kChainPrompt, "discovery").ok());
+    const an::ReviewPolicy explicitHelp{an::ReviewTrigger::ExplicitReview, an::AssistanceKind::Creative};
+    const auto optional = an::buildRoutedAnalysisSnapshot(choices, triage, fx::kChainPrompt, "discovery", std::nullopt, explicitHelp);
+    ROCLINT_CHECK(optional.ok() && optional.value().payloadVersion == 5);
+    ROCLINT_CHECK(optional.value().promptTriage == triage);
+    ROCLINT_CHECK(storage::decodeAnalysisSnapshot(storage::encodeAnalysisSnapshot(optional.value())).value() == optional.value());
+    {
+        storage::Database db(":memory:"); storage::PromptRepository repository(db);
+        ROCLINT_CHECK(repository.migrate().ok());
+        PromptRevision root(SessionId(triage.sessionId), RevisionId(triage.revisionId), std::nullopt, fx::kChainPrompt, 1);
+        ROCLINT_CHECK(repository.createSessionWithRootRevision(root, 1).ok());
+        storage::ModelAttemptRecord classifier{triage.attemptId, triage.sessionId, triage.revisionId, "julia_triage"};
+        classifier.modelId = triage.modelId; classifier.transport = "fixture";
+        ROCLINT_CHECK(repository.beginModelAttempt(classifier).ok());
+        ROCLINT_CHECK(repository.completeModelAttempt(classifier.attemptId, storage::AttemptStatus::Succeeded,
+            triage.modelId, "fixture; prompt_triage_payload=" + storage::encodePromptTriage(triage), "", 2).ok());
+        storage::ModelAttemptRecord discovery{"discovery", triage.sessionId, triage.revisionId, "discovery"};
+        discovery.transport = "fixture";
+        ROCLINT_CHECK(repository.beginModelAttempt(discovery).ok());
+        ROCLINT_CHECK(repository.completeModelAttempt("discovery", storage::AttemptStatus::Succeeded, "fixture", "fixture; review_trigger=automatic", "", 3).ok());
+        ROCLINT_CHECK(!repository.insertAnalysisSnapshot(optional.value(), 4).ok());
+        ROCLINT_CHECK(db.execute("UPDATE model_attempts SET model_detail='fixture; review_trigger=explicit_review' WHERE attempt_id='discovery';").ok());
+        ROCLINT_CHECK(repository.insertAnalysisSnapshot(optional.value(), 4).ok());
+        ROCLINT_CHECK(repository.restoreSession(SessionId(triage.sessionId)).value().analysis == optional.value());
+        ROCLINT_CHECK(db.execute("UPDATE model_attempts SET model_detail='fixture; review_trigger=automatic' WHERE attempt_id='discovery';").ok());
+        ROCLINT_CHECK(!repository.restoreSession(SessionId(triage.sessionId)).ok());
+    }
+    auto tamperedPolicy = optional.value(); tamperedPolicy.reviewPolicy.trigger = an::ReviewTrigger::Automatic;
+    ROCLINT_CHECK(!an::validateAnalysisSnapshot(tamperedPolicy).ok());
+    tamperedPolicy.snapshotHash = an::computeSnapshotHash(tamperedPolicy); tamperedPolicy.id = "analysis_" + tamperedPolicy.snapshotHash;
+    ROCLINT_CHECK(!an::validateAnalysisSnapshot(tamperedPolicy).ok());
+    ROCLINT_CHECK(!an::buildRoutedAnalysisSnapshot(choices, triage, fx::kChainPrompt, {}, std::nullopt, explicitHelp).ok());
+    const an::ReviewPolicy explicitReady{an::ReviewTrigger::ExplicitReview, an::AssistanceKind::None};
+    const auto reviewed = an::buildRoutedAnalysisSnapshot(empty, triage, fx::kChainPrompt, "discovery", std::nullopt, explicitReady);
+    ROCLINT_CHECK(reviewed.ok() && reviewed.value().promptTriage == triage);
+    ROCLINT_CHECK(!an::buildRoutedAnalysisSnapshot(choices, triage, fx::kChainPrompt, "discovery", std::nullopt, explicitReady).ok());
     triage.categoryScores[0] = .70;
     triage = an::sealPromptTriage(triage, fx::kChainPrompt).value();
     ROCLINT_CHECK(!an::buildRoutedAnalysisSnapshot(empty, triage, fx::kChainPrompt).ok());
     ROCLINT_CHECK(!an::buildRoutedAnalysisSnapshot(choices, triage, fx::kChainPrompt).ok());
+    const auto disagreement = an::buildRoutedAnalysisSnapshot(empty, triage, fx::kChainPrompt, "discovery_clear");
+    ROCLINT_CHECK(disagreement.ok() && disagreement.value().promptTriage == triage);
+    ROCLINT_CHECK(storage::decodeAnalysisSnapshot(storage::encodeAnalysisSnapshot(disagreement.value())).value() == disagreement.value());
+    {
+        storage::Database db(":memory:"); storage::PromptRepository repository(db);
+        ROCLINT_CHECK(repository.migrate().ok());
+        PromptRevision root(SessionId(triage.sessionId), RevisionId(triage.revisionId), std::nullopt, fx::kChainPrompt, 1);
+        ROCLINT_CHECK(repository.createSessionWithRootRevision(root, 1).ok());
+        storage::ModelAttemptRecord classifier{triage.attemptId, triage.sessionId, triage.revisionId, "julia_triage"};
+        classifier.transport = "test_fixture"; classifier.modelId = triage.modelId;
+        ROCLINT_CHECK(repository.beginModelAttempt(classifier).ok());
+        ROCLINT_CHECK(repository.completeModelAttempt(classifier.attemptId, storage::AttemptStatus::Succeeded,
+            triage.modelId, "fixture; prompt_triage_payload=" + storage::encodePromptTriage(triage), "", 2).ok());
+        ROCLINT_CHECK(!repository.insertAnalysisSnapshot(disagreement.value(), 3).ok());
+        storage::ModelAttemptRecord discovery{"discovery_clear", triage.sessionId, triage.revisionId, "discovery"};
+        discovery.transport = "test_fixture";
+        ROCLINT_CHECK(repository.beginModelAttempt(discovery).ok());
+        ROCLINT_CHECK(!repository.insertAnalysisSnapshot(disagreement.value(), 3).ok());
+        ROCLINT_CHECK(repository.completeModelAttempt(discovery.attemptId, storage::AttemptStatus::Succeeded, "fixture", "", "", 3).ok());
+        ROCLINT_CHECK(repository.insertAnalysisSnapshot(disagreement.value(), 4).ok());
+        ROCLINT_CHECK(repository.restoreSession(SessionId(triage.sessionId)).value().analysis == disagreement.value());
+    }
     auto ambiguous = an::buildRoutedAnalysisSnapshot(choices, triage, fx::kChainPrompt, "discovery");
     ROCLINT_CHECK(ambiguous.ok());
     ROCLINT_CHECK(storage::decodeAnalysisSnapshot(storage::encodeAnalysisSnapshot(ambiguous.value())).value() == ambiguous.value());

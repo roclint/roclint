@@ -170,7 +170,11 @@ int main(int argc, char* argv[]) {
             }
             QObject::connect(controller, &roclint::host::HostController::showCardRequested,
                              window, [window, controller](int x, int y) {
-                if (x >= 0 && y >= 0) {
+                if (controller->isAmbientAttached() || controller->isAmbientActive()) {
+                    // The retained HUD may be expanded or manually resized. Its
+                    // actual size, rather than the compact default, must fit.
+                    window->setPosition(controller->calculateAmbientAnchor(window->width(), window->height()));
+                } else if (x >= 0 && y >= 0) {
                     window->setPosition(x, y);
                 } else {
                     const auto placement = roclint::host::ScreenPlacement::determineTargetPosition(window->width(), window->height());
@@ -178,11 +182,6 @@ int main(int argc, char* argv[]) {
                 }
                 if (controller->isAmbientAttached() || controller->isAmbientActive()) {
                     roclint::host::showNonActivatingWindow(window);
-                    roclint::host::installOutsideClickMonitor(window, [controller]() {
-                        if (controller->isAmbientAttached() || controller->isAmbientActive()) {
-                            controller->hideCard();
-                        }
-                    });
                 } else {
                     window->showNormal();
                     window->raise();

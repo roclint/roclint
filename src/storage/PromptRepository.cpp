@@ -422,7 +422,7 @@ void advanceStoredState(Database& db, const std::string& sessionId, const std::s
 
 void validateSnapshotAttempts(Database& db, const core::analysis::AnalysisSnapshot& snapshot) {
     auto requireAttempt = [&](const std::string& id, bool discovery) {
-        Statement statement(db.rawHandle(), "SELECT session_id, revision_id, stage, status FROM model_attempts WHERE attempt_id = ?1;");
+        Statement statement(db.rawHandle(), "SELECT session_id, revision_id, stage, status, model_detail FROM model_attempts WHERE attempt_id = ?1;");
         statement.text(1, id);
         if (!statement.step() || statement.columnText(0) != snapshot.normalized.sessionId ||
             statement.columnText(1) != snapshot.normalized.baseRevisionId) {
@@ -432,6 +432,15 @@ void validateSnapshotAttempts(Database& db, const core::analysis::AnalysisSnapsh
         const bool ranked = snapshot.evaluation.isRanked();
         if (discovery) {
             if (stage != "discovery" || status != "SUCCEEDED") fail(ErrorCode::ValidationFailed, "Final analysis requires successful discovery");
+            if (snapshot.payloadVersion >= 5) {
+                const auto marker = snapshot.reviewPolicy.trigger == core::analysis::ReviewTrigger::ExplicitReview
+                    ? "; review_trigger=explicit_review" : "; review_trigger=automatic";
+                const auto detail = statement.columnText(4) + ";";
+                const bool automatic = detail.find("; review_trigger=automatic;") != std::string::npos;
+                const bool explicitReview = detail.find("; review_trigger=explicit_review;") != std::string::npos;
+                if (automatic == explicitReview || detail.find(std::string(marker) + ";") == std::string::npos)
+                    fail(ErrorCode::ValidationFailed, "Review trigger differs from its recorded discovery request");
+            }
         } else {
             std::string expected = snapshot.evaluation.engine == core::analysis::ScorerEngine::JuliaLocal ? "julia_scoring" : "jev_scoring";
 #if defined(ROCLINT_ENABLE_TEST_MOCKS)
@@ -442,7 +451,7 @@ void validateSnapshotAttempts(Database& db, const core::analysis::AnalysisSnapsh
             }
         }
     };
-    if (snapshot.payloadVersion == 4 && snapshot.promptTriage) {
+    if (snapshot.payloadVersion >= 4 && snapshot.promptTriage) {
         const auto& triage = *snapshot.promptTriage;
         Statement statement(db.rawHandle(), "SELECT session_id, revision_id, stage, status, model_id, model_detail FROM model_attempts WHERE attempt_id = ?1;");
         statement.text(1, triage.attemptId);
@@ -565,21 +574,20 @@ Status PromptRepository::migrate() {
 
 Status PromptRepository::migrateTo(int targetVersion) {
     return guarded([&]() -> Status {
-        if (targetVersion > CURRENT_SCHEMA_VERSION) {
+        if (targetVersion < 0 || targetVersion > CURRENT_SCHEMA_VERSION) {
             fail(ErrorCode::InvalidInput, "Unknown schema version " + std::to_string(targetVersion));
         }
-        auto current = getSchemaVersion();
-        if (!current.ok()) {
-            return current.error();
-        }
-        int version = current.value();
-        if (version > CURRENT_SCHEMA_VERSION) {
-            fail(ErrorCode::DbError, "Database schema v" + std::to_string(version) + " is newer than this build");
-        }
-
         const char* steps[] = {kSchemaV1, kSchemaV2, kSchemaV3, kSchemaV4, kSchemaV5};
-        while (version < targetVersion) {
+        for (;;) {
+            // Serialize the version read with the migration. Another connection may
+            // have completed any number of steps while BEGIN IMMEDIATE waited.
             Transaction tx(db_);
+            auto current = getSchemaVersion();
+            if (!current.ok()) return current.error();
+            const int version = current.value();
+            if (version < 0 || version > CURRENT_SCHEMA_VERSION)
+                fail(ErrorCode::DbError, "Database schema v" + std::to_string(version) + " is unsupported by this build");
+            if (version >= targetVersion) { tx.commit(); break; }
             exec(db_, steps[version]);
             const std::string setVersion = "PRAGMA user_version = " + std::to_string(version + 1) + ";";
             exec(db_, setVersion.c_str());
@@ -591,7 +599,6 @@ Status PromptRepository::migrateTo(int targetVersion) {
                 }
             }
             tx.commit();
-            ++version;
         }
         return Status::success();
     });

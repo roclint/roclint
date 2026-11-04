@@ -185,7 +185,7 @@ ColumnLayout {
             Layout.fillWidth: true
             text: qsTr("Watch my focused prompt field in Codex and supported IDEs")
             checked: dashboardWindow.hc && hostController.ambientModeEnabled
-            onToggled: if (dashboardWindow.hc) hostController.setAmbientModeEnabled(checked)
+            onToggled: if (dashboardWindow.hc) hostController.ambientModeEnabled = checked
             indicator: Rectangle {
                 implicitWidth: 18; implicitHeight: 18
                 y: (ambientCaptureToggle.height - height) / 2

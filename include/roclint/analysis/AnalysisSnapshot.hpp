@@ -2,6 +2,7 @@
 
 #include "roclint/analysis/NormalizedAnalysis.hpp"
 #include "roclint/analysis/PromptTriage.hpp"
+#include "roclint/analysis/ReviewPolicy.hpp"
 #include "roclint/core/Result.hpp"
 
 #include <optional>
@@ -93,6 +94,7 @@ struct AnalysisSnapshot {
     std::vector<GroupPresentation> presentation{};
     std::vector<std::string> assumptionOrder{};
     std::optional<PromptTriage> promptTriage{}; // v4: classifier evidence precedes any Granite discovery.
+    ReviewPolicy reviewPolicy{}; // v5: explicit review and optional help, independently of S1 scores.
     bool operator==(const AnalysisSnapshot&) const = default;
 };
 
@@ -112,10 +114,12 @@ struct AnalysisSnapshot {
                                                             std::string discoveryAttemptId,
                                                             std::string scorerAttemptId = {});
 
-// Diagram route: Julia classifies raw prompt; Granite only supplies choices for Clarify.
+// Julia evidence stays unchanged. Historical v4 follows the classifier route; v5 also
+// permits a provenance-bound explicit review regardless of a valid classifier score.
 // Alternative ranking is deliberately NotRequested; triage scores are never copied onto choices.
 [[nodiscard]] Result<AnalysisSnapshot> buildRoutedAnalysisSnapshot(NormalizedAnalysis normalized,
     PromptTriage triage, std::string_view frozenPrompt, std::string discoveryAttemptId = {},
-    std::optional<SnapshotEvaluationResponse> evaluation = std::nullopt);
+    std::optional<SnapshotEvaluationResponse> evaluation = std::nullopt,
+    std::optional<ReviewPolicy> reviewPolicy = std::nullopt);
 
 } // namespace roclint::core::analysis

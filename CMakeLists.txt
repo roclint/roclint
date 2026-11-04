@@ -78,6 +78,7 @@ roclint_add_core_library(roclint_core OFF)
 # 1b. Storage library (A03 / A04)
 # -----------------------------------------------------------------------------
 find_package(SQLite3 REQUIRED)
+find_package(Threads REQUIRED)
 if(NOT TARGET SQLite3::SQLite3 AND TARGET SQLite::SQLite3)
     add_library(SQLite3::SQLite3 ALIAS SQLite::SQLite3)
 endif()
@@ -149,6 +150,11 @@ if(BUILD_DESKTOP)
             app/host/GraniteResidencyPolicy.hpp
             app/host/OllamaClient.hpp
             app/host/OllamaClient.cpp
+            app/host/RuntimeThread.hpp
+            app/host/JuliaRuntimeWorker.hpp
+            app/host/JuliaRuntimeWorker.cpp
+            app/host/NativeGraniteRuntimeWorker.hpp
+            app/host/NativeGraniteRuntimeWorker.cpp
             app/host/JuliaRuntime.hpp
             app/host/JuliaRuntime.cpp
             app/host/OwnedProcessJob.hpp
@@ -336,6 +342,18 @@ if(BUILD_DESKTOP)
                 "$<TARGET_FILE_DIR:roclint_host>/runtime"
             VERBATIM)
         # Refresh Python-only changes on ordinary incremental builds even when the host does not relink.
+        if(UNIX)
+            add_executable(roclint_process_guardian app/runtime/process_guardian.cpp)
+            roclint_apply_warnings(roclint_process_guardian)
+            add_dependencies(roclint_host roclint_process_guardian)
+            add_custom_command(TARGET roclint_host POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:roclint_host>/runtime"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:roclint_process_guardian>" "$<TARGET_FILE_DIR:roclint_host>/runtime/")
+            add_custom_target(roclint_guardian_runtime_files ALL
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:roclint_host>/runtime"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:roclint_process_guardian>" "$<TARGET_FILE_DIR:roclint_host>/runtime/"
+                DEPENDS roclint_process_guardian)
+        endif()
         add_executable(roclint_workspace_helper app/runtime/workspace_helper.cpp)
         target_link_libraries(roclint_workspace_helper PRIVATE Qt6::Core)
         add_dependencies(roclint_host roclint_workspace_helper)
@@ -400,6 +418,12 @@ if(BUILD_TESTING)
         target_include_directories(${test_name}_tests PRIVATE tests)
         target_compile_features(${test_name}_tests PRIVATE cxx_std_20)
         roclint_apply_warnings(${test_name}_tests)
+        if(TARGET roclint_process_guardian)
+            add_dependencies(${test_name}_tests roclint_process_guardian)
+            add_custom_command(TARGET ${test_name}_tests POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${test_name}_tests>/runtime"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:roclint_process_guardian>" "$<TARGET_FILE_DIR:${test_name}_tests>/runtime/")
+        endif()
         add_test(NAME ${test_name} COMMAND ${test_name}_tests)
         set_tests_properties(${test_name} PROPERTIES TIMEOUT 120)
         if(TARGET Qt6::QOffscreenIntegrationPlugin)
@@ -465,5 +489,20 @@ if(BUILD_TESTING)
         roclint_add_test(roclint_product_alignment tests/viewmodel/test_product_alignment.cpp roclint_host_lib_testing Qt6::Quick Qt6::Qml Qt6::Test)
         roclint_add_test(roclint_upstream_compatibility tests/viewmodel/test_upstream_compatibility.cpp roclint_host_lib_testing Qt6::Core)
         target_sources(roclint_product_alignment_tests PRIVATE app/qml/shell/qml.qrc)
+    endif()
+endif()
+
+if(TARGET roclint_storage_tests)
+    target_link_libraries(roclint_storage_tests PRIVATE Threads::Threads)
+endif()
+if(TARGET roclint_host_lib_testing)
+    roclint_add_test(roclint_ipc_hardening tests/bridge/test_ipc_hardening.cpp roclint_host_lib_testing Qt6::Core Qt6::Concurrent)
+    if(TARGET roclint_guardian_runtime_files)
+        add_dependencies(roclint_ipc_hardening_tests roclint_guardian_runtime_files)
+        add_dependencies(roclint_native_granite_tests roclint_guardian_runtime_files)
+        add_dependencies(roclint_upstream_compatibility_tests roclint_guardian_runtime_files)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME roclint_process_guardian COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_process_guardian.py" --helper "$<TARGET_FILE:roclint_ipc_hardening_tests>")
+        endif()
     endif()
 endif()

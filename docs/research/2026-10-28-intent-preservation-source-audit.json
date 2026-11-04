@@ -1,0 +1,218 @@
+{
+  "date": "2026-10-28",
+  "timezone": "America/Los_Angeles",
+  "scope": "Research and plan only; no new inference, model/application tests, production edits or rollout.",
+  "review_status": "Author has seen prior outputs; not an independent blind reviewer. Human reference/candidate review pending.",
+  "sources": [
+    {
+      "id": "rasa",
+      "url": "https://raw.githubusercontent.com/RasaHQ/rasa-calm-demo/main/data/flows/patterns.yml",
+      "kind": "engineering practice",
+      "version": "main as retrieved; mutable",
+      "verified_primary": true,
+      "claim_and_limit": "Correction confirmation/denial with reset-only bypass; not arbitrary-text fidelity evidence."
+    },
+    {
+      "id": "nasa_requirements",
+      "url": "https://www.nasa.gov/reference/6-2-requirements-management/",
+      "kind": "engineering practice",
+      "version": "as retrieved",
+      "verified_primary": true,
+      "claim_and_limit": "Bidirectional traceability, change-impact management, independent trace review."
+    },
+    {
+      "id": "nasa_evidence",
+      "url": "https://sma.nasa.gov/news/articles/newsitem/2026/03/25/identifying-objective-evidence-improves-requirement-implementation",
+      "kind": "engineering practice",
+      "version": "2026-03-25",
+      "verified_primary": true,
+      "claim_and_limit": "Requirement-linked objective evidence; not proof of completeness of an extracted prompt inventory."
+    },
+    {
+      "id": "dafny",
+      "url": "https://dafny.org/latest/DafnyRef/DafnyRef",
+      "kind": "formal language specification",
+      "version": "latest snapshot as retrieved; section 7.1.6",
+      "verified_primary": true,
+      "claim_and_limit": "Explicit write frames in a formal specification; no natural-language intent guarantee."
+    },
+    {
+      "id": "kubernetes",
+      "url": "https://kubernetes.io/docs/reference/using-api/server-side-apply/",
+      "kind": "engineering practice",
+      "version": "as retrieved",
+      "verified_primary": true,
+      "claim_and_limit": "Managed fields, conflict handling and explicit override; deletion-on-omission must not transfer to prompt requirements."
+    },
+    {
+      "id": "faa",
+      "url": "https://www.faa.gov/air_traffic/publications/atpubs/atc_html/chap2_section_4.html",
+      "kind": "operational procedure",
+      "version": "as retrieved; section 2-4-3",
+      "verified_primary": true,
+      "claim_and_limit": "Check correctness of items read back. Not evidence that confirmation eliminates error."
+    },
+    {
+      "id": "aha",
+      "url": "https://www.aha.org/center/project-firstline/teamstepps-video-toolkit/closed-loop-communication",
+      "kind": "operational communication guidance",
+      "version": "as retrieved",
+      "verified_primary": true,
+      "claim_and_limit": "Receiver repeats interpretation and sender verifies; no established Roclint time/detection benefit."
+    },
+    {
+      "id": "clariti",
+      "url": "https://arxiv.org/abs/2604.14624",
+      "kind": "empirical research",
+      "version": "2026-04-16 v1",
+      "verified_primary": true,
+      "claim_and_limit": "Task relevance and user answerability in simulated-user SWE clarification; no Granite transfer claim."
+    },
+    {
+      "id": "structured_uncertainty",
+      "url": "https://aclanthology.org/2026.findings-acl.2028/",
+      "kind": "empirical research",
+      "version": "ACL Findings July 2026",
+      "verified_primary": true,
+      "claim_and_limit": "Specification versus model uncertainty and question value/cost in tool parameters; domain limits retained."
+    },
+    {
+      "id": "edit_fidelity",
+      "url": "https://arxiv.org/abs/2609.04061v2",
+      "kind": "empirical research",
+      "version": "v2 2026-10-20; unversioned page verified current v2",
+      "verified_primary": true,
+      "claim_and_limit": "Minimal code editing distinct from repair correctness; no automatic size/reasoning cure."
+    },
+    {
+      "id": "correction",
+      "url": "https://arxiv.org/abs/2609.25337",
+      "kind": "empirical research",
+      "version": "2026-09-21 v1",
+      "verified_primary": true,
+      "claim_and_limit": "Gemini order effects motivate current-state/context hypothesis, not a diagnosed Granite mechanism."
+    },
+    {
+      "id": "mt_infoseek",
+      "url": "https://www.microsoft.com/en-us/research/publication/do-llms-know-what-to-ask-and-when-evaluating-multi-turn-information-seeking/",
+      "kind": "empirical research",
+      "version": "August 2026",
+      "verified_primary": true,
+      "claim_and_limit": "Separate information sufficiency from answer generation in other domains."
+    },
+    {
+      "id": "sequor",
+      "url": "https://arxiv.org/abs/2605.06353v2",
+      "kind": "empirical research",
+      "version": "v2 2026-05-08",
+      "verified_primary": true,
+      "claim_and_limit": "Changing constraints in simulated conversations; local short traces are not replication."
+    },
+    {
+      "id": "pvd",
+      "url": "https://arxiv.org/abs/2605.25133",
+      "kind": "empirical research",
+      "version": "2026-05-24 v1",
+      "verified_primary": true,
+      "claim_and_limit": "Imperfect verifier competence affects selective reliability; no transferred formal guarantees."
+    },
+    {
+      "id": "pricecheck",
+      "url": "https://arxiv.org/abs/2609.37493",
+      "kind": "empirical research",
+      "version": "2026-09-27 v1",
+      "verified_primary": true,
+      "claim_and_limit": "Calibrated selective risk, coverage and check cost in mathematics; local editing pool is not calibrated."
+    },
+    {
+      "id": "delegate_clarification",
+      "url": "https://www.microsoft.com/en-us/research/blog/further-notes-on-our-recent-research-on-ai-delegation-and-long-horizon-reliability/",
+      "kind": "authors methodological clarification",
+      "version": "2026-05-15",
+      "verified_primary": true,
+      "claim_and_limit": "Artifact stress tests are distinct from overall capability, task success and user outcomes."
+    },
+    {
+      "id": "anthropic_evals",
+      "url": "https://www.anthropic.com/research/demystifying-evals-for-ai-agents",
+      "kind": "engineering evaluation guidance",
+      "version": "2026-01-09",
+      "verified_primary": true,
+      "claim_and_limit": "Multiple trials, traces versus environment outcomes, appropriate graders; not product performance evidence."
+    }
+  ],
+  "source_access": "Primary browser pages/abstracts and specific official documentation sections verified; no new full-paper replication.",
+  "local_source_sha256": {
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/trusted_choice_hybrid.py": "15920edc56433501d16bdb79376e2d399a5147b87f352f6862b39bed43549429",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/trusted_choice_experiment.py": "4a7e25c07b08095643da3e1fd25e76e91a5d20f8bf91388ef9033c6fedc3255e",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/edit_ablation_experiment.py": "ae21bef8ad86343e08ca52c22664b97e9dc262f06791dc5e188a46afa1e47a7b",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/edit_ablation_contracts.json": "6f1776f1faaa147e00eaed6ca5bdd2166edb59d55470297d15f9b7b306187792",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/minimal_edit_prototype.py": "c9d8d777130252ccf333f9087c3747e1917e15396abd58454f58a4aabb20e430",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/question_bound_prototype.py": "8553ec0ffe95baf9d49244b75d146841fbfb46675b6609468e58e4df887d529e",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/question_bound_experiment.py": "57367d5d7af85493c16bec7173a12c1adb82c0b4e59da4e1db0edcb2a0843c46",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/semantic_study.py": "e313695b6909006606a9151861edf1ffdd1e55cfda16db90765c292e0f9f0f45",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/semantic_study_common.py": "28198ed0c67981cd4c228155ef95b40c2ac36bebeafc84866e0a037f323d4bc8",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/semantic_study_contracts.json": "75106fc4f815e323a3510606bc0b08a311ad5c5b714c96d9d0035ab03ee7d61d",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/semantic_diagnostic_cases.json": "5c67e022a78764137c313715c7f890766a67c6c7897e80f5f173d64246275657",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/mixed_reply_study_cases.json": "27b4043546f96889063116d7b6b37d7a4001ac633c00baa0e94fb392a0e2c9df",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/semantic_verifier_pairs.json": "89a096578aa18682e4ff2f2530b87fea14d6e625d8cd4741821a7b68c0ccf669",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/preservation_sequence_study_cases.json": "870b7ee4b901fb002f965b2662161334864a16a4ee17974ad03cfde88d2b9448",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/edit_ablation_engine.cpp": "a09cddb390d16428e8c7abde98c53f4c254f1e8f388bd5406a80a0aa235c0671",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/test_trusted_choice_hybrid.py": "271978975f7b8d22dc888f5cf8018c15bf1d58d1fc2135a6ed48e5d11838f556",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/tools/test_semantic_study.py": "71eb212c9ba255e64868ba85b78297abcf6c870319091ff6e5ce6af58ad14edb",
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint/docs/audit/julia-integration-trusted-choice.md": "6ef7b56c1500d17c8ef16fff3611f41269179e9c0ae9d1bbaba3a904ba7c6a81"
+  },
+  "preservation": {
+    "/Users/jesse/.codex/worktrees/slm-handoff-experiment/roclint": {
+      "initial_branch": "codex/slm-handoff-experiment",
+      "initial_head": "44ed23fbfde4a8e66537f39f72b2552ab4938ebc",
+      "initial_files": 337,
+      "changed_or_missing_initial_files": [],
+      "current_branch": "codex/slm-handoff-experiment",
+      "current_head": "44ed23fbfde4a8e66537f39f72b2552ab4938ebc"
+    },
+    "/Users/jesse/roclint": {
+      "initial_branch": "feat/codebase-decoupling",
+      "initial_head": "103bd12afe25e1d69391e86ac396b5e86ea5f3ae",
+      "initial_files": 242,
+      "changed_or_missing_initial_files": [],
+      "current_branch": "feat/codebase-decoupling",
+      "current_head": "103bd12afe25e1d69391e86ac396b5e86ea5f3ae"
+    }
+  },
+  "latest_evidence": {
+    "report": "/Users/jesse/roclint_notes/2026-10-28-semantic-failure-study.md",
+    "report_sha256": "03b59d7e1e4765854ad5293abc958ccf6a8150b41efe9c8026b5854e745e1cb8",
+    "bundle": "/Users/jesse/roclint_notes/semantic-failure-study-2026-10-28",
+    "manifest_entries": 205,
+    "manifest_mismatches": [],
+    "phase_attempts": {
+      "diagnostics": 96,
+      "mixed": 32,
+      "verifier": 60,
+      "sequences": 56
+    },
+    "total_attempts": 244,
+    "historical_verification": {
+      "ctests": 43,
+      "python_tests": 296,
+      "rerun_in_this_task": false
+    }
+  },
+  "new_files": [
+    "/Users/jesse/roclint/docs/research/2026-10-28-intent-preservation-next-experiment.md",
+    "/Users/jesse/roclint/docs/research/2026-10-28-intent-preservation-source-audit.json"
+  ],
+  "report_sha256": "e852a2c9d3784860471a30dc9d0a714f2b8dd2d4558f0d1b5212ac6679b9a45f",
+  "recommended_first_experiment": "Sixteen independently reviewed exposed interactions, faithful and defective supplied plans: 32 deterministic replays; no inference; source-linked dispositions and edit authority only as a diagnostic.",
+  "future_model_budget": {
+    "primary_attempts": 384,
+    "extraction_probe_attempts": 48,
+    "fresh_comparison_attempts": 144,
+    "total_attempts": 576,
+    "max_calls": 1104,
+    "max_work_minutes": 172.8,
+    "max_generated_tokens": 1179648,
+    "authorized_now": false
+  }
+}

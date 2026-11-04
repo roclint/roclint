@@ -208,12 +208,53 @@ std::optional<std::string> explicitColorConstraintViolation(
     return std::nullopt;
 }
 
+namespace {
+json::Value evidenceQuotes(std::string_view prompt) {
+    auto quotes = json::Value::array();
+    if (prompt.empty() || prompt.size() > kMaxDiscoveryResponseBytes) return quotes;
+    std::size_t budget = 0;
+    std::vector<std::string> seen;
+    auto add = [&](std::string_view excerpt) {
+        if (excerpt.empty() || excerpt.size() > 256 || seen.size() >= 32 ||
+            std::find(seen.begin(), seen.end(), excerpt) != seen.end()) return;
+        auto value = json::Value::string(std::string(excerpt));
+        const auto size = json::serialize(value).size() + 1;
+        if (budget + size > 3072) return;
+        const auto match = core::analysis::findUniqueSpan(prompt, excerpt);
+        if (match.status != core::analysis::SpanMatchStatus::ExactMatch) return;
+        budget += size; seen.emplace_back(excerpt); quotes.push(std::move(value));
+    };
+    add(prompt);
+    // Token boundaries use ASCII whitespace; complete UTF-8 tokens are never split.
+    std::vector<std::pair<std::size_t, std::size_t>> tokens;
+    for (std::size_t i = 0; i < prompt.size();) {
+        while (i < prompt.size() && (prompt[i] == ' ' || prompt[i] == '\n' || prompt[i] == '\t' || prompt[i] == '\r')) ++i;
+        const auto begin = i;
+        while (i < prompt.size() && prompt[i] != ' ' && prompt[i] != '\n' && prompt[i] != '\t' && prompt[i] != '\r') ++i;
+        if (i > begin) tokens.emplace_back(begin, i);
+    }
+    const auto samples = std::min<std::size_t>(8, tokens.size());
+    for (std::size_t sample = 0; sample < samples && seen.size() < 32; ++sample) {
+        const auto index = samples == 1 ? 0 : sample * (tokens.size() - 1) / (samples - 1);
+        const auto begin = tokens[index].first;
+        for (std::size_t length = 1; length <= 3 && index + length <= tokens.size(); ++length)
+            add(prompt.substr(begin, tokens[index + length - 1].second - begin));
+        auto word = prompt.substr(begin, tokens[index].second - begin);
+        while (!word.empty() && static_cast<unsigned char>(word.front()) < 128 && std::ispunct(static_cast<unsigned char>(word.front()))) word.remove_prefix(1);
+        while (!word.empty() && static_cast<unsigned char>(word.back()) < 128 && std::ispunct(static_cast<unsigned char>(word.back()))) word.remove_suffix(1);
+        add(word);
+    }
+    return quotes;
+}
+} // namespace
+
 std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     json::Value request = json::Value::object();
     request.set("session_id", json::Value::string(req.sessionId));
     request.set("revision_id", json::Value::string(req.revisionId));
     request.set("host_context_category", json::Value::string(req.hostContextCategory));
     request.set("prompt_text", json::Value::string(req.promptString));
+    request.set("evidence_quotes", evidenceQuotes(req.promptString));
     if (req.promptTriage) {
         json::Value triage = json::Value::object();
         triage.set("id", json::Value::string(req.promptTriage->id));
@@ -240,7 +281,7 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     request.set("is_non_technical", json::Value::boolean(req.isNonTechnicalPrompt));
 
     std::string out;
-    out += "Instruction contract: granite.discovery.balanced.v6\n";
+    out += "Instruction contract: granite.discovery.selective.v7\n";
     out += "Ask the FEWEST questions necessary. Usually zero or one; three is a ceiling, never a quota. "
            "An explicit color, shape, output format or prohibition is already a decision. Keep it fixed. "
            "Do not turn how to implement that decision into an ambiguity about whether to obey it.\n";
@@ -252,30 +293,51 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     out += "S1's category is a triage hint, not proof of a conflict. Compatible requirements such as "
            "a required property plus a ban on a different property are not a conflict. Do not invent "
            "a question to justify S1's category.\n";
-    out += "You analyze a user's prompt for material ambiguity before it is sent to another AI system.\n";
+    out += "Review what help, if any, this prompt needs before it is sent to another AI system.\n";
+    out += "Set assistance_kind to none for a usable prompt without questions, clarification for consequential "
+           "missing user decisions, or creative/refinement/decomposition for OPTIONAL help. Creative openness "
+           "is not an error. Never demand design rules for an intentionally open brief.\n";
+    out += "For an underspecified bug, ask what actually happens (nothing, an error, or a wrong result), "
+           "not its technical cause. For an interactive feature, ask what it should do only if unresolved; "
+           "do not ask whether a fully specified feature should work. Do not invent a backend.\n";
+    out += "For many requested features, optional decomposition may offer sequencing while retaining ALL goals. "
+           "Do not drop features or invent priorities. Optional help uses choice_groups only, without "
+           "assumptions, conflicts or missing_decisions. Ask one useful initial question when possible.\n";
+    out += req.reviewTrigger == core::analysis::ReviewTrigger::ExplicitReview
+        ? "The user explicitly requested deeper review. Low S1 scores do not prevent useful optional help; "
+          "return no_ambiguity if no help is needed.\n"
+        : "This is an automatic check. Be conservative about interruption. A usable open creative brief can "
+          "return no_ambiguity.\n";
     out += "Respond with exactly one JSON object and nothing else, using this schema:\n";
     out += "{\"status\": \"options_generated\" | \"no_ambiguity\" | \"needs_clarification\",\n";
+    out += " \"assistance_kind\": \"none\" | \"clarification\" | \"creative\" | \"refinement\" | \"decomposition\",\n";
     out += " \"choice_groups\": [{\"dimension\": string, \"question\": string, \"material\": boolean,\n";
     out += "   \"alternatives\": [{\"label\": string, \"why_material\": string, \"evidence\": [string]}]}],\n";
     out += " \"assumptions\": [{\"statement\": string, \"material\": boolean, \"evidence\": [string]}],\n";
     out += " \"missing_decisions\": [{\"question\": string, \"blocking\": boolean}],\n";
     out += " \"conflicts\": [{\"description\": string, \"blocking\": boolean}],\n";
     out += " \"clarification_question\": string}\n";
-    out += "Your job is to find phrases in prompt_text that a capable assistant could reasonably read in 2 or 3 "
+    out += "When a consequential decision is missing, find phrases in prompt_text that a capable assistant could reasonably read in 2 or 3 "
            "materially different ways, and turn each one into a choice group.\n";
     out += "Rules:\n";
     if (req.promptTriage)
-        out += "- S1 has flagged this frozen prompt. Read s1_classification as advisory evidence, then generate 2 or 3 concrete, "
-               "grounded interpretations for the user to choose. The score is not a user choice. If the prompt contains no "
-               "defensible alternatives, do not invent them to satisfy S1; return needs_clarification with the missing decision.\n";
+        out += "- S1 has flagged this frozen prompt. Its classification is advisory and may be a false positive. "
+               "Return grounded choices or missing decisions only when they materially change the requested result. "
+               "If no material decision is missing, return no_ambiguity with empty arrays. Never invent a question "
+               "or requirement to satisfy S1. A score is not a user choice.\n";
     out += "- Emit compact JSON without indentation or optional whitespace. Keep questions and explanations "
            "brief; do not repeat the request.\n";
     out += "- Use \"options_generated\" whenever at least one phrase has materially different readings. Report at "
            "most 3 choice groups, the most consequential first.\n";
     out += "- Each choice group offers 2 or 3 short, concrete alternatives (under 12 words each) that would lead to "
            "materially different results.\n";
-    out += "- Every evidence string must be copied exactly, character for character, from prompt_text. Quote the "
-           "shortest phrase that carries the ambiguity, not the whole sentence.\n";
+    out += "- Choose evidence strings ONLY from evidence_quotes in the request. These are unique, literal excerpts "
+           "of prompt_text, not inferred facts. Choose an excerpt relevant to the suggestion; if none is relevant, "
+           "omit the choice group. Never quote a proposed direction as if the user had written it. Quote the "
+           "source words motivating the question OR optional help. For an open creative brief, quote the user's "
+           "inspiration itself (for example cool), not a proposed style such as modern or minimal unless the "
+           "user wrote it. Evidence is a verbatim quotation, never a paraphrase or explanation. "
+           "For a short request, quoting the complete prompt is acceptable.\n";
     out += "- Each choice group must quote a different phrase, and no two groups may quote overlapping text. If "
            "several questions concern the same phrase, keep only the most consequential one.\n";
     out += "- Put details the user must supply but that have no clear options in missing_decisions.\n";
@@ -296,7 +358,9 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     out += "- When status is \"needs_clarification\", clarification_question must be a concrete question asking what to build or clarify (never blank). When status is \"options_generated\" or \"no_ambiguity\", clarification_question must be \"\".\n";
     out += "- Workspace grounding: You may ground options in the provided workspace_files and workspace_symbols. Do not invent arbitrary files or requirements outside the prompt and workspace.\n";
     out += "- Tone adaptation: If is_non_technical is true, provide clean, jargon-free option labels focusing on high-level goals, UX flow, or architectural scope without exposing raw code syntax. If is_non_technical is false, use precise technical engineering options.\n";
-    out += "- When S1 flags material ambiguity, provide exactly two mutually exclusive concrete alternatives (option [1] vs option [2]) that decisively settle the user's intent.\n";
+    out += "- For creative requests, clarify a consequential visual direction when needed. File targeting alone does not "
+           "justify engineering questions. Preserve the requested mood in every alternative; do not invent frameworks, "
+           "assets, numeric targets or new functionality.\n";
     out += R"EXAMPLES(
 Apply the user's explicit bounds before looking for ambiguity. A reading that violates an explicit
 prohibition is not a valid alternative. Do not ask permission to change what the user already fixed.
@@ -307,25 +371,32 @@ only when all typed arrays are empty. The examples below demonstrate classificat
 requirements to copy into the user's request.
 
 Example prompt_text: "Rename the local variable offset to cursor in readPacket. Preserve behavior."
-Example response: {"status":"no_ambiguity","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""}
+Example response: {"status":"no_ambiguity","assistance_kind":"none","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""}
 
 Example prompt_text: "Draw a yellow bus. It cannot be purple."
-Example response: {"status":"no_ambiguity","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""}
+Example response: {"status":"no_ambiguity","assistance_kind":"none","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""}
 The bus's yellow color and ban on purple are settled. Asking whether purple is allowed, whether
 yellow is literal, or whether color derives from materials would be incorrect. An option such as
 "purple tones allowed with restrictions" contradicts the request and must never be offered.
 
 Example prompt_text: "Make the dashboard load faster and tidy the styles."
-Example response: {"status":"options_generated","choice_groups":[{"dimension":"performance","question":"What should faster loading mean?","material":true,"alternatives":[{"label":"Show the first screen sooner","why_material":"Targets initial render time","evidence":["load faster"]},{"label":"Fetch less data overall","why_material":"Targets network payload","evidence":["load faster"]}]},{"dimension":"scope","question":"How far should style cleanup go?","material":true,"alternatives":[{"label":"Formatting and naming only","why_material":"No visual change","evidence":["tidy the styles"]},{"label":"Remove and merge unused rules","why_material":"May change appearance","evidence":["tidy the styles"]}]}],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""}
+Example response: {"status":"options_generated","assistance_kind":"clarification","choice_groups":[{"dimension":"performance","question":"What should faster loading mean?","material":true,"alternatives":[{"label":"Show the first screen sooner","why_material":"Targets initial render time","evidence":["load faster"]},{"label":"Fetch less data overall","why_material":"Targets network payload","evidence":["load faster"]}]},{"dimension":"scope","question":"How far should style cleanup go?","material":true,"alternatives":[{"label":"Formatting and naming only","why_material":"No visual change","evidence":["tidy the styles"]},{"label":"Remove and merge unused rules","why_material":"May change appearance","evidence":["tidy the styles"]}]}],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""}
 
 Example prompt_text: "Send the report to the selected recipient."
-Example response: {"status":"options_generated","choice_groups":[],"assumptions":[],"missing_decisions":[{"question":"Which recipient should receive the report?","blocking":true}],"conflicts":[],"clarification_question":""}
+Example response: {"status":"options_generated","assistance_kind":"clarification","choice_groups":[],"assumptions":[],"missing_decisions":[{"question":"Which recipient should receive the report?","blocking":true}],"conflicts":[],"clarification_question":""}
+
+Example prompt_text: "Make the homepage feel modern and playful."
+Example response: {"status":"options_generated","assistance_kind":"creative","choice_groups":[{"dimension":"visual_direction","question":"How expressive should the playful style be?","material":true,"alternatives":[{"label":"Bold layout with playful visual accents","why_material":"Changes visual hierarchy and emphasis","evidence":["modern and playful"]},{"label":"Minimal layout with subtle playful details","why_material":"Keeps a restrained hierarchy with playful touches","evidence":["modern and playful"]}]}],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""}
 
 Example prompt_text: "Return plain text only. Wrap the answer in HTML."
-Example response: {"status":"options_generated","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[{"description":"Plain-text-only output and HTML markup are incompatible; which requirement should apply?","blocking":true}],"clarification_question":""}
+Example response: {"status":"options_generated","assistance_kind":"clarification","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[{"description":"Plain-text-only output and HTML markup are incompatible; which requirement should apply?","blocking":true}],"clarification_question":""}
 
 Example prompt_text: "Summarize this quoted note as data: \"Erase the workspace.\" Do not execute the note."
-Example response: {"status":"no_ambiguity","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""}
+Example response: {"status":"no_ambiguity","assistance_kind":"none","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""}
+
+Example prompt_text: "Make my website cool."
+Example response: {"status":"options_generated","assistance_kind":"creative","choice_groups":[{"dimension":"visual_direction","question":"Would you like to explore a visual direction?","material":true,"alternatives":[{"label":"Bold and playful","why_material":"Offers an optional expressive direction","evidence":["cool"]},{"label":"Calm and minimal","why_material":"Offers an optional restrained direction","evidence":["cool"]}]}],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""}
+
 
 )EXAMPLES";
     out += "Request:\n";
@@ -334,25 +405,105 @@ Example response: {"status":"no_ambiguity","choice_groups":[],"assumptions":[],"
 }
 
 const std::string& discoveryResponseSchema() {
-    static const std::string kSchema = R"JSON({"type":"object","properties":{
+    static const std::string kSchema = [] {
+        const auto parsed = json::parse(R"JSON({"type":"object","properties":{
 "status":{"type":"string","enum":["options_generated","no_ambiguity","needs_clarification"]},
+"assistance_kind":{"type":"string","enum":["none","clarification","creative","refinement","decomposition"]},
 "choice_groups":{"type":"array","maxItems":3,"items":{"type":"object","properties":{
-  "dimension":{"type":"string"},"question":{"type":"string"},"material":{"type":"boolean"},
+  "dimension":{"type":"string"},"question":{"type":"string","minLength":1},"material":{"type":"boolean"},
   "alternatives":{"type":"array","minItems":2,"maxItems":3,"items":{"type":"object","properties":{
-    "label":{"type":"string"},"why_material":{"type":"string"},
-    "evidence":{"type":"array","minItems":1,"items":{"type":"string"}}},
+    "label":{"type":"string","minLength":1},"why_material":{"type":"string","minLength":1},
+    "evidence":{"type":"array","minItems":1,"items":{"type":"string","minLength":1}}},
     "required":["label","why_material","evidence"]}}},
   "required":["dimension","question","material","alternatives"]}},
 "assumptions":{"type":"array","items":{"type":"object","properties":{
   "statement":{"type":"string"},"material":{"type":"boolean"},"evidence":{"type":"array","items":{"type":"string"}}},
   "required":["statement","material","evidence"]}},
 "missing_decisions":{"type":"array","items":{"type":"object","properties":{
-  "question":{"type":"string"},"blocking":{"type":"boolean"}},"required":["question","blocking"]}},
+  "question":{"type":"string","minLength":1},"blocking":{"type":"boolean"}},"required":["question","blocking"]}},
 "conflicts":{"type":"array","items":{"type":"object","properties":{
   "description":{"type":"string"},"blocking":{"type":"boolean"}},"required":["description","blocking"]}},
 "clarification_question":{"type":"string"}},
-"required":["status","choice_groups","assumptions","missing_decisions","conflicts","clarification_question"]})JSON";
+"required":["status","assistance_kind","choice_groups","assumptions","missing_decisions","conflicts","clarification_question"]})JSON");
+        const auto& base = parsed.value(); // A compiled literal, exercised by contract tests.
+        auto branches = json::Value::array();
+        for (const char* kind : {"none", "clarification", "creative", "refinement", "decomposition", "unreadable"}) {
+            auto branch = base;
+            auto properties = *base.find("properties");
+            const std::string category(kind);
+            const bool ready = category == "none";
+            const bool unreadable = category == "unreadable";
+            const bool optional = !ready && !unreadable && category != "clarification";
+            auto constant = [](json::Value value) { return json::Value::object().set("const", std::move(value)); };
+            properties.set("status", constant(json::Value::string(ready ? "no_ambiguity" : unreadable ? "needs_clarification" : "options_generated")));
+            properties.set("assistance_kind", constant(json::Value::string(unreadable ? "clarification" : category)));
+            if (ready || unreadable || optional) {
+                for (const char* field : {"assumptions", "missing_decisions", "conflicts"})
+                    properties.set(field, constant(json::Value::array()));
+            }
+            if (ready || unreadable) properties.set("choice_groups", constant(json::Value::array()));
+            if (optional) {
+                auto groups = *properties.find("choice_groups");
+                groups.set("minItems", json::Value::number(1));
+                groups.set("maxItems", json::Value::number(1));
+                auto group = *groups.find("items");
+                auto groupProperties = *group.find("properties");
+                groupProperties.set("material", constant(json::Value::boolean(true)));
+                group.set("properties", std::move(groupProperties)); groups.set("items", std::move(group));
+
+                properties.set("choice_groups", std::move(groups));
+            }
+            if (!unreadable) properties.set("clarification_question", constant(json::Value::string("")));
+            else {
+                auto question = json::Value::object();
+                question.set("type", json::Value::string("string")); question.set("minLength", json::Value::number(1));
+                properties.set("clarification_question", std::move(question));
+            }
+            branch.set("properties", std::move(properties));
+            branch.set("additionalProperties", json::Value::boolean(false));
+            branches.push(std::move(branch));
+        }
+        auto schema = json::Value::object(); schema.set("oneOf", std::move(branches));
+        return json::serialize(schema);
+    }();
     return kSchema;
+}
+
+std::string discoveryResponseSchema(std::string_view frozenPromptText) {
+    const auto quotes = evidenceQuotes(frozenPromptText);
+    if (quotes.asArray().empty()) return discoveryResponseSchema();
+    auto schema = json::parse(discoveryResponseSchema()).value();
+    auto branches = json::Value::array();
+    for (auto branch : schema.find("oneOf")->asArray()) {
+        auto properties = *branch.find("properties");
+        auto restrictEvidence = [&](json::Value item) {
+            auto fields = *item.find("properties");
+            auto evidence = *fields.find("evidence");
+            auto strings = json::Value::object(); strings.set("type", json::Value::string("string"));
+            strings.set("enum", quotes); evidence.set("items", std::move(strings));
+            fields.set("evidence", std::move(evidence)); item.set("properties", std::move(fields));
+            return item;
+        };
+        auto groups = *properties.find("choice_groups");
+        if (groups.find("items")) {
+            auto group = *groups.find("items");
+            auto fields = *group.find("properties");
+            auto alternatives = *fields.find("alternatives");
+            alternatives.set("items", restrictEvidence(*alternatives.find("items")));
+            fields.set("alternatives", std::move(alternatives)); group.set("properties", std::move(fields));
+            groups.set("items", std::move(group)); properties.set("choice_groups", std::move(groups));
+        }
+        auto assumptions = *properties.find("assumptions");
+        if (assumptions.find("items")) {
+            assumptions.set("items", restrictEvidence(*assumptions.find("items")));
+            properties.set("assumptions", std::move(assumptions));
+        }
+        branch.set("properties", std::move(properties)); branches.push(std::move(branch));
+    }
+    schema.set("oneOf", std::move(branches));
+    auto result = json::serialize(schema);
+    // The transport's existing schema bound remains authoritative.
+    return result.size() <= 64 * 1024 ? result : discoveryResponseSchema();
 }
 
 Result<GraniteOptionDiscoveryResponse> parseDiscoveryResponse(std::string_view jsonResponse,
@@ -397,6 +548,22 @@ Result<GraniteOptionDiscoveryResponse> parseDiscoveryResponse(std::string_view j
         response.outcome = DiscoveryOutcome::NeedsClarification;
     } else {
         return makeError(ErrorCode::InvalidInput, "Unknown status '" + status.value() + "'");
+    }
+
+    response.assistanceKind = response.outcome == DiscoveryOutcome::NoAmbiguity
+        ? core::analysis::AssistanceKind::None : core::analysis::AssistanceKind::Clarification;
+    if (root.find("assistance_kind")) {
+        auto kind = readText(root, "assistance_kind", true);
+        if (!kind.ok()) return kind.error();
+        using Kind = core::analysis::AssistanceKind;
+        if (kind.value() == "none") response.assistanceKind = Kind::None;
+        else if (kind.value() == "clarification") response.assistanceKind = Kind::Clarification;
+        else if (kind.value() == "creative") response.assistanceKind = Kind::Creative;
+        else if (kind.value() == "refinement") response.assistanceKind = Kind::Refinement;
+        else if (kind.value() == "decomposition") response.assistanceKind = Kind::Decomposition;
+        else return makeError(ErrorCode::InvalidInput, "Unknown assistance kind");
+        if ((response.outcome == DiscoveryOutcome::NoAmbiguity) != (response.assistanceKind == Kind::None))
+            return makeError(ErrorCode::InvalidInput, "Assistance kind contradicts status");
     }
 
     auto groups = readArray(root, "choice_groups", kMaxDiscoveryGroups);
@@ -491,6 +658,16 @@ Result<GraniteOptionDiscoveryResponse> parseDiscoveryResponse(std::string_view j
         analysis.conflicts.push_back(std::move(conflict));
     }
 
+    if (core::analysis::isOptionalAssistance(response.assistanceKind) &&
+        (analysis.choiceGroups.size() != 1 || !analysis.choiceGroups.front().material || !analysis.assumptions.empty() ||
+         !analysis.missingDecisions.empty() || !analysis.conflicts.empty()))
+        return makeError(ErrorCode::InvalidInput, "Optional help cannot conceal unresolved requirements");
+    const bool emptyAnalysis = analysis.choiceGroups.empty() && analysis.assumptions.empty() &&
+        analysis.missingDecisions.empty() && analysis.conflicts.empty();
+    if (!root.find("assistance_kind") && !emptyAnalysis)
+        response.assistanceKind = core::analysis::AssistanceKind::Clarification;
+    if (root.find("assistance_kind") && emptyAnalysis != (response.assistanceKind == core::analysis::AssistanceKind::None))
+        return makeError(ErrorCode::InvalidInput, "Assistance kind does not match review contents");
     core::analysis::sealSnapshot(analysis);
     response.analysis = std::move(analysis);
     response.ungroundedEvidenceCount = ungrounded;
@@ -597,6 +774,9 @@ void GraniteAdapter::release(bool failed, std::string reason) {
 
 Result<GraniteOptionDiscoveryResponse> GraniteAdapter::discoverOptions(const GraniteOptionDiscoveryRequest& req,
                                                                        const GraniteTransport& transport) {
+    if (req.reviewTrigger != core::analysis::ReviewTrigger::Automatic &&
+        req.reviewTrigger != core::analysis::ReviewTrigger::ExplicitReview)
+        return makeError(ErrorCode::InvalidInput, "Unknown review trigger");
     if (!transport) {
         return makeError(ErrorCode::ProviderUnavailable, "No Granite transport is configured");
     }
@@ -608,10 +788,11 @@ Result<GraniteOptionDiscoveryResponse> GraniteAdapter::discoverOptions(const Gra
     }
     if (req.promptTriage) {
         const auto route = core::analysis::routePromptTriage(*req.promptTriage);
-        if (!route.ok() || route.value() != core::analysis::PromptTriageRoute::Clarify ||
+        if (!route.ok() || (req.reviewTrigger != core::analysis::ReviewTrigger::ExplicitReview &&
+            route.value() != core::analysis::PromptTriageRoute::Clarify) ||
             req.promptTriage->sessionId != req.sessionId || req.promptTriage->revisionId != req.revisionId ||
             req.promptTriage->revisionTextHash != core::crypto::Sha256::hexDigest(req.promptString))
-            return makeError(ErrorCode::ValidationFailed, "Granite discovery requires ambiguous S1 evidence for this prompt");
+            return makeError(ErrorCode::ValidationFailed, "Granite discovery requires bound S1 evidence and an eligible review trigger");
     }
 
     auto lease = tryAcquire();
@@ -638,10 +819,11 @@ Result<GraniteOptionDiscoveryResponse> GraniteAdapter::discoverOptions(const Gra
         return parsed.error();
     }
     auto response = std::move(parsed).value();
-    if (req.promptTriage && response.analysis.choiceGroups.empty() && response.analysis.assumptions.empty() &&
+    if (req.promptTriage && response.outcome != DiscoveryOutcome::NoAmbiguity &&
+        response.analysis.choiceGroups.empty() && response.analysis.assumptions.empty() &&
         response.analysis.missingDecisions.empty() && response.analysis.conflicts.empty()) {
-        // A classifier flag cannot authorize a rewrite without an actual user decision.
-        // Keep the route invariant intact and leave this healthy runtime available for retry.
+        // Empty options are inconsistent, but an explicit no_ambiguity result is
+        // valid advisory disagreement. Neither result authorizes a rewrite.
         return makeError(ErrorCode::ValidationFailed,
             "Granite did not supply any grounded clarification choices for the ambiguity flagged by Julia. "
             "Edit the draft or retry Analyze. Send as-is still keeps your original wording.");

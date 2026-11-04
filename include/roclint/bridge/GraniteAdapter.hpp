@@ -1,5 +1,6 @@
 #pragma once
 #include "roclint/analysis/PromptTriage.hpp"
+#include "roclint/analysis/ReviewPolicy.hpp"
 
 #include "roclint/analysis/NormalizedAnalysis.hpp"
 #include "roclint/core/Result.hpp"
@@ -64,6 +65,7 @@ struct GraniteOptionDiscoveryRequest {
     std::vector<std::string> workspaceFiles{};
     std::vector<std::string> workspaceSymbols{};
     bool isNonTechnicalPrompt{false};
+    core::analysis::ReviewTrigger reviewTrigger{core::analysis::ReviewTrigger::Automatic};
 };
 
 enum class DiscoveryOutcome {
@@ -87,6 +89,7 @@ struct GraniteOptionDiscoveryResponse {
     std::size_t ungroundedEvidenceCount{0};
     GraniteModelInfo model{};
     double latencyMs{0.0};
+    core::analysis::AssistanceKind assistanceKind{core::analysis::AssistanceKind::None};
 };
 
 // Builds the instruction text sent to the model. User text is embedded as escaped JSON only.
@@ -95,6 +98,9 @@ struct GraniteOptionDiscoveryResponse {
 // JSON Schema for the discovery reply, used by runtimes that support schema-constrained output.
 // The reply is still strictly validated by parseDiscoveryResponse.
 [[nodiscard]] const std::string& discoveryResponseSchema();
+// Restricts evidence quotations to bounded, unique literal excerpts of this frozen prompt.
+// This proves quotation provenance only, not semantic relevance of model suggestions.
+[[nodiscard]] std::string discoveryResponseSchema(std::string_view frozenPromptText);
 
 // Strictly parses a model response (C03/C04). Provider IDs are ignored; IDs are host-minted.
 // Evidence excerpts are resolved against frozenPromptText; unresolvable excerpts are dropped so

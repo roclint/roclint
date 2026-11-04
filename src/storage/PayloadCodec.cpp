@@ -153,9 +153,14 @@ Result<an::PromptTriage> decodePromptTriage(std::string_view payload) {
 std::string encodeAnalysisSnapshot(const an::AnalysisSnapshot& snapshot) {
     Value root = Value::object();
     root.set("schema", str(snapshot.payloadVersion == 2 ? "analysis_snapshot.v2" :
-        snapshot.payloadVersion == 3 ? "analysis_snapshot.v3" : "analysis_snapshot.v4"));
+        snapshot.payloadVersion == 3 ? "analysis_snapshot.v3" :
+        snapshot.payloadVersion == 4 ? "analysis_snapshot.v4" : "analysis_snapshot.v5"));
     if (snapshot.payloadVersion >= 4 && snapshot.promptTriage)
         root.set("prompt_triage_payload", str(encodePromptTriage(*snapshot.promptTriage)));
+    if (snapshot.payloadVersion >= 5) {
+        root.set("review_trigger", num(static_cast<unsigned>(snapshot.reviewPolicy.trigger)));
+        root.set("assistance_kind", num(static_cast<unsigned>(snapshot.reviewPolicy.assistance)));
+    }
     root.set("revision_text_hash", str(snapshot.revisionTextHash));
     root.set("id", str(snapshot.id));
     root.set("snapshot_hash", str(snapshot.snapshotHash));
@@ -232,16 +237,24 @@ Result<an::AnalysisSnapshot> decodeAnalysisSnapshot(std::string_view payload) {
     const auto& root = parsed.value();
     std::string schema, normalized;
     ROCLINT_TRY_ASSIGN(schema, json::requireString(root, "schema"));
-    if (schema != "analysis_snapshot.v2" && schema != "analysis_snapshot.v3" && schema != "analysis_snapshot.v4") return makeError(ErrorCode::InvalidInput, "Unsupported final analysis schema");
+    if (schema != "analysis_snapshot.v2" && schema != "analysis_snapshot.v3" && schema != "analysis_snapshot.v4" && schema != "analysis_snapshot.v5") return makeError(ErrorCode::InvalidInput, "Unsupported final analysis schema");
     an::AnalysisSnapshot snapshot;
-    snapshot.payloadVersion = schema == "analysis_snapshot.v2" ? 2 : schema == "analysis_snapshot.v3" ? 3 : 4;
-    if (snapshot.payloadVersion == 4) {
+    snapshot.payloadVersion = schema == "analysis_snapshot.v2" ? 2 : schema == "analysis_snapshot.v3" ? 3 : schema == "analysis_snapshot.v4" ? 4 : 5;
+    if (snapshot.payloadVersion >= 4) {
         std::string triagePayload;
         ROCLINT_TRY_ASSIGN(triagePayload, json::requireString(root, "prompt_triage_payload"));
         an::PromptTriage triage;
         ROCLINT_TRY_ASSIGN(triage, decodePromptTriage(triagePayload));
         snapshot.promptTriage = std::move(triage);
     } else if (root.find("prompt_triage_payload")) return makeError(ErrorCode::InvalidInput, "Historical analysis cannot claim classifier evidence");
+    if (snapshot.payloadVersion >= 5) {
+        std::uint64_t trigger = 0, assistance = 0;
+        ROCLINT_TRY_ASSIGN(trigger, json::requireUInt(root, "review_trigger"));
+        ROCLINT_TRY_ASSIGN(assistance, json::requireUInt(root, "assistance_kind"));
+        if (trigger > 1 || assistance > 4) return makeError(ErrorCode::InvalidInput, "Unknown review policy");
+        snapshot.reviewPolicy = {static_cast<an::ReviewTrigger>(trigger), static_cast<an::AssistanceKind>(assistance)};
+    } else if (root.find("review_trigger") || root.find("assistance_kind"))
+        return makeError(ErrorCode::InvalidInput, "Historical analysis cannot claim a review policy");
     ROCLINT_TRY_ASSIGN(snapshot.revisionTextHash, json::requireString(root, "revision_text_hash"));
     ROCLINT_TRY_ASSIGN(snapshot.id, json::requireString(root, "id"));
     ROCLINT_TRY_ASSIGN(snapshot.snapshotHash, json::requireString(root, "snapshot_hash"));
@@ -261,7 +274,7 @@ Result<an::AnalysisSnapshot> decodeAnalysisSnapshot(std::string_view payload) {
     std::uint64_t engine = 0, status = 0;
     ROCLINT_TRY_ASSIGN(engine, json::requireUInt(evaluation, "engine"));
     ROCLINT_TRY_ASSIGN(status, json::requireUInt(evaluation, "execution_status"));
-    if (engine > 1 || status > (snapshot.payloadVersion == 4 ? 3U : 2U)) return makeError(ErrorCode::InvalidInput, "Unknown scoring metadata");
+    if (engine > 1 || status > (snapshot.payloadVersion >= 4 ? 3U : 2U)) return makeError(ErrorCode::InvalidInput, "Unknown scoring metadata");
     e.engine = static_cast<an::ScorerEngine>(engine);
     e.executionStatus = static_cast<an::ExecutionStatus>(status);
     const auto* executed = evaluation.find("executed_engine");

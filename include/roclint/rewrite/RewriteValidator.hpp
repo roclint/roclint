@@ -11,7 +11,7 @@
 
 namespace roclint::core::rewrite {
 
-inline constexpr const char* kValidatorVersion = "rewrite_validator_v2";
+inline constexpr const char* kValidatorVersion = "rewrite_validator_v3";
 
 struct ValidationResult {
     bool structurallyValid{false};   // Binding, hash, diff, and constraint derivation all verified
@@ -25,6 +25,10 @@ struct ValidationResult {
 
 class RewriteValidator {
 public:
+    // Narrow checks for known requirement changes, not a semantic-equivalence claim.
+    [[nodiscard]] static Status validateFidelity(std::string_view original,
+                                                const intent::ConfirmedIntent& intent,
+                                                std::string_view rewritten);
     [[nodiscard]] static ValidationResult validateProposal(const RewriteProposal& proposal,
                                                            std::string_view currentSessionId,
                                                            std::string_view currentRevisionId,

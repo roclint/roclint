@@ -747,8 +747,8 @@ void testSubmitClarificationDeferral() {
 
         ROCLINT_CHECK(c.waitForCommandForTesting(c.submitClarification(QStringLiteral("idk lol"), c.stateVersion())));
         ROCLINT_CHECK(wasAutoSelected);
-        ROCLINT_CHECK(deferredMsg.contains("Auto-selected: Lower latency per call (Julia 84% confident)"));
-        ROCLINT_CHECK(c.ambientStatus().contains("Auto-selected: Lower latency per call (Julia 84% confident)"));
+        ROCLINT_CHECK(deferredMsg.contains("Used your delegated choice: Lower latency per call"));
+        ROCLINT_CHECK(c.ambientStatus().contains("Used your delegated choice: Lower latency per call"));
         ROCLINT_CHECK(c.interventionVerdict() == "QUIET");
         ROCLINT_CHECK(c.hasConfirmedIntent());
         ROCLINT_CHECK(c.confirmedIntentForTesting().has_value());
@@ -782,8 +782,8 @@ void testSubmitClarificationDeferral() {
 
         ROCLINT_CHECK(c.waitForCommandForTesting(c.submitClarification(QStringLiteral("you decide"), c.stateVersion())));
         ROCLINT_CHECK(!wasAutoSelected);
-        ROCLINT_CHECK(deferredMsg == "Kept original — Julia wasn't confident enough to auto-pick");
-        ROCLINT_CHECK(c.ambientStatus() == "Kept original — Julia wasn't confident enough to auto-pick");
+        ROCLINT_CHECK(deferredMsg == "Kept your original wording; no option was selected.");
+        ROCLINT_CHECK(c.ambientStatus() == "Kept your original wording; no option was selected.");
         ROCLINT_CHECK(c.interventionVerdict() == "QUIET");
         ROCLINT_CHECK(c.hasConfirmedIntent());
         ROCLINT_CHECK(c.confirmedIntentForTesting().has_value());
@@ -841,7 +841,7 @@ void testChoicePolarityUnderRuleConflict() {
     // Set recommended option to the safe rule-compliant override
     c.setRecommendedOptionForTesting(QStringLiteral("[Safe Rule-Compliant Override] Lower latency per call"), 0.85);
 
-    // Verify submitClarification auto-selects the safe override
+    // An invented prefix is not a current alternative and must not select the first option.
     ROCLINT_CHECK(c.waitForCommandForTesting(c.submitClarification(QStringLiteral("idk"), c.stateVersion())));
     ROCLINT_CHECK(c.interventionVerdict() == "QUIET");
     ROCLINT_CHECK(c.hasConfirmedIntent());
@@ -849,9 +849,9 @@ void testChoicePolarityUnderRuleConflict() {
     const auto& intent = c.confirmedIntentForTesting().value();
     const auto decision = intent.getDecision("grp_0");
     ROCLINT_CHECK(decision.has_value());
-    ROCLINT_CHECK(decision->kind == intent::IntentResolutionKind::SelectedAlternative);
-    ROCLINT_CHECK(decision->chosenAlternativeId == "alt_0_0");
-    std::cout << "  [PASS] Choice polarity prioritizes and auto-selects safe rule-compliant options.\n";
+    ROCLINT_CHECK(decision->kind == intent::IntentResolutionKind::UseOriginal);
+    ROCLINT_CHECK(decision->chosenAlternativeId.empty());
+    std::cout << "  [PASS] Unmatched recommendations preserve original wording instead of selecting the first option.\n";
 }
 
 void testStrictNegativeGuardrailsPassThrough() {

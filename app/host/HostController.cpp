@@ -792,7 +792,6 @@ AsyncTask<core::Status> HostController::freezeDraftIfNeeded(std::string canonica
 
 void HostController::pauseAmbientFollowing() {
     m_followAmbientDraft = false;
-    m_widgetDraftEdited = true;
     if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
         qInfo() << "[Roclint follow] Ambient following paused by user HUD interaction";
 }
@@ -857,12 +856,16 @@ void HostController::invalidateDownstreamPipeline() {
     m_promptTriageLoad.reset();
     if (m_cancelWorkspaceContext) m_cancelWorkspaceContext();
     m_promptTriage.reset();
+    m_reviewTrigger = analysis::ReviewTrigger::Automatic;
     if (!m_recommendedOption.isEmpty() || m_recommendedConfidence > 0.0) {
         m_recommendedOption.clear();
         m_recommendedConfidence = 0.0;
         emit recommendedOptionChanged();
     }
-    if (m_routedAnalysisGroup) m_routedAnalysisGroup->terminal = true;
+    if (m_routedAnalysisGroup && !m_routedAnalysisGroup->terminal) {
+        m_routedAnalysisGroup->superseded = true;
+        m_routedAnalysisGroup->terminal = true;
+    }
     m_routedAnalysisGroup.reset();
     m_pendingNativeRewrite.reset();
     m_julia->cancelAllEvaluations();
@@ -966,6 +969,7 @@ HostController::PipelineTicket HostController::makeTicket() const {
     t.draftEditGeneration = m_revisionState->draftEditGeneration();
     t.proposalEditGeneration = m_revisionState->proposalEditGeneration();
     t.serial = m_pipelineSerial;
+    t.reviewTrigger = m_reviewTrigger;
     return t;
 }
 
@@ -1054,6 +1058,8 @@ AsyncTask<core::Status> HostController::beginAttempt(PipelineTicket& ticket, con
                                 ss(m_graniteResidencyPreset) + "; residency_tier=" + ss(m_native->residency());
     if (ticket.analysisGroup)
         ticket.configuration += "; request_group_id=" + ticket.analysisGroup->id + "; analysis_group_budget_ms=" + std::to_string(ticket.analysisGroup->budgetMs);
+    ticket.configuration += ticket.reviewTrigger == analysis::ReviewTrigger::ExplicitReview
+        ? "; review_trigger=explicit_review" : "; review_trigger=automatic";
     record.modelDetail = ticket.configuration;
     record.startedAtMs = nowMs();
     if (auto st = (co_await m_repository->beginModelAttempt(record)); !st.ok()) {
@@ -1120,7 +1126,7 @@ AsyncTask<core::Status> HostController::cancelAnalysisOperation(quint64 expected
 
 }
 
-AsyncTask<core::Status> HostController::analyzePromptOperation(QString text, quint64 expectedVersion) {
+AsyncTask<core::Status> HostController::analyzePromptOperation(QString text, quint64 expectedVersion, analysis::ReviewTrigger trigger) {
 
         const std::string canonical = core::normalizeLineEndings(ss(text));
         if (isBlank(canonical)) {
@@ -1138,6 +1144,7 @@ AsyncTask<core::Status> HostController::analyzePromptOperation(QString text, qui
         }
         if (auto status = (co_await advanceCommandVersion(stateVersion())); !status.ok()) co_return status;
         invalidateDownstreamPipeline();
+        m_reviewTrigger = trigger;
         emit stateVersionChanged();
         co_return (co_await startDiscovery());
 
@@ -1157,7 +1164,8 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
     }
     if (promptTriageRoutingEnabled() && !m_promptTriage) co_return (co_await startPromptTriage());
     if (promptTriageRoutingEnabled() && (!m_routedAnalysisGroup || m_routedAnalysisGroup->terminal ||
-        analysis::routePromptTriage(*m_promptTriage).value() != analysis::PromptTriageRoute::Clarify))
+        (m_reviewTrigger != analysis::ReviewTrigger::ExplicitReview &&
+         analysis::routePromptTriage(*m_promptTriage).value() != analysis::PromptTriageRoute::Clarify)))
         co_return makeError(ErrorCode::PreconditionFailed, "Granite discovery requires current ambiguous S1 classification");
     if (promptTriageRoutingEnabled() && !nativeGraniteSelected() && !usesTransportOverride()) {
         m_routedAnalysisGroup->terminal = true;
@@ -1203,7 +1211,7 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
         co_return st;
     }
 
-    const auto transport = currentTransport(bridge::discoveryResponseSchema(), &ticket, QStringLiteral("granite_analyze"), qs(m_revisionState->currentRevision().text()));
+    const auto transport = currentTransport(bridge::discoveryResponseSchema(m_revisionState->currentRevision().text()), &ticket, QStringLiteral("granite_analyze"), qs(m_revisionState->currentRevision().text()));
     if (runtime != bridge::GraniteRuntimeState::Ready || !transport) {
         std::string reason;
         if (!transport) {
@@ -1226,6 +1234,7 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
     request.revisionId = ticket.revisionId;
     request.promptString = m_revisionState->currentRevision().text();
     request.hostContextCategory = ss(m_hostContext.categoryString());
+    request.reviewTrigger = ticket.reviewTrigger;
     if (promptTriageRoutingEnabled()) request.promptTriage = m_promptTriage;
 
     for (const auto& f : m_projectFiles) {
@@ -1284,6 +1293,9 @@ AsyncTask<void> HostController::onDiscoveryFinishedAsync(PipelineTicket ticket,
         m_ambientDebounce.start();
     }
     if (ticket.analysisGroup && ticket.analysisGroup->terminal) {
+        if (ticket.analysisGroup->superseded)
+            completeAttempt(ticket, storage::AttemptStatus::DiscardedStale,
+                            "The prompt changed before analysis finished");
         if (m_discoveryQueued) {
             if (auto status = (co_await startDiscovery()); !status.ok()) setLastError(status.error());
         }
@@ -1341,10 +1353,16 @@ AsyncTask<void> HostController::acceptDiscovery(PipelineTicket ticket, bridge::G
 
     if (promptTriageRoutingEnabled()) {
         ticket.analysisGroup->terminal = true;
-        if ((co_await applyAnalysis(response.analysis, ticket.attemptId, {}, std::nullopt, m_promptTriage)))
-            setAnalysisStatus(AnalysisStatus::Ready, QStringLiteral("S1 score %1 ≥ 0.70 (%2). Granite supplied the decisions below; confirm your choice explicitly.")
-                .arg(m_promptTriage->ambiguityScore, 0, 'f', 3)
-                .arg(QString::fromLatin1(analysis::toString(m_promptTriage->primaryCategory))));
+        const bool noQuestions = response.outcome == bridge::DiscoveryOutcome::NoAmbiguity &&
+            response.analysis.choiceGroups.empty() && response.analysis.assumptions.empty() &&
+            response.analysis.missingDecisions.empty() && response.analysis.conflicts.empty();
+        if ((co_await applyAnalysis(response.analysis, ticket.attemptId, {}, std::nullopt, m_promptTriage, response.assistanceKind)))
+            setAnalysisStatus(AnalysisStatus::Ready, noQuestions
+                ? QStringLiteral("No material clarification was identified. Your original wording is unchanged.")
+                : isManual() ? QStringLiteral("Roclint couldn't offer a reliable suggestion. Review again or keep your original wording.")
+                : isOptionalHelp()
+                    ? QStringLiteral("Optional help is available. You can keep your original prompt.")
+                    : QStringLiteral("One detail could change the result. Your original prompt is unchanged."));
         co_return;
     }
 
@@ -1510,7 +1528,7 @@ AsyncTask<void> HostController::onJuliaFinishedAsync(PendingJuliaScore pending, 
 AsyncTask<bool> HostController::applyAnalysis(analysis::NormalizedAnalysis normalized, std::string discoveryAttemptId,
                                     std::string scorerAttemptId,
                                     std::optional<bridge::SnapshotEvaluationResponse> evaluation,
-                                    std::optional<analysis::PromptTriage> triage) {
+                                    std::optional<analysis::PromptTriage> triage, analysis::AssistanceKind assistance) {
     auto scored = evaluation ? std::move(*evaluation) :
         triage ? bridge::SnapshotEvaluationResponse{} : m_s1Adapter.evaluateSnapshot(normalized);
 #if defined(ROCLINT_ENABLE_TEST_MOCKS)
@@ -1527,7 +1545,8 @@ AsyncTask<bool> HostController::applyAnalysis(analysis::NormalizedAnalysis norma
     }
 #endif
     auto result = triage ? analysis::buildRoutedAnalysisSnapshot(std::move(normalized), std::move(*triage),
-        m_revisionState->currentRevision().text(), std::move(discoveryAttemptId), evaluation) :
+        m_revisionState->currentRevision().text(), std::move(discoveryAttemptId), evaluation,
+        analysis::ReviewPolicy{m_reviewTrigger, assistance}) :
         analysis::buildAnalysisSnapshot(std::move(normalized), std::move(scored), m_revisionState->currentRevision().text(),
             std::move(discoveryAttemptId), std::move(scorerAttemptId));
     if (!result.ok()) {
@@ -1844,31 +1863,21 @@ quint64 HostController::submitClarification(const QString& text, bool isDeferral
             const QString label = map.value(QStringLiteral("label")).toString();
             if (!m_recommendedOption.isEmpty() &&
                 (id.compare(m_recommendedOption, Qt::CaseInsensitive) == 0 ||
-                 label.compare(m_recommendedOption, Qt::CaseInsensitive) == 0 ||
-                 label.contains(m_recommendedOption, Qt::CaseInsensitive) ||
-                 m_recommendedOption.contains(label, Qt::CaseInsensitive))) {
+                 label.compare(m_recommendedOption, Qt::CaseInsensitive) == 0)) {
+                // Multiple matches are not a recommendation for one current alternative.
+                if (!chosenAltId.isEmpty()) { chosenAltId.clear(); chosenLabel.clear(); break; }
                 chosenAltId = id;
                 chosenLabel = label;
-                break;
             }
         }
-        if (chosenAltId.isEmpty() && !m_activeAlternatives.isEmpty()) {
-            const auto map = m_activeAlternatives.first().toMap();
-            chosenAltId = map.value(QStringLiteral("id")).toString();
-            chosenLabel = !m_recommendedOption.isEmpty() ? m_recommendedOption : map.value(QStringLiteral("label")).toString();
-        } else if (chosenLabel.isEmpty() && !m_recommendedOption.isEmpty()) {
-            chosenLabel = m_recommendedOption;
-        }
-
         if (!chosenAltId.isEmpty()) {
-            const int pct = qRound(m_recommendedConfidence * 100.0);
-            const QString message = QStringLiteral("Auto-selected: %1 (Julia %2% confident)").arg(chosenLabel).arg(pct);
+            const QString message = QStringLiteral("Used your delegated choice: %1").arg(chosenLabel);
             return notifyAfter(confirmChoice(chosenAltId, expectedVersion), message, true);
         }
     }
 
     // Otherwise, treat same as "Keep my original wording"
-    const QString message = QStringLiteral("Kept original — Julia wasn't confident enough to auto-pick");
+    const QString message = QStringLiteral("Kept your original wording; no option was selected.");
 
     if (m_currentDecision.activeItemKind == intent::ActiveItemKind::ChoiceGroup) {
         return notifyAfter(keepOriginalPrompt(expectedVersion), message, false);
@@ -1941,6 +1950,37 @@ QString HostController::analysisStatus() const {
     return QStringLiteral("IDLE");
 }
 
+bool HostController::isOptionalHelp() const {
+    return m_currentSnapshot && m_currentSnapshot->payloadVersion >= 5 && !isDraftDirty() && m_currentPolicyResult.isEligible() &&
+        analysis::isOptionalAssistance(m_currentSnapshot->reviewPolicy.assistance);
+}
+
+QString HostController::reviewDiagnostics() const {
+    QString detail = diagnosticMessage();
+    if (m_currentAnalysis) {
+        detail += QStringLiteral("\nPolicy: ") + QString::fromLatin1(analysis::toString(m_currentPolicyResult.primaryReasonCode));
+        for (const auto& group : m_currentPolicyResult.groupResults)
+            if (!group.isEligible()) detail += QLatin1Char('\n') + qs(group.diagnosticMessage).left(512);
+    }
+    if (m_currentSnapshot && m_currentSnapshot->promptTriage) {
+        const auto& triage = *m_currentSnapshot->promptTriage;
+        detail += QStringLiteral("\nS1: action %1, target %2, rule %3, conflict %4")
+            .arg(triage.categoryScores[0], 0, 'f', 3).arg(triage.categoryScores[1], 0, 'f', 3)
+            .arg(triage.categoryScores[2], 0, 'f', 3).arg(triage.categoryScores[3], 0, 'f', 3);
+        if (m_currentSnapshot->payloadVersion >= 5)
+            detail += m_currentSnapshot->reviewPolicy.trigger == analysis::ReviewTrigger::ExplicitReview
+                ? QStringLiteral("\nTrigger: explicit review") : QStringLiteral("\nTrigger: automatic check");
+    }
+    return detail.trimmed();
+}
+
+QString HostController::reviewOutcome() const {
+    if (!m_currentAnalysis || isDraftDirty()) return {};
+    if (isManual() && !m_currentDecision.activeItemId) return QStringLiteral("UNAVAILABLE");
+    if (isOptionalHelp()) return QStringLiteral("OPTIONAL_HELP");
+    return (isClarifying() || isManual()) ? QStringLiteral("QUESTION") : QStringLiteral("READY");
+}
+
 QString HostController::interventionVerdict() const {
     return m_currentAnalysis ? QString::fromUtf8(intent::toString(m_currentDecision.verdict)) : QString();
 }
@@ -2009,7 +2049,9 @@ QString HostController::confirmedIntentSummary() const {
     if (isIntentStale()) {
         return QStringLiteral("Your decisions are out of date because the prompt changed.");
     }
-    QString summary = QStringLiteral("%1 decision(s) recorded").arg(m_confirmedIntent->items.size());
+    if (m_confirmedIntent->items.empty() && m_confirmedIntent->unresolvedItemIds.empty())
+        return QStringLiteral("Ready to use as written. Improving the wording is optional.");
+    QString summary = QStringLiteral("%1 answer(s) saved").arg(m_confirmedIntent->items.size());
     if (!m_confirmedIntent->unresolvedItemIds.empty()) {
         summary += QStringLiteral(", %1 left open").arg(m_confirmedIntent->unresolvedItemIds.size());
     }
@@ -2076,10 +2118,12 @@ AsyncTask<core::Status> HostController::setRewriteProfileOperation(QString profi
 }
 
 bool HostController::isRewriteEnabled() const {
-    if (promptTriageRoutingEnabled() && (!m_currentSnapshot || !m_currentSnapshot->promptTriage ||
-        analysis::routePromptTriage(*m_currentSnapshot->promptTriage).value() != analysis::PromptTriageRoute::Clarify ||
-        (m_workingIntent.confirmedAlternatives.empty() && m_workingIntent.customResolutions.empty() &&
-         m_workingIntent.assumptionDecisions.empty()))) return false;
+    if (promptTriageRoutingEnabled() && m_currentSnapshot && m_currentSnapshot->payloadVersion == 4 &&
+        (analysis::routePromptTriage(*m_currentSnapshot->promptTriage).value() != analysis::PromptTriageRoute::Clarify ||
+         (!m_confirmedIntent || std::none_of(m_confirmedIntent->items.begin(), m_confirmedIntent->items.end(), [](const auto& item) {
+             return item.kind == intent::IntentResolutionKind::SelectedAlternative || item.kind == intent::IntentResolutionKind::CustomText ||
+                    item.kind == intent::IntentResolutionKind::AcceptedAssumption || item.kind == intent::IntentResolutionKind::DeclinedAssumption;
+         })))) return false;
     return m_confirmedIntent.has_value() && !isIntentStale() &&
            m_currentDecision.verdict == intent::InterventionVerdict::Quiet &&
            m_proposalStatus != ProposalUiStatus::Generating &&
@@ -2112,11 +2156,8 @@ QVariantMap HostController::getConfirmedIntentPayload() const {
 AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expectedVersion) {
 
         if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
-        if (promptTriageRoutingEnabled() && (!m_currentSnapshot || !m_currentSnapshot->promptTriage ||
-            analysis::routePromptTriage(*m_currentSnapshot->promptTriage).value() != analysis::PromptTriageRoute::Clarify ||
-            (m_workingIntent.confirmedAlternatives.empty() && m_workingIntent.customResolutions.empty() &&
-             m_workingIntent.assumptionDecisions.empty())))
-            co_return makeError(ErrorCode::PreconditionFailed, "Granite rewrite requires ambiguous S1 classification and an explicit confirmed choice. Clear prompts keep their original wording.");
+        if (m_currentSnapshot && m_currentSnapshot->payloadVersion == 4 && !isRewriteEnabled())
+            co_return makeError(ErrorCode::PreconditionFailed, "Review this saved prompt again before requesting wording help.");
         if (promptTriageRoutingEnabled() && !nativeGraniteSelected() && !usesTransportOverride())
             co_return makeError(ErrorCode::ProviderUnavailable, "Only the pinned native IBM Granite model can generate this rewrite.");
         if (!m_revisionState) {
@@ -2242,7 +2283,9 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
     }
     if (!result.ok()) {
         completeAttempt(ticket, storage::AttemptStatus::Failed, result.error().message);
-        const auto error = modelReplyError(result.error());
+        const auto error = result.error().code == ErrorCode::ValidationFailed
+            ? makeError(ErrorCode::ProviderFailed, "That rewrite couldn't preserve your requirements. Retry explicitly or keep the original prompt.")
+            : modelReplyError(result.error());
         setProposalStatus(ProposalUiStatus::Failed, QStringLiteral("The rewrite couldn't be produced. ") + plainError(error));
         setLastError(error);
         co_return;
@@ -2291,7 +2334,7 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
     if (!validation.structurallyValid) {
         completeAttempt(ticket, storage::AttemptStatus::Failed, "Validation failed: " + validation.rejectionReason, &model);
         setProposalStatus(ProposalUiStatus::ValidationFailed,
-                          QStringLiteral("The suggested rewrite failed checks: ") + qs(validation.rejectionReason));
+                          QStringLiteral("That rewrite couldn't be verified. Retry explicitly or keep the original prompt."));
         co_return;
     }
     if (auto st = (co_await persistProposal()); !st.ok()) {
@@ -2460,7 +2503,8 @@ Status HostController::deliver(const QString& text) {
                                             .value_or(TerminalDraft{})
                                             .text
                                       : target.field.text;
-    m_pendingDelivery = PendingDelivery{request.requestId, text, target.field.appDisplayName};
+    m_pendingDelivery = PendingDelivery{request.requestId, text, target.field.appDisplayName,
+        target.field.fieldToken, target.field.processId, target.field.appIdentifier, m_pipelineSerial};
     // The native bridge restores and verifies target focus. Keep the draft visible until readback
     // confirms delivery; a clipboard fallback is not a successful insertion.
     m_accessibility->inject(request);
@@ -2474,11 +2518,21 @@ void HostController::onInjectionFinished(quint64 requestId, InjectionOutcome out
     const PendingDelivery delivery = *m_pendingDelivery;
     m_pendingDelivery.reset();
     if (outcome == InjectionOutcome::Injected) {
+        if (m_captureSource == CaptureSource::Ambient && m_captureTarget && m_pipelineSerial == delivery.pipelineSerial &&
+            m_captureTarget->field.fieldToken == delivery.fieldToken && m_captureTarget->field.processId == delivery.processId &&
+            m_captureTarget->field.appIdentifier == delivery.appIdentifier) {
+            // Readback confirmed this exact delivery. Ignore its observation echo,
+            // then follow fresh typing in the same composer for the next prompt.
+            m_captureTarget->prompt = delivery.text;
+            m_captureTarget->textHash = core::crypto::Sha256::hexDigest(ss(delivery.text));
+            if (m_captureTarget->field.kind == FieldKind::GuiEditor) m_captureTarget->field.text = delivery.text;
+            m_widgetDraftEdited = false;
+            m_followAmbientDraft = true;
+        }
         clearLastError();
         m_lastCopiedText = delivery.text;
         emit lastCopiedTextChanged();
         setAmbientStatus(QStringLiteral("Inserted into %1.").arg(delivery.appName));
-        hideCard();
         emit promptInjected(delivery.text, delivery.appName);
         return;
     }
@@ -2496,7 +2550,6 @@ void HostController::onInjectionFinished(quint64 requestId, InjectionOutcome out
                           .arg(delivery.appName, reason);
     setLastError(message);
     setAmbientStatus(message);
-    showCardInternal(false);
     emit deliveryFellBack(message);
 }
 
@@ -2604,6 +2657,7 @@ AsyncTask<core::Status> HostController::restoreRevisionOperation(QString revisio
             co_return st;
         }
         m_followAmbientDraft = false;
+        m_widgetDraftEdited = true; // Restored text, not the live editor, owns this draft.
         m_captureRequestedApp.clear();
         invalidateDownstreamPipeline();
         emit revisionRestored(qs(text));
@@ -2633,6 +2687,7 @@ AsyncTask<core::Status> HostController::restoreSessionOperation(QString sessionI
 
         // Switching sessions does not invalidate the saved approval; the restored copy is re-validated below.
         m_followAmbientDraft = false;
+        m_widgetDraftEdited = true;
         m_captureRequestedApp.clear();
         m_currentApproval.reset();
         invalidateDownstreamPipeline();
@@ -3735,7 +3790,7 @@ void HostController::followAmbientDraft() {
     // another hotkey; a draft already typed into the HUD remains the user's authoritative text.
     if (!isAmbientCapture() && !m_captureOpenPending && !m_captureRequestedApp.isEmpty() &&
         observed.field.appIdentifier.compare(m_captureRequestedApp, Qt::CaseInsensitive) == 0) {
-        if (!preserveHud && m_revisionState && !noteDraftEdited(stateVersion())) return;
+        if (!preserveHud && m_revisionState && !noteDraftEditedInternal(stateVersion(), false)) return;
         m_widgetDraftEdited = preserveHud;
         m_captureSource = CaptureSource::Ambient;
         m_captureTarget = observed;
@@ -3751,19 +3806,23 @@ void HostController::followAmbientDraft() {
             : QStringLiteral("Live capture connected. Continue typing in your editor, then Analyze when ready."));
         return;
     }
-    if (!isAmbientCapture() || !m_followAmbientDraft || !m_captureTarget) return;
-    if (preserveHud) {
+    if (!isAmbientCapture() || !m_captureTarget) return;
+    if (m_widgetDraftEdited || m_selectingInsertionTarget) {
         m_followAmbientDraft = false;
         return;
     }
     const auto& previous = *m_captureTarget;
-    // Before a HUD edit or an explicit clarification decision, follow the focused draft.
-    // Identity changes invalidate prior analysis/approval even when the words happen to match.
-    if (previous.field.fieldToken == observed.field.fieldToken &&
+    const bool sameField = previous.field.fieldToken == observed.field.fieldToken &&
         previous.field.processId == observed.field.processId &&
-        previous.field.appIdentifier.compare(observed.field.appIdentifier, Qt::CaseInsensitive) == 0 &&
-        previous.textHash == observed.textHash) return;
-    if (!noteDraftEdited(stateVersion())) return;
+        previous.field.appIdentifier.compare(observed.field.appIdentifier, Qt::CaseInsensitive) == 0;
+    // Answering a question freezes that review, but a real edit in its bound
+    // composer invalidates it. An unrelated field must not replace that review.
+    if ((!m_followAmbientDraft || (m_currentProposal && !m_currentApproval)) && !sameField) return;
+    if (sameField && previous.textHash == observed.textHash) {
+        m_captureTarget->field = observed.field;
+        return;
+    }
+    if (!noteDraftEditedInternal(stateVersion(), false)) return;
     m_followAmbientDraft = true;
     m_captureTarget = observed;
     if (m_hostContextEnabled) {
@@ -3804,7 +3863,7 @@ void HostController::onFieldObserved(const ObservedField& field) {
         prompt = field.text;
     }
     if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
-        qInfo() << "[HostController] onFieldObserved: app=" << field.appDisplayName << "prompt=" << prompt;
+        qInfo() << "[HostController] onFieldObserved: app=" << field.appDisplayName << "characters=" << prompt.size();
     }
     prompt = qs(core::normalizeLineEndings(ss(prompt)));
     if (field.kind == FieldKind::GuiEditor && prompt.trimmed().isEmpty()) {
@@ -3876,6 +3935,9 @@ void HostController::onFieldObserved(const ObservedField& field) {
 }
 
 void HostController::onAmbientDebounce() {
+    if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
+        qInfo() << "[Roclint badge] active=" << isAmbientActive() << "field=" << m_ambientObservation.has_value()
+                << "hudVisible=" << isCardVisible();
     if (!isAmbientActive() || !m_ambientObservation.has_value() || isCardVisible()) {
         m_ambientCheckPending = false;
         return;
@@ -4221,6 +4283,12 @@ quint64 HostController::analyzePrompt(QString text, quint64 expectedVersion) {
     return enqueueStorageCommand("analyzePrompt", [=, this]() { return analyzePromptOperation(text, expectedVersion); });
 }
 
+quint64 HostController::reviewPrompt(QString text, quint64 expectedVersion) {
+    return enqueueStorageCommand("reviewPrompt", [=, this]() {
+        return analyzePromptOperation(text, expectedVersion, analysis::ReviewTrigger::ExplicitReview);
+    });
+}
+
 quint64 HostController::cancelAnalysis(quint64 expectedVersion) {
     return enqueueStorageCommand("cancelAnalysis", [=, this]() { return cancelAnalysisOperation(expectedVersion); });
 }
@@ -4351,11 +4419,14 @@ void HostController::finishStorageCommand(quint64 id, const QString& name, const
         status.ok() ? QString{} : plainError(status.error()));
 }
 quint64 HostController::noteDraftEdited(quint64 expectedVersion) {
+    return noteDraftEditedInternal(expectedVersion, true);
+}
+quint64 HostController::noteDraftEditedInternal(quint64 expectedVersion, bool editedInHud) {
     if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) { setLastError(status.error()); return 0; }
     if (m_hostState == HostState::Quitting || m_nextStorageRequest == core::RevisionState::kMaxStateVersion) return 0;
     const auto id = ++m_nextStorageRequest; ++m_liveEditSerial;
     m_followAmbientDraft = false;
-    if (m_captureSource == CaptureSource::Widget || m_captureOpenPending) m_widgetDraftEdited = true;
+    if (editedInHud) m_widgetDraftEdited = true;
     if (!m_revisionState) { invalidateDownstreamPipeline(); finishStorageCommand(id, "noteDraftEdited", Status::success()); return id; }
     auto next = *m_revisionState;
     if (auto status = next.noteDraftEdit(expectedVersion); !status.ok()) { finishStorageCommand(id, "noteDraftEdited", status); return 0; }

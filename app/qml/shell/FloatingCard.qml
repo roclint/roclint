@@ -43,10 +43,63 @@ Window {
     property var projectFiles: []
     property string scopePreamble: ""
     property bool suppressEditSignal: false
+    property bool editingDraft: false
+    property double pendingEditRequest: 0
     readonly property bool isCompiledPreview: hc && hostController.hasProposal
     readonly property bool hasAmbiguity: hc && hostController.isClarifying
     readonly property bool needsManualAnswer: hc && hostController.isManual && hostController.interventionReason === "CLARIFICATION_BUDGET_EXCEEDED"
     readonly property real ambiguityScore: hc ? hostController.ambiguityScore : 0.0
+
+    readonly property var presentation: {
+        const neutral = rootWindow.fgColor;
+        const warning = "#FFB000";
+        if (!hc) return {badge: "DRAFT", tone: neutral, label: qsTr("Review prompt"), action: "REVIEW_PROMPT"};
+        if (hostController.isAnalyzing) return {badge: "CHECKING", tone: neutral, label: qsTr("Cancel analysis"), action: "CANCEL"};
+        if (hostController.proposalStatus === "GENERATING") return {badge: "WRITING", tone: neutral, label: qsTr("Writing…"), action: "NONE"};
+        if (hostController.hasProposal && hostController.proposalStatus === "READY_FOR_REVIEW") {
+            if (!hostController.canApprove) return {badge: "REVIEW", tone: neutral, label: qsTr("Review rewrite"), action: "REVIEW_REWRITE"};
+            const connected = hostController.isAmbientCapture || hostController.isAmbientAttached;
+            return {badge: "REVIEW", tone: neutral,
+                label: connected ? qsTr("Approve & Insert") : qsTr("Approve & Copy"),
+                action: "APPROVE"};
+        }
+        if (hostController.proposalStatus === "FAILED" || hostController.proposalStatus === "VALIDATION_FAILED")
+            return {badge: "NO REWRITE", tone: rootWindow.mutedTextColor,
+                label: hostController.isRewriteEnabled ? qsTr("Retry rewrite") : qsTr("Review prompt"),
+                action: hostController.isRewriteEnabled ? "REWRITE" : "REVIEW_PROMPT"};
+        if (hostController.proposalStatus === "NEEDS_CLARIFICATION")
+            return {badge: "NEEDS DETAIL", tone: warning, label: qsTr("Edit prompt"), action: "EDIT"};
+        if (hostController.isDraftDirty) return {badge: "DRAFT", tone: neutral, label: qsTr("Review prompt"), action: "REVIEW_PROMPT"};
+        if (hostController.reviewOutcome === "UNAVAILABLE" || hostController.analysisStatus === "FAILED")
+            return {badge: "NO SUGGESTION", tone: rootWindow.mutedTextColor, label: qsTr("Review prompt"), action: "REVIEW_PROMPT"};
+        if (hostController.isOptionalHelp && hostController.isClarifying)
+            return {badge: "OPTIONAL", tone: neutral, label: qsTr("Optional ideas"), action: "CLARIFY"};
+        if (hostController.isClarifying || rootWindow.needsManualAnswer)
+            return {badge: "CLARIFY", tone: warning, label: qsTr("Answer question"), action: "CLARIFY"};
+        if (hostController.isManual) return {badge: "REVIEW NEEDED", tone: warning, label: qsTr("Review prompt"), action: "REVIEW_PROMPT"};
+        if (hostController.hasConfirmedIntent && !hostController.isIntentStale && !hostController.isOriginalRoute && !hostController.isOptionalHelp)
+            return {badge: "READY", tone: "#7EE787", label: qsTr("Improve wording"), action: "REWRITE"};
+        return {badge: hostController.analysisStatus === "READY" ? "READY" : "DRAFT", tone: neutral,
+            label: qsTr("Review prompt"), action: "REVIEW_PROMPT"};
+    }
+    function openReview() {
+        if (!visible || visibility === Window.Minimized) return;
+        if (isAmbientMode && !isDetailedExpanded) toggleDetailedExpanded();
+        Qt.callLater(function() {
+            if (rootWindow.visible && rootWindow.visibility !== Window.Minimized && hc && hostController.hasProposal)
+                reviewFlow.focusReview();
+        });
+    }
+    function revealReviewItem(item) {
+        if (!visible || visibility === Window.Minimized || !item) return;
+        const view = contentScroll;
+        if (!view || typeof view.contentY !== "number") return;
+        const y = item.mapToItem(mainContent, 0, 0).y;
+        const maximum = Math.max(0, view.contentHeight - view.height);
+        if (item.height > view.height - 16 || y < view.contentY + 8) view.contentY = Math.min(maximum, Math.max(0, y - 8));
+        else if (y + item.height > view.contentY + view.height - 8)
+            view.contentY = Math.min(maximum, Math.max(0, y + item.height - view.height + 8));
+    }
 
     function refreshProjectFiles() {
         projectFiles = hc && activeProject.path ? hostController.getProjectFiles(activeProject.path) : [];
@@ -63,8 +116,9 @@ Window {
         onTriggered: rootWindow.revealFocusedControl()
     }
     function revealFocusedControl() {
+        if (!visible || visibility === Window.Minimized) return;
         const item = rootWindow.activeFocusItem;
-        const view = contentScroll.contentItem;
+        const view = contentScroll;
         if (!item || !view || typeof view.contentY !== "number") return;
         let ancestor = item;
         while (ancestor && ancestor !== mainContent) ancestor = ancestor.parent;
@@ -136,20 +190,11 @@ Window {
     property bool isClarificationActive: false
     property string toastMessage: ""
     property bool pinToTop: true
-    property bool hasBeenActive: false
-
-    onActiveChanged: {
-        if (active) {
-            hasBeenActive = true;
-        } else if (hasBeenActive && visible) {
-            hasBeenActive = false;
-            if (hc && (hostController.isAmbientAttached || hostController.isAmbientCapture)) {
-                dismissCard();
-            } else if (!pinToTop) {
-                dismissCard();
-            }
-        }
-    }
+    property int autoAnalysisDelayMs: 800
+    property string autoAnalysisText: ""
+    property bool autoAnalysisDue: false
+    // Focus and draft changes do not dismiss the HUD. Presentation belongs to
+    // the user, independently of the captured prompt and its analysis lifetime.
 
     Shortcut {
         sequence: "Escape"
@@ -158,6 +203,17 @@ Window {
 
     Connections {
         target: rootWindow.hc ? hostController : null
+        function onStorageCommandFinished(requestId, name, succeeded, errorCode, message) {
+            if (!rootWindow.pendingEditRequest || requestId !== rootWindow.pendingEditRequest) return;
+            rootWindow.pendingEditRequest = 0;
+            if (!hostController.hasProposal && rootWindow.visible && rootWindow.visibility !== Window.Minimized) {
+                if (!promptInput.text.length && !hostController.isDraftDirty) rootWindow.setEditorText(hostController.currentRevisionText);
+                Qt.callLater(function() {
+                    if (rootWindow.visible && rootWindow.visibility !== Window.Minimized && !hostController.hasProposal)
+                        promptInput.forceActiveFocus();
+                });
+            }
+        }
         function onProjectFilesChanged() { rootWindow.refreshProjectFiles(); }
         function onDraftCaptured(text) {
             if (!promptInput.text.length || promptInput.text === hostController.currentRevisionText) {
@@ -171,22 +227,69 @@ Window {
         function onAmbientDraftUpdated(text) {
             rootWindow.setEditorText(text);
             rootWindow.scopePreamble = "";
+            rootWindow.queueAutoAnalysis();
         }
-        // Delivery controls visibility. A clipboard fallback must leave the failed draft open.
-        function onPromptInjected(text, appName) { rootWindow.dismissCard(); }
+        function onPromptInjected(text, appName) { rootWindow.cancelQueuedAnalysis(); rootWindow.showToast(qsTr("Inserted into %1").arg(appName)); }
         function onClarificationDeferred(message, autoSelected) { rootWindow.showToast(message); }
+        function onStorageBusyChanged() { rootWindow.tryAutoAnalysis(); }
+        function onStorageChanged() {
+            if (hostController.storageNeedsRecovery) rootWindow.cancelQueuedAnalysis();
+            else rootWindow.tryAutoAnalysis();
+        }
+        function onScorerEngineChanged() { rootWindow.tryAutoAnalysis(); }
+        function onAnalysisStatusChanged() { rootWindow.tryAutoAnalysis(); }
+        function onHostStateChanged() {
+            if (hostController.hostStateString === "QUITTING") rootWindow.cancelQueuedAnalysis();
+        }
     }
 
+    Timer {
+        id: autoAnalysisTimer
+        interval: rootWindow.autoAnalysisDelayMs
+        repeat: false
+        onTriggered: { rootWindow.autoAnalysisDue = true; rootWindow.tryAutoAnalysis(); }
+    }
+    function cancelQueuedAnalysis() {
+        autoAnalysisTimer.stop();
+        autoAnalysisText = "";
+        autoAnalysisDue = false;
+    }
+    function queueAutoAnalysis() {
+        cancelQueuedAnalysis();
+        if (!hc || !visible || visibility === Window.Minimized || !promptInput.text.trim().length || hostController.storageNeedsRecovery) return;
+        autoAnalysisText = promptInput.text;
+        autoAnalysisTimer.restart();
+    }
+    function tryAutoAnalysis() {
+        if (!autoAnalysisDue || !autoAnalysisText.length || !hc) return;
+        if (!visible || visibility === Window.Minimized || promptInput.text !== autoAnalysisText || hostController.storageNeedsRecovery || hostController.hostStateString === "QUITTING") {
+            cancelQueuedAnalysis(); return;
+        }
+        // Manual analysis, cancellation or failure consumes this draft's check.
+        // Model/state notifications must never retry an unchanged draft.
+        if (!hostController.isDraftDirty && hostController.currentRevisionText === autoAnalysisText &&
+                (hostController.isAnalyzing || hostController.analysisStatus === "READY" || hostController.analysisStatus === "FAILED")) {
+            cancelQueuedAnalysis(); return;
+        }
+        if (!hostController.isStorageAvailable || hostController.storageBusy || hostController.juliaState === "CANCELLING") return;
+        if (hostController.isAnalyzing || hostController.juliaState === "STOPPING") { cancelQueuedAnalysis(); return; }
+        const text = autoAnalysisText;
+        cancelQueuedAnalysis(); // Consume before admission: synchronous signals cannot enqueue a duplicate.
+        hostController.analyzePrompt(text, hostController.stateVersion);
+    }
     function setEditorText(text) {
+        cancelQueuedAnalysis();
         suppressEditSignal = true;
         promptInput.text = text;
         suppressEditSignal = false;
     }
     function dismissCard() {
+        cancelQueuedAnalysis();
         toastMessage = "";
         if (hc) hostController.hideCard(); else rootWindow.hide();
     }
     function executeHardBypass() {
+        cancelQueuedAnalysis();
         if (!hc || !hostController.isStorageAvailable) return;
         const text = promptInput.text.trim().length ? promptInput.text : hostController.currentRevisionText;
         if (text.trim().length) {
@@ -196,30 +299,34 @@ Window {
         }
     }
     function sendAsTyped() { executeHardBypass(); }
-    function revertToDraft() { if (hc) hostController.discardProposal(hostController.stateVersion); promptInput.forceActiveFocus(); }
+    function revertToDraft() {
+        if (!hc) return;
+        editingDraft = true;
+        pendingEditRequest = hostController.discardProposal(hostController.stateVersion);
+    }
     function retryHistory() {
         if (hc) hostController.retryStorage(promptInput.text, hostController.stateVersion);
     }
 
     function analyzeNow() {
-        if (hc && hostController.isStorageAvailable && promptInput.text.trim().length) hostController.analyzePrompt(promptInput.text, hostController.stateVersion);
+        cancelQueuedAnalysis();
+        if (hc && hostController.isStorageAvailable && promptInput.text.trim().length) hostController.reviewPrompt(promptInput.text, hostController.stateVersion);
     }
     function approveForCurrentDestination() {
         if (!hc || hostController.storageBusy || !hostController.isStorageAvailable) return;
-        if (!hostController.isAmbientCapture && hostController.isAmbientActive)
-            hostController.beginInsertionTargetSelection(hostController.stateVersion);
-        else hostController.approveAndCopyRewrite(hostController.stateVersion);
+        hostController.approveAndCopyRewrite(hostController.stateVersion);
     }
     function handleEnter() {
         if (!hc) return;
-        if (hostController.isAnalyzing) { hostController.cancelAnalysis(hostController.stateVersion); return; }
-        if (needsManualAnswer && !hostController.isDraftDirty) { reviewFlow.focusClarification(); return; }
-        if (hostController.isDraftDirty || (!hostController.hasConfirmedIntent && !hostController.isClarifying)) analyzeNow();
-        else if (hostController.isOriginalRoute) sendAsTyped();
-        else if (hostController.isClarifying) reviewFlow.focusClarification();
-        else if (hostController.canApprove) rootWindow.approveForCurrentDestination();
-        else if (hostController.isRewriteEnabled && hostController.proposalStatus === "NONE") hostController.synthesizeRewrite(hostController.stateVersion);
-        else if (hostController.hasProposal) reviewFlow.focusReview();
+        switch (presentation.action) {
+        case "CANCEL": cancelQueuedAnalysis(); hostController.cancelAnalysis(hostController.stateVersion); break;
+        case "REVIEW_REWRITE": openReview(); break;
+        case "APPROVE": approveForCurrentDestination(); break;
+        case "EDIT": revertToDraft(); break;
+        case "CLARIFY": reviewFlow.focusClarification(); break;
+        case "REWRITE": hostController.synthesizeRewrite(hostController.stateVersion); break;
+        case "REVIEW_PROMPT": analyzeNow(); break;
+        }
     }
     function enterAction() { handleEnter(); }
     function commitChoice(choiceNumber) { reviewFlow.chooseAlternative(choiceNumber - 1); }
@@ -295,17 +402,15 @@ Window {
     onVisibleChanged: {
         if (visible) {
             if (isAmbientMode) {
-                isDetailedExpanded = false;
-                if (hostController.currentRevisionText.length) {
+                if (!hostController.isDraftDirty && hostController.currentRevisionText.length) {
                     rootWindow.setEditorText(hostController.currentRevisionText);
                 }
             } else {
                 promptInput.forceActiveFocus();
             }
-        } else {
-            hasBeenActive = false;
-        }
+        } else cancelQueuedAnalysis();
     }
+    onVisibilityChanged: if (visibility === Window.Minimized) cancelQueuedAnalysis()
 
     Shortcut {
         sequence: "Esc"
@@ -476,7 +581,7 @@ Window {
             ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 12
-                spacing: 8
+                spacing: rootWindow.height <= 260 ? 4 : 8
 
                 // =============================================================
                 // 1. TOP HEADER: Status, Model Hot-Swap, Palette, Window Controls
@@ -484,7 +589,7 @@ Window {
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    Layout.preferredHeight: 24
+                    Layout.preferredHeight: 20
                     spacing: 8
 
                     // Pulsing status dot
@@ -511,9 +616,13 @@ Window {
                     // Project Dropdown Selector Pill
                     Rectangle {
                         id: projectSelectorButton
+                            objectName: "projectSelectorButton"
                         visible: rootWindow.width >= 530
                         height: 20
-                        width: Math.min(140, projectRow.implicitWidth + 12)
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        Layout.maximumWidth: 140
+                        Layout.preferredWidth: 140
                         clip: true
                         color: (projectDropdown.visible || projectMouse.containsMouse) ? rootWindow.dimColor : "transparent"
                         border.color: projectDropdown.visible ? rootWindow.fgColor : rootWindow.borderColor
@@ -521,7 +630,8 @@ Window {
 
                         RowLayout {
                             id: projectRow
-                            anchors.centerIn: parent
+                            anchors.fill: parent
+                            anchors.margins: 4
                             spacing: 4
 
                             Text {
@@ -539,7 +649,8 @@ Window {
                                 font.pixelSize: 8
                                 color: rootWindow.fgColor
                                 elide: Text.ElideRight
-                                Layout.maximumWidth: 90
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
                             }
                         }
 
@@ -564,7 +675,7 @@ Window {
                     // Host Context Advisory Chip (B02H / C09)
                     Rectangle {
                         id: hostContextChip
-                        visible: (typeof hostController !== "undefined" && hostController.hasHostContext) && rootWindow.width >= 690
+                        visible: (typeof hostController !== "undefined" && hostController.hasHostContext) && rootWindow.width >= 900
                         height: 20
                         width: Math.min(140, ctxRow.implicitWidth + 16)
                         clip: true
@@ -623,94 +734,14 @@ Window {
 
                     // Window Controls & Status Group (Anchored to Right)
                     RowLayout {
+                        objectName: "hudWindowControls"
                         Layout.alignment: Qt.AlignRight
                         spacing: 6
-
-                        // Inference / Engine Badge
-                        Rectangle {
-                            id: engineBadge
-                            visible: rootWindow.width >= 600
-                            implicitWidth: engineBadgeTxt.implicitWidth + 10
-                            implicitHeight: 20
-                            height: 20
-                            color: "transparent"
-                            border.color: (typeof hostController !== "undefined" && hostController.isInferring)
-                                          ? "#FFB000"
-                                          : (typeof hostController !== "undefined" && hostController.modelRuntimeState === "FAILED")
-                                            ? "#F85149"
-                                          : (typeof hostController !== "undefined" && hostController.useLiveWeights)
-                                            ? "#7EE787"
-                                          : (typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
-                                            ? "#38BDF8"
-                                          : rootWindow.borderColor
-                            border.width: 1
-
-                            Text {
-                                id: engineBadgeTxt
-                                objectName: "modelRuntimeLabel"
-                                anchors.centerIn: parent
-                                text: {
-                                    if (!rootWindow.hc) return "[ MODEL UNAVAILABLE ]";
-                                    if (hostController.isInferring) return "[ 🧠 INFERRING (" + (hostController.acceleratorName ? hostController.acceleratorName : "GPU") + ") ]";
-                                    if (hostController.modelRuntimeState === "LOADING") return "[ LOADING MODEL ]";
-                                    if (hostController.useLiveWeights) return "[ LOCAL MODEL ]";
-                                    if (hostController.modelRuntimeState === "FAILED") return "[ MODEL ERROR ]";
-                                    if (hostController.isNativeGraniteInstalled) return "[ READY · STANDBY ]";
-                                    return "[ MODEL NOT LOADED ]";
-                                }
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 8
-                                color: (typeof hostController !== "undefined" && hostController.isInferring)
-                                       ? "#FFB000"
-                                       : (typeof hostController !== "undefined" && hostController.modelRuntimeState === "FAILED")
-                                         ? "#F85149"
-                                       : ((typeof hostController !== "undefined" && hostController.useLiveWeights)
-                                         ? "#7EE787"
-                                         : ((typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
-                                           ? "#38BDF8"
-                                           : rootWindow.mutedTextColor))
-                            }
-
-                            HudMouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (typeof hostController !== "undefined") {
-                                        hostController.showDashboard();
-                                    }
-                                }
-                            }
-                        }
-
-                        // Status Badge
-                        Rectangle {
-                            id: statusBadge
-                            implicitWidth: statusTextLabel.implicitWidth + 12
-                            implicitHeight: 20
-                            Layout.preferredWidth: implicitWidth
-                            Layout.preferredHeight: 20
-                            height: 20
-                            width: implicitWidth
-                            color: "transparent"
-                            border.color: rootWindow.hasAmbiguity ? "#FFB000" : "#7EE787"
-                            border.width: 1
-
-                            Text {
-                                id: statusTextLabel
-                                anchors.centerIn: parent
-                                text: rootWindow.hasAmbiguity ? "[ CLARIFY ]"
-                                      : (rootWindow.hc ? "[ " + hostController.analysisStatus + " ]" : "[ IDLE ]")
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 9
-                                color: rootWindow.hasAmbiguity ? "#FFB000" : "#7EE787"
-                            }
-                        }
 
                         // Progressive Expansion Toggle [ ⤢ SHOW MORE ] / [ ⤡ SHOW LESS ]
                         Rectangle {
                             id: expandToggleButton
+                            objectName: "expandToggleButton"
                             visible: rootWindow.isAmbientMode
                             implicitWidth: expandToggleText.implicitWidth + 12
                             implicitHeight: 20
@@ -745,6 +776,7 @@ Window {
                         // Pin Toggle [PIN] / [PINNED] - Fixed width to prevent shifting/overlapping adjacent items
                         Rectangle {
                             id: pinButton
+                            objectName: "pinButton"
                             implicitWidth: 50
                             implicitHeight: 20
                             Layout.preferredWidth: 50
@@ -779,6 +811,7 @@ Window {
                         // Settings Dashboard Button [SET]
                         Rectangle {
                             id: setButton
+                            objectName: "setButton"
                             implicitWidth: 32
                             implicitHeight: 20
                             Layout.preferredWidth: 32
@@ -816,6 +849,7 @@ Window {
                         // Window Minimize [-]
                         Rectangle {
                             id: minButton
+                            objectName: "minButton"
                             implicitWidth: 22
                             implicitHeight: 20
                             Layout.preferredWidth: 22
@@ -845,6 +879,7 @@ Window {
                         // Window Close [x]
                         Rectangle {
                             id: closeButton
+                            objectName: "closeButton"
                             implicitWidth: 22
                             implicitHeight: 20
                             Layout.preferredWidth: 22
@@ -871,6 +906,108 @@ Window {
                             }
                         }
                     }
+                }
+
+                // Status has its own row so changing model labels cannot displace window controls.
+                RowLayout {
+                    objectName: "hudStatusRow"
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    Layout.preferredHeight: 20
+                    spacing: 6
+                        // Inference / Engine Badge
+                        Rectangle {
+                            id: engineBadge
+                            objectName: "engineBadge"
+                            visible: true
+                            Layout.minimumWidth: 0
+                            Layout.maximumWidth: 220
+                            implicitWidth: engineBadgeTxt.implicitWidth + 10
+                            implicitHeight: 20
+                            height: 20
+                            color: "transparent"
+                            border.color: (typeof hostController !== "undefined" && hostController.isInferring)
+                                          ? "#FFB000"
+                                          : (typeof hostController !== "undefined" && hostController.modelRuntimeState === "FAILED")
+                                            ? "#F85149"
+                                          : (typeof hostController !== "undefined" && hostController.useLiveWeights)
+                                            ? "#7EE787"
+                                          : (typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
+                                            ? "#38BDF8"
+                                          : rootWindow.borderColor
+                            border.width: 1
+
+                            Text {
+                                id: engineBadgeTxt
+                                objectName: "modelRuntimeLabel"
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.leftMargin: 5
+                                anchors.rightMargin: 5
+                                anchors.verticalCenter: parent.verticalCenter
+                                elide: Text.ElideRight
+                                Accessible.name: text
+                                text: {
+                                    if (!rootWindow.hc) return "[ MODEL UNAVAILABLE ]";
+                                    if (hostController.isInferring) return "[ 🧠 INFERRING (" + (hostController.acceleratorName ? hostController.acceleratorName : "GPU") + ") ]";
+                                    if (hostController.modelRuntimeState === "LOADING") return "[ LOADING MODEL ]";
+                                    if (hostController.useLiveWeights) return "[ LOCAL MODEL ]";
+                                    if (hostController.modelRuntimeState === "FAILED") return "[ MODEL ERROR ]";
+                                    if (hostController.isNativeGraniteInstalled) return "[ READY · STANDBY ]";
+                                    return "[ MODEL NOT LOADED ]";
+                                }
+                                font.family: rootWindow.monoFont
+                                font.bold: true
+                                font.pixelSize: 8
+                                color: (typeof hostController !== "undefined" && hostController.isInferring)
+                                       ? "#FFB000"
+                                       : (typeof hostController !== "undefined" && hostController.modelRuntimeState === "FAILED")
+                                         ? "#F85149"
+                                       : ((typeof hostController !== "undefined" && hostController.useLiveWeights)
+                                         ? "#7EE787"
+                                         : ((typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
+                                           ? "#38BDF8"
+                                           : rootWindow.mutedTextColor))
+                            }
+
+                            HudMouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (typeof hostController !== "undefined") {
+                                        hostController.showDashboard();
+                                    }
+                                }
+                            }
+                        }
+
+                        // Status Badge
+                        Rectangle {
+                            id: statusBadge
+                            objectName: "hudStateBadge"
+                            implicitWidth: statusTextLabel.implicitWidth + 12
+                            implicitHeight: 20
+                            Layout.preferredWidth: implicitWidth
+                            Layout.preferredHeight: 20
+                            height: 20
+                            width: implicitWidth
+                            color: "transparent"
+                            border.color: rootWindow.presentation.tone
+                            border.width: 1
+
+                            Text {
+                                id: statusTextLabel
+                                objectName: "hudStateLabel"
+                                anchors.centerIn: parent
+                                text: "[ " + rootWindow.presentation.badge + " ]"
+                                font.family: rootWindow.monoFont
+                                font.bold: true
+                                font.pixelSize: 9
+                                color: rootWindow.presentation.tone
+                            }
+                        }
+
+                    Item { Layout.fillWidth: true; Layout.minimumWidth: 0 }
                 }
 
                 // Divider below top bar
@@ -1116,26 +1253,40 @@ Window {
                 // =============================================================
                 // 2. CENTRAL PROMPT INGESTION & INTERACTION MATRIX
                 // =============================================================
-                ScrollView {
-                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                Flickable {
                     ScrollBar.vertical: HudScrollBar {}
                     id: contentScroll
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     Layout.fillHeight: true
-                    contentWidth: availableWidth
+                    Layout.minimumHeight: 0
+                    objectName: "workflowViewport"
+                    contentWidth: width
+                    contentHeight: mainContent.height
+                    flickableDirection: Flickable.VerticalFlick
+                    boundsBehavior: Flickable.StopAtBounds
                     clip: true
+                    Keys.onPressed: function(event) {
+                        let next = contentY;
+                        if (event.key === Qt.Key_PageDown) next += height * 0.8;
+                        else if (event.key === Qt.Key_PageUp) next -= height * 0.8;
+                        else return;
+                        contentY = Math.max(0, Math.min(contentHeight - height, next));
+                        event.accepted = true;
+                    }
                 ColumnLayout {
                     id: mainContent
-                    width: contentScroll.availableWidth
-                    height: Math.max(implicitHeight, contentScroll.availableHeight)
+                    // Keep controls clear of the overlay scrollbar while scrolling.
+                    width: Math.max(0, contentScroll.contentWidth - 12)
+                    height: rootWindow.isCompiledPreview || (rootWindow.hc && hostController.isAmbientAttached && !rootWindow.editingDraft)
+                        ? implicitHeight : Math.max(implicitHeight, contentScroll.height)
                     spacing: 6
 
 
 
                         // Prompt Terminal Canvas (Double Bounded Inset)
                         Rectangle {
-                            visible: !rootWindow.hc || !hostController.isAmbientAttached
+                            visible: (!rootWindow.hc || !hostController.isAmbientAttached || rootWindow.editingDraft) && !rootWindow.isCompiledPreview
                             Layout.minimumHeight: visible ? 150 : 0
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
@@ -1178,8 +1329,10 @@ Window {
                                         topPadding: 6
                                         bottomPadding: 6
                                         onTextChanged: {
-                                            if (rootWindow.hc && !rootWindow.suppressEditSignal)
+                                            if (rootWindow.hc && !rootWindow.suppressEditSignal) {
                                                 hostController.noteDraftEdited(hostController.stateVersion);
+                                                rootWindow.queueAutoAnalysis();
+                                            }
                                         }
                                         Keys.onPressed: function(event) {
                                             if ((event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)) && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
@@ -1213,20 +1366,11 @@ Window {
                                             color: rootWindow.fgColor
                                         }
                                         Text {
-                                            text: {
-                                                if (rootWindow.isCompiledPreview) return "REWRITE AWAITING REVIEW";
-                                                if (rootWindow.needsManualAnswer) return "ANSWER REMAINING DECISION";
-                                                if (rootWindow.hasAmbiguity) return "NEEDS CLARITY";
-                                                return "READY";
-                                            }
+                                            text: rootWindow.presentation.badge
                                             font.family: rootWindow.monoFont
                                             font.bold: true
                                             font.pixelSize: 8
-                                            color: {
-                                                if (rootWindow.isCompiledPreview) return "#7EE787";
-                                                if (rootWindow.hasAmbiguity) return "#FFB000";
-                                                return rootWindow.fgColor;
-                                            }
+                                            color: rootWindow.presentation.tone
                                         }
                                         Text {
                                             text: "█"
@@ -1270,19 +1414,21 @@ Window {
                                     Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
 
                                     Text {
-                                        visible: rootWindow.width >= 620
+                                        visible: reviewFlow.showDiagnostics && rootWindow.width >= 620
                                         text: rootWindow.isCompiledPreview ? "MODE: PREVIEW & VERIFY" : "INPUT: VALID"
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
                                         color: rootWindow.isCompiledPreview ? "#7EE787" : rootWindow.fgColor
                                     }
                                     Text {
+                                        visible: reviewFlow.showDiagnostics
                                         text: rootWindow.isCompiledPreview ? "REVIEW" : (rootWindow.hasAmbiguity ? "RESOLVE INTENT" : (rootWindow.hc ? hostController.analysisStatus : "IDLE"))
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
                                         color: rootWindow.isCompiledPreview ? "#7EE787" : (rootWindow.hasAmbiguity ? "#FFB000" : rootWindow.fgColor)
                                     }
                                     Text {
+                                        visible: reviewFlow.showDiagnostics
                                         text: rootWindow.hc && hostController.isAmbiguityScored ? "AMBIGUITY: " + (rootWindow.ambiguityScore * 100).toFixed(0) + "%" : "UNRANKED"
                                         font.family: rootWindow.monoFont
                                         font.pixelSize: 8
@@ -1297,7 +1443,7 @@ Window {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     visible: text.length > 0
-                    text: rootWindow.hc ? [hostController.shortcutWarning, hostController.lastError === hostController.analysisMessage ? "" : hostController.lastError, hostController.analysisMessage].filter(function(x) { return x.length > 0; }).join("\n") : ""
+                    text: rootWindow.autoAnalysisText.length ? qsTr("Checking after you pause typing…") : (rootWindow.hc ? [hostController.shortcutWarning, hostController.lastError === hostController.analysisMessage ? "" : hostController.lastError, hostController.analysisMessage].filter(function(x) { return x.length > 0; }).join("\n") : "")
                     wrapMode: Text.WordWrap
                     color: rootWindow.mutedTextColor
                     font.family: rootWindow.monoFont
@@ -1310,81 +1456,22 @@ Window {
                     onClicked: rootWindow.retryHistory()
                 }
                 IntentReviewPanel {
+                    onReviewRequested: rootWindow.analyzeNow()
+                    onRevealReviewItem: function(item) { rootWindow.revealReviewItem(item); }
                     id: reviewFlow
                     visible: true
+                    Layout.fillHeight: false
+                    Layout.alignment: Qt.AlignTop
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     currentTheme: rootWindow.currentTheme
-                    viewportHeight: rootWindow.height
+                    viewportHeight: contentScroll.height
+                    diagnosticMetrics: qsTr("Characters: %1 · Words: %2 · Estimated tokens: %3\nRevision: %4 · Sessions: %5\nSpeed: %6")
+                        .arg(promptInput.text.length).arg(rootWindow.getWordCount(promptInput.text)).arg(Math.ceil(promptInput.text.length / 4))
+                        .arg(rootWindow.hc ? hostController.stateVersion : 0).arg(rootWindow.hc ? hostController.sessionCount : 0)
+                        .arg(rootWindow.hc ? hostController.inferenceSpeed : "")
                 }
             }
-                }
-
-                // =============================================================
-                // 3. TELEMETRY STRIP (Real System & Compiler Metrics)
-                // =============================================================
-                Rectangle {
-                    visible: !rootWindow.isAmbientMode || rootWindow.isDetailedExpanded
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    Layout.preferredHeight: 22
-                    color: "transparent"
-                    border.color: rootWindow.borderColor
-                    border.width: 1
-                    radius: 3
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        spacing: 8
-
-                        Text {
-                            text: "EST. " + Math.ceil(promptInput.text.length / 4) + " TOKENS"
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 8
-                            color: rootWindow.fgColor
-                        }
-
-                        Text { text: "│"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
-
-                        Text {
-                            text: "REVISION: v" + (typeof hostController !== "undefined" ? hostController.stateVersion : "0")
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 8
-                            color: rootWindow.fgColor
-                        }
-
-                        Text { text: "│"; visible: rootWindow.width >= 620 && (!rootWindow.hc || !hostController.isAmbientAttached); font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
-
-                        Text {
-                            visible: rootWindow.width >= 620 && (!rootWindow.hc || !hostController.isAmbientAttached)
-                            text: rootWindow.hc ? hostController.deliveryLabel : "CLIPBOARD"
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 8
-                            color: rootWindow.fgColor
-                        }
-
-                        Text { text: "│"; visible: rootWindow.width >= 540 && rootWindow.hc && hostController.inferenceSpeed.length > 0; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.mutedTextColor }
-
-                        Text {
-                            visible: rootWindow.width >= 540 && rootWindow.hc && hostController.inferenceSpeed.length > 0
-                            text: "SPEED: " + (rootWindow.hc ? hostController.inferenceSpeed : "")
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 8
-                            font.bold: true
-                            color: "#38BDF8"
-                        }
-
-                        Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-
-                        Text {
-                            text: "SESSIONS: " + (typeof hostController !== "undefined" ? hostController.sessionCount : "0")
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 8
-                            color: rootWindow.mutedTextColor
-                        }
-                    }
                 }
 
                 // =============================================================
@@ -1393,100 +1480,46 @@ Window {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    Layout.preferredHeight: 36
+                    Layout.preferredHeight: rootWindow.width < 600 ? 62 : 36
                     color: "transparent"
                     border.color: rootWindow.borderColor
                     border.width: 1
 
-                    RowLayout {
+                    GridLayout {
+                        columns: rootWindow.width < 600 ? 1 : 2
+                        rowSpacing: 4
+                        columnSpacing: 8
                         anchors.fill: parent
                         anchors.leftMargin: 8
                         anchors.rightMargin: 8
+                        anchors.topMargin: 5
+                        anchors.bottomMargin: 5
+
+                        RowLayout {
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
                         spacing: 8
-
-                        // Live Character & Word Counts (Visible on wider layouts when toast isn't taking space)
-                        Rectangle {
-                            visible: rootWindow.width >= 680 && rootWindow.toastMessage.length === 0
-                            height: 16
-                            implicitWidth: cTag.contentWidth + 6
-                            color: rootWindow.fgColor
-                            Text {
-                                id: cTag
-                                anchors.centerIn: parent
-                                text: "STATS"
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 8
-                                color: rootWindow.bgColor
-                            }
-                        }
-
                         Text {
-                            visible: rootWindow.width >= 660 && rootWindow.toastMessage.length === 0
-                            text: "CHARS: " + promptInput.text.length
-                            font.family: rootWindow.monoFont
-                            font.bold: true
-                            font.pixelSize: 9
-                            color: rootWindow.fgColor
-                        }
-
-                        Text {
-                            visible: rootWindow.width >= 680 && rootWindow.toastMessage.length === 0
-                            text: "|"
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 9
+                            objectName: "deliveryDestinationLabel"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            Layout.maximumWidth: 300
+                            text: rootWindow.hc ? hostController.deliveryLabel : qsTr("Copies to clipboard")
+                            textFormat: Text.PlainText
+                            elide: Text.ElideRight
+                            font.family: rootWindow.sansFont
+                            font.pixelSize: 11
                             color: rootWindow.mutedTextColor
                         }
-
                         Text {
-                            visible: rootWindow.width >= 680 && rootWindow.toastMessage.length === 0
-                            text: "WORDS: " + rootWindow.getWordCount(promptInput.text)
-                            font.family: rootWindow.monoFont
-                            font.bold: true
-                            font.pixelSize: 9
-                            color: rootWindow.fgColor
-                        }
-
-                        Text {
-                            visible: rootWindow.width >= 680 && rootWindow.toastMessage.length === 0
-                            text: "|"
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 9
-                            color: rootWindow.mutedTextColor
-                        }
-
-                        // Progressive Expansion Link in Footer
-                        Text {
-                            visible: rootWindow.isAmbientMode && !rootWindow.isDetailedExpanded && rootWindow.toastMessage.length === 0
-                            text: "[ ⤢ SHOW MORE ]"
-                            font.family: rootWindow.monoFont
-                            font.bold: true
-                            font.pixelSize: 8
-                            color: expandFooterMouse.containsMouse ? rootWindow.fgColor : rootWindow.mutedTextColor
-                            HudMouseArea {
-                                id: expandFooterMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: rootWindow.toggleDetailedExpanded()
-                            }
-                        }
-
-                        Text {
-                            visible: (!rootWindow.isAmbientMode || rootWindow.isDetailedExpanded) && rootWindow.width >= 580 && rootWindow.hc && hostController.inferenceSpeed.length > 0 && rootWindow.toastMessage.length === 0
-                            text: "SPEED: " + (rootWindow.hc ? hostController.inferenceSpeed : "")
-                            font.family: rootWindow.monoFont
-                            font.bold: true
-                            font.pixelSize: 9
-                            color: "#38BDF8"
-                        }
-
-                        Text {
-                            visible: rootWindow.width >= 580 && rootWindow.hc && hostController.inferenceSpeed.length > 0 && rootWindow.toastMessage.length === 0
-                            text: "|"
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 9
-                            color: rootWindow.mutedTextColor
+                            objectName: "pendingReviewLabel"
+                            Layout.minimumWidth: 0
+                            visible: rootWindow.hc && hostController.hasProposal && hostController.pendingReviewCount > 0
+                            text: rootWindow.hc ? (hostController.pendingReviewCount === 1 ? qsTr("1 check left") : qsTr("%1 checks left").arg(hostController.pendingReviewCount)) : ""
+                            font.family: rootWindow.sansFont
+                            font.pixelSize: 11
+                            color: "#FFB000"
+                            elide: Text.ElideRight
                         }
 
                         // System Toast Banner
@@ -1498,10 +1531,12 @@ Window {
                             font.pixelSize: 9
                             color: rootWindow.fgColor
                             elide: Text.ElideRight
-                            Layout.maximumWidth: Math.max(100, rootWindow.width - 340)
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            Layout.maximumWidth: 140
                         }
 
-                        Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
+                        }
 
                         // Clear Action Buttons (Right-aligned container)
                         RowLayout {
@@ -1511,6 +1546,7 @@ Window {
                             // Button 1: AS-IS or EDIT DRAFT
                             Rectangle {
                                 id: bypassBtn
+                                objectName: "bypassBtn"
                                 height: 22
                                 implicitWidth: b1Text.contentWidth + 14
                                 color: bypassMouse.pressed ? rootWindow.dimColor : (bypassMouse.containsMouse ? rootWindow.dimColor : "transparent")
@@ -1522,11 +1558,11 @@ Window {
                                     id: b1Text
                                     anchors.centerIn: parent
                                     text: {
-                                        if (rootWindow.hc && hostController.isAmbientAttached) return "[ SEND AS-IS ]";
-                                        if (rootWindow.isCompiledPreview) return "[ ↺ EDIT DRAFT ]";
+                                        if (rootWindow.isCompiledPreview) return "[ EDIT PROMPT ]";
+                                        if (rootWindow.hc && hostController.isAmbientAttached) return "[ INSERT AS-IS ]";
                                         const insert = rootWindow.hc && hostController.isAmbientCapture;
-                                        return rootWindow.width >= 720 ? (insert ? "[ SEND AS-IS ]" : "[ COPY AS-IS ]")
-                                                                      : (insert ? "[ SEND AS-IS ]" : "[ COPY ]");
+                                        return rootWindow.width >= 720 ? (insert ? "[ INSERT AS-IS ]" : "[ COPY AS-IS ]")
+                                                                      : (insert ? "[ INSERT AS-IS ]" : "[ COPY ]");
                                     }
                                     font.family: rootWindow.monoFont
                                     font.bold: true
@@ -1539,10 +1575,10 @@ Window {
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                        if (rootWindow.hc && hostController.isAmbientAttached) {
-                                            rootWindow.executeHardBypass();
-                                        } else if (rootWindow.isCompiledPreview) {
+                                        if (rootWindow.isCompiledPreview) {
                                             rootWindow.revertToDraft();
+                                        } else if (rootWindow.hc && hostController.isAmbientAttached) {
+                                            rootWindow.executeHardBypass();
                                         } else {
                                             rootWindow.executeHardBypass();
                                         }
@@ -1553,12 +1589,23 @@ Window {
                             // Button 2: ENHANCE or COPY AGAIN (Primary Action)
                             Rectangle {
                                 id: triageBtn
+                                objectName: "approveRewriteControl"
+                                property string label: rootWindow.presentation.label
+                                enabled: rootWindow.hc && rootWindow.presentation.action !== "NONE" &&
+                                    (rootWindow.presentation.action === "CANCEL" || (hostController.isStorageAvailable && !hostController.storageBusy))
+                                activeFocusOnTab: enabled
+                                Accessible.role: Accessible.Button
+                                Accessible.name: label
+                                Accessible.onPressAction: if (enabled) rootWindow.handleEnter()
+                                Keys.onReturnPressed: if (enabled) rootWindow.handleEnter()
+                                Keys.onSpacePressed: if (enabled) rootWindow.handleEnter()
+                                opacity: enabled ? 1 : 0.5
                                 height: 22
                                 implicitWidth: b2Text.contentWidth + 16
                                 color: {
                                     if (triageMouse.pressed) return rootWindow.dimColor;
                                     if (triageMouse.containsMouse) return "#E2E8F0";
-                                    if (rootWindow.isCompiledPreview) return "#7EE787";
+                                    if (rootWindow.isCompiledPreview && rootWindow.hc && hostController.canApprove) return "#7EE787";
                                     return rootWindow.fgColor;
                                 }
                                 border.color: rootWindow.borderColor
@@ -1569,17 +1616,7 @@ Window {
                                     id: b2Text
                                     objectName: "analysisActionLabel"
                                     anchors.centerIn: parent
-                                    text: {
-                                        if (rootWindow.hc && hostController.isAnalyzing) return "[ CANCEL ANALYSIS ]";
-                                        if (rootWindow.isCompiledPreview) return (hostController.canApprove ? ((hostController.isAmbientCapture || hostController.isAmbientAttached) ? "[ ENHANCE & REPLACE ]" : (hostController.isAmbientActive ? "[ CONNECT EDITOR ]" : "[ APPROVE & COPY ]")) : "[ REVIEW REWRITE ]");
-                                        if (rootWindow.hc && hostController.isOriginalRoute) return "[ SEND ORIGINAL ]";
-                                        if (rootWindow.hasAmbiguity) return rootWindow.width >= 720 ? "[ 1-2: RESOLVE ]" : "[ RESOLVE ]";
-                                        if (typeof hostController !== "undefined" && hostController.hasConfirmedIntent && !hostController.isIntentStale) {
-                                            return rootWindow.width >= 720 ? ((hostController.isAmbientCapture || hostController.isAmbientAttached) ? "[ ⏎ ENHANCE & REPLACE ]" : "[ ⏎ SYNTHESIZE REWRITE ]") : "[ ⏎ REWRITE ]";
-                                        }
-                                        if (rootWindow.needsManualAnswer) return "[ ANSWER REMAINING ]";
-                                        return rootWindow.width >= 720 ? "[ ANALYZE PROMPT ]" : "[ ANALYZE ]";
-                                    }
+                                    text: "[ " + rootWindow.presentation.label.toUpperCase() + " ]"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
                                     font.pixelSize: 8
@@ -1597,6 +1634,7 @@ Window {
                             // Button 3: HIDE
                             Rectangle {
                                 id: hideBtn
+                                objectName: "hideBtn"
                                 height: 22
                                 implicitWidth: hideTextLabel.contentWidth + 14
                                 color: hideMouse.pressed ? rootWindow.dimColor : (hideMouse.containsMouse ? rootWindow.dimColor : "transparent")

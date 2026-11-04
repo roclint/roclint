@@ -1,50 +1,18 @@
 #pragma once
-
-#include "roclint/analysis/NormalizedAnalysis.hpp"
-#include "roclint/analysis/PromptTriage.hpp"
-#include "roclint/bridge/S1TriageAdapter.hpp"
-
-#include <QHash>
-#include <QElapsedTimer>
-#include <QJsonObject>
-#include <QObject>
-#include <QProcess>
-#include <QString>
-
-#include <optional>
-#include <memory>
-
+#include "JuliaRuntimeWorker.hpp"
+#include "RuntimeThread.hpp"
+#include <functional>
+#include <QSet>
+#include <QJsonArray>
 namespace roclint::host {
-class OwnedProcessJob;
-
-// Owns one resident local worker. All process I/O is asynchronous on the Qt event loop.
+// GUI facade. Protocol parsing, pending requests, timers and process ownership live on I/O.
 class JuliaRuntime : public QObject {
     Q_OBJECT
 public:
-    explicit JuliaRuntime(QObject* parent = nullptr, QString helperPath = {});
-    ~JuliaRuntime() override;
-
+    using RequestContext = JuliaRuntimeWorker::RequestContext;
     static constexpr const char* kModelId = "SupersonicLabs/Julia-1";
     static constexpr const char* kRevision = "a85b127321d580d65176c89ced8273f305745d85";
     static constexpr const char* kWeightsSha256 = "df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72";
-    [[nodiscard]] static QString defaultModelDirectory();
-    [[nodiscard]] static QString defaultPython();
-    [[nodiscard]] bool isReady() const noexcept { return ready_; }
-    [[nodiscard]] bool supportsPromptTriage() const noexcept { return promptTriageSupported_; }
-    [[nodiscard]] QString state() const { return state_; }
-    [[nodiscard]] QString detail() const { return detail_; }
-    [[nodiscard]] QString executionConfigurationId() const { return executionConfigurationId_; }
-    [[nodiscard]] QString executionDevice() const { return executionDevice_; }
-    [[nodiscard]] QString executionPrecision() const { return executionPrecision_; }
-    [[nodiscard]] int executionCpuThreads() const { return executionCpuThreads_; }
-
-    struct RequestContext {
-        QString requestGroupId;
-        QString attemptId;
-        QString sessionId;
-        QString revisionId;
-        quint64 stateVersion{0};
-    };
     static constexpr int kProtocolVersion = 1;
     static constexpr int kHandshakeTimeoutMs = 3000;
     static constexpr int kShutdownTimeoutMs = 2000;
@@ -56,88 +24,59 @@ public:
     static constexpr int kRestartWindowMs = 60000;
     static constexpr qsizetype kMaxFrame = 256 * 1024;
     static constexpr const char* kConfigurationId = "julia.auto.bf16-fp32.v2";
-    [[nodiscard]] bool isRunning() const noexcept { return process_ != nullptr; }
-    [[nodiscard]] qsizetype automaticRestartCount() const noexcept { return restartTimes_.size(); }
-    // Allowed values: empty string (unset / auto), "auto", "cpu", "cuda", "mps", "directml".
-    [[nodiscard]] QString juliaDevice() const { return juliaDevice_; }
-    void setJuliaDevice(const QString& device);
-    void cancel(quint64 requestId, const QString& reason = QStringLiteral("Julia scoring was cancelled."));
-    void cancelAllEvaluations();
-
+    explicit JuliaRuntime(QObject* parent = nullptr, QString helperPath = {});
+    ~JuliaRuntime() override;
+    static QString defaultModelDirectory() { return JuliaRuntimeWorker::defaultModelDirectory(); }
+    static QString defaultPython() { return JuliaRuntimeWorker::defaultPython(); }
+    bool isReady() const { return cache_.ready; }
+    bool isRunning() const { return cache_.running; }
+    bool supportsPromptTriage() const { return cache_.triage; }
+    QString state() const { return cache_.state; }
+    QString detail() const { return cache_.detail; }
+    QString executionConfigurationId() const { return cache_.configuration; }
+    QString executionDevice() const { return cache_.device; }
+    QString executionPrecision() const { return cache_.precision; }
+    int executionCpuThreads() const { return cache_.threads; }
+    qsizetype automaticRestartCount() const { return cache_.restarts; }
+    QString lastRecommendedOption() const { return cache_.recommendation; }
+    double lastChoiceConfidence() const { return cache_.confidence; }
+    QString lastChoicePolarity() const { return cache_.polarity; }
     void load(const QString& directory, const QString& python, bool install = false);
     void stop();
-    [[nodiscard]] quint64 evaluate(const core::analysis::NormalizedAnalysis& analysis, const QString& prompt, const RequestContext& context);
-    [[nodiscard]] quint64 classifyPrompt(const QString& prompt, const RequestContext& context,
-                                         const QJsonObject& metadata = QJsonObject(),
-                                         const QStringList& candidateChoices = QStringList());
-
-    [[nodiscard]] QString lastRecommendedOption() const { return lastRecommendedOption_; }
-    [[nodiscard]] double lastChoiceConfidence() const { return lastChoiceConfidence_; }
-    [[nodiscard]] QString lastChoicePolarity() const { return lastChoicePolarity_; }
-
+    void setJuliaDevice(const QString& device);
+    void cancel(quint64 id, const QString& reason = QStringLiteral("Julia scoring was cancelled."));
+    void cancelAllEvaluations();
+    quint64 evaluate(const core::analysis::NormalizedAnalysis& analysis, const QString& prompt, const RequestContext& context);
+    quint64 classifyPrompt(const QString& prompt, const RequestContext& context, const QJsonObject& metadata = {}, const QStringList& choices = {});
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+    void setTimeoutForTesting(int milliseconds) { timeoutOverride_ = milliseconds; }
+    void stallIoForTesting(int milliseconds);
+#endif
 signals:
-    void stateChanged();
-    void stopped();
-    void evaluationFinished(quint64 requestId, const roclint::bridge::SnapshotEvaluationResponse& response);
-    void evaluationFailed(quint64 requestId, const QString& reason);
-    void promptClassified(quint64 requestId, const roclint::core::analysis::PromptTriage& triage);
-    void promptClassificationFailed(quint64 requestId, const QString& reason);
-    // Emitted when a new request is dropped because the pending queue is full.
-    void requestQueueFull();
-
+    void stateChanged(); void stopped(); void requestQueueFull();
+    void evaluationFinished(quint64 id, const roclint::bridge::SnapshotEvaluationResponse& response);
+    void evaluationFailed(quint64 id, const QString& reason);
+    void promptClassified(quint64 id, const roclint::core::analysis::PromptTriage& response);
+    void promptClassificationFailed(quint64 id, const QString& reason);
 private:
-    struct Pending {
-        QString operation;
-        QString snapshot;
-        QJsonObject envelope;
-        QString prompt;
+    struct Snapshot {
+        bool ready{false}, running{false}, triage{false};
+        QString state{"NOT_LOADED"}, detail{"Julia is not loaded."}, configuration, device, precision, recommendation, polarity;
+        int threads{0}; qsizetype restarts{0}; double confidence{0};
+        bool operator==(const Snapshot&) const = default;
     };
-    struct Launch { QString directory; QString python; bool install; };
-    quint64 send(const QString& operation, QJsonObject payload, QString snapshot, int timeoutMs,
-                 const RequestContext* context = nullptr);
-    void startWorker();
-    void beginStop(bool failed, const QString& reason);
-    void workerFinished(QProcess* process);
-    void startModelLoad();
-    void killWorker();
-    void readOutput();
-    void receive(const QJsonObject& object);
-    void fail(const QString& reason);
-    void setState(const QString& state, const QString& detail);
-
-    QProcess* process_{nullptr};
-    std::unique_ptr<OwnedProcessJob> job_;
-    QString helperPath_;
-    QHash<quint64, Pending> pending_;
-    QHash<quint64, QJsonObject> cancelled_;
-    std::optional<Launch> nextLoad_;
-    std::optional<Launch> launch_;
-    QByteArray incoming_;
-    QByteArray outgoing_;
-    quint64 nextId_{0};
-    bool ready_{false};
-    bool stopping_{false};
-    bool failed_{false};
-    bool handshaken_{false};
-    bool promptTriageSupported_{false};
-    QString juliaDevice_;           // JULIA_DEVICE override; empty = unset (auto)
-    int activePlanVersion_{0};      // Negotiated triage plan version; 0 = not yet negotiated
-    QString executionConfigurationId_;
-    QString executionDevice_;
-    QString executionPrecision_;
-    int executionCpuThreads_{0};
-    QElapsedTimer clock_;
-    QList<qint64> restartTimes_;
-    quint64 restartEpoch_{0};
-    quint64 processGeneration_{0};
-    QString state_{QStringLiteral("NOT_LOADED")};
-    QString detail_{QStringLiteral("Julia is not loaded. Download it or choose its local model folder.")};
-    QString lastRecommendedOption_;
-    double lastChoiceConfidence_{0.0};
-    QString lastChoicePolarity_;
+    struct FrontRequest { bool triage; quint64 lifetime; std::chrono::steady_clock::time_point deadline{}; };
+    struct Shared { quint64 epoch{0}; QHash<quint64, quint64> requests; };
+    void apply(Snapshot snapshot, quint64 epoch);
+    void post(std::function<void(JuliaRuntimeWorker*)> command);
+    quint64 accept(bool triage);
+    void watchDeadline(quint64 id, int budgetMs);
+    Snapshot cache_;
+    quint64 epoch_{0}, lifetime_{0}, nextId_{0};
+    int timeoutOverride_{0};
+    QHash<quint64, FrontRequest> pending_;
+    std::shared_ptr<Shared> shared_;
+    std::shared_ptr<RuntimeMailbox<JuliaRuntime>> mailbox_;
+    std::unique_ptr<RuntimeThread<JuliaRuntimeWorker>> io_;
 };
-
 } // namespace roclint::host
-
-Q_DECLARE_METATYPE(roclint::bridge::SnapshotEvaluationResponse)
-Q_DECLARE_METATYPE(roclint::core::analysis::PromptTriage)

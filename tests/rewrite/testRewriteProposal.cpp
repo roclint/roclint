@@ -2,6 +2,7 @@
 #include "roclint/rewrite/RewriteValidator.hpp"
 #include "support/check.hpp"
 #include "support/fixtures.hpp"
+#include "support/wording_fixtures.hpp"
 
 #include <iostream>
 
@@ -157,6 +158,49 @@ void testRewriteParserResilience() {
         ROCLINT_CHECK(!parse(output).ok());
 }
 
+void testKnownFidelityRegressions() {
+    intent::ConfirmedIntent intent;
+    intent::ConfirmedItem item;
+    item.kind = intent::IntentResolutionKind::SelectedAlternative;
+    item.chosenValue = "Allow minor semantic changes for speed";
+    intent.items.push_back(item);
+    ROCLINT_CHECK(!RewriteValidator::validateFidelity("Refactor the parser.", intent,
+        "Refactor the parser, allowing broad semantic reinterpretation of input.").ok());
+    ROCLINT_CHECK(RewriteValidator::validateFidelity("Refactor the parser.", intent,
+        "Refactor the parser, allowing minor semantic changes for speed.").ok());
+    ROCLINT_CHECK(RewriteValidator::validateFidelity("Refactor the parser.", intent,
+        "Allow minor semantic changes. Do not allow broad semantic changes.").ok());
+    ROCLINT_CHECK(!RewriteValidator::validateFidelity("Allow minor semantic changes. Do not allow broad semantic changes.", intent,
+        "Allow broad semantic changes.").ok());
+    ROCLINT_CHECK(!RewriteValidator::validateFidelity("Improve this code without changing its API.", intent,
+        "Improve this code and keep it working.").ok());
+    ROCLINT_CHECK(RewriteValidator::validateFidelity("Improve this code without changing its API.", intent,
+        "Improve the implementation without changing its API.").ok());
+    ROCLINT_CHECK(!RewriteValidator::validateFidelity("Make the parser faster.", intent,
+        "Make the parser run in less than 100ms.").ok());
+    item.chosenValue = "Less than 100 ms"; intent.items.push_back(item);
+    ROCLINT_CHECK(RewriteValidator::validateFidelity("Make the parser faster.", intent,
+        "Make the parser run in less than 100ms.").ok());
+    ROCLINT_CHECK(RewriteValidator::validateFidelity("Make a 1968 Beatles-inspired homepage.", {},
+        "Make a homepage inspired by a 1968 Beatles album.").ok());
+}
+
+void testLeanWordingContractPreservesRequestedContent() {
+    int index=0;
+    for (const auto& item : fx::leanWordingCases()) {
+        const auto request=fx::wordingRequest(item,index++);
+        const auto profile=ProfileRegistry::getProfile(item.profile); ROCLINT_CHECK(profile.has_value());
+        const auto instructions=roclint::bridge::buildRewritePrompt(request,*profile);
+        ROCLINT_CHECK(instructions.find("granite.rewrite.format.v5") != std::string::npos);
+        ROCLINT_CHECK(instructions.find("shortest wording") != std::string::npos);
+        ROCLINT_CHECK(instructions.find("Retain explicitly requested usability, accessibility and quality") != std::string::npos);
+        ROCLINT_CHECK(instructions.find(roclint::bridge::xmlEscape(item.original)) != std::string::npos);
+        const auto result=roclint::bridge::GraniteRewriteAdapter::parseRewriteResponse(fx::rewriteReply(item.expected), request,*profile,fx::testModel(),2000);
+        ROCLINT_CHECK(result.ok() && result.value().rewrittenText==item.expected && result.value().originalText==item.original);
+        ROCLINT_CHECK(ProposalHasher::computeProposalHash(result.value())==result.value().proposalHash);
+    }
+}
+
 void testAccessibleDiff() {
     ROCLINT_CHECK(RewriteValidator::computeAccessibleDiff("a\nb\nc", "a\nB\nc\nd") ==
                   "  a\n~ was: b\n~ now: B\n  c\n+ d\n");
@@ -174,6 +218,8 @@ int main() {
     testSemanticReviewRequiresAcknowledgment();
     testForgedOrStaleProposalsAreRejected();
     testNeedsClarificationIsNotApprovable();
+    testKnownFidelityRegressions();
+    testLeanWordingContractPreservesRequestedContent();
     testAccessibleDiff();
     testRewriteParserResilience();
     std::cout << "[Test RewriteProposal] All tests PASSED.\n";
