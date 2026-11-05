@@ -6,10 +6,10 @@
 **Baseline:** `0a17b8d` (Phase 5 sign-off, clean working tree)  
 **Environment:** Windows 11, AMD Ryzen 7 7840HS, 16 GB RAM, NVIDIA RTX 4060 Laptop, MSVC 2022 C++20, Qt 6.8.2 (`msvc2022_64`), Tree-sitter runtime `da6fe9b`, Tree-sitter C++ grammar `f41e1a0`, SQLite 3.46.1 with FTS5.
 
-> **Historical vs fresh evidence.** Sections 1–6 record the original Phase 6 sign-off at
-> `fbd2f78`/`49dc23a`. They are retained as historical evidence and are superseded by Section 7,
-> which records the independent review remediation, corrected refresh semantics and fresh
-> measurements. Do not cite the Section 1 metrics as current.
+> **Historical vs fresh evidence.** Sections 1–7 record earlier Phase 6 sign-offs and review
+> remediations (`fbd2f78`/`49dc23a` and `767ae70`/`b0eb13b`). They are retained as historical
+> evidence and are superseded by Section 8, which records the boundary remediation and fresh
+> measurements. Do not cite their metrics as current.
 
 ---
 
@@ -314,7 +314,7 @@ listed in 7.3.
 | **1. Cross-workspace evidence and clone ID collisions** | Index schema is now version 2. `ast_symbols` carries `workspace_root`; symbol and parent IDs are namespaced as `ws_<workspace-hash>_<symbol-id>`. Exact-name, qualified-name, parent/child and FTS queries all filter the bound canonical root. `CodebaseIndex` binds on construction, `bindWorkspace`, and `refresh`; an unbound instance fails closed. Opening an older schema drops and rebuilds the cache explicitly. The host only grounds after a successful refresh and clears readiness on failure. | `testWorkspaceIsolationAndCloneIdentity`, `testFailedWorkspaceRefreshDoesNotFallBack`, `testLegacyIndexSchemaRebuilds`; review probe `cross_workspace`, `clone_workspace`. |
 | **2. Qualified `LIMIT 1` hid overloads and declaration sites** | `findQualified` returns every exact candidate. The resolver merges children across all resolved scope candidates, ranks, and preserves ties as `Ambiguous`. Candidate evidence uses `qualified @ file:line:column` labels so same-named overloads remain distinguishable. | `testQualifiedOverloadsRemainAmbiguous`, `testAmbiguousScopeCandidates`, `testDeclarationAndDefinitionSites`; review probe `overloads`. |
 | **3. Unresolved explicit scope widened globally** | Scope parsing accepts backticks, bold, underline and quoted identifiers; normalization is applied to both targets and scopes. When an explicit scope cannot be resolved, the result is `NotFoundInScope` and global lookup is never attempted. Ambiguous scopes remain `Ambiguous` unless exactly one child resolves the target. | `testExplicitScopeIsFailClosedAndNormalized`, `testRealExtractorOverloadAndMissingScope`; review probe missing-scope lines. |
-| **4. Empty/unreadable/oversized files retained stale symbols** | A zero-byte file is indexed as a new empty snapshot. Unreadable or oversized paths invalidate the previous file and symbol rows immediately. Deletions are only confirmed when the scan is complete; any iterator error, file budget limit or time-budget stop marks the pass incomplete and suppresses stale deletion. Per-refresh limits make the incomplete path testable. Re-selecting the same workspace schedules a refresh, and `refreshCodebaseIndex()` is an explicit Q_INVOKABLE hook. | `testRefreshInvalidatesTruncatedEvidence`, `testRefreshDeletionOversizedAndUnreadable`, `testRefreshFailedReadInvalidatesEvidence`, `testIncompleteScanPreservesUnvisitedEvidence`; host check for the fail-closed refresh hook. |
+| **4. Empty/unreadable/oversized files retained stale symbols** | A zero-byte file is indexed as a new empty snapshot. Unreadable or oversized paths invalidate the previous file and symbol rows immediately. Deletions are only confirmed when the scan is complete; any iterator error, file budget limit or time-budget stop marks the pass incomplete and suppresses stale deletion. Per-refresh limits make the incomplete path testable. Re-selecting the same workspace schedules a refresh, and `refreshCodebaseIndex()` is an explicit Q_INVOKABLE hook. | `testRefreshInvalidatesTruncatedEvidence`, `testRefreshDeletionOversizedAndUnreadable`, `testRefreshFailedReadInvalidatesEvidence`, `testIncompleteScanPreservesUnvisitedEvidence` (now `testIncompleteRefreshWithholdsStaleEvidence`); host check for the fail-closed refresh hook. |
 | **5. Field signatures retained lambda bodies and exceeded the cap** | Signature extraction is structural: function bodies, constructor `field_initializer_list`, `default_value`/`value` initializers (including the preceding `=`), lambda bodies and comments are removed before indexing. The result is trimmed and capped at 1,200 UTF-8-safe bytes for every supported declaration kind. Optional/defaulted parameters are extracted and also body-free. | `testBodyFreeBoundedSignatures`, `testPromptXmlExcludesMemberInitializerBodies`, `testSourceCodeHasNoBodies`; review probe `lambda_initializer`, `field_signature`. |
 | **6. Markdown-formatted identifiers failed exact grounding** | Grounding normalizes backticks, `**bold**`, `__underline__`, single/double quotes, wrapping whitespace and trailing punctuation before target/scope matching. The original intent target remains unchanged in rendered output. | `testExplicitScopeIsFailClosedAndNormalized` uses the real `CanonicalIntentExtractor` → `AstGroundingEngine` pipeline for quoted and unquoted prompts. |
 
@@ -378,3 +378,78 @@ Notes on the corrected semantics:
 
 The fixes and regression tests are ready for review. No push has been performed, and the unrelated
 `docs/research/` UI document and images remain untouched.
+
+---
+
+## 8. Boundary remediation (fresh)
+
+- **Reviewed fix:** `767ae70`
+- **Documentation:** `b0eb13b`
+- **Latest review:** `build/phase6-remediation-review.md`
+- **Boundary probe:** `build/phase6-remediation-boundary-probe-fixed.txt`
+- **Original review probe:** `build/phase6-remediation-review-original-probe-fixed.txt`
+
+This section supersedes Section 7's metrics. The original six review reproductions remain
+corrected, and both remaining boundary findings are now fixed.
+
+### 8.1 Finding-to-fix map
+
+| Finding | Fix | Regression evidence |
+|---|---|---|
+| **1. Scoped matching missed members after 128 children** | The resolver no longer enumerates a fixed child window. For each resolved scope candidate it performs an exact-name lookup under that parent (`findByName(name, parentId, …, false)`), merges matches across overload/redeclaration candidates, and keeps the existing ranking and ambiguity rules. A truncated enumeration can no longer be interpreted as absence. | `testLargeScopeMatchesLateMembers`, `testLargeScopeAmbiguityAcrossCandidates`; boundary probe `large_class` now reports `late=Verified`. |
+| **2. Incomplete refresh authorized stale cached evidence** | Schema version 3 adds per-file `validated_generation` and a per-workspace `generation`. A refresh allocates a new generation, touches only files it actually revalidates (including unchanged-hash files), and retains unvisited rows at their older generation. Every exact-name, qualified-name, parent/child and FTS query filters to the current generation, so retained rows cannot surface through a new or existing `CodebaseIndex` instance. The host now propagates the structured `incomplete` result, marks itself not ready, and withholds both grounded XML and AST snapshot hashes until a complete refresh succeeds. | `testIncompleteRefreshWithholdsStaleEvidence`, extended host compatibility test for readiness/context gating; boundary probe `incomplete_refresh` now reports `old_target=NotFoundInScope` and `ast_hash_bytes=0`. |
+
+### 8.2 Chosen freshness model
+
+- Each completed or incomplete refresh advances the workspace generation by one.
+- Files visited during the pass are assigned the new generation. Files whose hash is unchanged are
+  revalidated without re-parsing by updating the file and symbol generation.
+- Files that become empty/unreadable/oversized are invalidated explicitly.
+- A complete pass deletes files whose generation was not advanced. An incomplete pass leaves those
+  rows in the cache, but they remain at an older generation and are invisible to queries.
+- Queries read the workspace's current generation and filter both exact and FTS lookups. A newly
+  opened `CodebaseIndex` therefore cannot bypass the freshness protection.
+- The host is stricter than the library: any incomplete pass sets `m_codebaseIndexReady=false`, so
+  all grounding is withheld, including rows that were freshly validated during that partial pass.
+  Library callers can still query the freshly validated generation directly.
+
+### 8.3 Fresh validation
+
+| Gate | Fresh result |
+|---|---|
+| Structure | **PASS** — `94/94` original paths, `0` errors, `244` additions |
+| Release build | **PASS** — full tree, exit `0` |
+| CTest | **PASS** — `45/45`, `162.94 s` |
+| AST extraction unit gate | **PASS** — `0.078908 ms` average |
+| AST grounding unit gate | **PASS** — `0.101499 ms` average; gate `< 2.0 ms` |
+| Repo-scale index | **PASS** — `164` files visited/indexed, `31` recovered, `4,784` symbols, `939.164 ms` cold |
+| Four-intent lookup batch | **PASS** — `0.139813 ms`, about `0.0350 ms`/intent |
+| Boundary probe | **PASS** — early/139th members both `Verified`; incomplete refresh yields `NotFoundInScope` and an empty AST hash |
+| Original review probe | **PASS** — all six earlier reproductions remain corrected |
+| Verification probe | **PASS** — `9/9`, all sealed |
+| Proposal v1/v2, payload, macro recovery, body-free signatures | **PASS** — unchanged CTest coverage |
+
+### 8.4 Boundary probe output
+
+```text
+large_class|refresh=1|symbols=141|direct_member139_hits=1|early=Verified|late=Verified
+incomplete_refresh|first=1|refresh=1|incomplete=1|source_bytes_now=0|old_target=NotFoundInScope|ast_hash_bytes=0
+```
+
+### 8.5 Remaining limitations
+
+1. **No continuous file watcher.** Refresh still happens on workspace selection/reselection, the
+   explicit `refreshCodebaseIndex()` hook, or host restart.
+2. **Host completeness gating is conservative.** An incomplete scan disables all host grounding
+   until a complete pass, even though per-file generations could expose freshly validated rows.
+3. **Schema version 3 rebuilds the previous cache.** The index is a cache and is re-created from
+   source because older rows lack generation identity.
+4. **C/C++ only and exact semantic matching.** FTS is not used to promote near misses to `Verified`.
+5. **Recovered parses remain best-effort.** Declarations containing errors or macro invocations
+   are rejected while clean declarations in the same file remain eligible.
+6. **Warm-lookup benchmark.** The `0.035 ms`/intent figure excludes the cold scan (`939 ms`).
+
+### 8.6 Review state
+
+The boundary fixes, regression tests and fresh evidence are ready for review. No push has been
+performed, and the unrelated `docs/research/` UI assets remain untouched.
