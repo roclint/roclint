@@ -6,6 +6,11 @@
 **Baseline:** `0a17b8d` (Phase 5 sign-off, clean working tree)  
 **Environment:** Windows 11, AMD Ryzen 7 7840HS, 16 GB RAM, NVIDIA RTX 4060 Laptop, MSVC 2022 C++20, Qt 6.8.2 (`msvc2022_64`), Tree-sitter runtime `da6fe9b`, Tree-sitter C++ grammar `f41e1a0`, SQLite 3.46.1 with FTS5.
 
+> **Historical vs fresh evidence.** Sections 1–6 record the original Phase 6 sign-off at
+> `fbd2f78`/`49dc23a`. They are retained as historical evidence and are superseded by Section 7,
+> which records the independent review remediation, corrected refresh semantics and fresh
+> measurements. Do not cite the Section 1 metrics as current.
+
 ---
 
 ## 1. Executive summary
@@ -263,11 +268,14 @@ probe exit = 0
    `NotFoundInScope`, not a guess.
 3. **Recovered parse is best-effort.** Error-free declarations in macro-heavy files are indexed,
    but symbols inside macro invocations are intentionally invisible.
-4. **Refresh cadence.** Index refresh starts when a workspace is selected. There is no continuous
-   file watcher yet, so edits made after selection are reflected after reselecting the workspace or
-   restarting the host. The stored file hash makes that refresh incremental.
+4. **Refresh cadence.** Index refresh starts when a workspace is selected. Re-selecting the same
+   folder schedules an incremental pass instead of returning only cached files, and the host
+   exposes `refreshCodebaseIndex()` as an explicit Q_INVOKABLE refresh hook. There is no continuous
+   file watcher yet, so edits are reflected when one of those actions runs. The stored file hash
+   makes that refresh incremental.
 5. **Benchmark scope.** The repo-scale probe measures warm in-process lookups after indexing. The
-   one-time SQLite open and the cold filesystem scan are reported separately (`829 ms`).
+   one-time SQLite open and the cold filesystem scan are reported separately (`989 ms` in the
+   fresh run; `829 ms` in the historical run).
 6. **Budget unit.** The 300-byte cap is a rendered XML signature payload, not a tokenizer count.
    It is deliberately stricter than the 350-token contract ceiling.
 7. **Active-file ambiguity.** When multiple declarations tie and none is in the active file,
@@ -284,3 +292,89 @@ docs(audit): record Phase 6 AST grounding verification
 
 No push is performed. The working tree is left clean except for unrelated pre-existing UI research
 assets, which are not staged.
+
+---
+
+## 7. Independent review remediation (fresh)
+
+- **Reviewed implementation:** `49dc23a`
+- **Historical report:** `fbd2f78`
+- **Review:** `build/phase6-review.md`
+- **Fresh probe output:** `build/phase6-review-probe-fixed.txt`
+
+The historical sections above are retained unchanged as evidence of what was signed off before
+the independent review. This section supersedes their refresh-cadence description and metrics.
+All six review findings are addressed; the independent probe now produces the corrected results
+listed in 7.3.
+
+### 7.1 Finding-to-fix map
+
+| Finding | Fix | Regression evidence |
+|---|---|---|
+| **1. Cross-workspace evidence and clone ID collisions** | Index schema is now version 2. `ast_symbols` carries `workspace_root`; symbol and parent IDs are namespaced as `ws_<workspace-hash>_<symbol-id>`. Exact-name, qualified-name, parent/child and FTS queries all filter the bound canonical root. `CodebaseIndex` binds on construction, `bindWorkspace`, and `refresh`; an unbound instance fails closed. Opening an older schema drops and rebuilds the cache explicitly. The host only grounds after a successful refresh and clears readiness on failure. | `testWorkspaceIsolationAndCloneIdentity`, `testFailedWorkspaceRefreshDoesNotFallBack`, `testLegacyIndexSchemaRebuilds`; review probe `cross_workspace`, `clone_workspace`. |
+| **2. Qualified `LIMIT 1` hid overloads and declaration sites** | `findQualified` returns every exact candidate. The resolver merges children across all resolved scope candidates, ranks, and preserves ties as `Ambiguous`. Candidate evidence uses `qualified @ file:line:column` labels so same-named overloads remain distinguishable. | `testQualifiedOverloadsRemainAmbiguous`, `testAmbiguousScopeCandidates`, `testDeclarationAndDefinitionSites`; review probe `overloads`. |
+| **3. Unresolved explicit scope widened globally** | Scope parsing accepts backticks, bold, underline and quoted identifiers; normalization is applied to both targets and scopes. When an explicit scope cannot be resolved, the result is `NotFoundInScope` and global lookup is never attempted. Ambiguous scopes remain `Ambiguous` unless exactly one child resolves the target. | `testExplicitScopeIsFailClosedAndNormalized`, `testRealExtractorOverloadAndMissingScope`; review probe missing-scope lines. |
+| **4. Empty/unreadable/oversized files retained stale symbols** | A zero-byte file is indexed as a new empty snapshot. Unreadable or oversized paths invalidate the previous file and symbol rows immediately. Deletions are only confirmed when the scan is complete; any iterator error, file budget limit or time-budget stop marks the pass incomplete and suppresses stale deletion. Per-refresh limits make the incomplete path testable. Re-selecting the same workspace schedules a refresh, and `refreshCodebaseIndex()` is an explicit Q_INVOKABLE hook. | `testRefreshInvalidatesTruncatedEvidence`, `testRefreshDeletionOversizedAndUnreadable`, `testRefreshFailedReadInvalidatesEvidence`, `testIncompleteScanPreservesUnvisitedEvidence`; host check for the fail-closed refresh hook. |
+| **5. Field signatures retained lambda bodies and exceeded the cap** | Signature extraction is structural: function bodies, constructor `field_initializer_list`, `default_value`/`value` initializers (including the preceding `=`), lambda bodies and comments are removed before indexing. The result is trimmed and capped at 1,200 UTF-8-safe bytes for every supported declaration kind. Optional/defaulted parameters are extracted and also body-free. | `testBodyFreeBoundedSignatures`, `testPromptXmlExcludesMemberInitializerBodies`, `testSourceCodeHasNoBodies`; review probe `lambda_initializer`, `field_signature`. |
+| **6. Markdown-formatted identifiers failed exact grounding** | Grounding normalizes backticks, `**bold**`, `__underline__`, single/double quotes, wrapping whitespace and trailing punctuation before target/scope matching. The original intent target remains unchanged in rendered output. | `testExplicitScopeIsFailClosedAndNormalized` uses the real `CanonicalIntentExtractor` → `AstGroundingEngine` pipeline for quoted and unquoted prompts. |
+
+### 7.2 Fresh validation
+
+| Gate | Fresh result |
+|---|---|
+| Structure | **PASS** — `94/94` original paths, `0` errors, `244` additions |
+| Release build | **PASS** — full tree, exit `0` |
+| CTest | **PASS** — `45/45`, `129.59 s` |
+| AST extraction unit gate | **PASS** — `0.084277 ms` average |
+| AST grounding unit gate | **PASS** — `0.141747 ms` average for a verified intent; gate `< 2.0 ms` |
+| Repo-scale index | **PASS** — `164` files visited/indexed, `31` recovered, `4,763` symbols, `988.733 ms` cold |
+| Four-intent lookup batch | **PASS** — `0.107399 ms`, about `0.0268 ms`/intent |
+| Verification probe | **PASS** — `9/9` cases, all sealed |
+| Proposal v1/v2 continuity | **PASS** — ungrounded v1 hashes unchanged; v2 sealing and payload round-trip tests pass |
+| Macro recovery | **PASS** — `Q_PROPERTY`, `READ`, `NOTIFY` symbols remain absent; `Widget` members still ground |
+
+### 7.3 Fresh independent probe output
+
+```text
+cross_workspace|refresh_a=1|refresh_b=1|target_from_other_workspace=NotFoundInScope|file=
+clone_workspace|refresh_a=1|refresh_b=1
+empty_file_refresh|first=1|refresh=1|bytes_now=0|old_target=NotFoundInScope
+overloads|refresh=1|declarations=2|qualified=Ambiguous|second_parameter=Verified|missing_scope_qualified=NotFoundInScope
+extracted|prompt=Rename Engine::run to step.|target=Engine::run|condition=|status=Ambiguous
+extracted|prompt=Rename Engine::run to step in MissingClass.|target=Engine::run|condition=in MissingClass|status=NotFoundInScope
+extracted|prompt=Rename `Engine::run` to `step`.|target=`Engine::run`|condition=|status=Ambiguous
+extracted|prompt=Rename Engine::run to step in `MissingClass`.|target=Engine::run|condition=in `MissingClass`|status=NotFoundInScope
+lambda_initializer|refresh=1|status=Verified|body_in_xml=0|signature=int value ;
+field_signature|bytes=18
+```
+
+Notes on the corrected semantics:
+
+- `Engine::run` is `Ambiguous` in the probe fixture because that fixture deliberately contains two
+  overloads. A single-declaration fixture is `Verified` in the unit test.
+- The backticked target is now grounded rather than `NotFoundInScope`; it remains `Ambiguous` only
+  because the same two overloads exist.
+- `field_signature|bytes=18` is the field `const char* text` after its 1,500-character initializer
+  was structurally excluded. The separate long-name test verifies the 1,200-byte cap on a
+  signature that genuinely exceeds it.
+- `int value ;` is body-free; a cosmetic space before the semicolon remains but no executable text
+  enters the index or prompt XML.
+
+### 7.4 Remaining limitations
+
+1. **No continuous file watcher.** Refresh happens on workspace selection/reselection, on the
+   explicit `refreshCodebaseIndex()` hook, or on host restart.
+2. **C/C++ only.** Other languages remain outside the indexer.
+3. **Exact semantic grounding.** FTS is not used to promote a near miss to `Verified`.
+4. **Old index migration is a rebuild.** Schema version 2 discards the previous unscoped cache and
+   re-indexes source; this is intentional because the old identities cannot be safely reinterpreted.
+5. **Recovered parses remain best-effort.** Error-free declarations are indexed; declarations whose
+   own subtree contains an error, including macro invocations, are rejected.
+6. **True OS read errors** follow the same invalidation path as the deterministic unreadable-path
+   test (replacing the source file with a directory).
+7. **Warm-lookup benchmark.** The 0.027 ms/intent figure excludes the cold scan (`989 ms`).
+
+### 7.5 Review state
+
+The fixes and regression tests are ready for review. No push has been performed, and the unrelated
+`docs/research/` UI document and images remain untouched.
