@@ -113,6 +113,7 @@ endif()
 # 2. Desktop resident host (B00)
 # -----------------------------------------------------------------------------
 option(BUILD_DESKTOP "Build the desktop resident host and shell" ON)
+option(ROCLINT_DEPLOY_QT "Stage a self-contained Windows host under build/<config>/bin" ON)
 set(ROCLINT_HOST_OUTPUT_DIRECTORY "" CACHE PATH "Optional separate host output directory, for previews while another build is running")
 
 if(BUILD_DESKTOP)
@@ -134,6 +135,25 @@ if(BUILD_DESKTOP)
 
     if(Qt6_FOUND)
         message(STATUS "Qt6 found (${Qt6_VERSION}). Building Roclint desktop host.")
+
+        if(WIN32 AND ROCLINT_DEPLOY_QT)
+            get_target_property(_roclint_qt_core_location Qt6::Core IMPORTED_LOCATION_RELEASE)
+            if(NOT _roclint_qt_core_location)
+                get_target_property(_roclint_qt_core_location Qt6::Core IMPORTED_LOCATION)
+            endif()
+            if(_roclint_qt_core_location)
+                get_filename_component(_roclint_qt_bin "${_roclint_qt_core_location}" DIRECTORY)
+                find_program(WINDEPLOYQT_EXECUTABLE NAMES windeployqt HINTS "${_roclint_qt_bin}" NO_DEFAULT_PATH)
+            endif()
+            if(NOT WINDEPLOYQT_EXECUTABLE)
+                find_program(WINDEPLOYQT_EXECUTABLE NAMES windeployqt)
+            endif()
+            if(WINDEPLOYQT_EXECUTABLE)
+                message(STATUS "Qt deployment enabled: ${WINDEPLOYQT_EXECUTABLE}")
+            else()
+                message(WARNING "windeployqt was not found; run start_roclint.bat to fall back to the Qt bin directory on PATH.")
+            endif()
+        endif()
 
         set(CMAKE_AUTOMOC ON)
         set(CMAKE_AUTORCC ON)
@@ -244,6 +264,11 @@ if(BUILD_DESKTOP)
         add_executable(roclint_granite_contracts tools/granite_contracts.cpp)
         target_link_libraries(roclint_granite_contracts PRIVATE roclint_core Qt6::Core)
         roclint_apply_warnings(roclint_granite_contracts)
+
+        add_executable(roclint_report_verification_probe tools/report_verification_probe.cpp)
+        set_target_properties(roclint_report_verification_probe PROPERTIES OUTPUT_NAME "report-verification-probe")
+        target_link_libraries(roclint_report_verification_probe PRIVATE roclint_core)
+        roclint_apply_warnings(roclint_report_verification_probe)
 
         option(ROCLINT_BUILD_NATIVE_GRANITE "Build the pinned native Granite helper" ON)
         set(ROCLINT_GRANITE_BACKEND "AUTO" CACHE STRING "Native backend: AUTO, CPU, VULKAN or METAL")
@@ -386,6 +411,48 @@ if(BUILD_DESKTOP)
                 COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:roclint_host>/runtime"
                 COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:roclint_granite_worker>" "$<TARGET_FILE_DIR:roclint_host>/runtime/"
                 DEPENDS roclint_host roclint_granite_worker VERBATIM)
+        endif()
+
+        if(WIN32 AND ROCLINT_DEPLOY_QT)
+            set(_roclint_deploy_deps roclint_host roclint_runtime_files roclint_workspace_runtime_files)
+            if(TARGET roclint_native_runtime_files)
+                list(APPEND _roclint_deploy_deps roclint_native_runtime_files)
+            endif()
+            if(TARGET roclint_report_verification_probe)
+                list(APPEND _roclint_deploy_deps roclint_report_verification_probe)
+            endif()
+            if(WINDEPLOYQT_EXECUTABLE)
+                add_custom_target(roclint_deploy_qt ALL
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:roclint_host>/bin"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:roclint_host>"
+                        "$<TARGET_FILE_DIR:roclint_host>/bin/roclint_host.exe"
+                    COMMAND ${CMAKE_COMMAND} -E copy_directory "$<TARGET_FILE_DIR:roclint_host>/runtime"
+                        "$<TARGET_FILE_DIR:roclint_host>/bin/runtime"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:roclint_report_verification_probe>"
+                        "$<TARGET_FILE_DIR:roclint_host>/bin/report-verification-probe.exe"
+                    COMMAND ${CMAKE_COMMAND}
+                        "-DWINDEPLOYQT=${WINDEPLOYQT_EXECUTABLE}"
+                        "-DHOST_EXE=$<TARGET_FILE_DIR:roclint_host>/bin/roclint_host.exe"
+                        "-DDEPLOY_DIR=$<TARGET_FILE_DIR:roclint_host>/bin"
+                        "-DQML_DIR=${CMAKE_CURRENT_SOURCE_DIR}/app/qml"
+                        "-DCONFIG_FLAG=$<IF:$<CONFIG:Debug>,--debug,--release>"
+                        -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/deploy_qt.cmake"
+                    DEPENDS ${_roclint_deploy_deps}
+                    COMMENT "Staging self-contained Qt runtime under $<TARGET_FILE_DIR:roclint_host>/bin"
+                    VERBATIM)
+            else()
+                add_custom_target(roclint_deploy_qt ALL
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:roclint_host>/bin"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:roclint_host>"
+                        "$<TARGET_FILE_DIR:roclint_host>/bin/roclint_host.exe"
+                    COMMAND ${CMAKE_COMMAND} -E copy_directory "$<TARGET_FILE_DIR:roclint_host>/runtime"
+                        "$<TARGET_FILE_DIR:roclint_host>/bin/runtime"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different "$<TARGET_FILE:roclint_report_verification_probe>"
+                        "$<TARGET_FILE_DIR:roclint_host>/bin/report-verification-probe.exe"
+                    DEPENDS ${_roclint_deploy_deps}
+                    COMMENT "Qt runtime deployment was requested but windeployqt was not found"
+                    VERBATIM)
+            endif()
         endif()
 
         # Propagate the resolved accelerator name so HostController::acceleratorName()

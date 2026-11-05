@@ -72,15 +72,27 @@ public class DesktopProcessLauncher {
 '@
 
 # Clean any existing lock file
-$lockPath = "C:\Users\kirby\AppData\Local\roclint\Roclint\roclint-host.lock"
+$root = $PSScriptRoot
+$lockPath = Join-Path $env:LOCALAPPDATA "roclint\Roclint\roclint-host.lock"
 if (Test-Path $lockPath) {
     Remove-Item $lockPath -Force -ErrorAction SilentlyContinue
     Write-Host "Cleaned stale lock file: $lockPath"
 }
 
-$app = "D:\Stardust\roclint\build\Release\roclint_host.exe"
-$workingDir = "D:\Stardust\roclint\build\Release"
-$args = "--show --pin --workspace `"D:\Stardust\roclint`""
+$deploy = Join-Path $root "build\Release\bin\roclint_host.exe"
+$fallback = Join-Path $root "build\Release\roclint_host.exe"
+$qtBin = "D:\Qt\6.8.2\msvc2022_64\bin"
+
+if (Test-Path $deploy) {
+    $app = $deploy
+    $workingDir = Join-Path $root "build\Release\bin"
+} else {
+    Write-Host "[WARN] Self-contained deployment is unavailable; using the Qt kit on PATH."
+    $env:PATH = $qtBin + [IO.Path]::PathSeparator + $env:PATH
+    $app = $fallback
+    $workingDir = Join-Path $root "build\Release"
+}
+$args = "--show --pin --workspace `"$root`""
 
 $targetPid = [DesktopProcessLauncher]::Start($app, $args, $workingDir)
 Write-Host "Launched Roclint with PID: $targetPid"

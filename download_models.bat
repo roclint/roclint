@@ -6,6 +6,9 @@ echo =======================================================
 echo   Roclint Pinned Models Downloader for Windows
 echo =======================================================
 echo.
+echo   Usage: download_models.bat [--verify] [--quantization Q8_0]
+echo          --verify checks local models without downloading or creating a venv.
+echo.
 
 where python >nul 2>nul
 if %ERRORLEVEL% neq 0 (
