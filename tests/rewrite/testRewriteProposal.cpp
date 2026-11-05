@@ -47,6 +47,46 @@ void testHashCoversBoundFieldsButNotTimestamp() {
     }
 }
 
+void testAstSnapshotHashSwitchesToV2Domain() {
+    fx::Chain c;
+    auto legacy = c.proposal;
+    ROCLINT_CHECK(legacy.astSnapshotHash.empty());
+    const auto legacyHash = legacy.proposalHash;
+    ROCLINT_CHECK(ProposalHasher::computeProposalHash(legacy) == legacyHash);
+
+    auto astBound = legacy;
+    astBound.astSnapshotHash = std::string(64, 'a');
+    ProposalHasher::seal(astBound);
+    ROCLINT_CHECK(astBound.proposalHash != legacyHash);
+    ROCLINT_CHECK(ProposalHasher::computeProposalHash(astBound) == astBound.proposalHash);
+
+    auto changed = astBound;
+    changed.astSnapshotHash = std::string(64, 'b');
+    ROCLINT_CHECK(ProposalHasher::computeProposalHash(changed) != astBound.proposalHash);
+
+    auto legacyAgain = astBound;
+    legacyAgain.astSnapshotHash.clear();
+    ProposalHasher::seal(legacyAgain);
+    ROCLINT_CHECK(legacyAgain.proposalHash == legacyHash);
+}
+
+void testParserCarriesAstSnapshotHash() {
+    fx::Chain c;
+    roclint::bridge::GraniteRewriteRequest req;
+    req.sessionId = c.session;
+    req.revisionId = c.revision;
+    req.originalText = fx::kChainPrompt;
+    req.analysis = c.snapshot;
+    req.confirmedIntent = c.intent;
+    req.astSnapshotHash = std::string(64, 'c');
+    const auto parsed = roclint::bridge::GraniteRewriteAdapter::parseRewriteResponse(
+        R"({"status":"rewritten","rewritten_prompt":"  Keep structure.\n"})", req,
+        ProfileRegistry::defaultProfile(), fx::testModel(), 1);
+    ROCLINT_CHECK(parsed.ok());
+    ROCLINT_CHECK(parsed.value().astSnapshotHash == req.astSnapshotHash);
+    ROCLINT_CHECK(parsed.value().status == ProposalStatus::ProposalReady);
+}
+
 void testValidProposalPassesWithoutPendingReview() {
     fx::Chain c;
     const auto r = validate(c, c.proposal);
@@ -214,6 +254,8 @@ int main() {
     std::cout << "[Test RewriteProposal] Starting...\n";
     testParsedProposalIsSealedAndBound();
     testHashCoversBoundFieldsButNotTimestamp();
+    testAstSnapshotHashSwitchesToV2Domain();
+    testParserCarriesAstSnapshotHash();
     testValidProposalPassesWithoutPendingReview();
     testSemanticReviewRequiresAcknowledgment();
     testForgedOrStaleProposalsAreRejected();

@@ -255,8 +255,12 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     request.set("revision_id", json::Value::string(req.revisionId));
     request.set("host_context_category", json::Value::string(req.hostContextCategory));
     request.set("prompt_text", json::Value::string(req.promptString));
-    const auto canonicalIntents = core::rewrite::CanonicalIntentExtractor::extract(req.promptString);
-    if (!canonicalIntents.empty()) {
+    const auto canonicalIntents = req.groundedCanonicalIntentXml.empty()
+        ? core::rewrite::CanonicalIntentExtractor::extract(req.promptString)
+        : std::vector<core::rewrite::CanonicalIntent>{};
+    if (!req.groundedCanonicalIntentXml.empty()) {
+        request.set("grounded_canonical_intents", json::Value::string(req.groundedCanonicalIntentXml));
+    } else if (!canonicalIntents.empty()) {
         auto parsed = json::parse(core::rewrite::CanonicalIntentExtractor::toJson(canonicalIntents),
                                   json::ParseLimits{16 * 1024, 8});
         if (parsed.ok() && parsed.value().isArray()) request.set("canonical_intents", std::move(parsed).value());
@@ -300,10 +304,10 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     out += "S1's category is a triage hint, not proof of a conflict. Compatible requirements such as "
            "a required property plus a ban on a different property are not a conflict. Do not invent "
            "a question to justify S1's category.\n";
-    if (!canonicalIntents.empty())
+    if (!canonicalIntents.empty() || !req.groundedCanonicalIntentXml.empty())
         out += "canonical_intents are deterministic source-linked action triples extracted from prompt_text. "
                "Use them as grounding for targets, properties and values; do not invent alternatives or "
-               "treat them as new requirements.\n";
+               "treat them as new requirements. AST-grounded entries are authoritative for symbol targets.\n";
     out += "Review what help, if any, this prompt needs before it is sent to another AI system.\n";
     out += "Set assistance_kind to none for a usable prompt without questions, clarification for consequential "
            "missing user decisions, or creative/refinement/decomposition for OPTIONAL help. Creative openness "

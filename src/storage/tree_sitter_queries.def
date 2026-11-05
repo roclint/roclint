@@ -1,0 +1,43 @@
+// Reference Tree-sitter query rules for the C/C++ AST index.
+// AstSymbolExtractor uses equivalent typed-node traversal so it can carry parent
+// symbol identity and parameter ownership through the same declaration nodes.
+
+(function_definition
+  declarator: (function_declarator
+    declarator: [
+      (identifier) @function.name
+      (field_identifier) @function.name
+      (qualified_identifier) @function.qualified
+    ]
+    parameters: (parameter_list) @function.parameters) @function.definition)
+
+(class_specifier
+  name: (type_identifier) @class.name
+  body: (field_declaration_list) @class.body) @class.definition
+
+(struct_specifier
+  name: (type_identifier) @struct.name
+  body: (field_declaration_list) @struct.body) @struct.definition
+
+(namespace_definition
+  name: (namespace_identifier) @namespace.name
+  body: (declaration_list) @namespace.body) @namespace.definition
+
+(enum_specifier
+  name: (type_identifier) @enum.name
+  body: (enumerator_list) @enum.body) @enum.definition
+
+(parameter_declaration
+  declarator: [
+    (identifier) @parameter.name
+    (pointer_declarator) @parameter.pointer
+    (reference_declarator) @parameter.reference
+  ]
+  type: (_) @parameter.type) @parameter.definition
+
+(field_declaration
+  declarator: (field_identifier) @field.name
+  type: (_) @field.type) @field.definition
+
+(alias_declaration
+  name: (type_identifier) @alias.name) @alias.definition

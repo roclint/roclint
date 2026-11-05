@@ -1233,6 +1233,7 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
     request.sessionId = ticket.sessionId;
     request.revisionId = ticket.revisionId;
     request.promptString = m_revisionState->currentRevision().text();
+    request.groundedCanonicalIntentXml = groundedCanonicalIntentContext(request.promptString).xml;
     request.hostContextCategory = ss(m_hostContext.categoryString());
     request.reviewTrigger = ticket.reviewTrigger;
     if (promptTriageRoutingEnabled()) request.promptTriage = m_promptTriage;
@@ -2221,6 +2222,9 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
         request.sessionId = ticket.sessionId;
         request.revisionId = ticket.revisionId;
         request.originalText = m_revisionState->currentRevision().text();
+        const auto grounded = groundedCanonicalIntentContext(request.originalText);
+        request.groundedCanonicalIntentXml = grounded.xml;
+        request.astSnapshotHash = grounded.astSnapshotHash;
         request.analysis = *m_currentSnapshot;
         request.confirmedIntent = *m_confirmedIntent;
         request.rewriteProfileId = profile->id;
@@ -3988,6 +3992,7 @@ void HostController::startAmbientCheck() {
     request.sessionId = "sess_ambient";
     request.revisionId = "rev_sess_ambient_1";
     request.promptString = ss(observation.prompt);
+    request.groundedCanonicalIntentXml = groundedCanonicalIntentContext(request.promptString).xml;
     request.hostContextCategory = m_hostContextEnabled ? ss(HostContextObservation{HostContextDetector::mapIdentityToCategory(
                                                                 observation.field.appIdentifier),
                                                             QString(), QString()}

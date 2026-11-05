@@ -77,23 +77,99 @@ endfunction()
 roclint_add_core_library(roclint_core OFF)
 
 # -----------------------------------------------------------------------------
-# 1b. Storage library (A03 / A04)
+# 1b. Pinned native support: Tree-sitter, C++ grammar and SQLite FTS5
 # -----------------------------------------------------------------------------
-find_package(SQLite3 REQUIRED)
-find_package(Threads REQUIRED)
-if(NOT TARGET SQLite3::SQLite3 AND TARGET SQLite::SQLite3)
-    add_library(SQLite3::SQLite3 ALIAS SQLite::SQLite3)
+enable_language(C)
+include(FetchContent)
+if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)
 endif()
+
+set(ROCLINT_SQLITE_SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/roclint_sqlite-src" CACHE PATH
+    "Pinned SQLite 3.46.1 amalgamation source (fetched when absent)")
+if(NOT EXISTS "${ROCLINT_SQLITE_SOURCE_DIR}/sqlite3.c")
+    FetchContent_Declare(roclint_sqlite
+        URL https://www.sqlite.org/2024/sqlite-amalgamation-3460100.zip
+        URL_HASH SHA256=77823cb110929c2bcb0f5d48e4833b5c59a8a6e40cdea3936b99e199dbbe5784)
+    FetchContent_GetProperties(roclint_sqlite)
+    if(NOT roclint_sqlite_POPULATED)
+        FetchContent_Populate(roclint_sqlite)
+    endif()
+    set(ROCLINT_SQLITE_SOURCE_DIR "${roclint_sqlite_SOURCE_DIR}" CACHE PATH
+        "Pinned SQLite 3.46.1 amalgamation source" FORCE)
+endif()
+add_library(roclint_sqlite STATIC "${ROCLINT_SQLITE_SOURCE_DIR}/sqlite3.c")
+target_include_directories(roclint_sqlite PUBLIC "${ROCLINT_SQLITE_SOURCE_DIR}")
+target_compile_definitions(roclint_sqlite PRIVATE SQLITE_ENABLE_FTS5=1 SQLITE_THREADSAFE=1)
+if(MSVC)
+    target_compile_options(roclint_sqlite PRIVATE /W3)
+else()
+    target_compile_options(roclint_sqlite PRIVATE -w)
+endif()
+add_library(SQLite3::SQLite3 ALIAS roclint_sqlite)
+
+set(ROCLINT_TREE_SITTER_SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/roclint_tree_sitter-src"
+    CACHE PATH "Pinned Tree-sitter runtime source (fetched when absent)")
+set(ROCLINT_TREE_SITTER_CPP_SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/roclint_tree_sitter_cpp-src"
+    CACHE PATH "Pinned Tree-sitter C++ grammar source (fetched when absent)")
+if(NOT EXISTS "${ROCLINT_TREE_SITTER_SOURCE_DIR}/lib/src/parser.c")
+    FetchContent_Declare(roclint_tree_sitter
+        GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter.git
+        GIT_TAG da6fe9beb4f7f67beb75914ca8e0d48ae48d6406
+        GIT_SHALLOW FALSE)
+    FetchContent_GetProperties(roclint_tree_sitter)
+    if(NOT roclint_tree_sitter_POPULATED)
+        FetchContent_Populate(roclint_tree_sitter)
+    endif()
+    set(ROCLINT_TREE_SITTER_SOURCE_DIR "${roclint_tree_sitter_SOURCE_DIR}" CACHE PATH
+        "Pinned Tree-sitter runtime source" FORCE)
+endif()
+if(NOT EXISTS "${ROCLINT_TREE_SITTER_CPP_SOURCE_DIR}/src/parser.c")
+    FetchContent_Declare(roclint_tree_sitter_cpp
+        GIT_REPOSITORY https://github.com/tree-sitter/tree-sitter-cpp.git
+        GIT_TAG f41e1a044c8a84ea9fa8577fdd2eab92ec96de02
+        GIT_SHALLOW FALSE)
+    FetchContent_GetProperties(roclint_tree_sitter_cpp)
+    if(NOT roclint_tree_sitter_cpp_POPULATED)
+        FetchContent_Populate(roclint_tree_sitter_cpp)
+    endif()
+    set(ROCLINT_TREE_SITTER_CPP_SOURCE_DIR "${roclint_tree_sitter_cpp_SOURCE_DIR}" CACHE PATH
+        "Pinned Tree-sitter C++ grammar source" FORCE)
+endif()
+file(GLOB ROCLINT_TREE_SITTER_RUNTIME CONFIGURE_DEPENDS
+    "${ROCLINT_TREE_SITTER_SOURCE_DIR}/lib/src/*.c")
+list(REMOVE_ITEM ROCLINT_TREE_SITTER_RUNTIME "${ROCLINT_TREE_SITTER_SOURCE_DIR}/lib/src/lib.c")
+add_library(roclint_tree_sitter STATIC
+    ${ROCLINT_TREE_SITTER_RUNTIME}
+    "${ROCLINT_TREE_SITTER_CPP_SOURCE_DIR}/src/parser.c"
+    "${ROCLINT_TREE_SITTER_CPP_SOURCE_DIR}/src/scanner.c")
+target_include_directories(roclint_tree_sitter PUBLIC
+    "${ROCLINT_TREE_SITTER_SOURCE_DIR}/lib/include"
+    "${ROCLINT_TREE_SITTER_CPP_SOURCE_DIR}/bindings/c")
+target_include_directories(roclint_tree_sitter PRIVATE
+    "${ROCLINT_TREE_SITTER_SOURCE_DIR}/lib/src"
+    "${ROCLINT_TREE_SITTER_CPP_SOURCE_DIR}/src")
+if(MSVC)
+    target_compile_options(roclint_tree_sitter PRIVATE /W3)
+else()
+    target_compile_options(roclint_tree_sitter PRIVATE -w)
+endif()
+
+find_package(Threads REQUIRED)
 
 set(ROCLINT_STORAGE_SOURCES
     src/storage/Database.cpp
     src/storage/PayloadCodec.cpp
     src/storage/PromptRepository.cpp
+    src/storage/AstSymbol.cpp
+    src/storage/AstSymbolExtractor.cpp
+    src/storage/CodebaseIndex.cpp
+    src/rewrite/AstGroundingEngine.cpp
 )
 
 function(roclint_add_storage_library name core_target)
     add_library(${name} STATIC ${ROCLINT_STORAGE_SOURCES})
-    target_link_libraries(${name} PUBLIC ${core_target} SQLite3::SQLite3)
+    target_link_libraries(${name} PUBLIC ${core_target} SQLite3::SQLite3 PRIVATE roclint_tree_sitter)
     target_include_directories(${name} PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:include>
@@ -270,6 +346,11 @@ if(BUILD_DESKTOP)
         set_target_properties(roclint_report_verification_probe PROPERTIES OUTPUT_NAME "report-verification-probe")
         target_link_libraries(roclint_report_verification_probe PRIVATE roclint_core)
         roclint_apply_warnings(roclint_report_verification_probe)
+
+        add_executable(roclint_ast_grounding_benchmark tools/ast_grounding_benchmark.cpp)
+        set_target_properties(roclint_ast_grounding_benchmark PROPERTIES OUTPUT_NAME "ast-grounding-benchmark")
+        target_link_libraries(roclint_ast_grounding_benchmark PRIVATE roclint_storage)
+        roclint_apply_warnings(roclint_ast_grounding_benchmark)
 
         option(ROCLINT_BUILD_NATIVE_GRANITE "Build the pinned native Granite helper" ON)
         set(ROCLINT_GRANITE_BACKEND "AUTO" CACHE STRING "Native backend: AUTO, CPU, VULKAN or METAL")
@@ -516,6 +597,8 @@ if(BUILD_TESTING)
     roclint_add_test(roclint_prompt_revision       tests/core/prompt_state/testPromptRevision.cpp    roclint_core_testing)
     roclint_add_test(roclint_revision_state        tests/core/prompt_state/testRevisionState.cpp     roclint_core_testing)
     roclint_add_test(roclint_storage               tests/storage/test_database.cpp                   roclint_storage_testing)
+    roclint_add_test(roclint_ast_symbol_extractor  tests/storage/testAstSymbolExtractor.cpp           roclint_storage_testing)
+    roclint_add_test(roclint_ast_grounding         tests/storage/testAstGroundingEngine.cpp           roclint_storage_testing)
     roclint_add_test(roclint_prompt_repository     tests/storage/test_prompt_repository.cpp          roclint_storage_testing)
     roclint_add_test(roclint_source_span           tests/analysis/testSourceSpan.cpp                 roclint_core_testing)
     roclint_add_test(roclint_normalized_analysis   tests/analysis/testNormalizedAnalysis.cpp         roclint_core_testing)

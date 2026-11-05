@@ -1,5 +1,7 @@
 #include "HostController.hpp"
 #include "WorkspaceInspection.hpp"
+#include "roclint/rewrite/AstGroundingEngine.hpp"
+#include "roclint/rewrite/CanonicalIntent.hpp"
 #include <QJsonArray>
 
 #include <QCoreApplication>
@@ -7,12 +9,23 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QTemporaryFile>
+#include <QtConcurrent>
 
 #include <algorithm>
+#include <filesystem>
 
 namespace roclint::host {
+namespace {
+std::filesystem::path codebaseIndexPath() {
+    const auto dataDirectory = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    if (dataDirectory.isEmpty() || !QDir().mkpath(dataDirectory)) return {};
+    return std::filesystem::path((dataDirectory + QStringLiteral("/codebase-index.db")).toStdWString());
+}
+} // namespace
 
 QVariantList HostController::recentProjects() const {
     QVariantList result;
@@ -36,7 +49,12 @@ QString HostController::openFolderDialog() {
         paths.prepend(canonical);
         while (paths.size() > 12) paths.removeLast();
         settings.setValue(QStringLiteral("workspace/recent"), paths);
+        auto consentedRoots = settings.value(QStringLiteral("workspace/codebaseContextConsentedRoots")).toStringList();
+        consentedRoots.removeAll(canonical);
+        consentedRoots.prepend(canonical);
+        settings.setValue(QStringLiteral("workspace/codebaseContextConsentedRoots"), consentedRoots);
     }
+    m_codebaseContextConsented = true;
     return canonical;
 }
 
@@ -46,8 +64,33 @@ QStringList HostController::getProjectFiles(const QString& projectPath) {
     if (canonical == m_projectScanPath) return m_projectFiles;
     m_projectScanPath = canonical;
     m_projectFiles.clear();
+    m_codebaseActiveFile.clear();
+    m_codebaseIndex.reset();
     m_workspaceRootIdentity.clear();
     m_workspaceScanIncomplete = true;
+    if (!QCoreApplication::organizationName().isEmpty()) {
+        const auto roots = QSettings().value(QStringLiteral("workspace/codebaseContextConsentedRoots")).toStringList();
+        m_codebaseContextConsented = roots.contains(canonical);
+    }
+    const bool consented = m_codebaseContextConsented;
+    if (consented) {
+        const auto indexPath = codebaseIndexPath();
+        if (!indexPath.empty()) {
+            const auto rootPath = std::filesystem::path(canonical.toStdWString());
+            auto* watcher = new QFutureWatcher<void>(this);
+            ++m_inFlight;
+            connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher]() {
+                --m_inFlight;
+                watcher->deleteLater();
+                finishQuitWhenRuntimesStopped();
+            });
+            watcher->setFuture(QtConcurrent::run([rootPath, indexPath]() {
+                storage::CodebaseIndex index(indexPath);
+                const storage::WorkspaceContext workspace{rootPath, {}, true};
+                static_cast<void>(index.refresh(workspace));
+            }));
+        }
+    }
     const auto serial = ++m_projectScanSerial;
     if (m_cancelWorkspaceScan) m_cancelWorkspaceScan();
     ++m_inFlight;
@@ -70,7 +113,10 @@ QString HostController::scopePreamble(const QString& projectPath, const QString&
     if (root.isEmpty() || !QFileInfo(root).isDir() || root.contains(QLatin1Char('\n')) || root.contains(QLatin1Char('\r'))) {
         setLastError(QStringLiteral("Choose an existing workspace before applying scope.")); return {};
     }
-    if (scope == QLatin1String("global")) return QStringLiteral("Workspace: %1\nScope: entire project.\n\n").arg(root);
+    if (scope == QLatin1String("global")) {
+        m_codebaseActiveFile.clear();
+        return QStringLiteral("Workspace: %1\nScope: entire project.\n\n").arg(root);
+    }
     if (scope != QLatin1String("local") || file.isEmpty() || file.contains(QLatin1Char('\n')) || file.contains(QLatin1Char('\r'))) {
         setLastError(QStringLiteral("Select a real file before applying single-file scope.")); return {};
     }
@@ -79,6 +125,7 @@ QString HostController::scopePreamble(const QString& projectPath, const QString&
     if (!info.isFile() || info.isSymLink() || relative == QLatin1String("..") || relative.startsWith(QStringLiteral("../")) || QDir::isAbsolutePath(relative)) {
         setLastError(QStringLiteral("The selected file must be inside the workspace.")); return {};
     }
+    m_codebaseActiveFile = relative;
     return QStringLiteral("Workspace: %1\nScope: single file %2. Do not modify other files.\n\n").arg(root, relative);
 }
 
@@ -155,6 +202,24 @@ void HostController::importLocalModel(const QString& path) {
         });
     QTimer::singleShot(600000, process, [process]() { if (process->state() != QProcess::NotRunning) process->kill(); });
     process->start(QStringLiteral("ollama"), {QStringLiteral("create"), tag, QStringLiteral("-f"), modelFilePath});
+}
+
+GroundedPromptContext HostController::groundedCanonicalIntentContext(std::string_view prompt) {
+    GroundedPromptContext context;
+    if (!m_codebaseContextConsented || m_projectScanPath.isEmpty()) return context;
+    auto raw = core::rewrite::CanonicalIntentExtractor::extract(prompt);
+    if (raw.empty()) return context;
+    if (!m_codebaseIndex) {
+        const auto path = codebaseIndexPath();
+        if (path.empty()) return context;
+        m_codebaseIndex = std::make_unique<storage::CodebaseIndex>(path);
+    }
+    const auto grounded = core::rewrite::AstGroundingEngine::groundIntents(
+        raw, m_codebaseActiveFile.toStdString(), *m_codebaseIndex);
+    context.xml = core::rewrite::AstGroundingEngine::renderPromptXml(grounded);
+    context.astSnapshotHash = core::rewrite::AstGroundingEngine::computeAstSnapshotHash(
+        grounded, m_workspaceRootIdentity.toStdString());
+    return context;
 }
 
 } // namespace roclint::host

@@ -26,7 +26,12 @@ bool RewriteProposal::allRequiredConstraintsMet() const {
 }
 
 std::string ProposalHasher::computeProposalHash(const RewriteProposal& p) {
-    crypto::CanonicalHasher h("roclint.rewrite_proposal.v1");
+    // Ungrounded proposals keep the historical v1 domain byte-for-byte so stored
+    // hashes remain verifiable. Verified AST evidence opts into v2 and binds the
+    // exact workspace/file/signature snapshot used for grounding.
+    const bool astBound = !p.astSnapshotHash.empty();
+    crypto::CanonicalHasher h(astBound ? "roclint.rewrite_proposal.v2"
+                                       : "roclint.rewrite_proposal.v1");
     h.field(p.sessionId)
         .field(p.baseRevisionId)
         .field(p.intentId)
@@ -44,6 +49,7 @@ std::string ProposalHasher::computeProposalHash(const RewriteProposal& p) {
         .field(p.clarificationQuestion)
         .field(toString(p.status))
         .number(p.proposalEditGeneration);
+    if (astBound) h.field(p.astSnapshotHash);
     h.number(p.constraints.size());
     for (const auto& c : p.constraints) {
         h.field(c.id).field(c.description).field(toString(c.status)).field(c.evidence);

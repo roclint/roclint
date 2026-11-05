@@ -22,6 +22,8 @@ struct GraniteRewriteRequest {
     core::analysis::AnalysisSnapshot analysis{};   // Final snapshot the intent is bound to
     core::intent::ConfirmedIntent confirmedIntent{};
     std::string rewriteProfileId{"GENERIC@1"};
+    std::string groundedCanonicalIntentXml{};      // Optional AST-grounded block from the host index
+    std::string astSnapshotHash{};                 // Optional hash of verified AST evidence (proposal v2)
     std::uint64_t proposalEditGeneration{0};
 };
 

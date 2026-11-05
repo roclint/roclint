@@ -45,6 +45,7 @@ struct RewriteProposal {
     std::string intentHash{};
     std::string snapshotId{};
     std::string snapshotHash{};
+    std::string astSnapshotHash{}; // Verified AST evidence; empty retains the v1 hash domain
     std::string rewriteProfileId{"GENERIC@1"};
     std::string modelId{};
     std::string modelDigest{};

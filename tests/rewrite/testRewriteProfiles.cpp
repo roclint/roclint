@@ -105,6 +105,13 @@ void testCanonicalIntentGroundingInRewritePrompt() {
     ROCLINT_CHECK(prompt.find("\"action\":\"PRESERVE\"") != std::string::npos);
     ROCLINT_CHECK(prompt.find("\"node_id\":\"nid_") != std::string::npos);
     ROCLINT_CHECK(prompt.find("readPacket") != std::string::npos);
+
+    req.groundedCanonicalIntentXml =
+        "<canonical_intents><intent action=\"MODIFY\" target=\"offset\" status=\"VERIFIED\">"
+        "<grounded_symbol>SessionManager::readPacket::offset</grounded_symbol></intent></canonical_intents>";
+    const auto groundedPrompt = roclint::bridge::buildRewritePrompt(req, ProfileRegistry::defaultProfile());
+    ROCLINT_CHECK(groundedPrompt.find("grounded_canonical_intents") == std::string::npos);
+    ROCLINT_CHECK(groundedPrompt.find("SessionManager::readPacket::offset") != std::string::npos);
 }
 
 } // namespace

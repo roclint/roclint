@@ -570,6 +570,7 @@ std::string encodeProposal(const rw::RewriteProposal& p) {
     root.set("intent_hash", str(p.intentHash));
     root.set("snapshot_id", str(p.snapshotId));
     root.set("snapshot_hash", str(p.snapshotHash));
+    root.set("ast_snapshot_hash", str(p.astSnapshotHash));
     root.set("rewrite_profile_id", str(p.rewriteProfileId));
     root.set("model_id", str(p.modelId));
     root.set("model_digest", str(p.modelDigest));
@@ -609,6 +610,11 @@ Result<rw::RewriteProposal> decodeProposal(std::string_view payload) {
     ROCLINT_TRY_ASSIGN(p.intentHash, json::requireString(root, "intent_hash"));
     ROCLINT_TRY_ASSIGN(p.snapshotId, json::requireString(root, "snapshot_id"));
     ROCLINT_TRY_ASSIGN(p.snapshotHash, json::requireString(root, "snapshot_hash"));
+    // Absent on proposals written before AST grounding; those keep the v1 domain.
+    if (const auto* astHash = root.find("ast_snapshot_hash")) {
+        if (!astHash->isString()) return makeError(ErrorCode::InvalidInput, "Invalid ast_snapshot_hash field");
+        p.astSnapshotHash = astHash->asString();
+    }
     ROCLINT_TRY_ASSIGN(p.rewriteProfileId, json::requireString(root, "rewrite_profile_id"));
     ROCLINT_TRY_ASSIGN(p.modelId, json::requireString(root, "model_id"));
     ROCLINT_TRY_ASSIGN(p.modelDigest, json::requireString(root, "model_digest"));

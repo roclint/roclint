@@ -17,9 +17,11 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 
 #include "HostContext.hpp"
 #include "AsyncRepository.hpp"
+#include "roclint/storage/CodebaseIndex.hpp"
 #include <deque>
 #include <QHash>
 #include <QPointer>
@@ -79,6 +81,13 @@ enum class ProposalUiStatus {
 enum class CaptureSource {
     Widget, // Typed or pasted into the card; delivered to the clipboard
     Ambient // Read from another app's focused field; written back into that field
+};
+
+// Grounded intents plus the hash of the exact verified AST evidence used to
+// render them. The hash is empty when no intent was verified.
+struct GroundedPromptContext {
+    std::string xml{};
+    std::string astSnapshotHash{};
 };
 
 // The single owner of authoritative prompt state for the desktop host. QML only forwards user
@@ -784,6 +793,8 @@ private:
     AsyncTask<void> onNativeRuntimeChanged();
     void appendNativeModelFiles();
     void finishQuitWhenRuntimesStopped();
+    // Resolves lexical intents against the local AST index and renders the bounded prompt block.
+    [[nodiscard]] GroundedPromptContext groundedCanonicalIntentContext(std::string_view prompt);
     void startPendingNativeDownload();
     [[nodiscard]] std::string currentTransportName() const;
     core::Status copyToClipboard(const QString& text);
@@ -913,6 +924,9 @@ private:
     QString m_projectScanPath;
     QStringList m_projectFiles;
     quint64 m_projectScanSerial{0};
+    bool m_codebaseContextConsented{false};
+    std::unique_ptr<storage::CodebaseIndex> m_codebaseIndex;
+    QString m_codebaseActiveFile;
     QString m_modelDirectory;
     std::shared_ptr<bridge::GraniteAdapter> m_graniteAdapter;
     std::optional<OllamaClient> m_ollama;

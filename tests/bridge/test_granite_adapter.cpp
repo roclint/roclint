@@ -188,6 +188,13 @@ void testDiscoveryPromptEmbedsTextAsEscapedJsonOnly() {
     ROCLINT_CHECK(canonical.find("\"action\":\"MODIFY\"") != std::string::npos);
     ROCLINT_CHECK(canonical.find("\"action\":\"PRESERVE\"") != std::string::npos);
     ROCLINT_CHECK(canonical.find("\"node_id\":\"nid_") != std::string::npos);
+    GraniteOptionDiscoveryRequest grounded{kSession, kRevision, "Rename offset to cursor in readPacket.", "UNKNOWN"};
+    grounded.groundedCanonicalIntentXml =
+        "<canonical_intents><intent action=\"MODIFY\" target=\"offset\" status=\"VERIFIED\">"
+        "<grounded_symbol>SessionManager::readPacket::offset</grounded_symbol></intent></canonical_intents>";
+    const auto groundedPrompt = buildDiscoveryPrompt(grounded);
+    ROCLINT_CHECK(groundedPrompt.find("grounded_canonical_intents") != std::string::npos);
+    ROCLINT_CHECK(groundedPrompt.find("SessionManager::readPacket::offset") != std::string::npos);
 }
 
 void testRuntimeLifecycle() {

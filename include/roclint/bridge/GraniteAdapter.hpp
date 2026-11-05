@@ -61,6 +61,7 @@ struct GraniteOptionDiscoveryRequest {
     std::string revisionId{};
     std::string promptString{};               // Frozen revision text (canonical LF)
     std::string hostContextCategory{"UNKNOWN"};
+    std::string groundedCanonicalIntentXml{}; // Optional AST-grounded block from the host index
     std::optional<core::analysis::PromptTriage> promptTriage{};
     std::vector<std::string> workspaceFiles{};
     std::vector<std::string> workspaceSymbols{};

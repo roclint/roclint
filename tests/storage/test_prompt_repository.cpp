@@ -1,4 +1,5 @@
 #include "roclint/storage/Database.hpp"
+#include "roclint/storage/PayloadCodec.hpp"
 #include "roclint/storage/PromptRepository.hpp"
 #include "support/check.hpp"
 #include "support/storage_fixtures.hpp"
@@ -380,6 +381,25 @@ void testCoalescedDraftRangeIsAtomic() {
     ROCLINT_CHECK(store.repo->getSession(session).value() == stored);
 }
 
+void testAstSnapshotHashPayloadRoundTrip() {
+    fx::Chain chain;
+    auto proposal = chain.proposal;
+    proposal.astSnapshotHash = std::string(64, 'd');
+    rewrite::ProposalHasher::seal(proposal);
+    const auto decoded = decodeProposal(encodeProposal(proposal));
+    ROCLINT_CHECK(decoded.ok());
+    ROCLINT_CHECK(decoded.value().astSnapshotHash == proposal.astSnapshotHash);
+    ROCLINT_CHECK(decoded.value().proposalHash == proposal.proposalHash);
+    ROCLINT_CHECK(decoded.value().id == proposal.id);
+
+    auto legacy = chain.proposal;
+    ROCLINT_CHECK(legacy.astSnapshotHash.empty());
+    const auto legacyDecoded = decodeProposal(encodeProposal(legacy));
+    ROCLINT_CHECK(legacyDecoded.ok());
+    ROCLINT_CHECK(legacyDecoded.value().astSnapshotHash.empty());
+    ROCLINT_CHECK(legacyDecoded.value().proposalHash == legacy.proposalHash);
+}
+
 } // namespace
 
 int main() {
@@ -395,6 +415,7 @@ int main() {
     testProposalGenerationIsPersistedMonotonically();
     testDeleteAndPurge();
     testStateCompareAndSwapAndArtifactFailuresRollBackTogether();
+    testAstSnapshotHashPayloadRoundTrip();
     std::cout << "[Test PromptRepository] All tests PASSED.\n";
     return 0;
 }
