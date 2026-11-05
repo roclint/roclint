@@ -101,6 +101,8 @@ class Worker:
         command = [str(args.worker), "--model-dir", str(args.model_dir), "--quantization", quantization]
         if getattr(args, "temperature", None) is not None:
             command += ["--sampling-temperature", str(args.temperature)]
+        if getattr(args, "cpu_reference", False):
+            command.append("--cpu-reference")
         if self.diagnostic_unbounded:
             command.append("--diagnostic-no-deadlines")
         self.process = subprocess.Popen(command,

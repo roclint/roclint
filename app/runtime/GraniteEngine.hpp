@@ -31,10 +31,11 @@ struct GraniteWorkControl {
 // cancellation/control I/O never waits on model loading or a decode operation.
 class GraniteEngine {
 public:
-    // temperatureOverride is a development-only sampling experiment seam. Normal
-    // host requests leave it empty and use the pinned manifest value.
+    // temperatureOverride and gpuLayersOverride are development-only experiment
+    // seams. Normal host requests leave both empty and use the pinned manifest.
     GraniteEngine(QString directory, const QString& quantization,
-                  std::optional<double> temperatureOverride = std::nullopt);
+                  std::optional<double> temperatureOverride = std::nullopt,
+                  std::optional<int> gpuLayersOverride = std::nullopt);
     ~GraniteEngine();
     GraniteEngine(const GraniteEngine&) = delete;
     GraniteEngine& operator=(const GraniteEngine&) = delete;

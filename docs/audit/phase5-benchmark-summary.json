@@ -1,0 +1,145 @@
+{
+  "backend": "VULKAN",
+  "configuration_id": "granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v8",
+  "quantization": "Q8_0",
+  "temperature": 1.0,
+  "repeat": 2,
+  "fixtures": 10,
+  "samples": 20,
+  "contract_validation": {
+    "total": 20,
+    "parse_valid": 20,
+    "bad": 0
+  },
+  "cold": {
+    "samples": 10,
+    "median_ttft_ms": 819.4183499999999,
+    "median_prefill_ms": 726.6186
+  },
+  "warm": {
+    "samples": 10,
+    "median_ttft_ms": 118.39920000000001,
+    "median_prefill_ms": 29.7256
+  },
+  "median_tokens_per_second": 33.242999999999995,
+  "deterministic_cases": 10,
+  "cases": [
+    {
+      "case_id": "ambiguous_speed",
+      "cold_ttft_ms": 843.1569,
+      "warm_ttft_ms": 82.964,
+      "cold_prefill_ms": 769.8943,
+      "warm_prefill_ms": 34.8624,
+      "output_tokens": 81.0,
+      "tok_per_s": 34.3055,
+      "deterministic": true
+    },
+    {
+      "case_id": "clear_bounds",
+      "cold_ttft_ms": 837.087,
+      "warm_ttft_ms": 117.9899,
+      "cold_prefill_ms": 733.0073,
+      "warm_prefill_ms": 25.3376,
+      "output_tokens": 42.0,
+      "tok_per_s": 33.421,
+      "deterministic": true
+    },
+    {
+      "case_id": "conflicting_output",
+      "cold_ttft_ms": 1046.6304,
+      "warm_ttft_ms": 118.8085,
+      "cold_prefill_ms": 926.6021,
+      "warm_prefill_ms": 34.1206,
+      "output_tokens": 87.0,
+      "tok_per_s": 33.3195,
+      "deterministic": true
+    },
+    {
+      "case_id": "literal_constraints_ANTHROPIC_STRUCTURED@1",
+      "cold_ttft_ms": 352.4715,
+      "warm_ttft_ms": 202.2259,
+      "cold_prefill_ms": 210.1889,
+      "warm_prefill_ms": 34.3947,
+      "output_tokens": 42.0,
+      "tok_per_s": 33.5415,
+      "deterministic": true
+    },
+    {
+      "case_id": "literal_constraints_GENERIC@1",
+      "cold_ttft_ms": 303.7955,
+      "warm_ttft_ms": 151.3522,
+      "cold_prefill_ms": 193.4066,
+      "warm_prefill_ms": 26.8487,
+      "output_tokens": 38.0,
+      "tok_per_s": 32.662499999999994,
+      "deterministic": true
+    },
+    {
+      "case_id": "literal_constraints_LOCAL_COMPACT@1",
+      "cold_ttft_ms": 322.8951,
+      "warm_ttft_ms": 121.1278,
+      "cold_prefill_ms": 200.9695,
+      "warm_prefill_ms": 25.438,
+      "output_tokens": 37.0,
+      "tok_per_s": 33.58,
+      "deterministic": true
+    },
+    {
+      "case_id": "literal_constraints_OPENAI_STRUCTURED@1",
+      "cold_ttft_ms": 384.9074,
+      "warm_ttft_ms": 162.9278,
+      "cold_prefill_ms": 246.5847,
+      "warm_prefill_ms": 28.9757,
+      "output_tokens": 40.0,
+      "tok_per_s": 33.205,
+      "deterministic": true
+    },
+    {
+      "case_id": "missing_target",
+      "cold_ttft_ms": 869.2151,
+      "warm_ttft_ms": 71.1124,
+      "cold_prefill_ms": 826.3144,
+      "warm_prefill_ms": 40.4201,
+      "output_tokens": 64.0,
+      "tok_per_s": 35.5195,
+      "deterministic": true
+    },
+    {
+      "case_id": "quoted_instructions",
+      "cold_ttft_ms": 936.0663,
+      "warm_ttft_ms": 92.2778,
+      "cold_prefill_ms": 873.8109,
+      "warm_prefill_ms": 30.4755,
+      "output_tokens": 72.0,
+      "tok_per_s": 30.924,
+      "deterministic": true
+    },
+    {
+      "case_id": "three_groups",
+      "cold_ttft_ms": 801.7497,
+      "warm_ttft_ms": 88.1698,
+      "cold_prefill_ms": 720.2299,
+      "warm_prefill_ms": 27.0372,
+      "output_tokens": 95.0,
+      "tok_per_s": 36.136,
+      "deterministic": true
+    }
+  ],
+  "ttft_reduction_percent": 85.55,
+  "prefill_reduction_percent": 95.91,
+  "cpu_reference": {
+    "mode": "same Q8_0 weights, CPU FP32-compute, gpu_layers=0",
+    "cases": [
+      {
+        "case_id": "clear_bounds",
+        "exact_match": true,
+        "character_similarity": 1.0
+      },
+      {
+        "case_id": "three_groups",
+        "exact_match": false,
+        "character_similarity": 0.3577
+      }
+    ]
+  }
+}

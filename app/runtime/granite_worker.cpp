@@ -174,6 +174,8 @@ int main(int argc, char** argv) {
     parser.addOption({QStringLiteral("sampling-temperature"),
         QStringLiteral("Development-only sampling experiment; overrides the pinned temperature. Not a release configuration."),
         QStringLiteral("value")});
+    parser.addOption({QStringLiteral("cpu-reference"),
+        QStringLiteral("Development-only benchmark reference: force gpu_layers=0 with the same weights.")});
     parser.addOption({QStringLiteral("diagnostic-no-deadlines"), QStringLiteral("Development investigation only: disable semantic operation deadlines; cancellation and shutdown remain active.")});
     parser.process(app);
     if (!parser.isSet(QStringLiteral("model-dir")) || !parser.isSet(QStringLiteral("quantization"))) return 2;
@@ -184,6 +186,7 @@ int main(int argc, char** argv) {
         if (!valid || value <= 0.0 || value > 4.0) return 2;
         temperatureOverride = value;
     }
+    const std::optional<int> gpuLayersOverride = parser.isSet(QStringLiteral("cpu-reference")) ? std::optional<int>(0) : std::nullopt;
     llama_log_set([](ggml_log_level level, const char* message, void*) {
         // Do not enable dependency DEBUG/payload tracing in the resident helper.
         if (level == GGML_LOG_LEVEL_WARN || level == GGML_LOG_LEVEL_ERROR) static_cast<void>(std::fputs(message, stderr));
@@ -191,7 +194,7 @@ int main(int argc, char** argv) {
     try {
         const bool diagnosticUnbounded = parser.isSet(QStringLiteral("diagnostic-no-deadlines"));
         GraniteEngine engine(parser.value(QStringLiteral("model-dir")), parser.value(QStringLiteral("quantization")),
-                             temperatureOverride);
+                             temperatureOverride, gpuLayersOverride);
         const auto identity = engine.identity();
         const auto initialStatus = engine.status();
         std::mutex mutex;
@@ -219,11 +222,13 @@ int main(int argc, char** argv) {
                             {QStringLiteral("diagnostic_unbounded"), diagnosticUnbounded},
                             {QStringLiteral("sampling_temperature"), initialStatus.value(QStringLiteral("sampling_temperature"))},
                             {QStringLiteral("kv_prefix_cache"), initialStatus.value(QStringLiteral("kv_prefix_cache"))},
+                            {QStringLiteral("cpu_reference"), gpuLayersOverride.has_value()},
+                            {QStringLiteral("gpu_layers"), initialStatus.value(QStringLiteral("gpu_layers"))},
                             {QStringLiteral("analysis_timeout_ms"), diagnosticUnbounded ? 0 : roclint::runtime::kGraniteAnalysisTimeoutMs},
                             {QStringLiteral("rewrite_timeout_ms"), diagnosticUnbounded ? 0 : roclint::runtime::kGraniteRewriteTimeoutMs},
                             {QStringLiteral("operations"), QJsonArray{
                             QStringLiteral("load"), QStringLiteral("warm"), QStringLiteral("granite_analyze"), QStringLiteral("granite_rewrite"),
-                            QStringLiteral("runtime_status"), QStringLiteral("set_residency"), QStringLiteral("cancel"), QStringLiteral("shutdown")}}}));
+                            QStringLiteral("runtime_status"), QStringLiteral("set_residency"), QStringLiteral("reset_cache"), QStringLiteral("cancel"), QStringLiteral("shutdown")}}}));
                     } else if (!hello) throw GraniteFailure(QStringLiteral("PROTOCOL"), "Native handshake is required before work.");
                     else if (op == QLatin1String("runtime_status")) emitFrame(reply(request, engine.status()));
                     else if (op == QLatin1String("shutdown")) {
@@ -242,8 +247,9 @@ int main(int argc, char** argv) {
                             if (found) it->second->store(true);
                         }
                         emitFrame(reply(request, {{QStringLiteral("cancelled"), found}}));
-                    } else if (op == QLatin1String("load") || op == QLatin1String("warm") || op == QLatin1String("set_residency") ||
-                               op == QLatin1String("granite_analyze") || op == QLatin1String("granite_rewrite")) {
+                    } else if (op == QLatin1String("load") || op == QLatin1String("warm") || op == QLatin1String("reset_cache") ||
+                               op == QLatin1String("set_residency") || op == QLatin1String("granite_analyze") ||
+                               op == QLatin1String("granite_rewrite")) {
                         const bool semantic = op == QLatin1String("granite_analyze") || op == QLatin1String("granite_rewrite");
                         const auto budget = op == QLatin1String("granite_analyze") ? roclint::runtime::kGraniteAnalysisTimeoutMs :
                             op == QLatin1String("granite_rewrite") ? roclint::runtime::kGraniteRewriteTimeoutMs : kLoadBudgetMs;

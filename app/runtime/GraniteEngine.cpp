@@ -66,8 +66,10 @@ void GraniteWorkControl::check() const {
 
 class GraniteEngine::Impl {
 public:
-    Impl(QString directory, const QString& quantization, std::optional<double> temperatureOverride)
-        : directory_(std::move(directory)), temperatureOverride_(temperatureOverride) {
+    Impl(QString directory, const QString& quantization, std::optional<double> temperatureOverride,
+         std::optional<int> gpuLayersOverride)
+        : directory_(std::move(directory)), temperatureOverride_(temperatureOverride),
+          gpuLayersOverride_(gpuLayersOverride) {
         manifest_ = QJsonDocument::fromJson(QByteArray(kGraniteManifestJson)).object();
         for (const auto& entry : manifest_.value(QStringLiteral("candidates")).toArray()) {
             const auto candidate = entry.toObject();
@@ -85,6 +87,8 @@ public:
         if (temperatureOverride_.has_value() &&
             (!std::isfinite(*temperatureOverride_) || *temperatureOverride_ <= 0 || *temperatureOverride_ > 4))
             throw GraniteFailure(QStringLiteral("CONFIGURATION"), "The development temperature override is invalid.");
+        if (gpuLayersOverride_.has_value() && (*gpuLayersOverride_ < 0 || *gpuLayersOverride_ > 999))
+            throw GraniteFailure(QStringLiteral("CONFIGURATION"), "The development GPU-layer override is invalid.");
     }
 
     QJsonObject identity() const {
@@ -104,9 +108,10 @@ public:
         return {{QStringLiteral("state"), QString::fromLatin1(stateName(state_.load()))},
             {QStringLiteral("residency"), QString::fromLatin1(tierName(tier_.load()))},
             {QStringLiteral("mmap_supported"), llama_supports_mmap()},
-            {QStringLiteral("idle_mapped_supported"), manifest_.value(QStringLiteral("gpu_layers")).toInt() == 0 && llama_supports_mmap()},
-            {QStringLiteral("gpu_layers"), manifest_.value(QStringLiteral("gpu_layers"))},
-            {QStringLiteral("backend"), manifest_.value(QStringLiteral("backend"))},
+            {QStringLiteral("idle_mapped_supported"), effectiveGpuLayers() == 0 && llama_supports_mmap()},
+            {QStringLiteral("gpu_layers"), effectiveGpuLayers()},
+            {QStringLiteral("backend"), effectiveBackend()},
+            {QStringLiteral("manifest_backend"), manifest_.value(QStringLiteral("backend"))},
             {QStringLiteral("sampling_temperature"), effectiveTemperature()},
             {QStringLiteral("kv_prefix_cache"), true},
             {QStringLiteral("last_prefix_reused_tokens"), static_cast<qint64>(lastPrefixReused_.load())},
@@ -118,6 +123,14 @@ public:
     double effectiveTemperature() const {
         return temperatureOverride_.value_or(
             manifest_.value(QStringLiteral("sampling")).toObject().value(QStringLiteral("temperature")).toDouble());
+    }
+
+    int effectiveGpuLayers() const {
+        return gpuLayersOverride_.value_or(manifest_.value(QStringLiteral("gpu_layers")).toInt());
+    }
+
+    QString effectiveBackend() const {
+        return effectiveGpuLayers() == 0 ? QStringLiteral("cpu") : manifest_.value(QStringLiteral("backend")).toString();
     }
 
     void freeContext() {
@@ -182,7 +195,7 @@ public:
             if (hash.result().toHex() != candidate_.value(QStringLiteral("sha256")).toString().toLatin1())
                 throw GraniteFailure(QStringLiteral("INTEGRITY"), "The native model failed its pinned SHA-256 integrity check.");
             auto params = llama_model_default_params();
-            params.n_gpu_layers = manifest_.value(QStringLiteral("gpu_layers")).toInt();
+            params.n_gpu_layers = effectiveGpuLayers();
             if (params.n_gpu_layers > 0) {
                 const auto expected = manifest_.value(QStringLiteral("backend")).toString().toLower();
                 ggml_backend_dev_t selected = nullptr;
@@ -246,11 +259,11 @@ public:
             }
             // Lock decode threads at 4 only when Vulkan offload is active: the single-token
             // decode loop is GPU-bound; extra CPU threads only contend the Vulkan compute queue.
-            if (manifest_.value(QStringLiteral("gpu_layers")).toInt() > 0) {
+            if (effectiveGpuLayers() > 0) {
                 params.n_threads = std::min(params.n_threads, 4);
             }
 #endif
-            params.offload_kqv = manifest_.value(QStringLiteral("gpu_layers")).toInt() > 0;
+            params.offload_kqv = effectiveGpuLayers() > 0;
             params.op_offload = params.offload_kqv;
             params.abort_callback = abortDecode;
             params.abort_callback_data = &control;
@@ -325,7 +338,7 @@ public:
         // token prefix. Reuse the matching KV entries instead of re-prefilling them.
         llama_memory_t memory = llama_get_memory(context_.get());
         std::size_t reusedTokens = 0;
-        if (cacheValid_) reusedTokens = reusablePromptPrefix(cachedTokens_, tokens);
+        if (cacheValid_) reusedTokens = reusablePromptPrefix(cachedTokens_, tokens, 512);
         if (reusedTokens > 0) {
             if (!llama_memory_seq_rm(memory, 0, static_cast<llama_pos>(reusedTokens), -1)) {
                 llama_memory_clear(memory, false);
@@ -436,11 +449,19 @@ public:
                         const std::function<void(std::string_view)>& progressCallback) {
         try {
             if (operation == QLatin1String("load") || operation == QLatin1String("warm")) prepare(control);
+            else if (operation == QLatin1String("reset_cache")) {
+                if (context_) {
+                    llama_memory_clear(llama_get_memory(context_.get()), true);
+                    cachedTokens_.clear();
+                    cacheValid_ = false;
+                    lastPrefixReused_.store(0);
+                }
+            }
             else if (operation == QLatin1String("set_residency")) {
                 const auto tier = payload.value(QStringLiteral("tier")).toString();
                 if (tier == QLatin1String("HOT")) prepare(control);
                 else if (tier == QLatin1String("IDLE_MAPPED") && model_) {
-                    if (manifest_.value(QStringLiteral("gpu_layers")).toInt() == 0) freeContext();
+                    if (effectiveGpuLayers() == 0) freeContext();
                     else unload(); // GPU weights cannot claim the CPU mmap reclaim behavior.
                 }
                 else if (tier == QLatin1String("UNLOADED")) unload();
@@ -469,6 +490,7 @@ private:
     QJsonObject candidate_;
     QByteArray templateHash_;
     std::optional<double> temperatureOverride_;
+    std::optional<int> gpuLayersOverride_;
     std::atomic<ReadyState> state_{ReadyState::Unloaded};
     std::atomic<Tier> tier_{Tier::Unloaded};
     std::atomic<std::size_t> lastPrefixReused_{0};
@@ -486,8 +508,9 @@ private:
 };
 
 GraniteEngine::GraniteEngine(QString directory, const QString& quantization,
-                             std::optional<double> temperatureOverride)
-    : impl_(std::make_unique<Impl>(std::move(directory), quantization, temperatureOverride)) {}
+                             std::optional<double> temperatureOverride,
+                             std::optional<int> gpuLayersOverride)
+    : impl_(std::make_unique<Impl>(std::move(directory), quantization, temperatureOverride, gpuLayersOverride)) {}
 GraniteEngine::~GraniteEngine() = default;
 QJsonObject GraniteEngine::identity() const { return impl_->identity(); }
 QJsonObject GraniteEngine::status() const { return impl_->status(); }

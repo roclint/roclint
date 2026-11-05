@@ -149,6 +149,13 @@ void prefixCacheTests() {
     ROCLINT_CHECK(reusablePromptPrefix(std::vector<int>{1, 9, 3}, std::vector<int>{1, 2, 3, 4}) == 1);
     ROCLINT_CHECK(reusablePromptPrefix(std::vector<int>{1, 2, 3, 4, 5, 6}, std::vector<int>{1, 2, 3}) == 2);
     ROCLINT_CHECK(reusablePromptPrefix(std::vector<int>{1}, std::vector<int>{1}) == 0);
+    // Chunk-aligned reuse never reuses a partial prefill chunk.
+    const std::vector<int> longPrompt(1024, 7);
+    ROCLINT_CHECK(reusablePromptPrefix(longPrompt, longPrompt, 512) == 512);
+    std::vector<int> shorter(700, 7);
+    ROCLINT_CHECK(reusablePromptPrefix(longPrompt, shorter, 512) == 512);
+    ROCLINT_CHECK(reusablePromptPrefix(std::vector<int>(512, 7), std::vector<int>(512, 7), 512) == 0);
+    ROCLINT_CHECK(reusablePromptPrefix(std::vector<int>(513, 7), std::vector<int>(513, 7), 512) == 512);
 }
 
 void residencyPolicyTests() {
