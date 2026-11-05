@@ -807,6 +807,8 @@ int main(int argc, char** argv) {
     ROCLINT_CHECK(files.size() == 2);
     ROCLINT_CHECK(files.contains(QStringLiteral("src/main.cpp")));
     ROCLINT_CHECK(files.contains(QStringLiteral("README.md")));
+    // The explicit refresh hook fails closed until the workspace index is consented.
+    ROCLINT_CHECK(!c.refreshCodebaseIndex());
     ROCLINT_CHECK(c.scopePreamble(root, "global", {}).contains(QStringLiteral("Scope: entire project.")));
     ROCLINT_CHECK(c.scopePreamble(root, "local", "src/main.cpp").contains(QStringLiteral("Do not modify other files.")));
     ROCLINT_CHECK(c.scopePreamble(root, "local", "../outside.cpp").isEmpty());

@@ -61,36 +61,24 @@ QString HostController::openFolderDialog() {
 QStringList HostController::getProjectFiles(const QString& projectPath) {
     const auto canonical = QDir::cleanPath(projectPath);
     if (projectPath.isEmpty() || !QDir::isAbsolutePath(canonical)) return {};
-    if (canonical == m_projectScanPath) return m_projectFiles;
+    if (canonical == m_projectScanPath) {
+        // Re-selecting the same folder is an explicit refresh request. Keep the
+        // cached file list, but schedule the incremental AST pass.
+        if (m_codebaseContextConsented && !m_codebaseRefreshInFlight) startCodebaseRefresh(canonical);
+        return m_projectFiles;
+    }
     m_projectScanPath = canonical;
     m_projectFiles.clear();
     m_codebaseActiveFile.clear();
     m_codebaseIndex.reset();
+    m_codebaseIndexReady = false;
     m_workspaceRootIdentity.clear();
     m_workspaceScanIncomplete = true;
     if (!QCoreApplication::organizationName().isEmpty()) {
         const auto roots = QSettings().value(QStringLiteral("workspace/codebaseContextConsentedRoots")).toStringList();
         m_codebaseContextConsented = roots.contains(canonical);
     }
-    const bool consented = m_codebaseContextConsented;
-    if (consented) {
-        const auto indexPath = codebaseIndexPath();
-        if (!indexPath.empty()) {
-            const auto rootPath = std::filesystem::path(canonical.toStdWString());
-            auto* watcher = new QFutureWatcher<void>(this);
-            ++m_inFlight;
-            connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher]() {
-                --m_inFlight;
-                watcher->deleteLater();
-                finishQuitWhenRuntimesStopped();
-            });
-            watcher->setFuture(QtConcurrent::run([rootPath, indexPath]() {
-                storage::CodebaseIndex index(indexPath);
-                const storage::WorkspaceContext workspace{rootPath, {}, true};
-                static_cast<void>(index.refresh(workspace));
-            }));
-        }
-    }
+    if (m_codebaseContextConsented) startCodebaseRefresh(canonical);
     const auto serial = ++m_projectScanSerial;
     if (m_cancelWorkspaceScan) m_cancelWorkspaceScan();
     ++m_inFlight;
@@ -106,6 +94,50 @@ QStringList HostController::getProjectFiles(const QString& projectPath) {
             finishQuitWhenRuntimesStopped();
         });
     return {};
+}
+
+bool HostController::refreshCodebaseIndex() {
+    if (m_projectScanPath.isEmpty() || !m_codebaseContextConsented) {
+        setLastError(QStringLiteral("Select a workspace before refreshing the code index."));
+        return false;
+    }
+    startCodebaseRefresh(m_projectScanPath);
+    return true;
+}
+
+void HostController::startCodebaseRefresh(const QString& projectPath) {
+    if (!m_codebaseContextConsented || projectPath.isEmpty()) return;
+    const auto indexPath = codebaseIndexPath();
+    if (indexPath.empty()) return;
+    const auto rootPath = std::filesystem::path(projectPath.toStdWString());
+    const auto serial = ++m_codebaseRefreshSerial;
+    m_codebaseRefreshInFlight = true;
+    m_codebaseIndexReady = false;
+    m_codebaseIndex.reset();
+    auto* watcher = new QFutureWatcher<QString>(this);
+    ++m_inFlight;
+    connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, serial]() {
+        --m_inFlight;
+        if (serial == m_codebaseRefreshSerial) {
+            m_codebaseRefreshInFlight = false;
+            const auto error = watcher->result();
+            m_codebaseIndexReady = error.isEmpty();
+            if (!m_codebaseIndexReady) {
+                m_codebaseIndex.reset();
+                setLastError(QStringLiteral("Codebase index refresh failed: %1")
+                                 .arg(error.isEmpty() ? QStringLiteral("unknown error") : error));
+            }
+        }
+        watcher->deleteLater();
+        finishQuitWhenRuntimesStopped();
+    });
+    watcher->setFuture(QtConcurrent::run([rootPath, indexPath]() -> QString {
+        storage::CodebaseIndex index(indexPath, rootPath);
+        const storage::WorkspaceContext workspace{rootPath, {}, true};
+        const auto refreshed = index.refresh(workspace);
+        if (!refreshed.ok()) return QString::fromStdString(refreshed.error().message);
+        return {};
+    }));
 }
 
 QString HostController::scopePreamble(const QString& projectPath, const QString& scope, const QString& file) {
@@ -206,19 +238,25 @@ void HostController::importLocalModel(const QString& path) {
 
 GroundedPromptContext HostController::groundedCanonicalIntentContext(std::string_view prompt) {
     GroundedPromptContext context;
-    if (!m_codebaseContextConsented || m_projectScanPath.isEmpty()) return context;
+    if (!m_codebaseContextConsented || m_projectScanPath.isEmpty() || !m_codebaseIndexReady) return context;
     auto raw = core::rewrite::CanonicalIntentExtractor::extract(prompt);
     if (raw.empty()) return context;
     if (!m_codebaseIndex) {
         const auto path = codebaseIndexPath();
         if (path.empty()) return context;
-        m_codebaseIndex = std::make_unique<storage::CodebaseIndex>(path);
+        std::error_code error;
+        const auto root = std::filesystem::canonical(
+            std::filesystem::path(m_projectScanPath.toStdWString()), error);
+        if (error) return context;
+        m_codebaseIndex = std::make_unique<storage::CodebaseIndex>(path, root);
     }
     const auto grounded = core::rewrite::AstGroundingEngine::groundIntents(
         raw, m_codebaseActiveFile.toStdString(), *m_codebaseIndex);
     context.xml = core::rewrite::AstGroundingEngine::renderPromptXml(grounded);
+    const auto workspaceIdentity = m_workspaceRootIdentity.isEmpty()
+        ? m_projectScanPath.toStdString() : m_workspaceRootIdentity.toStdString();
     context.astSnapshotHash = core::rewrite::AstGroundingEngine::computeAstSnapshotHash(
-        grounded, m_workspaceRootIdentity.toStdString());
+        grounded, workspaceIdentity);
     return context;
 }
 

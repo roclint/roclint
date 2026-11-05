@@ -113,16 +113,86 @@ std::string joinQualified(std::string_view parent, std::string_view name) {
     return std::string(parent) + "::" + std::string(name);
 }
 
-std::string signatureFor(TSNode node, std::string_view source) {
+constexpr std::size_t kMaximumSignatureBytes = 1200;
+
+struct SignatureRange {
+    std::size_t begin{0};
+    std::size_t end{0};
+};
+
+std::string boundedSignature(std::string text) {
+    text = trim(text);
+    if (text.size() > kMaximumSignatureBytes) {
+        auto cut = kMaximumSignatureBytes;
+        while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) --cut;
+        text.resize(cut);
+        text = trim(text);
+    }
+    return text;
+}
+
+// Collects executable or redundant ranges so signatures never carry function
+// bodies, lambda bodies, member initializers or default arguments.
+void collectSignatureExclusions(TSNode node, std::string_view source, std::size_t start, std::size_t end,
+                                bool excludeInitializers, std::vector<SignatureRange>& ranges,
+                                std::uint32_t depth = 0) {
+    if (!validNode(node) || depth > 128) return;
+    const auto nodeStart = ts_node_start_byte(node);
+    const auto nodeEnd = ts_node_end_byte(node);
+    if (nodeEnd <= start || nodeStart >= end) return;
+    const auto type = nodeType(node);
+    auto add = [&](std::size_t begin, std::size_t rangeEnd) {
+        begin = std::max(begin, start);
+        rangeEnd = std::min(rangeEnd, end);
+        if (rangeEnd > begin) ranges.push_back({begin, rangeEnd});
+    };
+    auto addInitializer = [&](TSNode value) {
+        auto begin = static_cast<std::size_t>(ts_node_start_byte(value));
+        auto probe = begin;
+        while (probe > start && std::isspace(static_cast<unsigned char>(source[probe - 1]))) --probe;
+        if (probe > start && source[probe - 1] == '=') begin = probe - 1;
+        add(begin, ts_node_end_byte(value));
+    };
+    if (type == "comment") {
+        add(nodeStart, nodeEnd);
+        return;
+    }
+    if (type == "lambda_expression") {
+        if (const auto body = field(node, "body"); validNode(body))
+            add(ts_node_start_byte(body), ts_node_end_byte(body));
+    }
+    if (excludeInitializers) {
+        if (const auto value = field(node, "default_value"); validNode(value)) addInitializer(value);
+        if (const auto value = field(node, "value"); validNode(value)) addInitializer(value);
+    }
+    for (std::uint32_t index = 0; index < ts_node_named_child_count(node); ++index)
+        collectSignatureExclusions(ts_node_named_child(node, index), source, start, end, excludeInitializers,
+                                   ranges, depth + 1);
+}
+
+std::string signatureFor(TSNode node, std::string_view source, bool excludeInitializers = true) {
     if (!validNode(node)) return {};
-    auto end = ts_node_end_byte(node);
-    const auto body = field(node, "body");
-    if (validNode(body)) end = ts_node_start_byte(body);
-    const auto start = ts_node_start_byte(node);
-    if (end < start || end > source.size()) return {};
-    auto signature = trim(source.substr(start, end - start));
-    if (signature.size() > 1200) signature.resize(1200);
-    return signature;
+    std::size_t end = ts_node_end_byte(node);
+    if (const auto body = field(node, "body"); validNode(body))
+        end = std::min<std::size_t>(end, ts_node_start_byte(body));
+    if (const auto initializers = findChildType(node, "field_initializer_list"); validNode(initializers))
+        end = std::min<std::size_t>(end, ts_node_start_byte(initializers));
+    const std::size_t start = ts_node_start_byte(node);
+    if (end <= start || end > source.size()) return {};
+    std::vector<SignatureRange> excluded;
+    collectSignatureExclusions(node, source, start, end, excludeInitializers, excluded);
+    std::sort(excluded.begin(), excluded.end(), [](const SignatureRange& left, const SignatureRange& right) {
+        return left.begin < right.begin;
+    });
+    std::string text;
+    text.reserve(end - start);
+    std::size_t cursor = start;
+    for (const auto& range : excluded) {
+        if (range.begin > cursor) text.append(source.substr(cursor, range.begin - cursor));
+        cursor = std::max(cursor, range.end);
+    }
+    if (cursor < end) text.append(source.substr(cursor, end - cursor));
+    return boundedSignature(std::move(text));
 }
 
 struct Extractor {
@@ -146,7 +216,7 @@ struct Extractor {
         symbol.startColumn = start.column + 1;
         symbol.endLine = end.row + 1;
         symbol.endColumn = end.column + 1;
-        symbol.signature = std::move(signature);
+        symbol.signature = boundedSignature(std::move(signature));
         symbol.typeName = std::move(typeName);
         symbol.isConst = isConst;
         symbol.symbolId = makeSymbolId(filePath, symbol.qualifiedName, symbol.span.startByte, symbol.span.endByte);
@@ -160,18 +230,21 @@ struct Extractor {
         if (!validNode(parameters)) return;
         for (std::uint32_t index = 0; index < ts_node_named_child_count(parameters); ++index) {
             const auto parameter = ts_node_named_child(parameters, index);
-            if (nodeType(parameter) != "parameter_declaration") continue;
+            const auto parameterType = nodeType(parameter);
+            if (parameterType != "parameter_declaration" &&
+                parameterType != "optional_parameter_declaration" &&
+                parameterType != "variadic_parameter_declaration") continue;
             const auto nameNode = findNameNode(field(parameter, "declarator"));
             const auto name = nodeText(nameNode, source);
             if (name.empty()) continue;
             auto typeNode = field(parameter, "type");
             if (!validNode(typeNode)) typeNode = findTypeNode(field(parameter, "declarator"));
             const auto typeName = trim(nodeText(typeNode, source));
-            const auto text = nodeText(parameter, source);
-            const bool isConst = text.find("const") != std::string::npos;
+            const auto signature = signatureFor(parameter, source, true);
+            const bool isConst = signature.find("const") != std::string::npos;
             const auto qualified = joinQualified(functionQualified, name);
             auto symbol = makeSymbol(parameter, name, qualified, AstNodeKind::Parameter, functionScope,
-                                     trim(text), typeName, isConst);
+                                     signature, typeName, isConst);
             symbol.parentSymbolId = functionScope.parentSymbolId;
             symbols.push_back(std::move(symbol));
         }
@@ -232,7 +305,7 @@ struct Extractor {
             if (name.empty()) return;
             const auto qualified = joinQualified(scope.qualifiedName, name);
             symbols.push_back(makeSymbol(node, name, qualified, AstNodeKind::Enumerator, scope,
-                                         trim(nodeText(node, source))));
+                                         signatureFor(node, source, false)));
             return;
         }
         if (type == "function_definition") {
@@ -295,9 +368,9 @@ struct Extractor {
                 if (name.empty()) return;
                 const auto qualified = joinQualified(scope.qualifiedName, name);
                 const auto typeName = trim(nodeText(field(node, "type"), source));
-                const auto text = nodeText(node, source);
-                symbols.push_back(makeSymbol(node, name, qualified, AstNodeKind::Field, scope, trim(text),
-                                             typeName, text.find("const") != std::string::npos));
+                const auto signature = signatureFor(node, source, true);
+                symbols.push_back(makeSymbol(node, name, qualified, AstNodeKind::Field, scope, signature,
+                                             typeName, signature.find("const") != std::string::npos));
             }
             return;
         }
@@ -307,7 +380,7 @@ struct Extractor {
             if (name.empty()) return;
             const auto qualified = joinQualified(scope.qualifiedName, name);
             symbols.push_back(makeSymbol(node, name, qualified, AstNodeKind::TypeAlias, scope,
-                                         trim(nodeText(node, source))));
+                                         signatureFor(node, source, true)));
             return;
         }
         for (std::uint32_t index = 0; index < ts_node_named_child_count(node); ++index)

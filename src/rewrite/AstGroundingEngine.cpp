@@ -12,20 +12,52 @@
 namespace roclint::core::rewrite {
 namespace {
 
-const std::regex scopeRe(R"(\b(?:in|within|inside)\s+([A-Za-z_][A-Za-z0-9_:]*))",
-                         std::regex::icase | std::regex::optimize);
+const std::regex scopeRe(
+    R"(\b(?:in|within|inside)\s+((?:`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|"[^"]+"|'[^']+'|[A-Za-z_][A-Za-z0-9_:]*)))",
+    std::regex::icase | std::regex::optimize);
 
-std::string lower(std::string_view text) {
-    std::string result(text);
-    std::transform(result.begin(), result.end(), result.begin(), [](unsigned char character) {
-        return static_cast<char>(std::tolower(character));
-    });
-    return result;
+std::string trimText(std::string_view text) {
+    std::size_t begin = 0;
+    while (begin < text.size() && std::isspace(static_cast<unsigned char>(text[begin]))) ++begin;
+    std::size_t end = text.size();
+    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1]))) --end;
+    return std::string(text.substr(begin, end - begin));
 }
 
-std::string targetName(std::string_view target) {
-    const auto separator = target.rfind("::");
-    return std::string(separator == std::string_view::npos ? target : target.substr(separator + 2));
+// Strips code-formatting wrappers that can survive canonical extraction. The
+// intent keeps its original text; only symbol matching uses this normalized form.
+std::string normalizeIdentifier(std::string_view raw) {
+    auto text = trimText(raw);
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        if (text.size() >= 2 && text.front() == '`' && text.back() == '`') {
+            text = trimText(std::string_view(text).substr(1, text.size() - 2));
+            changed = true;
+        } else if (text.size() >= 4 && text.starts_with("**") && text.ends_with("**")) {
+            text = trimText(std::string_view(text).substr(2, text.size() - 4));
+            changed = true;
+        } else if (text.size() >= 4 && text.starts_with("__") && text.ends_with("__")) {
+            text = trimText(std::string_view(text).substr(2, text.size() - 4));
+            changed = true;
+        } else if (text.size() >= 2 &&
+                   ((text.front() == '"' && text.back() == '"') ||
+                    (text.front() == '\'' && text.back() == '\''))) {
+            text = trimText(std::string_view(text).substr(1, text.size() - 2));
+            changed = true;
+        }
+    }
+    while (!text.empty() && (text.back() == '.' || text.back() == ',' || text.back() == ';' ||
+                             text.back() == '!' || text.back() == '?')) {
+        text.pop_back();
+    }
+    return trimText(text);
+}
+
+std::string targetName(std::string_view normalizedTarget) {
+    const auto separator = normalizedTarget.rfind("::");
+    return std::string(separator == std::string_view::npos ? normalizedTarget
+                                                           : normalizedTarget.substr(separator + 2));
 }
 
 std::string directoryOf(std::string_view path) {
@@ -79,11 +111,11 @@ bool requiresExistingTarget(IntentAction action) {
 }
 
 int rank(const storage::AstSymbol& symbol, const CanonicalIntent& intent, std::string_view activeFile,
-         std::string_view resolvedScope) {
+         std::string_view normalizedTarget, std::string_view resolvedScope) {
     int score = 0;
     if (!activeFile.empty() && symbol.filePath == activeFile) score += 1000;
     if (!activeFile.empty() && directoryOf(symbol.filePath) == directoryOf(activeFile)) score += 100;
-    if (symbol.qualifiedName == intent.target) score += 200;
+    if (symbol.qualifiedName == normalizedTarget) score += 200;
     if (!resolvedScope.empty() && symbol.qualifiedName.starts_with(std::string(resolvedScope) + "::")) score += 80;
     if (intent.property == "parameter" && symbol.kind == storage::AstNodeKind::Parameter) score += 50;
     if (intent.property == "field" && symbol.kind == storage::AstNodeKind::Field) score += 50;
@@ -107,6 +139,42 @@ AstGroundingEvidence evidenceFor(const storage::AstSymbol& symbol, GroundingStat
     return evidence;
 }
 
+std::string candidateLabel(const storage::AstSymbol& symbol) {
+    return symbol.qualifiedName + " @ " + symbol.filePath + ":" + std::to_string(symbol.startLine) + ":" +
+           std::to_string(symbol.startColumn);
+}
+
+std::vector<std::string> candidateLabels(const std::vector<storage::AstSymbol>& symbols,
+                                         std::size_t limit = AstGroundingEngine::kMaximumCandidates) {
+    std::vector<std::string> labels;
+    labels.reserve(std::min(limit, symbols.size()));
+    for (const auto& symbol : symbols) {
+        if (labels.size() >= limit) break;
+        labels.push_back(candidateLabel(symbol));
+    }
+    std::sort(labels.begin(), labels.end());
+    labels.erase(std::unique(labels.begin(), labels.end()), labels.end());
+    return labels;
+}
+
+void deduplicate(std::vector<storage::AstSymbol>& symbols) {
+    std::sort(symbols.begin(), symbols.end(), [](const storage::AstSymbol& left,
+                                                 const storage::AstSymbol& right) {
+        return left.symbolId < right.symbolId;
+    });
+    symbols.erase(std::unique(symbols.begin(), symbols.end(),
+                              [](const storage::AstSymbol& left, const storage::AstSymbol& right) {
+                                  return left.symbolId == right.symbolId;
+                              }),
+                  symbols.end());
+}
+
+bool isScopeKind(storage::AstNodeKind kind) {
+    return kind == storage::AstNodeKind::Namespace || kind == storage::AstNodeKind::Class ||
+           kind == storage::AstNodeKind::Struct || kind == storage::AstNodeKind::Enum ||
+           kind == storage::AstNodeKind::Function || kind == storage::AstNodeKind::Method;
+}
+
 } // namespace
 
 std::vector<CanonicalIntent> AstGroundingEngine::groundIntents(const std::vector<CanonicalIntent>& raw,
@@ -115,84 +183,99 @@ std::vector<CanonicalIntent> AstGroundingEngine::groundIntents(const std::vector
     auto grounded = raw;
     for (auto& intent : grounded) {
         if (intent.grounding.has_value()) continue;
-        const auto name = targetName(intent.target);
+
+        const auto normalizedTarget = normalizeIdentifier(intent.target);
+        const auto name = targetName(normalizedTarget);
         if (name.empty()) continue;
 
         std::string scope;
         std::smatch scopeMatch;
-        if (std::regex_search(intent.condition, scopeMatch, scopeRe)) scope = scopeMatch[1].str();
-        std::optional<storage::AstSymbol> scopeSymbol;
+        if (std::regex_search(intent.condition, scopeMatch, scopeRe))
+            scope = normalizeIdentifier(scopeMatch[1].str());
+        const bool explicitScope = !scope.empty();
+
         std::vector<storage::AstSymbol> scopeCandidates;
-        bool scopeAmbiguous = false;
-        if (!scope.empty()) {
+        if (explicitScope) {
             const auto exact = index.findQualified(scope);
-            if (exact.ok() && exact.value().has_value()) scopeSymbol = exact.value();
-            else {
-                const auto matches = index.findByName(scope, {}, {}, 8, false);
-                if (matches.ok() && !matches.value().empty()) {
-                    if (matches.value().size() == 1) scopeSymbol = matches.value().front();
-                    else {
-                        scopeCandidates = matches.value();
-                        scopeAmbiguous = true;
-                    }
-                }
+            if (exact.ok()) scopeCandidates = exact.value();
+            if (scopeCandidates.empty()) {
+                const auto matches = index.findByName(scope, {}, {}, 32, false);
+                if (matches.ok()) scopeCandidates = matches.value();
             }
+            scopeCandidates.erase(
+                std::remove_if(scopeCandidates.begin(), scopeCandidates.end(), [](const auto& candidate) {
+                    return !isScopeKind(candidate.kind);
+                }),
+                scopeCandidates.end());
+            deduplicate(scopeCandidates);
         }
+        const bool scopeMissing = explicitScope && scopeCandidates.empty();
 
         std::vector<storage::AstSymbol> candidates;
-        const bool scopeResolved = !scope.empty() && scopeSymbol.has_value();
-        if (scopeResolved) {
-            const auto exact = index.findByName(name, scopeSymbol->symbolId, {}, 32, false);
-            if (exact.ok()) candidates = exact.value();
-        } else if (intent.target.find("::") != std::string::npos) {
-            const auto exact = index.findQualified(intent.target);
-            if (exact.ok() && exact.value().has_value()) candidates.push_back(*exact.value());
+        if (explicitScope && !scopeMissing) {
+            // An overloaded or redeclared scope is not a single child owner. Merge
+            // matching children from every resolved scope candidate before deciding.
+            for (const auto& scopeSymbol : scopeCandidates) {
+                const auto children = index.children(scopeSymbol.symbolId, 128);
+                if (!children.ok()) continue;
+                for (const auto& child : children.value()) {
+                    if (child.name == name) candidates.push_back(child);
+                }
+            }
+        } else if (!explicitScope) {
+            if (normalizedTarget.find("::") != std::string::npos) {
+                const auto exact = index.findQualified(normalizedTarget);
+                if (exact.ok()) candidates = exact.value();
+            } else {
+                const auto matches = index.findByName(name, {}, {}, 64, false);
+                if (matches.ok()) candidates = matches.value();
+            }
         }
-        if (candidates.empty() && scope.empty()) {
-            const auto matches = index.findByName(name, {}, {}, 32, false);
-            if (matches.ok()) candidates = matches.value();
-        }
+        deduplicate(candidates);
 
         if (candidates.empty()) {
             AstGroundingEvidence evidence;
-            evidence.status = (!scope.empty() || requiresExistingTarget(intent.action))
-                ? GroundingStatus::NotFoundInScope : GroundingStatus::Ungrounded;
-            if (!scope.empty()) evidence.qualifiedTarget = scope + "::" + name;
-            evidence.candidates = scopeCandidates.empty() ? std::vector<std::string>{} :
-                [&]() {
-                    std::vector<std::string> names;
-                    for (const auto& candidate : scopeCandidates) names.push_back(candidate.qualifiedName);
-                    return names;
-                }();
+            if (explicitScope) {
+                if (scopeMissing || scopeCandidates.size() == 1) {
+                    evidence.status = GroundingStatus::NotFoundInScope;
+                    evidence.qualifiedTarget = scope + "::" + name;
+                } else {
+                    // The scope itself could not be narrowed to one symbol, and no
+                    // child resolved it. Never widen this to a global lookup.
+                    evidence.status = GroundingStatus::Ambiguous;
+                    evidence.qualifiedTarget = scope + "::" + name;
+                    evidence.candidates = candidateLabels(scopeCandidates);
+                }
+            } else if (normalizedTarget.find("::") != std::string::npos ||
+                       requiresExistingTarget(intent.action)) {
+                evidence.status = GroundingStatus::NotFoundInScope;
+                evidence.qualifiedTarget = normalizedTarget;
+            } else {
+                evidence.status = GroundingStatus::Ungrounded;
+            }
             intent.grounding = std::move(evidence);
             continue;
         }
 
         std::stable_sort(candidates.begin(), candidates.end(), [&](const auto& left, const auto& right) {
-            return rank(left, intent, activeFile, scope) > rank(right, intent, activeFile, scope);
+            return rank(left, intent, activeFile, normalizedTarget, scope) >
+                   rank(right, intent, activeFile, normalizedTarget, scope);
         });
-        const auto bestScore = rank(candidates.front(), intent, activeFile, scope);
-        std::vector<std::string> tied;
+        const auto bestScore = rank(candidates.front(), intent, activeFile, normalizedTarget, scope);
+        std::vector<const storage::AstSymbol*> tied;
         for (const auto& candidate : candidates) {
-            if (rank(candidate, intent, activeFile, scope) == bestScore)
-                tied.push_back(candidate.qualifiedName);
-        }
-        if (scopeAmbiguous && tied.size() > 1) {
-            AstGroundingEvidence evidence;
-            evidence.status = GroundingStatus::Ambiguous;
-            evidence.qualifiedTarget = scope + "::" + name;
-            evidence.candidates = std::move(tied);
-            for (const auto& candidate : scopeCandidates) evidence.candidates.push_back(candidate.qualifiedName);
-            std::sort(evidence.candidates.begin(), evidence.candidates.end());
-            evidence.candidates.erase(std::unique(evidence.candidates.begin(), evidence.candidates.end()),
-                                      evidence.candidates.end());
-            if (evidence.candidates.size() > kMaximumCandidates) evidence.candidates.resize(kMaximumCandidates);
-            intent.grounding = std::move(evidence);
-            continue;
+            if (rank(candidate, intent, activeFile, normalizedTarget, scope) == bestScore)
+                tied.push_back(&candidate);
         }
         if (tied.size() > 1) {
-            auto evidence = evidenceFor(candidates.front(), GroundingStatus::Ambiguous);
-            evidence.candidates = std::move(tied);
+            auto evidence = evidenceFor(*tied.front(), GroundingStatus::Ambiguous);
+            evidence.qualifiedTarget = explicitScope ? scope + "::" + name : normalizedTarget;
+            std::vector<std::string> candidatesByName;
+            for (const auto* candidate : tied) candidatesByName.push_back(candidateLabel(*candidate));
+            std::sort(candidatesByName.begin(), candidatesByName.end());
+            candidatesByName.erase(std::unique(candidatesByName.begin(), candidatesByName.end()),
+                                   candidatesByName.end());
+            evidence.candidates = std::move(candidatesByName);
             if (evidence.candidates.size() > kMaximumCandidates) evidence.candidates.resize(kMaximumCandidates);
             intent.grounding = std::move(evidence);
             continue;

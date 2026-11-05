@@ -95,6 +95,40 @@ void testParserRejectsMalformedSource() {
         ROCLINT_CHECK(roclint::core::analysis::isValidSpan("class Broken { void f( {", symbol.span));
 }
 
+void testBodyFreeBoundedSignatures() {
+    const std::string longString(1500, 'x');
+    const std::string longName(1500, 'n');
+    const std::string source =
+        "class Handler {\n"
+        "public:\n"
+        "  int value = [] { return 12345; }();\n"
+        "  int braced{[] { return 6789; }()};\n"
+        "  int longText = \"" + longString + "\";\n"
+        "  int " + longName + ";\n"
+        "  Handler() : value([] { return 7; }()) {}\n"
+        "  void accept(int first = [] { return 99; }());\n"
+        "};\n"
+        "using Callback = decltype([] { return 42; });\n";
+    const auto result = AstSymbolExtractor::extractSymbols(source, "bodies.hpp");
+    ROCLINT_CHECK(result.parseOk || result.recovered);
+    const auto* value = findSymbol(result.symbols, "Handler::value", AstNodeKind::Field);
+    const auto* braced = findSymbol(result.symbols, "Handler::braced", AstNodeKind::Field);
+    const auto* longText = findSymbol(result.symbols, "Handler::longText", AstNodeKind::Field);
+    const auto* longField = findSymbol(result.symbols, "Handler::" + longName, AstNodeKind::Field);
+    const auto* constructor = findSymbol(result.symbols, "Handler::Handler", AstNodeKind::Method);
+    const auto* accept = findSymbol(result.symbols, "Handler::accept", AstNodeKind::Method);
+    const auto* first = findSymbol(result.symbols, "Handler::accept::first", AstNodeKind::Parameter);
+    const auto* alias = findSymbol(result.symbols, "Callback", AstNodeKind::TypeAlias);
+    ROCLINT_CHECK(value && braced && longText && longField && constructor && accept && first && alias);
+    for (const auto* symbol : {value, braced, longText, longField, constructor, accept, first, alias}) {
+        ROCLINT_CHECK(symbol->signature.find("return") == std::string::npos);
+        ROCLINT_CHECK(symbol->signature.size() <= 1200);
+    }
+    ROCLINT_CHECK(accept->signature.find("first") != std::string::npos);
+    ROCLINT_CHECK(first->signature.find('=') == std::string::npos);
+    ROCLINT_CHECK(longField->signature.size() <= 1200);
+}
+
 void testExtractionLatency() {
     const std::string source =
         "namespace demo { class A { bool f(int alpha, int beta); int value; }; "
@@ -117,7 +151,8 @@ int main() {
     testHierarchicalCppExtraction();
     testParserRecoversMacroHeavyHeader();
     testParserRejectsMalformedSource();
+    testBodyFreeBoundedSignatures();
     testExtractionLatency();
-    std::cout << "AST symbol extraction, hierarchy, recovery and byte spans passed.\n";
+    std::cout << "AST symbol extraction, hierarchy, recovery, signatures and byte spans passed.\n";
     return 0;
 }

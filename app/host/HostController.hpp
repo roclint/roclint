@@ -532,6 +532,8 @@ public slots:
     Q_INVOKABLE QString openFolderDialog();
     Q_INVOKABLE QVariantList recentProjects() const;
     Q_INVOKABLE QStringList getProjectFiles(const QString& projectPath);
+    // Explicitly schedules an incremental refresh of the selected workspace.
+    Q_INVOKABLE bool refreshCodebaseIndex();
     Q_INVOKABLE QString scopePreamble(const QString& projectPath, const QString& scope, const QString& file);
     Q_INVOKABLE QString openModelFolderDialog();
     Q_INVOKABLE void importLocalModel(const QString& path);
@@ -795,6 +797,7 @@ private:
     void finishQuitWhenRuntimesStopped();
     // Resolves lexical intents against the local AST index and renders the bounded prompt block.
     [[nodiscard]] GroundedPromptContext groundedCanonicalIntentContext(std::string_view prompt);
+    void startCodebaseRefresh(const QString& projectPath);
     void startPendingNativeDownload();
     [[nodiscard]] std::string currentTransportName() const;
     core::Status copyToClipboard(const QString& text);
@@ -927,6 +930,9 @@ private:
     bool m_codebaseContextConsented{false};
     std::unique_ptr<storage::CodebaseIndex> m_codebaseIndex;
     QString m_codebaseActiveFile;
+    int m_codebaseRefreshSerial{0};
+    bool m_codebaseRefreshInFlight{false};
+    bool m_codebaseIndexReady{false};
     QString m_modelDirectory;
     std::shared_ptr<bridge::GraniteAdapter> m_graniteAdapter;
     std::optional<OllamaClient> m_ollama;

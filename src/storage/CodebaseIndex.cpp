@@ -11,11 +11,14 @@
 #include <fstream>
 #include <set>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 
 namespace roclint::storage {
 namespace {
+
+constexpr int kSchemaVersion = 2;
 
 const std::set<std::string> kExcludedDirectories{
     ".git", ".hg", ".svn", ".cache", "build", "dist", "out", "target", "node_modules", "vendor", "deps",
@@ -43,11 +46,11 @@ int bindText(sqlite3_stmt* statement, int index, std::string_view value) {
     return sqlite3_bind_text(statement, index, value.data(), static_cast<int>(value.size()), SQLITE_TRANSIENT);
 }
 
-std::string fileText(const std::filesystem::path& path) {
+bool readFileText(const std::filesystem::path& path, std::string& data) {
     std::ifstream stream(path, std::ios::binary);
-    if (!stream) return {};
-    std::string data((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
-    return data;
+    if (!stream) return false;
+    data.assign((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
+    return !stream.bad();
 }
 
 std::string normalizedFtsQuery(std::string_view value) {
@@ -91,6 +94,10 @@ constexpr const char* kSymbolColumnsAliased =
     "a.symbol_id,a.file_path,a.file_hash,a.name,a.qualified_name,a.kind,a.parent_id,a.signature,"
     "a.start_line,a.end_line,a.start_column,a.end_column,a.byte_offset,a.byte_length,a.type_name,a.is_const";
 
+std::string scopedSymbolId(std::string_view workspaceKey, std::string_view symbolId) {
+    return "ws_" + std::string(workspaceKey) + "_" + std::string(symbolId);
+}
+
 } // namespace
 
 struct CodebaseIndex::Impl {
@@ -104,22 +111,57 @@ struct CodebaseIndex::Impl {
         if (!exec(db,
                   "PRAGMA journal_mode=WAL;"
                   "PRAGMA synchronous=NORMAL;"
-                  "PRAGMA foreign_keys=ON;"
+                  "PRAGMA foreign_keys=ON;")) {
+            initError = sqlite3_errmsg(db);
+            sqlite3_close(db);
+            db = nullptr;
+            return;
+        }
+
+        int userVersion = 0;
+        sqlite3_stmt* version = nullptr;
+        if (sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &version, nullptr) == SQLITE_OK) {
+            if (sqlite3_step(version) == SQLITE_ROW) userVersion = sqlite3_column_int(version, 0);
+            sqlite3_finalize(version);
+        }
+
+        // The index is a cache. A schema change rebuilds it from source instead
+        // of carrying old unscoped identity or columns forward.
+        if (userVersion != kSchemaVersion &&
+            !exec(db, "DROP TABLE IF EXISTS ast_symbols_fts;"
+                      "DROP TABLE IF EXISTS ast_symbols;"
+                      "DROP TABLE IF EXISTS files;"
+                      "DROP TABLE IF EXISTS workspaces;")) {
+            initError = sqlite3_errmsg(db);
+            sqlite3_close(db);
+            db = nullptr;
+            return;
+        }
+
+        if (!exec(db,
                   "CREATE TABLE IF NOT EXISTS workspaces(root TEXT PRIMARY KEY);"
                   "CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, root TEXT NOT NULL, path TEXT NOT NULL,"
                   "  hash TEXT NOT NULL, UNIQUE(root,path));"
                   "CREATE TABLE IF NOT EXISTS ast_symbols("
-                  "  symbol_id TEXT PRIMARY KEY, file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,"
+                  "  symbol_id TEXT PRIMARY KEY, workspace_root TEXT NOT NULL,"
+                  "  file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,"
                   "  file_path TEXT NOT NULL, file_hash TEXT NOT NULL, name TEXT NOT NULL, qualified_name TEXT NOT NULL,"
                   "  kind INTEGER NOT NULL, parent_id TEXT, signature TEXT NOT NULL, start_line INTEGER NOT NULL,"
                   "  end_line INTEGER NOT NULL, start_column INTEGER NOT NULL, end_column INTEGER NOT NULL,"
                   "  byte_offset INTEGER NOT NULL, byte_length INTEGER NOT NULL, type_name TEXT NOT NULL,"
                   "  is_const INTEGER NOT NULL);"
-                  "CREATE INDEX IF NOT EXISTS ast_symbols_name_idx ON ast_symbols(name);"
-                  "CREATE INDEX IF NOT EXISTS ast_symbols_parent_idx ON ast_symbols(parent_id);"
-                  "CREATE INDEX IF NOT EXISTS ast_symbols_qualified_idx ON ast_symbols(qualified_name);"
+                  "CREATE INDEX IF NOT EXISTS ast_symbols_ws_name_idx ON ast_symbols(workspace_root,name);"
+                  "CREATE INDEX IF NOT EXISTS ast_symbols_ws_parent_idx ON ast_symbols(workspace_root,parent_id);"
+                  "CREATE INDEX IF NOT EXISTS ast_symbols_ws_qualified_idx ON ast_symbols(workspace_root,qualified_name);"
                   "CREATE VIRTUAL TABLE IF NOT EXISTS ast_symbols_fts USING fts5("
                   "  name, qualified_name, signature, content='ast_symbols', content_rowid='rowid', tokenize='trigram');")) {
+            initError = sqlite3_errmsg(db);
+            sqlite3_close(db);
+            db = nullptr;
+            return;
+        }
+        if (userVersion != kSchemaVersion &&
+            !exec(db, "PRAGMA user_version=2;")) {
             initError = sqlite3_errmsg(db);
             sqlite3_close(db);
             db = nullptr;
@@ -130,20 +172,66 @@ struct CodebaseIndex::Impl {
         if (db != nullptr) sqlite3_close(db);
     }
 
+    bool bind(std::string root) {
+        workspaceRoot = std::move(root);
+        workspaceKey = core::crypto::Sha256::hexDigest(workspaceRoot).substr(0, 16);
+        bound = true;
+        return true;
+    }
+
     sqlite3* db{nullptr};
     std::string initError;
+    std::string workspaceRoot;
+    std::string workspaceKey;
+    bool bound{false};
 };
 
-CodebaseIndex::CodebaseIndex(std::filesystem::path databasePath)
-    : impl_(std::make_unique<Impl>(databasePath)) {}
+CodebaseIndex::CodebaseIndex(std::filesystem::path databasePath, std::filesystem::path workspaceRoot)
+    : impl_(std::make_unique<Impl>(databasePath)) {
+    if (impl_ && impl_->db != nullptr && !workspaceRoot.empty())
+        static_cast<void>(bindWorkspace(workspaceRoot));
+}
 CodebaseIndex::~CodebaseIndex() = default;
 CodebaseIndex::CodebaseIndex(CodebaseIndex&&) noexcept = default;
 CodebaseIndex& CodebaseIndex::operator=(CodebaseIndex&&) noexcept = default;
 
-core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& workspace) {
+core::Status CodebaseIndex::bindWorkspace(const std::filesystem::path& root) {
+    if (!impl_ || impl_->db == nullptr)
+        return core::makeError(core::ErrorCode::DbError,
+                               impl_ && !impl_->initError.empty() ? impl_->initError : "Code index database is unavailable");
+    if (root.empty()) return core::makeError(core::ErrorCode::InvalidInput, "Workspace root is empty");
+    std::error_code error;
+    const auto canonical = std::filesystem::weakly_canonical(root, error);
+    if (error || canonical.empty())
+        return core::makeError(core::ErrorCode::InvalidInput, "Workspace path is unavailable");
+    impl_->bind(canonical.generic_string());
+    return core::Status::success();
+}
+
+bool CodebaseIndex::isWorkspaceBound() const noexcept {
+    return impl_ && impl_->db != nullptr && impl_->bound;
+}
+
+std::string CodebaseIndex::workspaceRoot() const {
+    return impl_ ? impl_->workspaceRoot : std::string{};
+}
+
+core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& workspace,
+                                                        const CodebaseIndexLimits& limits) {
     if (!impl_ || impl_->db == nullptr) {
         return core::makeError(core::ErrorCode::DbError,
                                impl_ && !impl_->initError.empty() ? impl_->initError : "Code index database is unavailable");
+    }
+    if (!workspace.workspaceRoot.empty()) {
+        std::error_code identityError;
+        const auto requested = std::filesystem::weakly_canonical(workspace.workspaceRoot, identityError);
+        if (!identityError && impl_->bound && requested.generic_string() != impl_->workspaceRoot) {
+            // A refresh attempt for another workspace must never leave the
+            // previous workspace's evidence queryable.
+            impl_->workspaceRoot.clear();
+            impl_->workspaceKey.clear();
+            impl_->bound = false;
+        }
     }
     if (!workspace.consented) {
         return core::makeError(core::ErrorCode::PreconditionFailed,
@@ -156,6 +244,10 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
     }
     const auto started = std::chrono::steady_clock::now();
     const auto rootText = root.generic_string();
+    // Bind before the transaction starts so a failed refresh can never leave the
+    // instance answering from the previously selected workspace.
+    impl_->bind(rootText);
+    const auto& workspaceKey = impl_->workspaceKey;
     CodebaseIndexStats stats;
     if (!exec(impl_->db, "BEGIN IMMEDIATE;")) {
         return core::makeError(core::ErrorCode::DbError, "Unable to start code index transaction");
@@ -170,140 +262,260 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
     static_cast<void>(sqlite3_step(statement));
     sqlite3_finalize(statement);
 
+    auto findFile = [&](std::string_view relative, std::int64_t& fileId, std::string& existingHash) -> bool {
+        fileId = 0;
+        existingHash.clear();
+        sqlite3_stmt* find = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, "SELECT id,hash FROM files WHERE root=?1 AND path=?2;", -1, &find, nullptr) != SQLITE_OK)
+            return false;
+        bindText(find, 1, rootText);
+        bindText(find, 2, relative);
+        const bool found = sqlite3_step(find) == SQLITE_ROW;
+        if (found) {
+            fileId = sqlite3_column_int64(find, 0);
+            existingHash = columnText(find, 1);
+        }
+        sqlite3_finalize(find);
+        return true;
+    };
+    auto upsertFile = [&](std::string_view relative, std::string_view hash, std::int64_t& fileId) -> bool {
+        std::string existingHash;
+        if (!findFile(relative, fileId, existingHash)) return false;
+        if (fileId == 0) {
+            sqlite3_stmt* insert = nullptr;
+            if (sqlite3_prepare_v2(impl_->db, "INSERT INTO files(root,path,hash) VALUES(?1,?2,?3);", -1, &insert, nullptr) != SQLITE_OK)
+                return false;
+            bindText(insert, 1, rootText);
+            bindText(insert, 2, relative);
+            bindText(insert, 3, hash);
+            const bool ok = sqlite3_step(insert) == SQLITE_DONE;
+            sqlite3_finalize(insert);
+            if (!ok) return false;
+            fileId = sqlite3_last_insert_rowid(impl_->db);
+            return true;
+        }
+        sqlite3_stmt* update = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, "UPDATE files SET hash=?1 WHERE id=?2;", -1, &update, nullptr) != SQLITE_OK)
+            return false;
+        bindText(update, 1, hash);
+        sqlite3_bind_int64(update, 2, fileId);
+        const bool ok = sqlite3_step(update) == SQLITE_DONE;
+        sqlite3_finalize(update);
+        return ok;
+    };
+    auto deleteSymbols = [&](std::int64_t fileId) -> bool {
+        sqlite3_stmt* remove = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, "DELETE FROM ast_symbols WHERE file_id=?1;", -1, &remove, nullptr) != SQLITE_OK)
+            return false;
+        sqlite3_bind_int64(remove, 1, fileId);
+        const bool ok = sqlite3_step(remove) == SQLITE_DONE;
+        sqlite3_finalize(remove);
+        return ok;
+    };
+    auto invalidateFile = [&](std::string_view relative) -> bool {
+        sqlite3_stmt* symbols = nullptr;
+        if (sqlite3_prepare_v2(impl_->db,
+                               "DELETE FROM ast_symbols WHERE workspace_root=?1 AND file_path=?2;",
+                               -1, &symbols, nullptr) != SQLITE_OK)
+            return false;
+        bindText(symbols, 1, rootText);
+        bindText(symbols, 2, relative);
+        const bool symbolsDeleted = sqlite3_step(symbols) == SQLITE_DONE;
+        sqlite3_finalize(symbols);
+        if (!symbolsDeleted) return false;
+        sqlite3_stmt* remove = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, "DELETE FROM files WHERE root=?1 AND path=?2;", -1, &remove, nullptr) != SQLITE_OK)
+            return false;
+        bindText(remove, 1, rootText);
+        bindText(remove, 2, relative);
+        const bool fileDeleted = sqlite3_step(remove) == SQLITE_DONE;
+        sqlite3_finalize(remove);
+        return fileDeleted;
+    };
+
     std::unordered_set<std::string> seen;
     auto options = std::filesystem::directory_options::skip_permission_denied;
-    for (std::filesystem::recursive_directory_iterator iterator(root, options), end;
-         iterator != end; iterator.increment(error)) {
+    std::filesystem::recursive_directory_iterator iterator(root, options), end;
+    auto invalidateObservedSource = [&]() -> bool {
+        const auto relative = std::filesystem::relative(iterator->path(), root, error);
+        if (error || relative.empty() || relative.generic_string().starts_with("..")) {
+            error.clear();
+            stats.incomplete = true;
+            return true;
+        }
+        const auto relativeText = relative.generic_string();
+        seen.insert(relativeText);
+        return invalidateFile(relativeText);
+    };
+    for (; iterator != end; iterator.increment(error)) {
         if (error) {
+            // An unreadable subtree could hide files; never treat unvisited paths
+            // as confirmed deletions for this pass.
+            stats.incomplete = true;
             error.clear();
             continue;
         }
         if (std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - started).count() >= kScanBudgetMs) {
+                std::chrono::steady_clock::now() - started).count() >= limits.scanBudgetMs) {
             stats.incomplete = true;
             break;
         }
-        if (iterator->is_symlink(error)) {
-            if (iterator->is_directory(error)) iterator.disable_recursion_pending();
+        std::error_code statusError;
+        const bool symlink = iterator->is_symlink(statusError);
+        if (statusError) {
+            statusError.clear();
+            stats.incomplete = true;
+            if (isSourceFile(iterator->path()) && !invalidateObservedSource()) {
+                rollback();
+                return core::makeError(core::ErrorCode::DbError, "Unable to invalidate unavailable file");
+            }
             continue;
         }
-        if (iterator->is_directory(error)) {
+        if (symlink) {
+            std::error_code directoryError;
+            if (iterator->is_directory(directoryError)) iterator.disable_recursion_pending();
+            directoryError.clear();
+            if (isSourceFile(iterator->path()) && !invalidateObservedSource()) {
+                rollback();
+                return core::makeError(core::ErrorCode::DbError, "Unable to invalidate symlinked file");
+            }
+            continue;
+        }
+        const bool directory = iterator->is_directory(statusError);
+        if (statusError) {
+            statusError.clear();
+            stats.incomplete = true;
+            if (isSourceFile(iterator->path()) && !invalidateObservedSource()) {
+                rollback();
+                return core::makeError(core::ErrorCode::DbError, "Unable to invalidate unavailable file");
+            }
+            continue;
+        }
+        if (directory) {
+            if (isSourceFile(iterator->path()) && !invalidateObservedSource()) {
+                rollback();
+                return core::makeError(core::ErrorCode::DbError, "Unable to invalidate directory-shaped file");
+            }
             if (kExcludedDirectories.contains(iterator->path().filename().string())) iterator.disable_recursion_pending();
             continue;
         }
-        if (!iterator->is_regular_file(error) || !isSourceFile(iterator->path())) continue;
+        const bool regular = iterator->is_regular_file(statusError);
+        if (statusError) {
+            statusError.clear();
+            stats.incomplete = true;
+            if (isSourceFile(iterator->path()) && !invalidateObservedSource()) {
+                rollback();
+                return core::makeError(core::ErrorCode::DbError, "Unable to invalidate unreadable file");
+            }
+            continue;
+        }
+        if (!regular) {
+            if (isSourceFile(iterator->path()) && !invalidateObservedSource()) {
+                rollback();
+                return core::makeError(core::ErrorCode::DbError, "Unable to invalidate special file");
+            }
+            continue;
+        }
+        if (!isSourceFile(iterator->path())) continue;
         ++stats.filesVisited;
-        if (stats.filesVisited > kMaximumIndexedFiles) {
+        if (stats.filesVisited > limits.maximumFiles) {
             stats.incomplete = true;
             break;
         }
         const auto relative = std::filesystem::relative(iterator->path(), root, error);
         if (error || relative.empty() || relative.generic_string().starts_with("..")) {
+            stats.incomplete = true;
             error.clear();
             continue;
         }
         const auto relativeText = relative.generic_string();
         seen.insert(relativeText);
+
         const auto size = std::filesystem::file_size(iterator->path(), error);
-        if (error || size > kMaximumFileBytes) {
+        if (error || size > limits.maximumFileBytes) {
             error.clear();
+            if (!invalidateFile(relativeText)) {
+                rollback();
+                return core::makeError(core::ErrorCode::DbError, "Unable to invalidate indexed file");
+            }
             continue;
         }
-        const auto source = fileText(iterator->path());
-        if (source.empty()) continue;
+        std::string source;
+        if (!readFileText(iterator->path(), source)) {
+            if (!invalidateFile(relativeText)) {
+                rollback();
+                return core::makeError(core::ErrorCode::DbError, "Unable to invalidate unreadable file");
+            }
+            continue;
+        }
         const auto fileHash = core::crypto::Sha256::hexDigest(source);
-        sqlite3_stmt* find = nullptr;
-        if (sqlite3_prepare_v2(impl_->db, "SELECT id,hash FROM files WHERE root=?1 AND path=?2;", -1, &find, nullptr) != SQLITE_OK) {
+
+        std::int64_t fileId = 0;
+        std::string existingHash;
+        if (!findFile(relativeText, fileId, existingHash)) {
             rollback();
             return core::makeError(core::ErrorCode::DbError, "Unable to inspect indexed file");
         }
-        bindText(find, 1, rootText);
-        bindText(find, 2, relativeText);
-        std::int64_t fileId = 0;
-        std::string existingHash;
-        if (sqlite3_step(find) == SQLITE_ROW) {
-            fileId = sqlite3_column_int64(find, 0);
-            existingHash = columnText(find, 1);
-        }
-        sqlite3_finalize(find);
         if (fileId != 0 && existingHash == fileHash) continue;
 
         const auto extraction = AstSymbolExtractor::extractSymbols(source, relativeText);
+        if (!upsertFile(relativeText, fileHash, fileId)) {
+            rollback();
+            return core::makeError(core::ErrorCode::DbError, "Unable to persist indexed file");
+        }
+        if (!deleteSymbols(fileId)) {
+            rollback();
+            return core::makeError(core::ErrorCode::DbError, "Unable to replace indexed symbols");
+        }
+        ++stats.filesIndexed;
+        if (extraction.recovered) ++stats.filesRecovered;
         if (!extraction.parseOk && !extraction.recovered) {
-            if (fileId != 0) {
-                sqlite3_stmt* remove = nullptr;
-                if (sqlite3_prepare_v2(impl_->db, "DELETE FROM ast_symbols WHERE file_id=?1;", -1, &remove, nullptr) == SQLITE_OK) {
-                    sqlite3_bind_int64(remove, 1, fileId);
-                    static_cast<void>(sqlite3_step(remove));
-                    sqlite3_finalize(remove);
-                }
-            }
+            // The current bytes are known, but unusable. Keep the new hash with
+            // an empty symbol snapshot so stale evidence cannot survive.
             continue;
         }
-        if (extraction.recovered) ++stats.filesRecovered;
-        if (fileId == 0) {
-            sqlite3_stmt* insert = nullptr;
-            if (sqlite3_prepare_v2(impl_->db, "INSERT INTO files(root,path,hash) VALUES(?1,?2,?3);", -1, &insert, nullptr) != SQLITE_OK) {
-                rollback();
-                return core::makeError(core::ErrorCode::DbError, "Unable to create indexed file");
-            }
-            bindText(insert, 1, rootText);
-            bindText(insert, 2, relativeText);
-            bindText(insert, 3, fileHash);
-            if (sqlite3_step(insert) != SQLITE_DONE) {
-                sqlite3_finalize(insert);
-                rollback();
-                return core::makeError(core::ErrorCode::DbError, "Unable to insert indexed file");
-            }
-            sqlite3_finalize(insert);
-            fileId = sqlite3_last_insert_rowid(impl_->db);
-        } else {
-            sqlite3_stmt* update = nullptr;
-            if (sqlite3_prepare_v2(impl_->db, "UPDATE files SET hash=?1 WHERE id=?2;", -1, &update, nullptr) != SQLITE_OK) {
-                rollback();
-                return core::makeError(core::ErrorCode::DbError, "Unable to update indexed file");
-            }
-            bindText(update, 1, fileHash);
-            sqlite3_bind_int64(update, 2, fileId);
-            static_cast<void>(sqlite3_step(update));
-            sqlite3_finalize(update);
-            sqlite3_stmt* remove = nullptr;
-            if (sqlite3_prepare_v2(impl_->db, "DELETE FROM ast_symbols WHERE file_id=?1;", -1, &remove, nullptr) == SQLITE_OK) {
-                sqlite3_bind_int64(remove, 1, fileId);
-                static_cast<void>(sqlite3_step(remove));
-                sqlite3_finalize(remove);
-            }
-        }
+
+        std::unordered_map<std::string, std::string> scopedIds;
+        scopedIds.reserve(extraction.symbols.size());
+        for (const auto& symbol : extraction.symbols)
+            scopedIds.emplace(symbol.symbolId, scopedSymbolId(workspaceKey, symbol.symbolId));
+
         sqlite3_stmt* insert = nullptr;
         if (sqlite3_prepare_v2(impl_->db,
-                               "INSERT INTO ast_symbols(symbol_id,file_id,file_path,file_hash,name,qualified_name,kind,"
-                               "parent_id,signature,start_line,end_line,start_column,end_column,byte_offset,byte_length,"
-                               "type_name,is_const) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17);",
+                               "INSERT INTO ast_symbols(symbol_id,workspace_root,file_id,file_path,file_hash,name,"
+                               "qualified_name,kind,parent_id,signature,start_line,end_line,start_column,end_column,"
+                               "byte_offset,byte_length,type_name,is_const)"
+                               " VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18);",
                                -1, &insert, nullptr) != SQLITE_OK) {
             rollback();
             return core::makeError(core::ErrorCode::DbError, "Unable to prepare symbol insert");
         }
-        ++stats.filesIndexed;
         for (const auto& symbol : extraction.symbols) {
+            const auto scoped = scopedIds.find(symbol.symbolId);
+            const auto parent = symbol.parentSymbolId.empty()
+                ? std::string{} : scopedIds.find(symbol.parentSymbolId) != scopedIds.end()
+                    ? scopedIds.at(symbol.parentSymbolId) : std::string{};
+            if (scoped == scopedIds.end()) continue;
             sqlite3_reset(insert);
             sqlite3_clear_bindings(insert);
-            bindText(insert, 1, symbol.symbolId);
-            sqlite3_bind_int64(insert, 2, fileId);
-            bindText(insert, 3, symbol.filePath);
-            bindText(insert, 4, fileHash);
-            bindText(insert, 5, symbol.name);
-            bindText(insert, 6, symbol.qualifiedName);
-            sqlite3_bind_int(insert, 7, static_cast<int>(symbol.kind));
-            bindText(insert, 8, symbol.parentSymbolId);
-            bindText(insert, 9, symbol.signature);
-            sqlite3_bind_int64(insert, 10, symbol.startLine);
-            sqlite3_bind_int64(insert, 11, symbol.endLine);
-            sqlite3_bind_int64(insert, 12, symbol.startColumn);
-            sqlite3_bind_int64(insert, 13, symbol.endColumn);
-            sqlite3_bind_int64(insert, 14, static_cast<sqlite3_int64>(symbol.span.startByte));
-            sqlite3_bind_int64(insert, 15, static_cast<sqlite3_int64>(symbol.span.length()));
-            bindText(insert, 16, symbol.typeName);
-            sqlite3_bind_int(insert, 17, symbol.isConst ? 1 : 0);
+            bindText(insert, 1, scoped->second);
+            bindText(insert, 2, rootText);
+            sqlite3_bind_int64(insert, 3, fileId);
+            bindText(insert, 4, symbol.filePath);
+            bindText(insert, 5, fileHash);
+            bindText(insert, 6, symbol.name);
+            bindText(insert, 7, symbol.qualifiedName);
+            sqlite3_bind_int(insert, 8, static_cast<int>(symbol.kind));
+            bindText(insert, 9, parent);
+            bindText(insert, 10, symbol.signature);
+            sqlite3_bind_int64(insert, 11, symbol.startLine);
+            sqlite3_bind_int64(insert, 12, symbol.endLine);
+            sqlite3_bind_int64(insert, 13, symbol.startColumn);
+            sqlite3_bind_int64(insert, 14, symbol.endColumn);
+            sqlite3_bind_int64(insert, 15, static_cast<sqlite3_int64>(symbol.span.startByte));
+            sqlite3_bind_int64(insert, 16, static_cast<sqlite3_int64>(symbol.span.length()));
+            bindText(insert, 17, symbol.typeName);
+            sqlite3_bind_int(insert, 18, symbol.isConst ? 1 : 0);
             if (sqlite3_step(insert) != SQLITE_DONE) {
                 sqlite3_finalize(insert);
                 rollback();
@@ -314,25 +526,46 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
         sqlite3_finalize(insert);
     }
 
-    sqlite3_stmt* files = nullptr;
-    if (sqlite3_prepare_v2(impl_->db, "SELECT id,path FROM files WHERE root=?1;", -1, &files, nullptr) != SQLITE_OK) {
-        rollback();
-        return core::makeError(core::ErrorCode::DbError, "Unable to enumerate indexed files");
-    }
-    bindText(files, 1, rootText);
-    std::vector<std::int64_t> stale;
-    while (sqlite3_step(files) == SQLITE_ROW) {
-        if (!seen.contains(columnText(files, 1))) stale.push_back(sqlite3_column_int64(files, 0));
-    }
-    sqlite3_finalize(files);
-    for (const auto id : stale) {
-        sqlite3_stmt* remove = nullptr;
-        if (sqlite3_prepare_v2(impl_->db, "DELETE FROM files WHERE id=?1;", -1, &remove, nullptr) == SQLITE_OK) {
+    if (!stats.incomplete) {
+        sqlite3_stmt* files = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, "SELECT id,path FROM files WHERE root=?1;", -1, &files, nullptr) != SQLITE_OK) {
+            rollback();
+            return core::makeError(core::ErrorCode::DbError, "Unable to enumerate indexed files");
+        }
+        bindText(files, 1, rootText);
+        std::vector<std::int64_t> stale;
+        while (sqlite3_step(files) == SQLITE_ROW) {
+            if (!seen.contains(columnText(files, 1))) stale.push_back(sqlite3_column_int64(files, 0));
+        }
+        sqlite3_finalize(files);
+        for (const auto id : stale) {
+            sqlite3_stmt* symbols = nullptr;
+            if (sqlite3_prepare_v2(impl_->db, "DELETE FROM ast_symbols WHERE file_id=?1;", -1, &symbols, nullptr) != SQLITE_OK) {
+                rollback();
+                return core::makeError(core::ErrorCode::DbError, "Unable to remove stale indexed symbols");
+            }
+            sqlite3_bind_int64(symbols, 1, id);
+            const bool symbolsDeleted = sqlite3_step(symbols) == SQLITE_DONE;
+            sqlite3_finalize(symbols);
+            if (!symbolsDeleted) {
+                rollback();
+                return core::makeError(core::ErrorCode::DbError, "Unable to remove stale indexed symbols");
+            }
+            sqlite3_stmt* remove = nullptr;
+            if (sqlite3_prepare_v2(impl_->db, "DELETE FROM files WHERE id=?1;", -1, &remove, nullptr) != SQLITE_OK) {
+                rollback();
+                return core::makeError(core::ErrorCode::DbError, "Unable to remove stale indexed file");
+            }
             sqlite3_bind_int64(remove, 1, id);
-            static_cast<void>(sqlite3_step(remove));
+            const bool ok = sqlite3_step(remove) == SQLITE_DONE;
             sqlite3_finalize(remove);
+            if (!ok) {
+                rollback();
+                return core::makeError(core::ErrorCode::DbError, "Unable to remove stale indexed file");
+            }
         }
     }
+
     if (!exec(impl_->db, "INSERT INTO ast_symbols_fts(ast_symbols_fts) VALUES('rebuild');")) {
         rollback();
         return core::makeError(core::ErrorCode::DbError, "Unable to rebuild the symbol FTS index");
@@ -352,17 +585,20 @@ core::Result<std::vector<AstSymbol>> CodebaseIndex::findByName(std::string_view 
                                                                std::size_t limit,
                                                                bool allowFtsFallback) const {
     if (!impl_ || impl_->db == nullptr) return core::makeError(core::ErrorCode::DbError, "Code index is unavailable");
+    if (!impl_->bound) return core::makeError(core::ErrorCode::PreconditionFailed, "Code index has no bound workspace");
     const auto bounded = std::min<std::size_t>(std::max<std::size_t>(limit, 1), 64);
-    std::string sql = std::string("SELECT ") + kSymbolColumns + " FROM ast_symbols WHERE name=?1";
-    int bindIndex = 2;
+    std::string sql = std::string("SELECT ") + kSymbolColumns +
+        " FROM ast_symbols WHERE workspace_root=?1 AND name=?2";
+    int bindIndex = 3;
     if (!parentSymbolId.empty()) sql += " AND parent_id=?" + std::to_string(bindIndex++);
     if (!filePath.empty()) sql += " AND file_path=?" + std::to_string(bindIndex++);
     sql += " LIMIT ?" + std::to_string(bindIndex);
     sqlite3_stmt* statement = nullptr;
     if (sqlite3_prepare_v2(impl_->db, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
         return core::makeError(core::ErrorCode::DbError, "Unable to query AST symbols");
-    bindText(statement, 1, name);
-    int index = 2;
+    bindText(statement, 1, impl_->workspaceRoot);
+    bindText(statement, 2, name);
+    int index = 3;
     if (!parentSymbolId.empty()) bindText(statement, index++, parentSymbolId);
     if (!filePath.empty()) bindText(statement, index++, filePath);
     sqlite3_bind_int(statement, index, static_cast<int>(bounded));
@@ -374,39 +610,51 @@ core::Result<std::vector<AstSymbol>> CodebaseIndex::findByName(std::string_view 
     const auto query = normalizedFtsQuery(name);
     if (query.empty()) return symbols;
     std::string ftsSql = "SELECT " + std::string(kSymbolColumnsAliased) +
-        " FROM ast_symbols_fts f JOIN ast_symbols a ON a.rowid=f.rowid WHERE ast_symbols_fts MATCH ?1"
-        " ORDER BY bm25(ast_symbols_fts) LIMIT ?2";
+        " FROM ast_symbols_fts f JOIN ast_symbols a ON a.rowid=f.rowid"
+        " WHERE ast_symbols_fts MATCH ?1 AND a.workspace_root=?2"
+        " ORDER BY bm25(ast_symbols_fts) LIMIT ?3";
     if (sqlite3_prepare_v2(impl_->db, ftsSql.c_str(), -1, &statement, nullptr) != SQLITE_OK) return symbols;
     bindText(statement, 1, query);
-    sqlite3_bind_int(statement, 2, static_cast<int>(bounded));
+    bindText(statement, 2, impl_->workspaceRoot);
+    sqlite3_bind_int(statement, 3, static_cast<int>(bounded));
     while (sqlite3_step(statement) == SQLITE_ROW) symbols.push_back(rowSymbol(statement));
     sqlite3_finalize(statement);
     return symbols;
 }
 
-core::Result<std::optional<AstSymbol>> CodebaseIndex::findQualified(std::string_view qualifiedName) const {
+core::Result<std::vector<AstSymbol>> CodebaseIndex::findQualified(std::string_view qualifiedName,
+                                                                  std::size_t limit) const {
     if (!impl_ || impl_->db == nullptr) return core::makeError(core::ErrorCode::DbError, "Code index is unavailable");
-    const std::string sql = std::string("SELECT ") + kSymbolColumns + " FROM ast_symbols WHERE qualified_name=?1 LIMIT 1;";
+    if (!impl_->bound) return core::makeError(core::ErrorCode::PreconditionFailed, "Code index has no bound workspace");
+    const auto bounded = std::min<std::size_t>(std::max<std::size_t>(limit, 1), 64);
+    const std::string sql = std::string("SELECT ") + kSymbolColumns +
+        " FROM ast_symbols WHERE workspace_root=?1 AND qualified_name=?2"
+        " ORDER BY file_path,byte_offset LIMIT ?3;";
     sqlite3_stmt* statement = nullptr;
     if (sqlite3_prepare_v2(impl_->db, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
         return core::makeError(core::ErrorCode::DbError, "Unable to query AST symbol");
-    bindText(statement, 1, qualifiedName);
-    std::optional<AstSymbol> symbol;
-    if (sqlite3_step(statement) == SQLITE_ROW) symbol = rowSymbol(statement);
+    bindText(statement, 1, impl_->workspaceRoot);
+    bindText(statement, 2, qualifiedName);
+    sqlite3_bind_int(statement, 3, static_cast<int>(bounded));
+    std::vector<AstSymbol> symbols;
+    while (sqlite3_step(statement) == SQLITE_ROW) symbols.push_back(rowSymbol(statement));
     sqlite3_finalize(statement);
-    return symbol;
+    return symbols;
 }
 
-core::Result<std::vector<AstSymbol>> CodebaseIndex::children(std::string_view parentSymbolId, std::size_t limit) const {
+core::Result<std::vector<AstSymbol>> CodebaseIndex::children(std::string_view parentSymbolId,
+                                                             std::size_t limit) const {
     if (!impl_ || impl_->db == nullptr) return core::makeError(core::ErrorCode::DbError, "Code index is unavailable");
+    if (!impl_->bound) return core::makeError(core::ErrorCode::PreconditionFailed, "Code index has no bound workspace");
     const auto bounded = std::min<std::size_t>(std::max<std::size_t>(limit, 1), 128);
     const std::string sql = std::string("SELECT ") + kSymbolColumns +
-        " FROM ast_symbols WHERE parent_id=?1 ORDER BY byte_offset LIMIT ?2;";
+        " FROM ast_symbols WHERE workspace_root=?1 AND parent_id=?2 ORDER BY byte_offset LIMIT ?3;";
     sqlite3_stmt* statement = nullptr;
     if (sqlite3_prepare_v2(impl_->db, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
         return core::makeError(core::ErrorCode::DbError, "Unable to query AST children");
-    bindText(statement, 1, parentSymbolId);
-    sqlite3_bind_int(statement, 2, static_cast<int>(bounded));
+    bindText(statement, 1, impl_->workspaceRoot);
+    bindText(statement, 2, parentSymbolId);
+    sqlite3_bind_int(statement, 3, static_cast<int>(bounded));
     std::vector<AstSymbol> symbols;
     while (sqlite3_step(statement) == SQLITE_ROW) symbols.push_back(rowSymbol(statement));
     sqlite3_finalize(statement);
@@ -424,6 +672,13 @@ core::Status CodebaseIndex::forgetWorkspace(const std::filesystem::path& root) {
     bindText(workspace, 1, normalized);
     static_cast<void>(sqlite3_step(workspace));
     sqlite3_finalize(workspace);
+    sqlite3_stmt* symbols = nullptr;
+    if (sqlite3_prepare_v2(impl_->db, "DELETE FROM ast_symbols WHERE workspace_root=?1;", -1,
+                           &symbols, nullptr) != SQLITE_OK)
+        return core::makeError(core::ErrorCode::DbError, "Unable to forget workspace symbols");
+    bindText(symbols, 1, normalized);
+    static_cast<void>(sqlite3_step(symbols));
+    sqlite3_finalize(symbols);
     sqlite3_stmt* files = nullptr;
     if (sqlite3_prepare_v2(impl_->db, "DELETE FROM files WHERE root=?1;", -1, &files, nullptr) != SQLITE_OK)
         return core::makeError(core::ErrorCode::DbError, "Unable to forget workspace files");
@@ -432,6 +687,11 @@ core::Status CodebaseIndex::forgetWorkspace(const std::filesystem::path& root) {
     sqlite3_finalize(files);
     if (!exec(impl_->db, "INSERT INTO ast_symbols_fts(ast_symbols_fts) VALUES('rebuild');"))
         return core::makeError(core::ErrorCode::DbError, "Unable to rebuild the symbol FTS index");
+    if (impl_->bound && impl_->workspaceRoot == normalized) {
+        impl_->workspaceRoot.clear();
+        impl_->workspaceKey.clear();
+        impl_->bound = false;
+    }
     return core::Status::success();
 }
 
