@@ -7,6 +7,7 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string_view>
 
@@ -30,7 +31,10 @@ struct GraniteWorkControl {
 // cancellation/control I/O never waits on model loading or a decode operation.
 class GraniteEngine {
 public:
-    GraniteEngine(QString directory, const QString& quantization);
+    // temperatureOverride is a development-only sampling experiment seam. Normal
+    // host requests leave it empty and use the pinned manifest value.
+    GraniteEngine(QString directory, const QString& quantization,
+                  std::optional<double> temperatureOverride = std::nullopt);
     ~GraniteEngine();
     GraniteEngine(const GraniteEngine&) = delete;
     GraniteEngine& operator=(const GraniteEngine&) = delete;

@@ -62,6 +62,11 @@ std::string computeSnapshotHash(const NormalizedAnalysis& analysis) {
     h.number(analysis.missingDecisions.size());
     for (const auto& md : analysis.missingDecisions) {
         h.field(md.id).field(md.question).flag(md.blocking);
+        // Empty field values are omitted so already persisted Decision Contract v2
+        // snapshots keep their original canonical hash. A non-empty suggestion is
+        // still bound into the snapshot and changes its hash.
+        if (!md.suggestedAlternativeEvidence.empty())
+            h.field("suggested_alternative_evidence").field(md.suggestedAlternativeEvidence);
     }
 
     h.number(analysis.conflicts.size());

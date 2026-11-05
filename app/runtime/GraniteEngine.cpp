@@ -1,6 +1,7 @@
 #include "GraniteEngine.hpp"
 #include "GraniteConfig.hpp"
 #include "GraniteJsonGrammar.hpp"
+#include "GranitePrefixCache.hpp"
 #include "roclint/core/Json.hpp"
 
 #include <chat.h>
@@ -65,7 +66,8 @@ void GraniteWorkControl::check() const {
 
 class GraniteEngine::Impl {
 public:
-    Impl(QString directory, const QString& quantization) : directory_(std::move(directory)) {
+    Impl(QString directory, const QString& quantization, std::optional<double> temperatureOverride)
+        : directory_(std::move(directory)), temperatureOverride_(temperatureOverride) {
         manifest_ = QJsonDocument::fromJson(QByteArray(kGraniteManifestJson)).object();
         for (const auto& entry : manifest_.value(QStringLiteral("candidates")).toArray()) {
             const auto candidate = entry.toObject();
@@ -80,6 +82,9 @@ public:
             seed < 0 || seed > std::numeric_limits<std::uint32_t>::max() ||
             sampling.value(QStringLiteral("grammar_strategy")).toString() != QLatin1String("llama_common_rejection_v1"))
             throw GraniteFailure(QStringLiteral("CONFIGURATION"), "Native Granite sampling configuration is invalid.");
+        if (temperatureOverride_.has_value() &&
+            (!std::isfinite(*temperatureOverride_) || *temperatureOverride_ <= 0 || *temperatureOverride_ > 4))
+            throw GraniteFailure(QStringLiteral("CONFIGURATION"), "The development temperature override is invalid.");
     }
 
     QJsonObject identity() const {
@@ -102,13 +107,24 @@ public:
             {QStringLiteral("idle_mapped_supported"), manifest_.value(QStringLiteral("gpu_layers")).toInt() == 0 && llama_supports_mmap()},
             {QStringLiteral("gpu_layers"), manifest_.value(QStringLiteral("gpu_layers"))},
             {QStringLiteral("backend"), manifest_.value(QStringLiteral("backend"))},
+            {QStringLiteral("sampling_temperature"), effectiveTemperature()},
+            {QStringLiteral("kv_prefix_cache"), true},
+            {QStringLiteral("last_prefix_reused_tokens"), static_cast<qint64>(lastPrefixReused_.load())},
             {QStringLiteral("selected_device"), deviceName},
             {QStringLiteral("selected_device_description"), deviceDescription},
             {QStringLiteral("system_info"), systemInfo}};
     }
 
+    double effectiveTemperature() const {
+        return temperatureOverride_.value_or(
+            manifest_.value(QStringLiteral("sampling")).toObject().value(QStringLiteral("temperature")).toDouble());
+    }
+
     void freeContext() {
         context_.reset();
+        cachedTokens_.clear();
+        cacheValid_ = false;
+        lastPrefixReused_.store(0);
         tier_.store(model_ ? Tier::IdleMapped : Tier::Unloaded);
         state_.store(ReadyState::Unloaded);
     }
@@ -241,6 +257,9 @@ public:
             context_.reset(llama_init_from_model(model_.get(), params));
             control.check();
             if (!context_) throw GraniteFailure(QStringLiteral("CONTEXT"), "The native runtime could not allocate its context.");
+            cachedTokens_.clear();
+            cacheValid_ = false;
+            lastPrefixReused_.store(0);
             const auto tokens = common_tokenize(llama_model_get_vocab(model_.get()), "Runtime warm-up.", true, false);
             decode(tokens, 0, control);
             llama_memory_clear(llama_get_memory(context_.get()), true);
@@ -294,14 +313,28 @@ public:
         common_params_sampling params;
         params.samplers = {COMMON_SAMPLER_TYPE_TOP_P, COMMON_SAMPLER_TYPE_TEMPERATURE};
         params.top_p = static_cast<float>(sampling.value(QStringLiteral("top_p")).toDouble());
-        params.temp = static_cast<float>(sampling.value(QStringLiteral("temperature")).toDouble());
+        params.temp = static_cast<float>(effectiveTemperature());
         params.seed = static_cast<std::uint32_t>(sampling.value(QStringLiteral("seed")).toInteger());
         params.min_keep = 1;
         params.backend_sampling = false;
         params.grammar = {COMMON_GRAMMAR_TYPE_OUTPUT_FORMAT, *grammar};
         auto sampler = common_sampler_ptr(common_sampler_init(model_.get(), params));
         if (!sampler) throw GraniteFailure(QStringLiteral("SCHEMA"), "The native runtime could not compile its output schema.");
-        llama_memory_clear(llama_get_memory(context_.get()), true);
+
+        // The system prompt and granite.discovery.selective.v7 preamble are a fixed
+        // token prefix. Reuse the matching KV entries instead of re-prefilling them.
+        llama_memory_t memory = llama_get_memory(context_.get());
+        std::size_t reusedTokens = 0;
+        if (cacheValid_) reusedTokens = reusablePromptPrefix(cachedTokens_, tokens);
+        if (reusedTokens > 0) {
+            if (!llama_memory_seq_rm(memory, 0, static_cast<llama_pos>(reusedTokens), -1)) {
+                llama_memory_clear(memory, false);
+                reusedTokens = 0;
+            }
+        } else {
+            llama_memory_clear(memory, true);
+        }
+        std::vector<llama_token> promptSuffix(tokens.begin() + static_cast<std::ptrdiff_t>(reusedTokens), tokens.end());
         llama_set_abort_callback(context_.get(), abortDecode, &control);
         QElapsedTimer timer;
         timer.start();
@@ -312,6 +345,7 @@ public:
         bool ended = false;
         bool prefillCompleted = false;
         qint64 decodeNanoseconds = 0;
+        qint64 prefillNanoseconds = 0;
         qint64 samplerNanoseconds = 0;
         struct PhaseTimer {
             qint64& total;
@@ -324,8 +358,12 @@ public:
             decode(input, position, control);
         };
         try {
-            timedDecode(tokens, 0);
+            {
+                const PhaseTimer phase(prefillNanoseconds);
+                decode(promptSuffix, static_cast<llama_pos>(reusedTokens), control);
+            }
             prefillCompleted = true;
+            lastPrefixReused_.store(reusedTokens);
             for (; generated < outputCap; ++generated) {
                 control.check();
                 llama_token token{};
@@ -353,7 +391,17 @@ public:
             }
             const auto latency = static_cast<double>(timer.nsecsElapsed()) / 1e6;
             llama_set_abort_callback(context_.get(), nullptr, nullptr);
-            llama_memory_clear(llama_get_memory(context_.get()), true);
+            // Keep only the prompt tokens in the cache; generated tokens are removed
+            // so the next request can reuse the stable instruction prefix safely.
+            const bool trimmed = llama_memory_seq_rm(memory, 0, static_cast<llama_pos>(tokens.size()), -1);
+            if (trimmed) {
+                cachedTokens_ = tokens;
+                cacheValid_ = true;
+            } else {
+                llama_memory_clear(memory, false);
+                cachedTokens_.clear();
+                cacheValid_ = false;
+            }
             state_.store(ReadyState::Ready);
             if (!ended) throw GraniteFailure(QStringLiteral("OUTPUT_TOO_LARGE"), "Native Granite reached its output token limit before completing the object.");
             const auto valid = core::json::parse(std::string_view(output.constData(), static_cast<std::size_t>(output.size())));
@@ -361,12 +409,22 @@ public:
             return {{QStringLiteral("text"), QString::fromUtf8(output)}, {QStringLiteral("input_tokens"), static_cast<qint64>(tokens.size())},
                 {QStringLiteral("output_tokens"), emitted}, {QStringLiteral("first_token_ms"), firstTokenMs},
                 {QStringLiteral("decode_ms"), static_cast<double>(decodeNanoseconds) / 1e6},
+                {QStringLiteral("prefill_ms"), static_cast<double>(prefillNanoseconds) / 1e6},
+                {QStringLiteral("kv_cache_reused_tokens"), static_cast<qint64>(reusedTokens)},
+                {QStringLiteral("kv_cache_prefix_enabled"), true},
                 {QStringLiteral("sampler_ms"), static_cast<double>(samplerNanoseconds) / 1e6},
+                {QStringLiteral("sampling_temperature"), effectiveTemperature()},
                 {QStringLiteral("generation_ms"), latency}, {QStringLiteral("template_sha256"), QString::fromLatin1(templateHash_)}};
         } catch (GraniteFailure& error) {
+            llama_set_abort_callback(context_.get(), nullptr, nullptr);
+            llama_memory_clear(memory, false);
+            cachedTokens_.clear();
+            cacheValid_ = false;
             error.metrics = {{QStringLiteral("input_tokens"), static_cast<qint64>(tokens.size())},
                 {QStringLiteral("output_tokens"), emitted}, {QStringLiteral("first_token_ms"), firstTokenMs},
                 {QStringLiteral("decode_ms"), static_cast<double>(decodeNanoseconds) / 1e6},
+                {QStringLiteral("prefill_ms"), static_cast<double>(prefillNanoseconds) / 1e6},
+                {QStringLiteral("kv_cache_reused_tokens"), static_cast<qint64>(reusedTokens)},
                 {QStringLiteral("sampler_ms"), static_cast<double>(samplerNanoseconds) / 1e6},
                 {QStringLiteral("prefill_completed"), prefillCompleted},
                 {QStringLiteral("generation_ms"), static_cast<double>(timer.nsecsElapsed()) / 1e6}};
@@ -396,6 +454,9 @@ public:
             if (context_) {
                 llama_set_abort_callback(context_.get(), nullptr, nullptr);
                 llama_memory_clear(llama_get_memory(context_.get()), true);
+                cachedTokens_.clear();
+                cacheValid_ = false;
+                lastPrefixReused_.store(0);
             }
             state_.store(model_ && context_ ? ReadyState::Ready : ReadyState::Failed);
             throw;
@@ -407,10 +468,14 @@ private:
     QJsonObject manifest_;
     QJsonObject candidate_;
     QByteArray templateHash_;
+    std::optional<double> temperatureOverride_;
     std::atomic<ReadyState> state_{ReadyState::Unloaded};
     std::atomic<Tier> tier_{Tier::Unloaded};
+    std::atomic<std::size_t> lastPrefixReused_{0};
     std::unique_ptr<llama_model, decltype(&llama_model_free)> model_{nullptr, llama_model_free};
     std::unique_ptr<llama_context, decltype(&llama_free)> context_{nullptr, llama_free};
+    std::vector<llama_token> cachedTokens_;
+    bool cacheValid_{false};
     common_chat_templates_ptr templates_;
     ggml_backend_dev_t devices_[2]{nullptr, nullptr};
     bool backendInitialized_{false};
@@ -420,7 +485,9 @@ private:
     QString deviceDescription_;
 };
 
-GraniteEngine::GraniteEngine(QString directory, const QString& quantization) : impl_(std::make_unique<Impl>(std::move(directory), quantization)) {}
+GraniteEngine::GraniteEngine(QString directory, const QString& quantization,
+                             std::optional<double> temperatureOverride)
+    : impl_(std::make_unique<Impl>(std::move(directory), quantization, temperatureOverride)) {}
 GraniteEngine::~GraniteEngine() = default;
 QJsonObject GraniteEngine::identity() const { return impl_->identity(); }
 QJsonObject GraniteEngine::status() const { return impl_->status(); }

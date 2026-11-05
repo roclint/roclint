@@ -34,6 +34,31 @@ an::SnapshotEvaluationResponse scored(const an::NormalizedAnalysis& input) {
     return result;
 }
 
+void testSuggestedAlternativeEvidenceRoundTrip() {
+    an::NormalizedAnalysis input;
+    input.sessionId = "sess_suggestion";
+    input.baseRevisionId = "rev_sess_suggestion_1";
+    an::MissingDecision missing;
+    missing.id = an::mintMissingDecisionId(0);
+    missing.question = "Which database should the migration target?";
+    missing.blocking = true;
+    missing.suggestedAlternativeEvidence = "An excerpt of the deployment configuration would resolve this.";
+    input.missingDecisions.push_back(missing);
+    an::sealSnapshot(input);
+
+    const auto encoded = storage::encodeAnalysis(input);
+    const auto decoded = storage::decodeAnalysis(encoded);
+    ROCLINT_CHECK(decoded.ok());
+    ROCLINT_CHECK(decoded.value() == input);
+    ROCLINT_CHECK(decoded.value().missingDecisions.front().suggestedAlternativeEvidence ==
+                  missing.suggestedAlternativeEvidence);
+    ROCLINT_CHECK(an::isSnapshotSealed(decoded.value()));
+
+    auto tampered = input;
+    tampered.missingDecisions.front().suggestedAlternativeEvidence = "A different evidence path.";
+    ROCLINT_CHECK(!an::isSnapshotSealed(tampered));
+}
+
 void testPlanCapCoverageAndStrictValidation() {
     const auto input = normalized(5);
     const auto plan = an::buildScoringPlan(input);
@@ -127,6 +152,7 @@ void testLegacySnapshotHashAndPayloadRemainUnchanged() {
 
 int main() {
     testLegacySnapshotHashAndPayloadRemainUnchanged();
+    testSuggestedAlternativeEvidenceRoundTrip();
     testPlanCapCoverageAndStrictValidation();
     testScoresNeverConfirmAssumptionsAndSurviveReopen();
     std::cout << "Assumption batch limits, scoring evidence, user authority and history passed.\n";

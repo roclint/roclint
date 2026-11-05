@@ -153,3 +153,17 @@ The v5 implementation uses the pinned library's [`common_sampler` grammar-reject
 **Semantic quality is not accepted.** Explicitly contradictory output requirements were returned as `no_ambiguity`. Missing-target analysis offered unsupported scope such as whole-directory deletion/secure erase and required manual review for overlap. Quoted-data analysis invented output-format instructions and had two ungrounded excerpts. The speed example offered correctness degradation despite an ordinary refactoring request. Mechanical success is not semantic or release acceptance.
 
 This is a Granite component check, not a complete real-model S1/user-interaction study. Recovery measurements were explicitly skipped. Baseline GPU activity was 15% with 2,145 MiB in use on the RTX 4060 Laptop GPU (`build/s1-q8-gpu-baseline.csv` and process listing); other applications were not stopped, so the run is not certified uncontended. The Q8_0 default is retained while these quality gates remain open.
+
+### KV prefix reuse (current)
+
+The system prompt and the fixed `granite.discovery.selective.v7` instruction preamble are identical across discovery calls. The native engine now keeps the prompt KV entries after a successful response, removes only the generated tail with `llama_memory_seq_rm`, and reuses the longest matching token prefix on the next request. The final prompt token is always re-evaluated so sampling receives fresh logits. Any failed, cancelled or incompatible call clears the cache instead of reusing partial state.
+
+Successful responses report `prefill_ms`, `kv_cache_reused_tokens` and `kv_cache_prefix_enabled`. `runtime_status` also reports `kv_prefix_cache` and `last_prefix_reused_tokens`. This is a latency optimization only; it does not change the pinned model, sampling configuration, grammar or Decision Contract.
+
+`--sampling-temperature` on `roclint_granite_worker` is a development-only controlled-experiment override. The desktop host never sets it. Benchmark reports must record the requested value separately from the pinned manifest temperature. The controlled comparison tool is:
+
+```sh
+python tools/benchmark_granite_backends.py --backend-label VULKAN --temperature 1.0 --temperature 0.7 --repeat 2
+```
+
+Run the same command on macOS with a Metal build and `--backend-label METAL` for a like-for-like cross-backend comparison; the fixture corpus and quantization must match.

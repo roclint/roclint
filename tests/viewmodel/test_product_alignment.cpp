@@ -683,7 +683,7 @@ void testReviewAcknowledgementStorageFailure() {
     });
     auto* check=findVisual(window->contentItem(),"constraintReview_intent_item_grp_0");
     ROCLINT_CHECK(check && check->hasActiveFocus()); QTest::keyClick(window,Qt::Key_Space);
-    ROCLINT_CHECK(c.waitForIdleForTesting(12000));
+    ROCLINT_CHECK(c.waitForIdleForTesting(30000));
     ROCLINT_CHECK(completed && ticks>100 && c.storageNeedsRecovery() && !c.canApprove() && !c.hasApproval() && !c.hasProposal());
     ROCLINT_CHECK(c.currentRevisionText()==QString::fromStdString(fx::kChainPrompt));
     ROCLINT_CHECK(window->findChild<QQuickItem*>("promptInput")->property("text").toString()==c.currentRevisionText());

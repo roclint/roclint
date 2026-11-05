@@ -1693,6 +1693,9 @@ void HostController::refreshActiveItemPresentation() {
             for (const auto& m : a.missingDecisions) {
                 if (m.id == id) {
                     m_activeQuestion = qs(m.question);
+                    if (!m.suggestedAlternativeEvidence.empty()) {
+                        m_activeQuestion += QStringLiteral("\n\nAlternative evidence: ") + qs(m.suggestedAlternativeEvidence);
+                    }
                     m_activeDimension = QStringLiteral("Missing detail");
                 }
             }

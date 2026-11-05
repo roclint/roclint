@@ -1,0 +1,181 @@
+"""Download and verify all pinned Roclint models (Julia-1 S1 and Granite-4.2-3B S2) on Windows/macOS/Linux.
+
+This provisions the exact pinned model weights required for Roclint's decoupled
+two-model architecture:
+- S1: Julia-1 Triage Classifier (ModernBERT FP32 safetensors)
+- S2: Granite-4.2-3B (GGUF Q8_0 Vulkan/Metal runtime)
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
+ROOT = Path(__file__).resolve().parents[1]
+
+# Pinned Julia-1 Checkpoint
+JULIA_MODEL_ID = "SupersonicLabs/Julia-1"
+JULIA_REVISION = "a85b127321d580d65176c89ced8273f305745d85"
+JULIA_WEIGHTS_SHA256 = "df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72"
+
+
+def get_default_models_dir() -> Path:
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if local_app_data:
+            return Path(local_app_data) / "roclint" / "Roclint" / "models"
+        return Path.home() / "AppData" / "Local" / "roclint" / "Roclint" / "models"
+    elif sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "roclint" / "Roclint" / "models"
+    else:
+        return Path.home() / ".local" / "share" / "roclint" / "Roclint" / "models"
+
+
+def get_or_create_julia_venv(build_dir: Path) -> Path:
+    """Ensure build/runtime/julia-python exists and has required dependencies."""
+    venv_dir = build_dir / "runtime" / "julia-python"
+    python_exe = venv_dir / ("Scripts" if sys.platform == "win32" else "bin") / ("python.exe" if sys.platform == "win32" else "python3")
+    
+    if not python_exe.exists():
+        print(f"[*] Setting up Julia Python virtual environment in {venv_dir}...")
+        setup_script = ROOT / "tools" / "setup_julia.py"
+        subprocess.run([sys.executable, str(setup_script), "--build-dir", str(build_dir)], check=True)
+    
+    if not python_exe.exists():
+        raise RuntimeError(f"Failed to create or locate Julia Python at {python_exe}")
+    
+    return python_exe
+
+
+def download_julia(target_dir: Path, venv_python: Path):
+    """Download and verify Julia-1 using the prepared virtual environment."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    safetensors = target_dir / "model.safetensors"
+    manifest_file = target_dir / "roclint-julia.json"
+    
+    if safetensors.exists() and manifest_file.exists():
+        with safetensors.open("rb") as f:
+            h = hashlib.file_digest(f, "sha256").hexdigest()
+        if h == JULIA_WEIGHTS_SHA256:
+            print(f"[OK] Julia-1 model is already installed and verified at {target_dir}")
+            return
+        print("[!] Existing Julia weights failed hash check; re-downloading...")
+
+    print(f"[*] Downloading Julia-1 classifier to {target_dir} (about 600 MB)...")
+    download_code = f"""
+from pathlib import Path
+import json, hashlib
+from huggingface_hub import snapshot_download
+
+root = Path(r'{target_dir}')
+snapshot_download(
+    '{JULIA_MODEL_ID}',
+    revision='{JULIA_REVISION}',
+    local_dir=str(root),
+    allow_patterns=[
+        'README.md', 'config.json', 'julia_config.json', 'inference-policy.json',
+        'model.safetensors', 'encoder/*.json', 'tokenizer/*.json',
+        'julia/*.py', 'julia/router/*.py'
+    ]
+)
+
+weights_file = root / 'model.safetensors'
+with weights_file.open('rb') as f:
+    digest = hashlib.file_digest(f, 'sha256').hexdigest()
+
+if digest != '{JULIA_WEIGHTS_SHA256}':
+    raise ValueError('Julia weights failed SHA-256 integrity check')
+
+manifest = {{'model_id': '{JULIA_MODEL_ID}', 'revision': '{JULIA_REVISION}', 'weights_sha256': '{JULIA_WEIGHTS_SHA256}', 'files': {{}}}}
+for path in sorted(root.rglob('*')):
+    if path.is_file() and '.cache' not in path.parts and '__pycache__' not in path.parts and path.name != 'roclint-julia.json':
+        with path.open('rb') as f:
+            manifest['files'][path.relative_to(root).as_posix()] = hashlib.file_digest(f, 'sha256').hexdigest()
+
+(root / 'roclint-julia.json').write_text(json.dumps(manifest, indent=2) + '\\n', encoding='utf-8')
+print('[OK] Julia-1 download and SHA-256 verification complete.')
+"""
+    subprocess.run([str(venv_python), "-c", download_code], check=True)
+
+
+def download_granite(target_dir: Path, quantization: str):
+    """Download and verify native Granite GGUF candidate using setup_granite.py."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    setup_script = ROOT / "tools" / "setup_granite.py"
+    print(f"[*] Downloading / verifying native Granite 4.2-3B ({quantization}) to {target_dir}...")
+    cmd = [
+        sys.executable,
+        str(setup_script),
+        "--model-dir", str(target_dir),
+        "--quantization", quantization
+    ]
+    subprocess.run(cmd, check=True)
+
+
+def update_windows_registry(models_base: Path):
+    if sys.platform != "win32":
+        return
+    import winreg
+    try:
+        models_str = str(models_base).replace("\\", "/")
+        s1_str = str(models_base / "s1").replace("\\", "/")
+        s2_str = str(models_base / "s2").replace("\\", "/")
+        
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\roclint\Roclint\models") as key:
+            winreg.SetValueEx(key, "baseDirectory", 0, winreg.REG_SZ, models_str)
+            winreg.SetValueEx(key, "nativeDirectory", 0, winreg.REG_SZ, s2_str)
+            winreg.SetValueEx(key, "active", 0, winreg.REG_SZ, "native-granite:Q8_0")
+        
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, r"Software\roclint\Roclint\scoring") as key:
+            winreg.SetValueEx(key, "juliaDirectory", 0, winreg.REG_SZ, s1_str)
+        
+        print("[OK] Updated Windows Registry model paths successfully.")
+    except Exception as e:
+        print(f"[!] Note: Could not update registry automatically: {e}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--models-dir", type=Path, default=None,
+                        help="Root directory for models (defaults to system AppData models directory)")
+    parser.add_argument("--quantization", choices=["Q8_0", "Q5_K_M", "Q4_K_M", "all"], default="Q8_0",
+                        help="Granite quantization to download (default: Q8_0)")
+    parser.add_argument("--skip-julia", action="store_true", help="Skip Julia-1 download")
+    parser.add_argument("--skip-granite", action="store_true", help="Skip Granite download")
+    args = parser.parse_args()
+
+    models_dir = args.models_dir or get_default_models_dir()
+    s1_dir = models_dir / "s1"
+    s2_dir = models_dir / "s2"
+    build_dir = ROOT / "build"
+
+    print("==================================================")
+    print("  Roclint Model Downloader & Verification (v2)")
+    print("==================================================")
+    print(f"Models Directory : {models_dir}")
+    print(f"S1 (Julia-1)     : {s1_dir}")
+    print(f"S2 (Granite-3B)  : {s2_dir} ({args.quantization})")
+    print("==================================================")
+
+    if not args.skip_julia:
+        venv_python = get_or_create_julia_venv(build_dir)
+        download_julia(s1_dir, venv_python)
+
+    if not args.skip_granite:
+        download_granite(s2_dir, args.quantization)
+
+    update_windows_registry(models_dir)
+
+    print("\n[OK] All required models are provisioned and verified.")
+    print("    You can now launch Roclint with start_roclint.bat.")
+
+
+if __name__ == "__main__":
+    main()

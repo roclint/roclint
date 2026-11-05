@@ -553,7 +553,7 @@ void testS1FirstControllerRouting() {
         settings.setValue(QStringLiteral("scoring/juliaDirectory"), QString::fromLatin1(mode));
         HostController controller(history.filePath(QString::fromLatin1(mode) + ".db"));
     ROCLINT_CHECK(controller.waitForStorageForTesting());
-        if (std::string_view(mode) == "slow_triage") controller.setAnalysisGroupTimeoutForTesting(200);
+        if (std::string_view(mode) == "slow_triage") controller.setAnalysisGroupTimeoutForTesting(1500);
         if (std::string_view(mode) == "s1_timeout") controller.setAnalysisGroupTimeoutForTesting(25);
         // Uses the production routing default. Only the out-of-process model data is scripted.
         controller.refreshJuliaModel();
@@ -561,7 +561,7 @@ void testS1FirstControllerRouting() {
         int graniteCalls = 0, rewriteCalls = 0;
         controller.setTransportOverrideForTesting([&](std::string_view instruction) -> roclint::core::Result<std::string> {
             ++graniteCalls;
-            if (std::string_view(mode) == "slow_triage") QThread::msleep(100);
+            if (std::string_view(mode) == "slow_triage") QThread::msleep(2500);
             if (instruction.find("<instructions>") != std::string_view::npos) {
                 ++rewriteCalls;
                 return fx::rewriteReply("Refactor the parser to reduce single-call latency.");

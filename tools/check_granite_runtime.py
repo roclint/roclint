@@ -99,6 +99,8 @@ class Worker:
         self.diagnostics = []
         self.diagnostic_unbounded = args.diagnostic_no_deadlines
         command = [str(args.worker), "--model-dir", str(args.model_dir), "--quantization", quantization]
+        if getattr(args, "temperature", None) is not None:
+            command += ["--sampling-temperature", str(args.temperature)]
         if self.diagnostic_unbounded:
             command.append("--diagnostic-no-deadlines")
         self.process = subprocess.Popen(command,
@@ -145,6 +147,12 @@ class Worker:
         response = self.messages.get(timeout=timeout)
         if isinstance(response, Exception):
             raise response
+        # Streaming frames arrive before the final result. The probe records only
+        # the complete typed response, never a partial stream as the reply.
+        while isinstance(response, dict) and response.get("type") == "partial_result":
+            response = self.messages.get(timeout=timeout)
+            if isinstance(response, Exception):
+                raise response
         for key, value in request.items():
             if key not in ("type", "payload") and response.get(key) != value:
                 raise RuntimeError("Native response binding mismatch: " + key)

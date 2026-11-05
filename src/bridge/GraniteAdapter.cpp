@@ -1,6 +1,7 @@
 #include "roclint/bridge/GraniteAdapter.hpp"
 #include "roclint/bridge/ModelResponseEnvelope.hpp"
 #include "roclint/core/crypto/Sha256.hpp"
+#include "roclint/rewrite/StructuredEntityExtractor.hpp"
 
 #include "roclint/core/Json.hpp"
 #include "roclint/core/prompt_state/TextNormalization.hpp"
@@ -314,7 +315,7 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     out += " \"choice_groups\": [{\"dimension\": string, \"question\": string, \"material\": boolean,\n";
     out += "   \"alternatives\": [{\"label\": string, \"why_material\": string, \"evidence\": [string]}]}],\n";
     out += " \"assumptions\": [{\"statement\": string, \"material\": boolean, \"evidence\": [string]}],\n";
-    out += " \"missing_decisions\": [{\"question\": string, \"blocking\": boolean}],\n";
+    out += " \"missing_decisions\": [{\"question\": string, \"blocking\": boolean, \"suggested_alternative_evidence\": string}],\n";
     out += " \"conflicts\": [{\"description\": string, \"blocking\": boolean}],\n";
     out += " \"clarification_question\": string}\n";
     out += "When a consequential decision is missing, find phrases in prompt_text that a capable assistant could reasonably read in 2 or 3 "
@@ -341,6 +342,10 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     out += "- Each choice group must quote a different phrase, and no two groups may quote overlapping text. If "
            "several questions concern the same phrase, keep only the most consequential one.\n";
     out += "- Put details the user must supply but that have no clear options in missing_decisions.\n";
+    out += "- When a missing decision could be resolved by an alternative artifact the user may already have "
+           "(for example a log excerpt, configuration file, error message or sample input), put one short "
+           "suggestion in suggested_alternative_evidence; otherwise use an empty string. Never invent a "
+           "file name or path.\n";
     out += "- Ask at most 3 material questions IN TOTAL across choice_groups, material assumptions, "
            "blocking missing_decisions and blocking conflicts. Never repeat a choice group's question "
            "as a missing decision. A user's answer to one question must settle that decision completely.\n";
@@ -420,7 +425,8 @@ const std::string& discoveryResponseSchema() {
   "statement":{"type":"string"},"material":{"type":"boolean"},"evidence":{"type":"array","items":{"type":"string"}}},
   "required":["statement","material","evidence"]}},
 "missing_decisions":{"type":"array","items":{"type":"object","properties":{
-  "question":{"type":"string","minLength":1},"blocking":{"type":"boolean"}},"required":["question","blocking"]}},
+  "question":{"type":"string","minLength":1},"blocking":{"type":"boolean"},
+  "suggested_alternative_evidence":{"type":"string","maxLength":1024}},"required":["question","blocking"]}},
 "conflicts":{"type":"array","items":{"type":"object","properties":{
   "description":{"type":"string"},"blocking":{"type":"boolean"}},"required":["description","blocking"]}},
 "clarification_question":{"type":"string"}},
@@ -620,6 +626,11 @@ Result<GraniteOptionDiscoveryResponse> parseDiscoveryResponse(std::string_view j
         auto blocking = readFlag(m, "blocking", false);
         if (!blocking.ok()) return blocking.error();
         md.blocking = blocking.value();
+        auto suggestion = readText(m, "suggested_alternative_evidence", false);
+        if (!suggestion.ok()) return suggestion.error();
+        md.suggestedAlternativeEvidence = trimModelWhitespace(suggestion.value());
+        if (md.suggestedAlternativeEvidence.size() > 1024)
+            return makeError(ErrorCode::InvalidInput, "Field 'suggested_alternative_evidence' exceeds its 1024-byte limit");
         analysis.missingDecisions.push_back(std::move(md));
     }
 
@@ -802,6 +813,49 @@ Result<GraniteOptionDiscoveryResponse> GraniteAdapter::discoverOptions(const Gra
     }
 
     const auto start = std::chrono::steady_clock::now();
+
+    // Deterministic pre-model guard: same-target explicit contradictions do not
+    // need a 2-8 second Granite call and must never be reported as no_ambiguity.
+    const auto preflight = core::rewrite::StructuredEntityExtractor::analyze(req.promptString);
+    if (!preflight.detectedExplicitConflicts.empty()) {
+        std::vector<core::analysis::Conflict> conflicts;
+        bool resolvable = true;
+        for (const auto& detected : preflight.detectedExplicitConflicts) {
+            if (conflicts.size() >= kMaxDiscoveryItemsPerKind) break;
+            const auto first = core::analysis::findUniqueSpan(req.promptString, detected.requirementA);
+            const auto second = core::analysis::findUniqueSpan(req.promptString, detected.requirementB);
+            if (first.status != core::analysis::SpanMatchStatus::ExactMatch || !first.span.has_value() ||
+                second.status != core::analysis::SpanMatchStatus::ExactMatch || !second.span.has_value()) {
+                // An ambiguous or missing source span falls through to the model rather
+                // than fabricating a binding to text the host cannot prove.
+                resolvable = false;
+                break;
+            }
+            core::analysis::Conflict conflict;
+            conflict.id = core::analysis::mintConflictId(conflicts.size());
+            conflict.description = "Conflicting requirements for " + detected.subject + ": \"" +
+                detected.requirementA.substr(0, 512) + "\" and \"" + detected.requirementB.substr(0, 512) +
+                "\". Choose which requirement should apply.";
+            conflict.blocking = true;
+            conflicts.push_back(std::move(conflict));
+        }
+        if (resolvable && !conflicts.empty()) {
+            core::analysis::NormalizedAnalysis analysis;
+            analysis.sessionId = req.sessionId;
+            analysis.baseRevisionId = req.revisionId;
+            analysis.conflicts = std::move(conflicts);
+            core::analysis::sealSnapshot(analysis);
+
+            GraniteOptionDiscoveryResponse response;
+            response.outcome = DiscoveryOutcome::OptionsGenerated;
+            response.analysis = std::move(analysis);
+            response.assistanceKind = core::analysis::AssistanceKind::Clarification;
+            response.model = modelInfo();
+            response.latencyMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            return response;
+        }
+    }
+
     Result<std::string> raw = makeError(ErrorCode::Internal, "Transport did not run");
     try {
         raw = transport(buildDiscoveryPrompt(req));

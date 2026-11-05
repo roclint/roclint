@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -170,17 +171,29 @@ int main(int argc, char** argv) {
     parser.addHelpOption();
     parser.addOption({QStringLiteral("model-dir"), QStringLiteral("Directory containing pinned Granite GGUF files."), QStringLiteral("directory")});
     parser.addOption({QStringLiteral("quantization"), QStringLiteral("Pinned benchmark candidate."), QStringLiteral("quantization")});
+    parser.addOption({QStringLiteral("sampling-temperature"),
+        QStringLiteral("Development-only sampling experiment; overrides the pinned temperature. Not a release configuration."),
+        QStringLiteral("value")});
     parser.addOption({QStringLiteral("diagnostic-no-deadlines"), QStringLiteral("Development investigation only: disable semantic operation deadlines; cancellation and shutdown remain active.")});
     parser.process(app);
     if (!parser.isSet(QStringLiteral("model-dir")) || !parser.isSet(QStringLiteral("quantization"))) return 2;
+    std::optional<double> temperatureOverride;
+    if (parser.isSet(QStringLiteral("sampling-temperature"))) {
+        bool valid = false;
+        const auto value = parser.value(QStringLiteral("sampling-temperature")).toDouble(&valid);
+        if (!valid || value <= 0.0 || value > 4.0) return 2;
+        temperatureOverride = value;
+    }
     llama_log_set([](ggml_log_level level, const char* message, void*) {
         // Do not enable dependency DEBUG/payload tracing in the resident helper.
         if (level == GGML_LOG_LEVEL_WARN || level == GGML_LOG_LEVEL_ERROR) static_cast<void>(std::fputs(message, stderr));
     }, nullptr);
     try {
         const bool diagnosticUnbounded = parser.isSet(QStringLiteral("diagnostic-no-deadlines"));
-        GraniteEngine engine(parser.value(QStringLiteral("model-dir")), parser.value(QStringLiteral("quantization")));
+        GraniteEngine engine(parser.value(QStringLiteral("model-dir")), parser.value(QStringLiteral("quantization")),
+                             temperatureOverride);
         const auto identity = engine.identity();
+        const auto initialStatus = engine.status();
         std::mutex mutex;
         std::condition_variable available;
         std::deque<Work> queue;
@@ -204,6 +217,8 @@ int main(int argc, char** argv) {
                         hello = true;
                         emitFrame(reply(request, {{QStringLiteral("protocol_version"), 1},
                             {QStringLiteral("diagnostic_unbounded"), diagnosticUnbounded},
+                            {QStringLiteral("sampling_temperature"), initialStatus.value(QStringLiteral("sampling_temperature"))},
+                            {QStringLiteral("kv_prefix_cache"), initialStatus.value(QStringLiteral("kv_prefix_cache"))},
                             {QStringLiteral("analysis_timeout_ms"), diagnosticUnbounded ? 0 : roclint::runtime::kGraniteAnalysisTimeoutMs},
                             {QStringLiteral("rewrite_timeout_ms"), diagnosticUnbounded ? 0 : roclint::runtime::kGraniteRewriteTimeoutMs},
                             {QStringLiteral("operations"), QJsonArray{

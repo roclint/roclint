@@ -126,7 +126,7 @@ void testBusyFailureAndExplicitRecovery() {
     int ticks = 0; QTimer heartbeat; QObject::connect(&heartbeat, &QTimer::timeout, [&]() { ++ticks; }); heartbeat.start(2);
     const auto version = controller.stateVersion();
     const auto edit = controller.noteDraftEdited(version); ROCLINT_CHECK(edit);
-    ROCLINT_CHECK(!controller.waitForCommandForTesting(edit, 10000));
+    ROCLINT_CHECK(!controller.waitForCommandForTesting(edit, 30000));
     ROCLINT_CHECK(ticks > 100 && controller.storageNeedsRecovery() && controller.isDraftDirty());
     ROCLINT_CHECK(controller.currentRevisionText() == prompt);
     ROCLINT_CHECK(blocker.execute("ROLLBACK").ok());

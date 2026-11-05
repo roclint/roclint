@@ -45,6 +45,13 @@ Window {
     property bool suppressEditSignal: false
     property bool editingDraft: false
     property double pendingEditRequest: 0
+    readonly property bool showPromptEditor: !rootWindow.isCompiledPreview && (
+        !rootWindow.hc ||
+        !hostController.isAmbientAttached ||
+        rootWindow.editingDraft ||
+        rootWindow.isDetailedExpanded ||
+        (!hostController.isClarifying && !hostController.hasProposal)
+    )
     readonly property bool isCompiledPreview: hc && hostController.hasProposal
     readonly property bool hasAmbiguity: hc && hostController.isClarifying
     readonly property bool needsManualAnswer: hc && hostController.isManual && hostController.interventionReason === "CLARIFICATION_BUDGET_EXCEEDED"
@@ -1278,7 +1285,7 @@ Window {
                     id: mainContent
                     // Keep controls clear of the overlay scrollbar while scrolling.
                     width: Math.max(0, contentScroll.contentWidth - 12)
-                    height: rootWindow.isCompiledPreview || (rootWindow.hc && hostController.isAmbientAttached && !rootWindow.editingDraft)
+                    height: !rootWindow.showPromptEditor
                         ? implicitHeight : Math.max(implicitHeight, contentScroll.height)
                     spacing: 6
 
@@ -1286,11 +1293,23 @@ Window {
 
                         // Prompt Terminal Canvas (Double Bounded Inset)
                         Rectangle {
-                            visible: (!rootWindow.hc || !hostController.isAmbientAttached || rootWindow.editingDraft) && !rootWindow.isCompiledPreview
-                            Layout.minimumHeight: visible ? 150 : 0
+                            id: promptTerminalCanvas
+                            visible: rootWindow.showPromptEditor
+                            Layout.minimumHeight: visible ? (rootWindow.isDetailedExpanded ? 180 : 120) : 0
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
                             Layout.fillHeight: visible
+                            MouseArea {
+                                anchors.fill: parent
+                                z: -1
+                                cursorShape: Qt.IBeamCursor
+                                onClicked: {
+                                    if (rootWindow.Window.window) rootWindow.Window.window.requestActivate();
+                                    if (rootWindow.hc) hostController.pauseAmbientFollowing();
+                                    rootWindow.editingDraft = true;
+                                    promptInput.forceActiveFocus();
+                                }
+                            }
                             color: rootWindow.inputBgColor
                             border.color: promptInput.activeFocus ? rootWindow.fgColor : rootWindow.borderColor
                             border.width: 1
@@ -1316,6 +1335,22 @@ Window {
                                         objectName: "promptInput"
                                         Accessible.name: qsTr("Prompt draft")
                                         activeFocusOnTab: true
+                                        cursorVisible: activeFocus
+                                        TapHandler {
+                                            onTapped: {
+                                                if (rootWindow.Window.window) rootWindow.Window.window.requestActivate();
+                                                if (rootWindow.hc) hostController.pauseAmbientFollowing();
+                                                rootWindow.editingDraft = true;
+                                                promptInput.forceActiveFocus();
+                                            }
+                                        }
+                                        onActiveFocusChanged: {
+                                            if (activeFocus) {
+                                                if (rootWindow.Window.window) rootWindow.Window.window.requestActivate();
+                                                if (rootWindow.hc) hostController.pauseAmbientFollowing();
+                                                rootWindow.editingDraft = true;
+                                            }
+                                        }
                                         placeholderText: qsTr("// Type your prompt here...\n// Example: 'Update SessionManager timeout handling and run tests'")
                                         placeholderTextColor: rootWindow.commentColor
                                         color: rootWindow.fgColor
@@ -1456,9 +1491,16 @@ Window {
                     onClicked: rootWindow.retryHistory()
                 }
                 IntentReviewPanel {
+                    id: reviewFlow
                     onReviewRequested: rootWindow.analyzeNow()
                     onRevealReviewItem: function(item) { rootWindow.revealReviewItem(item); }
-                    id: reviewFlow
+                    onEditDraftRequested: {
+                        rootWindow.editingDraft = true;
+                        if (rootWindow.isAmbientMode && !rootWindow.isDetailedExpanded) {
+                            rootWindow.toggleDetailedExpanded();
+                        }
+                        promptInput.forceActiveFocus();
+                    }
                     visible: true
                     Layout.fillHeight: false
                     Layout.alignment: Qt.AlignTop
@@ -1481,6 +1523,7 @@ Window {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     Layout.preferredHeight: rootWindow.width < 600 ? 62 : 36
+                    Layout.minimumHeight: rootWindow.width < 600 ? 62 : 36
                     color: "transparent"
                     border.color: rootWindow.borderColor
                     border.width: 1

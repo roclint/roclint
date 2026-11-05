@@ -402,6 +402,8 @@ std::string encodeAnalysis(const an::NormalizedAnalysis& a) {
         v.set("id", str(x.id));
         v.set("question", str(x.question));
         v.set("blocking", flag(x.blocking));
+        if (!x.suggestedAlternativeEvidence.empty())
+            v.set("suggested_alternative_evidence", str(x.suggestedAlternativeEvidence));
         missing.push(std::move(v));
     }
     root.set("missing_decisions", std::move(missing));
@@ -471,6 +473,8 @@ Result<an::NormalizedAnalysis> decodeAnalysis(std::string_view payload) {
         ROCLINT_TRY_ASSIGN(x.id, json::requireString(v, "id"));
         ROCLINT_TRY_ASSIGN(x.question, json::requireString(v, "question"));
         ROCLINT_TRY_ASSIGN(x.blocking, json::requireBool(v, "blocking"));
+        if (v.find("suggested_alternative_evidence") != nullptr)
+            ROCLINT_TRY_ASSIGN(x.suggestedAlternativeEvidence, json::requireString(v, "suggested_alternative_evidence"));
         a.missingDecisions.push_back(std::move(x));
     }
 

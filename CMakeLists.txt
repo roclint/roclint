@@ -50,6 +50,7 @@ set(ROCLINT_CORE_SOURCES
     src/rewrite/RewriteProfile.cpp
     src/rewrite/RewriteProposal.cpp
     src/rewrite/RewriteValidator.cpp
+    src/rewrite/StructuredEntityExtractor.cpp
     src/review/ApprovalRecord.cpp
 )
 
@@ -169,6 +170,7 @@ if(BUILD_DESKTOP)
             app/host/GlobalShortcutManager.cpp
             app/host/HostContext.hpp
             app/host/HostContext.cpp
+            app/host/OutsideClickPolicy.hpp
             app/host/ScreenPlacement.hpp
             app/host/ScreenPlacement.cpp
             app/host/IAccessibilityBridge.hpp
@@ -426,6 +428,12 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME ${test_name} COMMAND ${test_name}_tests)
         set_tests_properties(${test_name} PROPERTIES TIMEOUT 120)
+        if(TARGET Qt6::Core)
+            # Windows resolves Qt DLLs through PATH; CTest does not inherit a
+            # developer shell's Qt environment, so prepend the kit's bin directory.
+            set_tests_properties(${test_name} PROPERTIES
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        endif()
         if(TARGET Qt6::QOffscreenIntegrationPlugin)
             # windeployqt deploys qwindows, while GUI tests explicitly use offscreen.
             set_tests_properties(${test_name} PROPERTIES ENVIRONMENT
@@ -466,6 +474,7 @@ if(BUILD_TESTING)
     roclint_add_test(roclint_rewrite_proposal      tests/rewrite/testRewriteProposal.cpp             roclint_core_testing)
     roclint_add_test(roclint_rewrite_profiles      tests/rewrite/testRewriteProfiles.cpp             roclint_core_testing)
     roclint_add_test(roclint_rewrite_checkpoint    tests/rewrite/test_rewrite_checkpoint.cpp         roclint_core_testing)
+    roclint_add_test(roclint_structured_entity_extractor tests/rewrite/testStructuredEntityExtractor.cpp roclint_core_testing)
     roclint_add_test(roclint_approval_record       tests/review/testApprovalRecord.cpp               roclint_storage_testing)
     roclint_add_test(roclint_approval_checkpoint   tests/review/test_approval_checkpoint.cpp         roclint_storage_testing)
 
@@ -483,7 +492,7 @@ if(BUILD_TESTING)
         roclint_add_test(roclint_host_controller   tests/viewmodel/test_host_controller.cpp   roclint_host_lib_testing Qt6::Core Qt6::Gui Qt6::Network)
         roclint_add_test(roclint_workspace_inspection tests/viewmodel/test_workspace_inspection.cpp roclint_host_lib_testing Qt6::Core)
         add_dependencies(roclint_workspace_inspection_tests roclint_workspace_runtime_files)
-        roclint_add_test(roclint_host_context      tests/viewmodel/test_host_context.cpp      roclint_host_lib_testing Qt6::Core)
+        roclint_add_test(roclint_host_context      tests/viewmodel/test_host_context.cpp      roclint_host_lib_testing Qt6::Core Qt6::Gui)
         roclint_add_test(roclint_terminal_adapter  tests/viewmodel/test_terminal_adapter.cpp  roclint_host_lib_testing Qt6::Core)
         roclint_add_test(roclint_dual_mode         tests/viewmodel/test_dual_mode.cpp         roclint_host_lib_testing Qt6::Core Qt6::Gui)
         roclint_add_test(roclint_product_alignment tests/viewmodel/test_product_alignment.cpp roclint_host_lib_testing Qt6::Quick Qt6::Qml Qt6::Test)

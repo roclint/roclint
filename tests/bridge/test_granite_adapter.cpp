@@ -30,7 +30,8 @@ const char* kTwoGroupResponse = R"({
      ]}
   ],
   "assumptions": [{"statement": "There is one session layer", "material": true, "evidence": ["session layer"]}],
-  "missing_decisions": [{"question": "What should the new value be?", "blocking": true}],
+  "missing_decisions": [{"question": "What should the new value be?", "blocking": true,
+    "suggested_alternative_evidence": "A timeout configuration excerpt would resolve this."}],
   "conflicts": []
 })";
 
@@ -51,6 +52,8 @@ void testParsesAndMintsHostIds() {
     ROCLINT_CHECK(a.assumptions[0].id == "asm_0");
     ROCLINT_CHECK(a.missingDecisions[0].id == "mdc_0");
     ROCLINT_CHECK(a.missingDecisions[0].blocking);
+    ROCLINT_CHECK(a.missingDecisions[0].suggestedAlternativeEvidence ==
+                  "A timeout configuration excerpt would resolve this.");
     // Evidence resolved to exact byte spans of the frozen text.
     const auto& span = a.choiceGroups[0].alternatives[0].evidence.at(0);
     ROCLINT_CHECK(kPrompt.substr(span.startByte, span.endByte - span.startByte) == "timeout handling");
@@ -405,6 +408,51 @@ void testSelectiveReviewContract() {
     ROCLINT_CHECK(req.promptTriage->ambiguityScore == .1);
 }
 
+void testPreModelConflictDetection() {
+    {
+        GraniteAdapter adapter;
+        makeReady(adapter);
+        GraniteOptionDiscoveryRequest req{kSession, kRevision,
+            "The refresh interval must be 15 seconds. The refresh interval must be 60 seconds.", "UNKNOWN"};
+        int calls = 0;
+        const auto result = adapter.discoverOptions(req, [&](std::string_view) -> Result<std::string> {
+            ++calls;
+            return std::string(R"({"status":"no_ambiguity","assistance_kind":"none"})");
+        });
+        ROCLINT_CHECK(result.ok());
+        ROCLINT_CHECK(calls == 0);
+        ROCLINT_CHECK(result.value().outcome == DiscoveryOutcome::OptionsGenerated);
+        ROCLINT_CHECK(result.value().assistanceKind == analysis::AssistanceKind::Clarification);
+        ROCLINT_CHECK(result.value().analysis.conflicts.size() == 1);
+        ROCLINT_CHECK(result.value().analysis.choiceGroups.empty());
+        ROCLINT_CHECK(analysis::isSnapshotSealed(result.value().analysis));
+        ROCLINT_CHECK(result.value().analysis.conflicts.front().id == "cfl_0");
+        ROCLINT_CHECK(result.value().analysis.conflicts.front().blocking);
+        ROCLINT_CHECK(result.value().analysis.conflicts.front().description.find("15 seconds") != std::string::npos);
+        ROCLINT_CHECK(result.value().analysis.conflicts.front().description.find("60 seconds") != std::string::npos);
+        ROCLINT_CHECK(result.value().latencyMs < 50.0);
+        std::cout << "  [INFO] Pre-model conflict latency=" << result.value().latencyMs << " ms\n";
+        ROCLINT_CHECK(adapter.state() == GraniteRuntimeState::Ready);
+    }
+    {
+        // Repeated fragments cannot be resolved to one authoritative span, so the
+        // deterministic path must fall through to the model instead of guessing.
+        GraniteAdapter adapter;
+        makeReady(adapter);
+        GraniteOptionDiscoveryRequest req{kSession, kRevision,
+            "The timeout must be 15 seconds. The timeout must be 60 seconds. The timeout must be 15 seconds.",
+            "UNKNOWN"};
+        int calls = 0;
+        const auto result = adapter.discoverOptions(req, [&](std::string_view) -> Result<std::string> {
+            ++calls;
+            return std::string(R"({"status":"no_ambiguity","assistance_kind":"none"})");
+        });
+        ROCLINT_CHECK(result.ok());
+        ROCLINT_CHECK(calls == 1);
+        ROCLINT_CHECK(result.value().outcome == DiscoveryOutcome::NoAmbiguity);
+    }
+}
+
 void testTransportFailureFailsRuntimeButMalformedOutputDoesNot() {
     GraniteOptionDiscoveryRequest req{kSession, kRevision, kPrompt, "UNKNOWN"};
     {
@@ -480,6 +528,7 @@ int main() {
     testRuntimeLifecycle();
     testDiscoverOptionsThroughTransport();
     testAdvisoryClassifierDisagreementPreservesOriginal();
+    testPreModelConflictDetection();
     testTransportFailureFailsRuntimeButMalformedOutputDoesNot();
     std::cout << "[Test GraniteAdapter] All tests PASSED.\n";
     return 0;

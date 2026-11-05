@@ -1,5 +1,9 @@
 #include "HostContext.hpp"
+#include "OutsideClickPolicy.hpp"
 #include "support/check.hpp"
+
+#include <QGuiApplication>
+#include <QWindow>
 
 #include <iostream>
 
@@ -70,15 +74,42 @@ void testMockCaptureSeam() {
     HostContextDetector::resetMock();
 }
 
+void testOutsideClickPolicy() {
+    using namespace std::chrono_literals;
+    using roclint::host::shouldDismissOutsideClick;
+    ROCLINT_CHECK(!shouldDismissOutsideClick(false, false, 0ms));
+    ROCLINT_CHECK(!shouldDismissOutsideClick(false, false, 399ms));
+    ROCLINT_CHECK(shouldDismissOutsideClick(false, false, 400ms));
+    ROCLINT_CHECK(shouldDismissOutsideClick(false, false, 2s));
+    ROCLINT_CHECK(!shouldDismissOutsideClick(true, false, 2s));
+    ROCLINT_CHECK(!shouldDismissOutsideClick(false, true, 2s));
+}
+
+void testOutsideClickMonitorLifecycle() {
+    QWindow window;
+    window.setFlags(Qt::Window | Qt::FramelessWindowHint);
+    int callbacks = 0;
+    roclint::host::installOutsideClickMonitor(&window, [&]() { ++callbacks; });
+    // Reinstallation must replace the previous monitor without leaking a hook.
+    roclint::host::installOutsideClickMonitor(&window, [&]() { ++callbacks; });
+    roclint::host::uninstallOutsideClickMonitor();
+    roclint::host::installOutsideClickMonitor(nullptr, [&]() { ++callbacks; });
+    roclint::host::uninstallOutsideClickMonitor();
+    ROCLINT_CHECK(callbacks == 0);
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
+    QGuiApplication app(argc, argv);
     std::cout << "[Test HostContext] Starting...\n";
     testWindowsExecutables();
     testMacBundleIds();
     testUnknownAppsMapToUnknown();
     testObservationStrings();
     testMockCaptureSeam();
+    testOutsideClickPolicy();
+    testOutsideClickMonitorLifecycle();
     std::cout << "[Test HostContext] All tests PASSED.\n";
     return 0;
 }

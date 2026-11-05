@@ -49,6 +49,10 @@ struct MissingDecision {
     std::string id{};
     std::string question{};
     bool blocking{false};
+    // Optional, model-suggested alternative evidence path that could resolve this
+    // decision without changing the user's requirement (for example a log excerpt
+    // or configuration file). Empty means no suggestion was supplied.
+    std::string suggestedAlternativeEvidence{};
 
     bool operator==(const MissingDecision&) const = default;
 };

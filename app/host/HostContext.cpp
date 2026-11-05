@@ -1,7 +1,14 @@
 #include "HostContext.hpp"
+#include "OutsideClickPolicy.hpp"
 
+#include <QCoreApplication>
 #include <QHash>
+#include <QPointer>
 #include <QSet>
+
+#include <atomic>
+#include <chrono>
+#include <mutex>
 
 #if defined(Q_OS_WIN)
 #include <windows.h>
@@ -259,7 +266,7 @@ void configureNonActivatingPanel(QWindow* window) {
 #if defined(Q_OS_WIN)
     HWND hwnd = reinterpret_cast<HWND>(window->winId());
     if (hwnd) {
-        SetWindowLong(hwnd, GWL_EXSTYLE, GetWindowLong(hwnd, GWL_EXSTYLE) | WS_EX_NOACTIVATE | WS_EX_TOPMOST);
+        SetWindowLong(hwnd, GWL_EXSTYLE, (GetWindowLong(hwnd, GWL_EXSTYLE) & ~WS_EX_NOACTIVATE) | WS_EX_TOPMOST);
     }
 #endif
 }
@@ -267,10 +274,138 @@ void configureNonActivatingPanel(QWindow* window) {
 void configureHostProcess() {}
 void showNonActivatingWindow(QWindow* window) {
     if (!window) return;
+#if defined(Q_OS_WIN)
+    // Temporarily set WindowDoesNotAcceptFocus while setting visible to suppress Qt's default
+    // foreground activation on initial popup, then immediately restore focus acceptance
+    // so user controls (text inputs, buttons) can receive keyboard focus when clicked.
+    window->setFlag(Qt::WindowDoesNotAcceptFocus, true);
+    window->setVisible(true);
+    window->setFlag(Qt::WindowDoesNotAcceptFocus, false);
+    HWND hwnd = reinterpret_cast<HWND>(window->winId());
+    if (hwnd) {
+        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+#else
     window->show();
+#endif
 }
-void installOutsideClickMonitor(QWindow*, std::function<void()>) {}
-void uninstallOutsideClickMonitor() {}
+
+#if defined(Q_OS_WIN)
+namespace {
+
+std::mutex g_outsideClickMutex;
+HHOOK g_outsideClickHook = nullptr;
+std::function<void()> g_outsideClickCallback;
+QPointer<QWindow> g_outsideClickWindow;
+std::chrono::steady_clock::time_point g_outsideClickInstallTime;
+DWORD g_outsideClickHostProcessId = 0;
+std::atomic<quint64> g_outsideClickGeneration{0};
+
+LRESULT CALLBACK outsideClickHookProc(int code, WPARAM message, LPARAM data) {
+    if (code != HC_ACTION ||
+        (message != WM_LBUTTONDOWN && message != WM_RBUTTONDOWN && message != WM_MBUTTONDOWN)) {
+        return CallNextHookEx(nullptr, code, message, data);
+    }
+
+    std::function<void()> callback;
+    quint64 generation = 0;
+    {
+        const std::lock_guard lock(g_outsideClickMutex);
+        if (g_outsideClickHook == nullptr || !g_outsideClickCallback || !g_outsideClickWindow) {
+            return CallNextHookEx(nullptr, code, message, data);
+        }
+        const auto sinceInstall = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - g_outsideClickInstallTime);
+        if (sinceInstall < kOutsideClickSettleWindow) {
+            // The click that opened the HUD arrives after installation; never treat
+            // it as an outside click while the floating card is still settling.
+            return CallNextHookEx(nullptr, code, message, data);
+        }
+
+        const auto* mouse = reinterpret_cast<const MSLLHOOKSTRUCT*>(data);
+        if (mouse == nullptr) return CallNextHookEx(nullptr, code, message, data);
+
+        bool insideCard = false;
+        bool sameHostApplication = false;
+        QWindow* window = g_outsideClickWindow.data();
+        const HWND hwnd = window != nullptr ? reinterpret_cast<HWND>(window->winId()) : nullptr;
+        if (hwnd != nullptr) {
+            RECT bounds{};
+            insideCard = GetWindowRect(hwnd, &bounds) != 0 && PtInRect(&bounds, mouse->pt) != 0;
+            // A click on a child of the floating card (text field, button) is inside.
+            const HWND target = WindowFromPoint(mouse->pt);
+            if (!insideCard && target != nullptr) insideCard = target == hwnd || IsChild(hwnd, target) != 0;
+            DWORD targetProcessId = 0;
+            if (target != nullptr) GetWindowThreadProcessId(target, &targetProcessId);
+            sameHostApplication = g_outsideClickHostProcessId != 0 && targetProcessId == g_outsideClickHostProcessId;
+        }
+        if (!shouldDismissOutsideClick(insideCard, sameHostApplication, sinceInstall)) {
+            return CallNextHookEx(nullptr, code, message, data);
+        }
+
+        callback = g_outsideClickCallback;
+        generation = g_outsideClickGeneration.load(std::memory_order_acquire);
+    }
+
+    // Never hide the HUD inside the hook. Queue the dismissal onto the application
+    // thread and let the generation check discard callbacks from an older monitor.
+    if (callback && QCoreApplication::instance() != nullptr) {
+        QMetaObject::invokeMethod(QCoreApplication::instance(),
+            [callback = std::move(callback), generation]() {
+                if (generation == g_outsideClickGeneration.load(std::memory_order_acquire)) callback();
+            },
+            Qt::QueuedConnection);
+    }
+    return CallNextHookEx(nullptr, code, message, data);
+}
+
+} // namespace
+#endif
+
+void installOutsideClickMonitor(QWindow* window, std::function<void()> onOutsideClick) {
+    if (!window) return;
+#if defined(Q_OS_WIN)
+    const std::lock_guard lock(g_outsideClickMutex);
+    if (g_outsideClickHook != nullptr) {
+        UnhookWindowsHookEx(g_outsideClickHook);
+        g_outsideClickHook = nullptr;
+    }
+    g_outsideClickGeneration.fetch_add(1, std::memory_order_acq_rel);
+    g_outsideClickCallback = std::move(onOutsideClick);
+    g_outsideClickWindow = window;
+    g_outsideClickInstallTime = std::chrono::steady_clock::now();
+    g_outsideClickHostProcessId = 0;
+    if (const HWND foreground = GetForegroundWindow(); foreground != nullptr) {
+        GetWindowThreadProcessId(foreground, &g_outsideClickHostProcessId);
+    }
+    if (g_outsideClickCallback) {
+        g_outsideClickHook = SetWindowsHookExW(WH_MOUSE_LL, outsideClickHookProc, GetModuleHandleW(nullptr), 0);
+        if (g_outsideClickHook == nullptr) {
+            g_outsideClickCallback = {};
+            g_outsideClickWindow = nullptr;
+        }
+    }
+#else
+    static_cast<void>(window);
+    static_cast<void>(onOutsideClick);
+#endif
+}
+
+void uninstallOutsideClickMonitor() {
+#if defined(Q_OS_WIN)
+    const std::lock_guard lock(g_outsideClickMutex);
+    g_outsideClickGeneration.fetch_add(1, std::memory_order_acq_rel);
+    if (g_outsideClickHook != nullptr) {
+        UnhookWindowsHookEx(g_outsideClickHook);
+        g_outsideClickHook = nullptr;
+    }
+    g_outsideClickCallback = {};
+    g_outsideClickWindow = nullptr;
+    g_outsideClickHostProcessId = 0;
+#endif
+}
 #endif
 
 } // namespace roclint::host

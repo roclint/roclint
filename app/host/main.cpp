@@ -187,6 +187,11 @@ int main(int argc, char* argv[]) {
                     window->raise();
                     window->requestActivate();
                 }
+                // Install only after the card is visible. The platform monitor owns
+                // the initial settle window so the triggering click cannot dismiss it.
+                roclint::host::installOutsideClickMonitor(window, [controller]() {
+                    controller->hideCard();
+                });
             });
 
             QObject::connect(controller, &roclint::host::HostController::hideCardRequested,
@@ -204,6 +209,7 @@ int main(int argc, char* argv[]) {
             const auto syncVisibility = [window, controller]() {
                 using roclint::host::CardVisibility;
                 if (!window->isVisible() || window->visibility() == QWindow::Minimized) {
+                    roclint::host::uninstallOutsideClickMonitor();
                     controller->syncCardVisibility(CardVisibility::Hidden);
                 } else {
                     controller->syncCardVisibility(window->isActive() ? CardVisibility::Focused
@@ -219,6 +225,7 @@ int main(int argc, char* argv[]) {
 
             if (autoShow && !dryRun) {
                 controller->showCard(); window->showNormal(); window->raise(); window->requestActivate();
+                roclint::host::installOutsideClickMonitor(window, [controller]() { controller->hideCard(); });
             }
 
             if (!workspacePath.isEmpty()) {

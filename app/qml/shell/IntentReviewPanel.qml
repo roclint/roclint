@@ -10,6 +10,7 @@ FocusScope {
     property bool showDiagnostics: false
     signal reviewRequested()
     signal revealReviewItem(var item)
+    signal editDraftRequested()
     property string diagnosticMetrics: ""
     readonly property bool previewActive: hc && (hostController.proposalStatus === "READY_FOR_REVIEW" || hostController.proposalStatus === "GENERATING")
     readonly property color questionTone: hc && hostController.isOptionalHelp ? borderColor : warnColor
@@ -275,6 +276,15 @@ FocusScope {
                 label: qsTr("Review prompt")
                 active: rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy && !hostController.isAnalyzing
                 onClicked: rootWindow.reviewRequested()
+            }
+            ActionButton {
+                objectName: "editDraftInHudButton"
+                visible: rootWindow.hc && hostController.isAmbientAttached
+                label: qsTr("Edit prompt in HUD")
+                onClicked: {
+                    rootWindow.editDraftRequested();
+                    if (rootWindow.hc) hostController.pauseAmbientFollowing();
+                }
             }
             Item { Layout.fillWidth: true }
             Text {

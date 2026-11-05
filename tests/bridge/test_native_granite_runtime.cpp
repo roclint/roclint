@@ -1,6 +1,7 @@
 #include "NativeGraniteRuntime.hpp"
 #include "GraniteModelInstaller.hpp"
 #include "GraniteJsonGrammar.hpp"
+#include "GranitePrefixCache.hpp"
 #include "GraniteResidencyPolicy.hpp"
 #include "GraniteConfig.hpp"
 #include "HostController.hpp"
@@ -133,6 +134,21 @@ char ::= [^"\\] | "\\" ["\\/bfnrt]
     ROCLINT_CHECK(!compactGraniteJsonGrammar("space ::= [ \\t]*\n"));
     ROCLINT_CHECK(!compactGraniteJsonGrammar(space + " \n"));
     ROCLINT_CHECK(!compactGraniteJsonGrammar(space + "\r\n"));
+}
+
+void prefixCacheTests() {
+    using roclint::runtime::reusablePromptPrefix;
+    const std::vector<int> empty;
+    const std::vector<int> prompt{1, 2, 3, 4};
+    ROCLINT_CHECK(reusablePromptPrefix(empty, prompt) == 0);
+    ROCLINT_CHECK(reusablePromptPrefix(prompt, empty) == 0);
+    // Identical prompts still re-evaluate the final token for fresh logits.
+    ROCLINT_CHECK(reusablePromptPrefix(prompt, prompt) == 3);
+    ROCLINT_CHECK(reusablePromptPrefix(std::vector<int>{1, 2}, std::vector<int>{1, 2, 3, 4}) == 2);
+    ROCLINT_CHECK(reusablePromptPrefix(std::vector<int>{9, 2, 3}, std::vector<int>{1, 2, 3, 4}) == 0);
+    ROCLINT_CHECK(reusablePromptPrefix(std::vector<int>{1, 9, 3}, std::vector<int>{1, 2, 3, 4}) == 1);
+    ROCLINT_CHECK(reusablePromptPrefix(std::vector<int>{1, 2, 3, 4, 5, 6}, std::vector<int>{1, 2, 3}) == 2);
+    ROCLINT_CHECK(reusablePromptPrefix(std::vector<int>{1}, std::vector<int>{1}) == 0);
 }
 
 void residencyPolicyTests() {
@@ -564,7 +580,7 @@ int main(int argc, char** argv) {
     if (argc == 4 && std::string_view(argv[1]) == "--live-rewrite-corpus") return liveRewriteCorpus(argv);
     if ((argc >= 6 && argc <= 8) && std::string_view(argv[1]) == "--live-host-pipeline") return liveHostPipeline(argc, argv);
     if (argc == 5 && std::string_view(argv[1]) == "--model-dir") return fixture(QString::fromLocal8Bit(argv[2]));
-    grammarTests(); residencyPolicyTests(); protocolTests(); installerTests(); controllerResidencyTests();
+    grammarTests(); prefixCacheTests(); residencyPolicyTests(); protocolTests(); installerTests(); controllerResidencyTests();
     acceleratorNameTests(); speedMetricsClearOnStopTests(); decodeThreadLockSanityTest();
     std::cout << "Native protocol, cancellation, recovery, residency, atomic model installation and calibration tests passed.\n";
     return 0;
