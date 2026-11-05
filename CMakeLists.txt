@@ -50,6 +50,7 @@ set(ROCLINT_CORE_SOURCES
     src/rewrite/RewriteProfile.cpp
     src/rewrite/RewriteProposal.cpp
     src/rewrite/RewriteValidator.cpp
+    src/rewrite/CanonicalIntentExtractor.cpp
     src/rewrite/StructuredEntityExtractor.cpp
     src/review/ApprovalRecord.cpp
 )

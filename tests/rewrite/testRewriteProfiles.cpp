@@ -90,6 +90,23 @@ void testRewritePromptCarriesOnlyUserContent() {
     }
 }
 
+void testCanonicalIntentGroundingInRewritePrompt() {
+    fx::Chain c;
+    roclint::bridge::GraniteRewriteRequest req;
+    req.sessionId = c.session;
+    req.revisionId = c.revision;
+    req.originalText = "Rename offset to cursor in readPacket. Preserve the public API.";
+    req.analysis = c.snapshot;
+    req.confirmedIntent = c.intent;
+    const auto prompt = roclint::bridge::buildRewritePrompt(req, ProfileRegistry::defaultProfile());
+    ROCLINT_CHECK(prompt.find("<canonical_intents>") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("canonical_intents are deterministic") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("\"action\":\"MODIFY\"") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("\"action\":\"PRESERVE\"") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("\"node_id\":\"nid_") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("readPacket") != std::string::npos);
+}
+
 } // namespace
 
 int main() {
@@ -98,6 +115,7 @@ int main() {
     testProfileStructureConstraints();
     testNothingIsVerifiedWithoutProof();
     testRewritePromptCarriesOnlyUserContent();
+    testCanonicalIntentGroundingInRewritePrompt();
     std::cout << "[Test RewriteProfiles] All tests PASSED.\n";
     return 0;
 }

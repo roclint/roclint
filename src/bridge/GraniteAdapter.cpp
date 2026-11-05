@@ -255,6 +255,12 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     request.set("revision_id", json::Value::string(req.revisionId));
     request.set("host_context_category", json::Value::string(req.hostContextCategory));
     request.set("prompt_text", json::Value::string(req.promptString));
+    const auto canonicalIntents = core::rewrite::CanonicalIntentExtractor::extract(req.promptString);
+    if (!canonicalIntents.empty()) {
+        auto parsed = json::parse(core::rewrite::CanonicalIntentExtractor::toJson(canonicalIntents),
+                                  json::ParseLimits{16 * 1024, 8});
+        if (parsed.ok() && parsed.value().isArray()) request.set("canonical_intents", std::move(parsed).value());
+    }
     request.set("evidence_quotes", evidenceQuotes(req.promptString));
     if (req.promptTriage) {
         json::Value triage = json::Value::object();
@@ -294,6 +300,10 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     out += "S1's category is a triage hint, not proof of a conflict. Compatible requirements such as "
            "a required property plus a ban on a different property are not a conflict. Do not invent "
            "a question to justify S1's category.\n";
+    if (!canonicalIntents.empty())
+        out += "canonical_intents are deterministic source-linked action triples extracted from prompt_text. "
+               "Use them as grounding for targets, properties and values; do not invent alternatives or "
+               "treat them as new requirements.\n";
     out += "Review what help, if any, this prompt needs before it is sent to another AI system.\n";
     out += "Set assistance_kind to none for a usable prompt without questions, clarification for consequential "
            "missing user decisions, or creative/refinement/decomposition for OPTIONAL help. Creative openness "
@@ -433,19 +443,20 @@ const std::string& discoveryResponseSchema() {
 "required":["status","assistance_kind","choice_groups","assumptions","missing_decisions","conflicts","clarification_question"]})JSON");
         const auto& base = parsed.value(); // A compiled literal, exercised by contract tests.
         auto branches = json::Value::array();
-        for (const char* kind : {"none", "clarification", "creative", "refinement", "decomposition", "unreadable"}) {
+        auto constant = [](json::Value value) { return json::Value::object().set("const", std::move(value)); };
+        const auto makeBranch = [&](const std::string& category, const char* nonEmptyField) {
             auto branch = base;
             auto properties = *base.find("properties");
-            const std::string category(kind);
             const bool ready = category == "none";
             const bool unreadable = category == "unreadable";
             const bool optional = !ready && !unreadable && category != "clarification";
-            auto constant = [](json::Value value) { return json::Value::object().set("const", std::move(value)); };
             properties.set("status", constant(json::Value::string(ready ? "no_ambiguity" : unreadable ? "needs_clarification" : "options_generated")));
             properties.set("assistance_kind", constant(json::Value::string(unreadable ? "clarification" : category)));
-            if (ready || unreadable || optional) {
-                for (const char* field : {"assumptions", "missing_decisions", "conflicts"})
+            if (ready || unreadable || optional || category == "clarification") {
+                for (const char* field : {"assumptions", "missing_decisions", "conflicts"}) {
+                    if (nonEmptyField != nullptr && std::string_view(field) == nonEmptyField) continue;
                     properties.set(field, constant(json::Value::array()));
+                }
             }
             if (ready || unreadable) properties.set("choice_groups", constant(json::Value::array()));
             if (optional) {
@@ -456,8 +467,19 @@ const std::string& discoveryResponseSchema() {
                 auto groupProperties = *group.find("properties");
                 groupProperties.set("material", constant(json::Value::boolean(true)));
                 group.set("properties", std::move(groupProperties)); groups.set("items", std::move(group));
-
                 properties.set("choice_groups", std::move(groups));
+            }
+            if (category == "clarification") {
+                // The parser rejects empty options_generated payloads. Each branch
+                // requires one non-empty typed array, so the grammar cannot emit a
+                // contract-invalid all-empty response.
+                if (nonEmptyField != nullptr) {
+                    auto field = *properties.find(nonEmptyField);
+                    field.set("minItems", json::Value::number(1));
+                    properties.set(nonEmptyField, std::move(field));
+                }
+                if (nonEmptyField == nullptr || std::string_view(nonEmptyField) != "choice_groups")
+                    properties.set("choice_groups", constant(json::Value::array()));
             }
             if (!unreadable) properties.set("clarification_question", constant(json::Value::string("")));
             else {
@@ -468,7 +490,11 @@ const std::string& discoveryResponseSchema() {
             branch.set("properties", std::move(properties));
             branch.set("additionalProperties", json::Value::boolean(false));
             branches.push(std::move(branch));
-        }
+        };
+        for (const char* kind : {"none", "creative", "refinement", "decomposition", "unreadable"})
+            makeBranch(kind, nullptr);
+        for (const char* field : {"choice_groups", "assumptions", "missing_decisions", "conflicts"})
+            makeBranch("clarification", field);
         auto schema = json::Value::object(); schema.set("oneOf", std::move(branches));
         return json::serialize(schema);
     }();

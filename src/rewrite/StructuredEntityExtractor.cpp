@@ -561,6 +561,7 @@ std::vector<Sentence> splitSentences(std::string_view text) {
 PreFlightExtractionReport StructuredEntityExtractor::analyze(std::string_view promptText) {
     PreFlightExtractionReport report;
     if (promptText.empty() || promptText.size() > kMaxPromptBytes) return report;
+    report.canonicalIntents = CanonicalIntentExtractor::extract(promptText);
 
     const auto sanitizedPrompt = maskEmbeddedQuotes(promptText);
     const auto sentences = splitSentences(sanitizedPrompt);

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "roclint/rewrite/CanonicalIntent.hpp"
+
 #include <string>
 #include <string_view>
 #include <vector>
@@ -21,6 +23,9 @@ struct PreFlightExtractionReport {
     // Explicit, syntactically visible contradictions between requirements that
     // constrain the same subject. Empty when no conservative match is found.
     std::vector<DetectedConflict> detectedExplicitConflicts{};
+
+    // Deterministic action/target/property/value triples linked to source spans.
+    std::vector<CanonicalIntent> canonicalIntents{};
 };
 
 // Deterministic, model-free extraction of explicit contradictions. The detector is

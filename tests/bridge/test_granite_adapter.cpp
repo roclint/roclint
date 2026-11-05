@@ -182,6 +182,12 @@ void testDiscoveryPromptEmbedsTextAsEscapedJsonOnly() {
     for (const char* forbidden : {"D:\\", "C:\\", "/Users/", "scope_lock", "project_files"}) {
         ROCLINT_CHECK(prompt.find(forbidden) == std::string::npos);
     }
+    const auto canonical = buildDiscoveryPrompt(
+        {kSession, kRevision, "Rename offset to cursor in readPacket. Preserve the public API.", "UNKNOWN"});
+    ROCLINT_CHECK(canonical.find("canonical_intents") != std::string::npos);
+    ROCLINT_CHECK(canonical.find("\"action\":\"MODIFY\"") != std::string::npos);
+    ROCLINT_CHECK(canonical.find("\"action\":\"PRESERVE\"") != std::string::npos);
+    ROCLINT_CHECK(canonical.find("\"node_id\":\"nid_") != std::string::npos);
 }
 
 void testRuntimeLifecycle() {
@@ -358,7 +364,20 @@ void testSelectiveReviewContract() {
     }
     const auto schema = json::parse(discoveryResponseSchema());
     ROCLINT_CHECK(schema.ok() && schema.value().find("oneOf"));
-    ROCLINT_CHECK(schema.value().find("oneOf")->asArray().size() == 6);
+    ROCLINT_CHECK(schema.value().find("oneOf")->asArray().size() == 9);
+    bool clarificationRequiresContent = false;
+    for (const auto& branch : schema.value().find("oneOf")->asArray()) {
+        const auto* properties = branch.find("properties");
+        const auto kind = properties->find("assistance_kind")->find("const")->asString();
+        const auto status = properties->find("status")->find("const")->asString();
+        if (kind != "clarification" || status != "options_generated") continue;
+        for (const char* field : {"choice_groups", "assumptions", "missing_decisions", "conflicts"}) {
+            const auto* value = properties->find(field);
+            const auto* minItems = value->find("minItems");
+            if (minItems != nullptr && minItems->asNumber() >= 1) clarificationRequiresContent = true;
+        }
+    }
+    ROCLINT_CHECK(clarificationRequiresContent);
     for (const auto& branch : schema.value().find("oneOf")->asArray()) {
         const auto* properties = branch.find("properties");
         const auto kind = properties->find("assistance_kind")->find("const")->asString();

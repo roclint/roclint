@@ -1,13 +1,20 @@
 #include "roclint/rewrite/StructuredEntityExtractor.hpp"
 #include "roclint/analysis/SourceSpan.hpp"
+#include "roclint/core/Json.hpp"
 #include "support/check.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <iostream>
+#include <set>
 #include <string>
 #include <string_view>
+#include <vector>
 
+using roclint::core::rewrite::CanonicalIntent;
 using roclint::core::rewrite::DetectedConflict;
+using roclint::core::rewrite::IntentAction;
 using roclint::core::rewrite::StructuredEntityExtractor;
 
 namespace {
@@ -33,6 +40,26 @@ void checkFragmentsResolve(std::string_view prompt) {
         ROCLINT_CHECK(conflict.requirementA != conflict.requirementB);
         ROCLINT_CHECK(!conflict.subject.empty());
     }
+}
+
+std::string lowerCopy(std::string_view text) {
+    std::string out(text);
+    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char character) {
+        return static_cast<char>(std::tolower(character));
+    });
+    return out;
+}
+
+bool containsCaseInsensitive(std::string_view text, std::string_view needle) {
+    return lowerCopy(text).find(lowerCopy(needle)) != std::string::npos;
+}
+
+const CanonicalIntent* findIntent(const std::vector<CanonicalIntent>& intents, IntentAction action,
+                                  std::string_view targetPart) {
+    for (const auto& intent : intents) {
+        if (intent.action == action && containsCaseInsensitive(intent.target, targetPart)) return &intent;
+    }
+    return nullptr;
 }
 
 void testMandatorySameTargetConflict() {
@@ -135,6 +162,104 @@ void testVerificationProbeCases() {
     ROCLINT_CHECK(!detected("Any user may edit. All users may edit."));
 }
 
+void testCanonicalIntentActionTriples() {
+    const std::string prompt =
+        "Add a Save button to Settings.qml. Remove the legacy cache. "
+        "Rename offset to cursor in readPacket. Preserve the public API. "
+        "The timeout must be 15 seconds.";
+    const auto report = StructuredEntityExtractor::analyze(prompt);
+    const auto& intents = report.canonicalIntents;
+    ROCLINT_CHECK(intents.size() >= 5);
+
+    const auto* add = findIntent(intents, IntentAction::ADD, "save button");
+    ROCLINT_CHECK(add != nullptr);
+    ROCLINT_CHECK(containsCaseInsensitive(add->value, "settings.qml"));
+    const auto* remove = findIntent(intents, IntentAction::REMOVE, "legacy cache");
+    ROCLINT_CHECK(remove != nullptr);
+    const auto* rename = findIntent(intents, IntentAction::MODIFY, "offset");
+    ROCLINT_CHECK(rename != nullptr);
+    ROCLINT_CHECK(containsCaseInsensitive(rename->value, "cursor"));
+    ROCLINT_CHECK(containsCaseInsensitive(rename->condition, "readpacket"));
+    ROCLINT_CHECK(rename->property == "name");
+    const auto* preserve = findIntent(intents, IntentAction::PRESERVE, "public api");
+    ROCLINT_CHECK(preserve != nullptr);
+    const auto* constrain = findIntent(intents, IntentAction::CONSTRAIN, "timeout");
+    ROCLINT_CHECK(constrain != nullptr);
+    ROCLINT_CHECK(containsCaseInsensitive(constrain->value, "15 seconds"));
+
+    std::set<std::string> nodeIds;
+    for (const auto& intent : intents) {
+        ROCLINT_CHECK(intent.nodeId.starts_with("nid_"));
+        ROCLINT_CHECK(intent.nodeId.size() == 28);
+        ROCLINT_CHECK(!intent.target.empty());
+        ROCLINT_CHECK(intent.disposition == "explicit_prompt");
+        ROCLINT_CHECK(roclint::core::analysis::isValidSpan(prompt, intent.source));
+        ROCLINT_CHECK(nodeIds.insert(intent.nodeId).second);
+    }
+}
+
+void testCanonicalIntentNegationAndNestedConditions() {
+    const std::string prompt =
+        "Do not modify tests. "
+        "MUST use JSON EXCEPT for logs ONLY_IF debug is enabled. "
+        "Preserve this example as data: \"Remove the cache.\"";
+    const auto report = StructuredEntityExtractor::analyze(prompt);
+    const auto& intents = report.canonicalIntents;
+    ROCLINT_CHECK(intents.size() >= 2);
+    const auto* preserve = findIntent(intents, IntentAction::PRESERVE, "tests");
+    ROCLINT_CHECK(preserve != nullptr);
+    ROCLINT_CHECK(preserve->value == "unchanged");
+    bool conditionalFound = false;
+    for (const auto& intent : intents) {
+        if (containsCaseInsensitive(intent.condition, "except") &&
+            containsCaseInsensitive(intent.condition, "only_if")) {
+            conditionalFound = true;
+            ROCLINT_CHECK(intent.action == IntentAction::CONSTRAIN);
+        }
+    }
+    ROCLINT_CHECK(conditionalFound);
+    ROCLINT_CHECK(findIntent(intents, IntentAction::REMOVE, "cache") == nullptr);
+}
+
+void testCanonicalIntentMultiParagraph() {
+    const std::string prompt =
+        "# Workspace task\n"
+        "Add logging to workspace_helper.cpp.\n"
+        "\n"
+        "Remove deprecated flags.\n"
+        "\n"
+        "Preserve the public API.";
+    const auto report = StructuredEntityExtractor::analyze(prompt);
+    const auto& intents = report.canonicalIntents;
+    ROCLINT_CHECK(intents.size() >= 3);
+    ROCLINT_CHECK(findIntent(intents, IntentAction::ADD, "logging") != nullptr);
+    ROCLINT_CHECK(findIntent(intents, IntentAction::REMOVE, "deprecated flags") != nullptr);
+    ROCLINT_CHECK(findIntent(intents, IntentAction::PRESERVE, "public api") != nullptr);
+    for (std::size_t index = 0; index < intents.size(); ++index) {
+        ROCLINT_CHECK(roclint::core::analysis::isValidSpan(prompt, intents[index].source));
+        if (index > 0) ROCLINT_CHECK(intents[index - 1].source.startByte <= intents[index].source.startByte);
+    }
+}
+
+void testCanonicalIntentDeterminismAndJson() {
+    const std::string prompt = "Rename offset to cursor in readPacket. Preserve the public API.";
+    const auto first = StructuredEntityExtractor::analyze(prompt).canonicalIntents;
+    const auto second = StructuredEntityExtractor::analyze(prompt).canonicalIntents;
+    ROCLINT_CHECK(!first.empty());
+    ROCLINT_CHECK(first == second);
+    const auto json = roclint::core::rewrite::CanonicalIntentExtractor::toJson(first);
+    const auto parsed = roclint::core::json::parse(json);
+    ROCLINT_CHECK(parsed.ok() && parsed.value().isArray());
+    ROCLINT_CHECK(parsed.value().asArray().size() == first.size());
+    const auto& object = parsed.value().asArray().front();
+    ROCLINT_CHECK(object.find("action") != nullptr);
+    ROCLINT_CHECK(object.find("target") != nullptr);
+    ROCLINT_CHECK(object.find("property") != nullptr);
+    ROCLINT_CHECK(object.find("value") != nullptr);
+    ROCLINT_CHECK(object.find("node_id") != nullptr);
+    ROCLINT_CHECK(object.find("source_start") != nullptr);
+}
+
 void testDeterministicAndFast() {
     const std::string prompt =
         "The refresh interval must be 15 seconds. The refresh interval must be 60 seconds. "
@@ -170,6 +295,10 @@ int main() {
     testDisjointScopesAreNotConflicts();
     testCompatibleRequirementsAreNotConflicts();
     testVerificationProbeCases();
+    testCanonicalIntentActionTriples();
+    testCanonicalIntentNegationAndNestedConditions();
+    testCanonicalIntentMultiParagraph();
+    testCanonicalIntentDeterminismAndJson();
     testDeterministicAndFast();
     std::cout << "Structured pre-flight extraction and same-target conflict detection passed.\n";
     return 0;
