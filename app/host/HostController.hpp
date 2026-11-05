@@ -442,6 +442,11 @@ public:
         emit recommendedOptionChanged();
     }
     bool setNativeWorkerForTesting(const QString& worker) { return m_native->setWorkerForTesting(worker); }
+    void setCodebaseContextConsentedForTesting(bool consented) { m_codebaseContextConsented = consented; }
+    void setCodebaseIndexPathForTesting(QString path);
+    void setCodebaseRefreshLimitsForTesting(std::optional<storage::CodebaseIndexLimits> limits);
+    [[nodiscard]] bool codebaseIndexReadyForTesting() const noexcept { return m_codebaseIndexReady; }
+    [[nodiscard]] QString groundedIntentXmlForTesting(const QString& prompt);
     void setResidencyInputsForTesting(std::optional<qint64> idleMs, std::optional<bool> lowMemory) {
         m_residencyIdleOverride = idleMs; m_residencyPressureOverride = lowMemory; applyResidencyPolicy();
     }
@@ -797,6 +802,7 @@ private:
     void finishQuitWhenRuntimesStopped();
     // Resolves lexical intents against the local AST index and renders the bounded prompt block.
     [[nodiscard]] GroundedPromptContext groundedCanonicalIntentContext(std::string_view prompt);
+    [[nodiscard]] QString codebaseIndexPathForHost() const;
     void startCodebaseRefresh(const QString& projectPath);
     void startPendingNativeDownload();
     [[nodiscard]] std::string currentTransportName() const;
@@ -930,6 +936,8 @@ private:
     bool m_codebaseContextConsented{false};
     std::unique_ptr<storage::CodebaseIndex> m_codebaseIndex;
     QString m_codebaseActiveFile;
+    QString m_codebaseIndexPathOverride;
+    std::optional<storage::CodebaseIndexLimits> m_codebaseRefreshLimitsForTesting;
     int m_codebaseRefreshSerial{0};
     bool m_codebaseRefreshInFlight{false};
     bool m_codebaseIndexReady{false};

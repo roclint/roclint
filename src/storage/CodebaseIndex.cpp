@@ -12,13 +12,12 @@
 #include <set>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 
 namespace roclint::storage {
 namespace {
 
-constexpr int kSchemaVersion = 2;
+constexpr int kSchemaVersion = 3;
 
 const std::set<std::string> kExcludedDirectories{
     ".git", ".hg", ".svn", ".cache", "build", "dist", "out", "target", "node_modules", "vendor", "deps",
@@ -139,20 +138,27 @@ struct CodebaseIndex::Impl {
         }
 
         if (!exec(db,
-                  "CREATE TABLE IF NOT EXISTS workspaces(root TEXT PRIMARY KEY);"
-                  "CREATE TABLE IF NOT EXISTS files(id INTEGER PRIMARY KEY, root TEXT NOT NULL, path TEXT NOT NULL,"
-                  "  hash TEXT NOT NULL, UNIQUE(root,path));"
+                  "CREATE TABLE IF NOT EXISTS workspaces("
+                  "  root TEXT PRIMARY KEY, generation INTEGER NOT NULL DEFAULT 0,"
+                  "  last_refresh_complete INTEGER NOT NULL DEFAULT 0);"
+                  "CREATE TABLE IF NOT EXISTS files("
+                  "  id INTEGER PRIMARY KEY, root TEXT NOT NULL, path TEXT NOT NULL, hash TEXT NOT NULL,"
+                  "  validated_generation INTEGER NOT NULL DEFAULT 0, UNIQUE(root,path));"
                   "CREATE TABLE IF NOT EXISTS ast_symbols("
                   "  symbol_id TEXT PRIMARY KEY, workspace_root TEXT NOT NULL,"
+                  "  validated_generation INTEGER NOT NULL,"
                   "  file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,"
                   "  file_path TEXT NOT NULL, file_hash TEXT NOT NULL, name TEXT NOT NULL, qualified_name TEXT NOT NULL,"
                   "  kind INTEGER NOT NULL, parent_id TEXT, signature TEXT NOT NULL, start_line INTEGER NOT NULL,"
                   "  end_line INTEGER NOT NULL, start_column INTEGER NOT NULL, end_column INTEGER NOT NULL,"
                   "  byte_offset INTEGER NOT NULL, byte_length INTEGER NOT NULL, type_name TEXT NOT NULL,"
                   "  is_const INTEGER NOT NULL);"
-                  "CREATE INDEX IF NOT EXISTS ast_symbols_ws_name_idx ON ast_symbols(workspace_root,name);"
-                  "CREATE INDEX IF NOT EXISTS ast_symbols_ws_parent_idx ON ast_symbols(workspace_root,parent_id);"
-                  "CREATE INDEX IF NOT EXISTS ast_symbols_ws_qualified_idx ON ast_symbols(workspace_root,qualified_name);"
+                  "CREATE INDEX IF NOT EXISTS ast_symbols_ws_name_idx"
+                  "  ON ast_symbols(workspace_root,validated_generation,name);"
+                  "CREATE INDEX IF NOT EXISTS ast_symbols_ws_parent_idx"
+                  "  ON ast_symbols(workspace_root,validated_generation,parent_id);"
+                  "CREATE INDEX IF NOT EXISTS ast_symbols_ws_qualified_idx"
+                  "  ON ast_symbols(workspace_root,validated_generation,qualified_name);"
                   "CREATE VIRTUAL TABLE IF NOT EXISTS ast_symbols_fts USING fts5("
                   "  name, qualified_name, signature, content='ast_symbols', content_rowid='rowid', tokenize='trigram');")) {
             initError = sqlite3_errmsg(db);
@@ -161,7 +167,7 @@ struct CodebaseIndex::Impl {
             return;
         }
         if (userVersion != kSchemaVersion &&
-            !exec(db, "PRAGMA user_version=2;")) {
+            !exec(db, "PRAGMA user_version=3;")) {
             initError = sqlite3_errmsg(db);
             sqlite3_close(db);
             db = nullptr;
@@ -177,6 +183,19 @@ struct CodebaseIndex::Impl {
         workspaceKey = core::crypto::Sha256::hexDigest(workspaceRoot).substr(0, 16);
         bound = true;
         return true;
+    }
+
+    std::optional<sqlite3_int64> currentGeneration() const {
+        if (!bound || db == nullptr) return std::nullopt;
+        sqlite3_stmt* statement = nullptr;
+        if (sqlite3_prepare_v2(db, "SELECT generation FROM workspaces WHERE root=?1;", -1,
+                               &statement, nullptr) != SQLITE_OK)
+            return std::nullopt;
+        bindText(statement, 1, workspaceRoot);
+        std::optional<sqlite3_int64> generation;
+        if (sqlite3_step(statement) == SQLITE_ROW) generation = sqlite3_column_int64(statement, 0);
+        sqlite3_finalize(statement);
+        return generation;
     }
 
     sqlite3* db{nullptr};
@@ -262,6 +281,18 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
     static_cast<void>(sqlite3_step(statement));
     sqlite3_finalize(statement);
 
+    std::int64_t previousGeneration = 0;
+    if (sqlite3_prepare_v2(impl_->db, "SELECT generation FROM workspaces WHERE root=?1;", -1,
+                           &statement, nullptr) != SQLITE_OK) {
+        rollback();
+        return core::makeError(core::ErrorCode::DbError, "Unable to read the code index generation");
+    }
+    bindText(statement, 1, rootText);
+    if (sqlite3_step(statement) == SQLITE_ROW) previousGeneration = sqlite3_column_int64(statement, 0);
+    sqlite3_finalize(statement);
+    const std::int64_t generation = previousGeneration + 1;
+    stats.generation = static_cast<std::uint64_t>(generation);
+
     auto findFile = [&](std::string_view relative, std::int64_t& fileId, std::string& existingHash) -> bool {
         fileId = 0;
         existingHash.clear();
@@ -283,11 +314,15 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
         if (!findFile(relative, fileId, existingHash)) return false;
         if (fileId == 0) {
             sqlite3_stmt* insert = nullptr;
-            if (sqlite3_prepare_v2(impl_->db, "INSERT INTO files(root,path,hash) VALUES(?1,?2,?3);", -1, &insert, nullptr) != SQLITE_OK)
+            if (sqlite3_prepare_v2(impl_->db,
+                                   "INSERT INTO files(root,path,hash,validated_generation)"
+                                   " VALUES(?1,?2,?3,?4);",
+                                   -1, &insert, nullptr) != SQLITE_OK)
                 return false;
             bindText(insert, 1, rootText);
             bindText(insert, 2, relative);
             bindText(insert, 3, hash);
+            sqlite3_bind_int64(insert, 4, generation);
             const bool ok = sqlite3_step(insert) == SQLITE_DONE;
             sqlite3_finalize(insert);
             if (!ok) return false;
@@ -295,13 +330,37 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
             return true;
         }
         sqlite3_stmt* update = nullptr;
-        if (sqlite3_prepare_v2(impl_->db, "UPDATE files SET hash=?1 WHERE id=?2;", -1, &update, nullptr) != SQLITE_OK)
+        if (sqlite3_prepare_v2(impl_->db,
+                               "UPDATE files SET hash=?1, validated_generation=?2 WHERE id=?3;",
+                               -1, &update, nullptr) != SQLITE_OK)
             return false;
         bindText(update, 1, hash);
-        sqlite3_bind_int64(update, 2, fileId);
+        sqlite3_bind_int64(update, 2, generation);
+        sqlite3_bind_int64(update, 3, fileId);
         const bool ok = sqlite3_step(update) == SQLITE_DONE;
         sqlite3_finalize(update);
         return ok;
+    };
+    auto touchFile = [&](std::int64_t fileId) -> bool {
+        sqlite3_stmt* file = nullptr;
+        if (sqlite3_prepare_v2(impl_->db, "UPDATE files SET validated_generation=?1 WHERE id=?2;",
+                               -1, &file, nullptr) != SQLITE_OK)
+            return false;
+        sqlite3_bind_int64(file, 1, generation);
+        sqlite3_bind_int64(file, 2, fileId);
+        const bool fileTouched = sqlite3_step(file) == SQLITE_DONE;
+        sqlite3_finalize(file);
+        if (!fileTouched) return false;
+        sqlite3_stmt* symbols = nullptr;
+        if (sqlite3_prepare_v2(impl_->db,
+                               "UPDATE ast_symbols SET validated_generation=?1 WHERE file_id=?2;",
+                               -1, &symbols, nullptr) != SQLITE_OK)
+            return false;
+        sqlite3_bind_int64(symbols, 1, generation);
+        sqlite3_bind_int64(symbols, 2, fileId);
+        const bool symbolsTouched = sqlite3_step(symbols) == SQLITE_DONE;
+        sqlite3_finalize(symbols);
+        return symbolsTouched;
     };
     auto deleteSymbols = [&](std::int64_t fileId) -> bool {
         sqlite3_stmt* remove = nullptr;
@@ -333,7 +392,6 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
         return fileDeleted;
     };
 
-    std::unordered_set<std::string> seen;
     auto options = std::filesystem::directory_options::skip_permission_denied;
     std::filesystem::recursive_directory_iterator iterator(root, options), end;
     auto invalidateObservedSource = [&]() -> bool {
@@ -344,7 +402,6 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
             return true;
         }
         const auto relativeText = relative.generic_string();
-        seen.insert(relativeText);
         return invalidateFile(relativeText);
     };
     for (; iterator != end; iterator.increment(error)) {
@@ -429,7 +486,6 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
             continue;
         }
         const auto relativeText = relative.generic_string();
-        seen.insert(relativeText);
 
         const auto size = std::filesystem::file_size(iterator->path(), error);
         if (error || size > limits.maximumFileBytes) {
@@ -456,7 +512,13 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
             rollback();
             return core::makeError(core::ErrorCode::DbError, "Unable to inspect indexed file");
         }
-        if (fileId != 0 && existingHash == fileHash) continue;
+        if (fileId != 0 && existingHash == fileHash) {
+            if (!touchFile(fileId)) {
+                rollback();
+                return core::makeError(core::ErrorCode::DbError, "Unable to revalidate indexed file");
+            }
+            continue;
+        }
 
         const auto extraction = AstSymbolExtractor::extractSymbols(source, relativeText);
         if (!upsertFile(relativeText, fileHash, fileId)) {
@@ -482,10 +544,10 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
 
         sqlite3_stmt* insert = nullptr;
         if (sqlite3_prepare_v2(impl_->db,
-                               "INSERT INTO ast_symbols(symbol_id,workspace_root,file_id,file_path,file_hash,name,"
-                               "qualified_name,kind,parent_id,signature,start_line,end_line,start_column,end_column,"
-                               "byte_offset,byte_length,type_name,is_const)"
-                               " VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18);",
+                               "INSERT INTO ast_symbols(symbol_id,workspace_root,validated_generation,file_id,"
+                               "file_path,file_hash,name,qualified_name,kind,parent_id,signature,start_line,end_line,"
+                               "start_column,end_column,byte_offset,byte_length,type_name,is_const)"
+                               " VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19);",
                                -1, &insert, nullptr) != SQLITE_OK) {
             rollback();
             return core::makeError(core::ErrorCode::DbError, "Unable to prepare symbol insert");
@@ -500,22 +562,23 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
             sqlite3_clear_bindings(insert);
             bindText(insert, 1, scoped->second);
             bindText(insert, 2, rootText);
-            sqlite3_bind_int64(insert, 3, fileId);
-            bindText(insert, 4, symbol.filePath);
-            bindText(insert, 5, fileHash);
-            bindText(insert, 6, symbol.name);
-            bindText(insert, 7, symbol.qualifiedName);
-            sqlite3_bind_int(insert, 8, static_cast<int>(symbol.kind));
-            bindText(insert, 9, parent);
-            bindText(insert, 10, symbol.signature);
-            sqlite3_bind_int64(insert, 11, symbol.startLine);
-            sqlite3_bind_int64(insert, 12, symbol.endLine);
-            sqlite3_bind_int64(insert, 13, symbol.startColumn);
-            sqlite3_bind_int64(insert, 14, symbol.endColumn);
-            sqlite3_bind_int64(insert, 15, static_cast<sqlite3_int64>(symbol.span.startByte));
-            sqlite3_bind_int64(insert, 16, static_cast<sqlite3_int64>(symbol.span.length()));
-            bindText(insert, 17, symbol.typeName);
-            sqlite3_bind_int(insert, 18, symbol.isConst ? 1 : 0);
+            sqlite3_bind_int64(insert, 3, generation);
+            sqlite3_bind_int64(insert, 4, fileId);
+            bindText(insert, 5, symbol.filePath);
+            bindText(insert, 6, fileHash);
+            bindText(insert, 7, symbol.name);
+            bindText(insert, 8, symbol.qualifiedName);
+            sqlite3_bind_int(insert, 9, static_cast<int>(symbol.kind));
+            bindText(insert, 10, parent);
+            bindText(insert, 11, symbol.signature);
+            sqlite3_bind_int64(insert, 12, symbol.startLine);
+            sqlite3_bind_int64(insert, 13, symbol.endLine);
+            sqlite3_bind_int64(insert, 14, symbol.startColumn);
+            sqlite3_bind_int64(insert, 15, symbol.endColumn);
+            sqlite3_bind_int64(insert, 16, static_cast<sqlite3_int64>(symbol.span.startByte));
+            sqlite3_bind_int64(insert, 17, static_cast<sqlite3_int64>(symbol.span.length()));
+            bindText(insert, 18, symbol.typeName);
+            sqlite3_bind_int(insert, 19, symbol.isConst ? 1 : 0);
             if (sqlite3_step(insert) != SQLITE_DONE) {
                 sqlite3_finalize(insert);
                 rollback();
@@ -528,15 +591,16 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
 
     if (!stats.incomplete) {
         sqlite3_stmt* files = nullptr;
-        if (sqlite3_prepare_v2(impl_->db, "SELECT id,path FROM files WHERE root=?1;", -1, &files, nullptr) != SQLITE_OK) {
+        if (sqlite3_prepare_v2(impl_->db,
+                               "SELECT id FROM files WHERE root=?1 AND validated_generation<>?2;",
+                               -1, &files, nullptr) != SQLITE_OK) {
             rollback();
-            return core::makeError(core::ErrorCode::DbError, "Unable to enumerate indexed files");
+            return core::makeError(core::ErrorCode::DbError, "Unable to enumerate stale indexed files");
         }
         bindText(files, 1, rootText);
+        sqlite3_bind_int64(files, 2, generation);
         std::vector<std::int64_t> stale;
-        while (sqlite3_step(files) == SQLITE_ROW) {
-            if (!seen.contains(columnText(files, 1))) stale.push_back(sqlite3_column_int64(files, 0));
-        }
+        while (sqlite3_step(files) == SQLITE_ROW) stale.push_back(sqlite3_column_int64(files, 0));
         sqlite3_finalize(files);
         for (const auto id : stale) {
             sqlite3_stmt* symbols = nullptr;
@@ -570,6 +634,22 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
         rollback();
         return core::makeError(core::ErrorCode::DbError, "Unable to rebuild the symbol FTS index");
     }
+    sqlite3_stmt* workspaceState = nullptr;
+    if (sqlite3_prepare_v2(impl_->db,
+                           "UPDATE workspaces SET generation=?2,last_refresh_complete=?3 WHERE root=?1;",
+                           -1, &workspaceState, nullptr) != SQLITE_OK) {
+        rollback();
+        return core::makeError(core::ErrorCode::DbError, "Unable to record code index completeness");
+    }
+    bindText(workspaceState, 1, rootText);
+    sqlite3_bind_int64(workspaceState, 2, generation);
+    sqlite3_bind_int(workspaceState, 3, stats.incomplete ? 0 : 1);
+    const bool stateUpdated = sqlite3_step(workspaceState) == SQLITE_DONE;
+    sqlite3_finalize(workspaceState);
+    if (!stateUpdated) {
+        rollback();
+        return core::makeError(core::ErrorCode::DbError, "Unable to record code index completeness");
+    }
     if (!exec(impl_->db, "COMMIT;")) {
         rollback();
         return core::makeError(core::ErrorCode::DbError, "Unable to commit the code index");
@@ -586,10 +666,12 @@ core::Result<std::vector<AstSymbol>> CodebaseIndex::findByName(std::string_view 
                                                                bool allowFtsFallback) const {
     if (!impl_ || impl_->db == nullptr) return core::makeError(core::ErrorCode::DbError, "Code index is unavailable");
     if (!impl_->bound) return core::makeError(core::ErrorCode::PreconditionFailed, "Code index has no bound workspace");
+    const auto generation = impl_->currentGeneration();
+    if (!generation.has_value()) return std::vector<AstSymbol>{};
     const auto bounded = std::min<std::size_t>(std::max<std::size_t>(limit, 1), 64);
     std::string sql = std::string("SELECT ") + kSymbolColumns +
-        " FROM ast_symbols WHERE workspace_root=?1 AND name=?2";
-    int bindIndex = 3;
+        " FROM ast_symbols WHERE workspace_root=?1 AND validated_generation=?2 AND name=?3";
+    int bindIndex = 4;
     if (!parentSymbolId.empty()) sql += " AND parent_id=?" + std::to_string(bindIndex++);
     if (!filePath.empty()) sql += " AND file_path=?" + std::to_string(bindIndex++);
     sql += " LIMIT ?" + std::to_string(bindIndex);
@@ -597,8 +679,9 @@ core::Result<std::vector<AstSymbol>> CodebaseIndex::findByName(std::string_view 
     if (sqlite3_prepare_v2(impl_->db, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
         return core::makeError(core::ErrorCode::DbError, "Unable to query AST symbols");
     bindText(statement, 1, impl_->workspaceRoot);
-    bindText(statement, 2, name);
-    int index = 3;
+    sqlite3_bind_int64(statement, 2, *generation);
+    bindText(statement, 3, name);
+    int index = 4;
     if (!parentSymbolId.empty()) bindText(statement, index++, parentSymbolId);
     if (!filePath.empty()) bindText(statement, index++, filePath);
     sqlite3_bind_int(statement, index, static_cast<int>(bounded));
@@ -611,12 +694,13 @@ core::Result<std::vector<AstSymbol>> CodebaseIndex::findByName(std::string_view 
     if (query.empty()) return symbols;
     std::string ftsSql = "SELECT " + std::string(kSymbolColumnsAliased) +
         " FROM ast_symbols_fts f JOIN ast_symbols a ON a.rowid=f.rowid"
-        " WHERE ast_symbols_fts MATCH ?1 AND a.workspace_root=?2"
-        " ORDER BY bm25(ast_symbols_fts) LIMIT ?3";
+        " WHERE ast_symbols_fts MATCH ?1 AND a.workspace_root=?2 AND a.validated_generation=?3"
+        " ORDER BY bm25(ast_symbols_fts) LIMIT ?4";
     if (sqlite3_prepare_v2(impl_->db, ftsSql.c_str(), -1, &statement, nullptr) != SQLITE_OK) return symbols;
     bindText(statement, 1, query);
     bindText(statement, 2, impl_->workspaceRoot);
-    sqlite3_bind_int(statement, 3, static_cast<int>(bounded));
+    sqlite3_bind_int64(statement, 3, *generation);
+    sqlite3_bind_int(statement, 4, static_cast<int>(bounded));
     while (sqlite3_step(statement) == SQLITE_ROW) symbols.push_back(rowSymbol(statement));
     sqlite3_finalize(statement);
     return symbols;
@@ -626,16 +710,19 @@ core::Result<std::vector<AstSymbol>> CodebaseIndex::findQualified(std::string_vi
                                                                   std::size_t limit) const {
     if (!impl_ || impl_->db == nullptr) return core::makeError(core::ErrorCode::DbError, "Code index is unavailable");
     if (!impl_->bound) return core::makeError(core::ErrorCode::PreconditionFailed, "Code index has no bound workspace");
+    const auto generation = impl_->currentGeneration();
+    if (!generation.has_value()) return std::vector<AstSymbol>{};
     const auto bounded = std::min<std::size_t>(std::max<std::size_t>(limit, 1), 64);
     const std::string sql = std::string("SELECT ") + kSymbolColumns +
-        " FROM ast_symbols WHERE workspace_root=?1 AND qualified_name=?2"
-        " ORDER BY file_path,byte_offset LIMIT ?3;";
+        " FROM ast_symbols WHERE workspace_root=?1 AND validated_generation=?2 AND qualified_name=?3"
+        " ORDER BY file_path,byte_offset LIMIT ?4;";
     sqlite3_stmt* statement = nullptr;
     if (sqlite3_prepare_v2(impl_->db, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
         return core::makeError(core::ErrorCode::DbError, "Unable to query AST symbol");
     bindText(statement, 1, impl_->workspaceRoot);
-    bindText(statement, 2, qualifiedName);
-    sqlite3_bind_int(statement, 3, static_cast<int>(bounded));
+    sqlite3_bind_int64(statement, 2, *generation);
+    bindText(statement, 3, qualifiedName);
+    sqlite3_bind_int(statement, 4, static_cast<int>(bounded));
     std::vector<AstSymbol> symbols;
     while (sqlite3_step(statement) == SQLITE_ROW) symbols.push_back(rowSymbol(statement));
     sqlite3_finalize(statement);
@@ -646,15 +733,19 @@ core::Result<std::vector<AstSymbol>> CodebaseIndex::children(std::string_view pa
                                                              std::size_t limit) const {
     if (!impl_ || impl_->db == nullptr) return core::makeError(core::ErrorCode::DbError, "Code index is unavailable");
     if (!impl_->bound) return core::makeError(core::ErrorCode::PreconditionFailed, "Code index has no bound workspace");
+    const auto generation = impl_->currentGeneration();
+    if (!generation.has_value()) return std::vector<AstSymbol>{};
     const auto bounded = std::min<std::size_t>(std::max<std::size_t>(limit, 1), 128);
     const std::string sql = std::string("SELECT ") + kSymbolColumns +
-        " FROM ast_symbols WHERE workspace_root=?1 AND parent_id=?2 ORDER BY byte_offset LIMIT ?3;";
+        " FROM ast_symbols WHERE workspace_root=?1 AND validated_generation=?2 AND parent_id=?3"
+        " ORDER BY byte_offset LIMIT ?4;";
     sqlite3_stmt* statement = nullptr;
     if (sqlite3_prepare_v2(impl_->db, sql.c_str(), -1, &statement, nullptr) != SQLITE_OK)
         return core::makeError(core::ErrorCode::DbError, "Unable to query AST children");
     bindText(statement, 1, impl_->workspaceRoot);
-    bindText(statement, 2, parentSymbolId);
-    sqlite3_bind_int(statement, 3, static_cast<int>(bounded));
+    sqlite3_bind_int64(statement, 2, *generation);
+    bindText(statement, 3, parentSymbolId);
+    sqlite3_bind_int(statement, 4, static_cast<int>(bounded));
     std::vector<AstSymbol> symbols;
     while (sqlite3_step(statement) == SQLITE_ROW) symbols.push_back(rowSymbol(statement));
     sqlite3_finalize(statement);

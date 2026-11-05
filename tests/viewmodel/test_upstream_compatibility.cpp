@@ -780,7 +780,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (argc == 5 && std::string_view(argv[1]) == "-u") return protocolWorker(QString::fromLocal8Bit(argv[4]));
-    QTemporaryDir settings, workspace;
+    QTemporaryDir settings, workspace, indexStorage;
     ROCLINT_CHECK(settings.isValid() && workspace.isValid());
     QCoreApplication::setOrganizationName(QStringLiteral("RoclintCompatibilityTests"));
     QCoreApplication::setApplicationName(QStringLiteral("UpstreamCompatibility"));
@@ -815,6 +815,39 @@ int main(int argc, char** argv) {
     ROCLINT_CHECK(c.scopePreamble(root, "local", "missing.cpp").isEmpty());
     ROCLINT_CHECK(c.scopePreamble(root, "unknown", "src/main.cpp").isEmpty());
     ROCLINT_CHECK(c.stateVersion() == 0 && c.sessionCount() == 0); // scope helpers do not create authoritative intent
+
+    {
+        QFile codeFile(root + QStringLiteral("/src/indexed.hpp"));
+        ROCLINT_CHECK(codeFile.open(QIODevice::WriteOnly));
+        ROCLINT_CHECK(codeFile.write("class HostIndexed { public: int hostField; };\n") > 0);
+    }
+    c.setCodebaseContextConsentedForTesting(true);
+    c.setCodebaseIndexPathForTesting(indexStorage.path() + QStringLiteral("/index.db"));
+    ROCLINT_CHECK(c.refreshCodebaseIndex());
+    ROCLINT_CHECK(c.waitForIdleForTesting(15000));
+    ROCLINT_CHECK(c.codebaseIndexReadyForTesting());
+    ROCLINT_CHECK(c.groundedIntentXmlForTesting(QStringLiteral("Rename hostField in HostIndexed."))
+                      .contains(QStringLiteral("VERIFIED")));
+
+    {
+        QFile codeFile(root + QStringLiteral("/src/indexed.hpp"));
+        ROCLINT_CHECK(codeFile.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    }
+    c.setCodebaseRefreshLimitsForTesting(roclint::storage::CodebaseIndexLimits{
+        roclint::storage::CodebaseIndex::kMaximumIndexedFiles, 0,
+        roclint::storage::CodebaseIndex::kMaximumFileBytes});
+    ROCLINT_CHECK(c.refreshCodebaseIndex());
+    ROCLINT_CHECK(c.waitForIdleForTesting(15000));
+    ROCLINT_CHECK(!c.codebaseIndexReadyForTesting());
+    ROCLINT_CHECK(c.groundedIntentXmlForTesting(QStringLiteral("Rename hostField in HostIndexed.")).isEmpty());
+
+    c.setCodebaseRefreshLimitsForTesting(std::nullopt);
+    ROCLINT_CHECK(c.refreshCodebaseIndex());
+    ROCLINT_CHECK(c.waitForIdleForTesting(15000));
+    ROCLINT_CHECK(c.codebaseIndexReadyForTesting());
+    const auto afterComplete = c.groundedIntentXmlForTesting(QStringLiteral("Rename hostField in HostIndexed."));
+    ROCLINT_CHECK(!afterComplete.contains(QStringLiteral("VERIFIED")));
+    ROCLINT_CHECK(afterComplete.contains(QStringLiteral("NOT_FOUND_IN_SCOPE")));
 
     for (const char* property : {"hasJuliaModel", "useLiveWeights", "isInferring", "directInjectionEnabled", "modelDirectory"}) {
         ROCLINT_CHECK(c.metaObject()->indexOfProperty(property) >= 0);

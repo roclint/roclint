@@ -4,6 +4,7 @@
 #include "roclint/storage/AstSymbol.hpp"
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -24,6 +25,7 @@ struct CodebaseIndexStats {
     std::size_t filesIndexed{0};
     std::size_t filesRecovered{0};
     std::size_t symbolsIndexed{0};
+    std::uint64_t generation{0};
     double elapsedMs{0.0};
     bool incomplete{false};
 };

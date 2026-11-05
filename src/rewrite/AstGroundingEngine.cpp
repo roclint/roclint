@@ -213,14 +213,13 @@ std::vector<CanonicalIntent> AstGroundingEngine::groundIntents(const std::vector
 
         std::vector<storage::AstSymbol> candidates;
         if (explicitScope && !scopeMissing) {
-            // An overloaded or redeclared scope is not a single child owner. Merge
-            // matching children from every resolved scope candidate before deciding.
+            // Query the requested child directly under each resolved scope. A
+            // fixed-window child enumeration could miss late members and must
+            // never be treated as proof that the target is absent.
             for (const auto& scopeSymbol : scopeCandidates) {
-                const auto children = index.children(scopeSymbol.symbolId, 128);
-                if (!children.ok()) continue;
-                for (const auto& child : children.value()) {
-                    if (child.name == name) candidates.push_back(child);
-                }
+                const auto matches = index.findByName(name, scopeSymbol.symbolId, {}, 64, false);
+                if (!matches.ok()) continue;
+                for (const auto& child : matches.value()) candidates.push_back(child);
             }
         } else if (!explicitScope) {
             if (normalizedTarget.find("::") != std::string::npos) {

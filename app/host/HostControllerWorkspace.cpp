@@ -17,14 +17,15 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <utility>
 
 namespace roclint::host {
 namespace {
-std::filesystem::path codebaseIndexPath() {
-    const auto dataDirectory = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-    if (dataDirectory.isEmpty() || !QDir().mkpath(dataDirectory)) return {};
-    return std::filesystem::path((dataDirectory + QStringLiteral("/codebase-index.db")).toStdWString());
-}
+struct CodebaseRefreshOutcome {
+    bool ok{false};
+    bool incomplete{false};
+    QString error{};
+};
 } // namespace
 
 QVariantList HostController::recentProjects() const {
@@ -107,36 +108,44 @@ bool HostController::refreshCodebaseIndex() {
 
 void HostController::startCodebaseRefresh(const QString& projectPath) {
     if (!m_codebaseContextConsented || projectPath.isEmpty()) return;
-    const auto indexPath = codebaseIndexPath();
-    if (indexPath.empty()) return;
+    const auto indexPathText = codebaseIndexPathForHost();
+    if (indexPathText.isEmpty()) return;
+    const auto indexPath = std::filesystem::path(indexPathText.toStdWString());
     const auto rootPath = std::filesystem::path(projectPath.toStdWString());
+    const auto limits = m_codebaseRefreshLimitsForTesting.value_or(storage::CodebaseIndexLimits{});
     const auto serial = ++m_codebaseRefreshSerial;
     m_codebaseRefreshInFlight = true;
     m_codebaseIndexReady = false;
     m_codebaseIndex.reset();
-    auto* watcher = new QFutureWatcher<QString>(this);
+    auto* watcher = new QFutureWatcher<CodebaseRefreshOutcome>(this);
     ++m_inFlight;
-    connect(watcher, &QFutureWatcher<QString>::finished, this, [this, watcher, serial]() {
+    connect(watcher, &QFutureWatcher<CodebaseRefreshOutcome>::finished, this, [this, watcher, serial]() {
         --m_inFlight;
         if (serial == m_codebaseRefreshSerial) {
             m_codebaseRefreshInFlight = false;
-            const auto error = watcher->result();
-            m_codebaseIndexReady = error.isEmpty();
-            if (!m_codebaseIndexReady) {
+            const auto outcome = watcher->result();
+            m_codebaseIndexReady = outcome.ok && !outcome.incomplete;
+            if (!outcome.ok) {
                 m_codebaseIndex.reset();
                 setLastError(QStringLiteral("Codebase index refresh failed: %1")
-                                 .arg(error.isEmpty() ? QStringLiteral("unknown error") : error));
+                                 .arg(outcome.error.isEmpty() ? QStringLiteral("unknown error") : outcome.error));
+            } else if (outcome.incomplete) {
+                // Cache rows are retained for the next complete pass, but cannot
+                // be promoted to authoritative context from an incomplete refresh.
+                m_codebaseIndex.reset();
+                setLastError(QStringLiteral("Codebase index refresh incomplete; grounding withheld."));
             }
         }
         watcher->deleteLater();
         finishQuitWhenRuntimesStopped();
     });
-    watcher->setFuture(QtConcurrent::run([rootPath, indexPath]() -> QString {
+    watcher->setFuture(QtConcurrent::run([rootPath, indexPath, limits]() -> CodebaseRefreshOutcome {
         storage::CodebaseIndex index(indexPath, rootPath);
         const storage::WorkspaceContext workspace{rootPath, {}, true};
-        const auto refreshed = index.refresh(workspace);
-        if (!refreshed.ok()) return QString::fromStdString(refreshed.error().message);
-        return {};
+        const auto refreshed = index.refresh(workspace, limits);
+        if (!refreshed.ok())
+            return {false, false, QString::fromStdString(refreshed.error().message)};
+        return {true, refreshed.value().incomplete, {}};
     }));
 }
 
@@ -242,8 +251,9 @@ GroundedPromptContext HostController::groundedCanonicalIntentContext(std::string
     auto raw = core::rewrite::CanonicalIntentExtractor::extract(prompt);
     if (raw.empty()) return context;
     if (!m_codebaseIndex) {
-        const auto path = codebaseIndexPath();
-        if (path.empty()) return context;
+        const auto pathText = codebaseIndexPathForHost();
+        if (pathText.isEmpty()) return context;
+        const auto path = std::filesystem::path(pathText.toStdWString());
         std::error_code error;
         const auto root = std::filesystem::canonical(
             std::filesystem::path(m_projectScanPath.toStdWString()), error);
@@ -259,5 +269,28 @@ GroundedPromptContext HostController::groundedCanonicalIntentContext(std::string
         grounded, workspaceIdentity);
     return context;
 }
+
+QString HostController::codebaseIndexPathForHost() const {
+    if (!m_codebaseIndexPathOverride.isEmpty()) return m_codebaseIndexPathOverride;
+    const auto dataDirectory = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    if (dataDirectory.isEmpty() || !QDir().mkpath(dataDirectory)) return {};
+    return dataDirectory + QStringLiteral("/codebase-index.db");
+}
+
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+void HostController::setCodebaseIndexPathForTesting(QString path) {
+    m_codebaseIndexPathOverride = std::move(path);
+    m_codebaseIndex.reset();
+    m_codebaseIndexReady = false;
+}
+
+void HostController::setCodebaseRefreshLimitsForTesting(std::optional<storage::CodebaseIndexLimits> limits) {
+    m_codebaseRefreshLimitsForTesting = std::move(limits);
+}
+
+QString HostController::groundedIntentXmlForTesting(const QString& prompt) {
+    return QString::fromStdString(groundedCanonicalIntentContext(prompt.toStdString()).xml);
+}
+#endif
 
 } // namespace roclint::host

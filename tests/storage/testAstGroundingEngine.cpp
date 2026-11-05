@@ -116,6 +116,18 @@ int userVersion(const fs::path& path) {
     return version;
 }
 
+std::int64_t cachedSymbolCount(const fs::path& path) {
+    sqlite3* db = nullptr;
+    ROCLINT_CHECK(sqlite3_open(path.string().c_str(), &db) == SQLITE_OK);
+    sqlite3_stmt* statement = nullptr;
+    ROCLINT_CHECK(sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM ast_symbols;", -1, &statement, nullptr) == SQLITE_OK);
+    ROCLINT_CHECK(sqlite3_step(statement) == SQLITE_ROW);
+    const auto count = sqlite3_column_int64(statement, 0);
+    sqlite3_finalize(statement);
+    sqlite3_close(db);
+    return count;
+}
+
 void testExactScopeAndHallucination() {
     TempArea area;
     const auto workspace = area.workspace("scope");
@@ -230,7 +242,7 @@ void testLegacyIndexSchemaRebuilds() {
     storage::CodebaseIndex index(database, workspace);
     const auto refreshed = index.refresh({workspace, {}, true});
     ROCLINT_CHECK(refreshed.ok());
-    ROCLINT_CHECK(userVersion(database) == 2);
+    ROCLINT_CHECK(userVersion(database) == 3);
     const auto hit = index.findByName("legacyField");
     ROCLINT_CHECK(hit.ok() && hit.value().size() == 1);
 }
@@ -277,6 +289,63 @@ void testAmbiguousScopeCandidates() {
     ROCLINT_CHECK(shared.grounding->candidates.size() >= 2);
     const auto missing = ground(index, "absent", "in Engine");
     ROCLINT_CHECK(statusOf(missing) == core::rewrite::GroundingStatus::Ambiguous);
+}
+
+std::string largeClassSource(std::string_view extraMember = {}) {
+    std::string code = "class Large { public:\n";
+    for (int index = 0; index < 140; ++index)
+        code += "int member" + std::to_string(index) + ";\n";
+    if (!extraMember.empty()) code += "int " + std::string(extraMember) + ";\n";
+    code += "};\n";
+    return code;
+}
+
+void testLargeScopeMatchesLateMembers() {
+    TempArea area;
+    const auto workspace = area.workspace("large-class");
+    write(workspace, "src/large.hpp", largeClassSource());
+    storage::CodebaseIndex index(area.database("large-class"), workspace);
+    const auto refreshed = index.refresh({workspace, {}, true});
+    ROCLINT_CHECK(refreshed.ok());
+    ROCLINT_CHECK(refreshed.value().symbolsIndexed == 141);
+    ROCLINT_CHECK(exactSymbolCount(index, "member139") == 1);
+
+    const auto early = ground(index, "member0", "in Large");
+    ROCLINT_CHECK(statusOf(early) == core::rewrite::GroundingStatus::Verified);
+    ROCLINT_CHECK(early.grounding->qualifiedTarget == "Large::member0");
+    const auto late = ground(index, "member139", "in Large");
+    ROCLINT_CHECK(statusOf(late) == core::rewrite::GroundingStatus::Verified);
+    ROCLINT_CHECK(late.grounding->qualifiedTarget == "Large::member139");
+    ROCLINT_CHECK(statusOf(ground(index, "member140", "in Large")) ==
+                  core::rewrite::GroundingStatus::NotFoundInScope);
+
+    const auto raw = core::rewrite::CanonicalIntentExtractor::extract(
+        "Rename member139 to renamed in Large.");
+    const auto extracted = core::rewrite::AstGroundingEngine::groundIntents(raw, {}, index);
+    const auto* target = findIntent(extracted, "member139");
+    ROCLINT_CHECK(target != nullptr);
+    ROCLINT_CHECK(statusOf(*target) == core::rewrite::GroundingStatus::Verified);
+}
+
+void testLargeScopeAmbiguityAcrossCandidates() {
+    TempArea area;
+    const auto workspace = area.workspace("large-ambiguous");
+    write(workspace, "src/a.hpp", largeClassSource("onlyA139"));
+    write(workspace, "src/b.hpp", largeClassSource());
+    storage::CodebaseIndex index(area.database("large-ambiguous"), workspace);
+    ROCLINT_CHECK(index.refresh({workspace, {}, true}).ok());
+    const auto scopes = index.findQualified("Large");
+    ROCLINT_CHECK(scopes.ok() && scopes.value().size() == 2);
+
+    ROCLINT_CHECK(statusOf(ground(index, "member0", "in Large")) ==
+                  core::rewrite::GroundingStatus::Ambiguous);
+    ROCLINT_CHECK(statusOf(ground(index, "member139", "in Large")) ==
+                  core::rewrite::GroundingStatus::Ambiguous);
+    const auto unique = ground(index, "onlyA139", "in Large");
+    ROCLINT_CHECK(statusOf(unique) == core::rewrite::GroundingStatus::Verified);
+    ROCLINT_CHECK(unique.grounding->qualifiedTarget == "Large::onlyA139");
+    ROCLINT_CHECK(statusOf(ground(index, "absent", "in Large")) ==
+                  core::rewrite::GroundingStatus::Ambiguous);
 }
 
 void testDeclarationAndDefinitionSites() {
@@ -461,15 +530,24 @@ void testRefreshFailedReadInvalidatesEvidence() {
 #endif
 }
 
-void testIncompleteScanPreservesUnvisitedEvidence() {
+void testIncompleteRefreshWithholdsStaleEvidence() {
     TempArea area;
     const auto workspace = area.workspace("incomplete");
+    const auto database = area.database("incomplete");
     write(workspace, "src/one.hpp", "class One { public: int oldOne; };\n");
     write(workspace, "src/two.hpp", "class Two { public: int oldTwo; };\n");
-    storage::CodebaseIndex index(area.database("incomplete"), workspace);
-    ROCLINT_CHECK(index.refresh({workspace, {}, true}).ok());
-    ROCLINT_CHECK(index.findByName("oldOne").value().size() == 1);
-    ROCLINT_CHECK(index.findByName("oldTwo").value().size() == 1);
+    storage::CodebaseIndex index(database, workspace);
+    const auto first = index.refresh({workspace, {}, true});
+    ROCLINT_CHECK(first.ok());
+    ROCLINT_CHECK(!first.value().incomplete);
+    const auto firstGeneration = first.value().generation;
+    ROCLINT_CHECK(firstGeneration > 0);
+    ROCLINT_CHECK(exactSymbolCount(index, "oldOne") == 1);
+    ROCLINT_CHECK(exactSymbolCount(index, "oldTwo") == 1);
+    const auto firstGrounding = ground(index, "oldOne", "in One");
+    ROCLINT_CHECK(statusOf(firstGrounding) == core::rewrite::GroundingStatus::Verified);
+    ROCLINT_CHECK(!core::rewrite::AstGroundingEngine::computeAstSnapshotHash(
+                       {firstGrounding}, "workspace").empty());
 
     write(workspace, "src/one.hpp", "");
     write(workspace, "src/two.hpp", "");
@@ -478,14 +556,35 @@ void testIncompleteScanPreservesUnvisitedEvidence() {
     const auto incomplete = index.refresh({workspace, {}, true}, emptyScan);
     ROCLINT_CHECK(incomplete.ok());
     ROCLINT_CHECK(incomplete.value().incomplete);
-    ROCLINT_CHECK(index.findByName("oldOne").value().size() == 1);
-    ROCLINT_CHECK(index.findByName("oldTwo").value().size() == 1);
+    ROCLINT_CHECK(incomplete.value().generation == firstGeneration + 1);
 
+    // The old cache rows are retained, but they belong to the prior generation
+    // and must not become authoritative evidence.
+    ROCLINT_CHECK(cachedSymbolCount(database) > 0);
+    ROCLINT_CHECK(exactSymbolCount(index, "oldOne") == 0);
+    ROCLINT_CHECK(exactSymbolCount(index, "oldTwo") == 0);
+    const auto stale = ground(index, "oldOne", "in One");
+    ROCLINT_CHECK(statusOf(stale) == core::rewrite::GroundingStatus::NotFoundInScope);
+    ROCLINT_CHECK(core::rewrite::AstGroundingEngine::computeAstSnapshotHash({stale}, "workspace").empty());
+
+    // A newly opened instance reads the same current generation and cannot
+    // bypass the freshness gate.
+    storage::CodebaseIndex reopened(database, workspace);
+    ROCLINT_CHECK(exactSymbolCount(reopened, "oldOne") == 0);
+    const auto reopenedStale = ground(reopened, "oldOne", "in One");
+    ROCLINT_CHECK(statusOf(reopenedStale) == core::rewrite::GroundingStatus::NotFoundInScope);
+
+    write(workspace, "src/one.hpp", "class One { public: int freshOne; };\n");
+    write(workspace, "src/two.hpp", "class Two { public: int freshTwo; };\n");
     const auto complete = index.refresh({workspace, {}, true});
     ROCLINT_CHECK(complete.ok());
     ROCLINT_CHECK(!complete.value().incomplete);
-    ROCLINT_CHECK(index.findByName("oldOne").value().empty());
-    ROCLINT_CHECK(index.findByName("oldTwo").value().empty());
+    ROCLINT_CHECK(complete.value().generation == firstGeneration + 2);
+    const auto fresh = ground(index, "freshOne", "in One");
+    ROCLINT_CHECK(statusOf(fresh) == core::rewrite::GroundingStatus::Verified);
+    ROCLINT_CHECK(!core::rewrite::AstGroundingEngine::computeAstSnapshotHash({fresh}, "workspace").empty());
+    ROCLINT_CHECK(exactSymbolCount(index, "oldOne") == 0);
+    ROCLINT_CHECK(exactSymbolCount(index, "freshTwo") == 1);
 }
 
 void testCrossFileAmbiguityAndActiveFileRanking() {
@@ -658,13 +757,15 @@ int main() {
     testLegacyIndexSchemaRebuilds();
     testQualifiedOverloadsRemainAmbiguous();
     testAmbiguousScopeCandidates();
+    testLargeScopeMatchesLateMembers();
+    testLargeScopeAmbiguityAcrossCandidates();
     testDeclarationAndDefinitionSites();
     testExplicitScopeIsFailClosedAndNormalized();
     testRealExtractorOverloadAndMissingScope();
     testRefreshInvalidatesTruncatedEvidence();
     testRefreshDeletionOversizedAndUnreadable();
     testRefreshFailedReadInvalidatesEvidence();
-    testIncompleteScanPreservesUnvisitedEvidence();
+    testIncompleteRefreshWithholdsStaleEvidence();
     testCrossFileAmbiguityAndActiveFileRanking();
     testRecoveredHeaderStillGroundsAndHashesSource();
     testPromptXmlSignatureBudget();
