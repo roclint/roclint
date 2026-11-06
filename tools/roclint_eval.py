@@ -94,8 +94,10 @@ def verify_freeze(paths, manifest_path):
     manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     for suite, path in paths.items():
         expected = manifest['datasets'][suite]
-        if path.resolve() != (ROOT / expected['path']).resolve() or sha256(path) != expected['sha256']:
-            raise ValueError('Fixture bytes differ from the frozen evaluation dataset')
+        content_digest = hashlib.sha256(path.read_bytes().replace(b'\r\n', b'\n')).hexdigest()
+        digest_matches = content_digest == expected['lf_content_sha256'] if 'lf_content_sha256' in expected else sha256(path) == expected['sha256']
+        if path.resolve() != (ROOT / expected['path']).resolve() or not digest_matches:
+            raise ValueError('Fixture content differs from the frozen evaluation dataset')
     return {'sha256': sha256(manifest_path), 'thresholds': manifest['thresholds']}
 
 
@@ -240,6 +242,81 @@ def check_annotation_readback(record, row, suite):
         if (semantic is None or semantic.get('score') is not None or
                 semantic.get('label') != 'human_review_required'):
             raise RuntimeError('Phoenix must retain an explicit unscored semantic-review annotation')
+
+
+def verify_editorial_review(report, review):
+    if (review.get('reviewer_kind') != 'AGENT' or review.get('source_run') != report['run_id'] or
+            review.get('source_commit') != report['source']['head']):
+        raise ValueError('Editorial review is not bound to this run as a provisional agent review')
+    rows = {row['id']: row for row in report['results'] if row['suite'] == 'rewrite'}
+    annotations = review['reviews']
+    by_id = {item['case_id']: item for item in annotations}
+    if len(by_id) != len(annotations) or set(by_id) != set(rows):
+        raise ValueError('Editorial review must cover each recorded rewrite exactly once')
+    for case_id, row in rows.items():
+        item = by_id[case_id]
+        digest = hashlib.sha256(json.dumps(row['actual']['reply'], sort_keys=True).encode()).hexdigest()
+        if item['reply_sha256'] != digest:
+            raise ValueError('Editorial annotation refers to a different model reply')
+        if item['agent_label'] not in ('preserved_provisionally', 'concern', 'withheld'):
+            raise ValueError('Invalid provisional editorial label')
+        if item['clarity_delta'] not in (-1, 0, 1) or item['usefulness_delta'] not in (-1, 0, 1):
+            raise ValueError('Invalid editorial delta')
+    return by_id
+
+
+def publish_editorial_review(report, review, endpoint):
+    annotations = verify_editorial_review(report, review)
+    endpoint = local_endpoint(endpoint)
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    def api(path, data=None):
+        req = urllib.request.Request(endpoint + path,
+            data=None if data is None else json.dumps(data).encode(),
+            headers={'Content-Type': 'application/json'})
+        with opener.open(req, timeout=10) as response:
+            return json.load(response)
+    published = next(p for p in report['publication']['experiments'] if p['suite'] == 'rewrite')
+    dataset = api('/v1/datasets/' + published['dataset_id'] + '/examples?version_id=' +
+                  urllib.parse.quote(published['dataset_version_id']))['data']
+    examples = {item['input']['case_id']: item['id'] for item in dataset['examples']}
+    path = '/v1/experiments/' + published['experiment_id'] + '/runs?limit=100'
+    runs = []
+    for _ in range(1000):
+        page = api(path)
+        runs.extend(page['data'])
+        if not page.get('next_cursor'):
+            break
+        path = path.split('&cursor=')[0] + '&cursor=' + urllib.parse.quote(page['next_cursor'])
+    else:
+        raise RuntimeError('Editorial run lookup did not exhaust pagination')
+    runs = {item['dataset_example_id']: item for item in runs}
+    rows = {row['id']: row for row in report['results'] if row['suite'] == 'rewrite'}
+    # Verify every attribution before making the first annotation write.
+    for case_id, row in rows.items():
+        if runs[examples[case_id]]['output']['actual']['reply'] != row['actual']['reply']:
+            raise ValueError('Phoenix run output differs from the reviewed reply')
+    for case_id, item in annotations.items():
+        now = dt.datetime.now(dt.timezone.utc).isoformat()
+        for name, score, label in (
+                ('agent_editorial_fidelity', None, item['agent_label']),
+                ('agent_clarity_delta', item['clarity_delta'], 'provisional'),
+                ('agent_usefulness_delta', item['usefulness_delta'], 'provisional')):
+            api('/v1/experiment_evaluations', {'experiment_run_id': runs[examples[case_id]]['id'],
+                'name': name, 'annotator_kind': 'AGENT', 'start_time': now, 'end_time': now,
+                'result': {'score': score, 'label': label, 'explanation': item['rationale']},
+                'metadata': {'reply_sha256': item['reply_sha256'], 'human_adjudication': item['human_adjudication']}})
+    restored = api('/v1/experiments/' + published['experiment_id'] + '/json')
+    by_example = {record['example_id']: record for record in restored}
+    for case_id, item in annotations.items():
+        saved = {a['name']: a for a in by_example[examples[case_id]]['annotations']}
+        if (saved['agent_editorial_fidelity']['label'] != item['agent_label'] or
+                saved['agent_editorial_fidelity']['score'] is not None or
+                saved['agent_clarity_delta']['score'] != item['clarity_delta'] or
+                saved['agent_usefulness_delta']['score'] != item['usefulness_delta']):
+            raise RuntimeError('Editorial annotation readback differs from local review')
+        check_annotation_readback(by_example[examples[case_id]], rows[case_id], 'rewrite')
+    return {'status': 'published', 'cases': len(annotations), 'experiment_id': published['experiment_id'],
+            'reviewer_kind': 'AGENT', 'human_acceptance': 'pending'}
 
 
 def publish(report, endpoint, checkpoint=lambda: None):
@@ -545,13 +622,25 @@ def main():
     parser.add_argument('--strict-publication', action='store_true')
     parser.add_argument('--endpoint', type=local_endpoint, default='http://127.0.0.1:6006')
     parser.add_argument('--publish-existing', type=Path)
+    parser.add_argument('--editorial-review', type=Path, help='Attach output-bound provisional agent review; requires --publish-existing')
     args = parser.parse_args()
     if args.limit is not None and args.limit < 1:
         parser.error('--limit must be positive')
     args.diagnostic_no_deadlines = False
+    if args.editorial_review and not args.publish_existing:
+        parser.error('--editorial-review requires --publish-existing')
     if args.publish_existing:
         path = args.publish_existing / 'report.json'
         report = json.loads(path.read_text(encoding='utf-8'))
+        if args.editorial_review:
+            review = json.loads(args.editorial_review.read_text(encoding='utf-8'))
+            try:
+                report['editorial_publication'] = publish_editorial_review(report, review, args.endpoint)
+            except Exception as error:
+                report['editorial_publication'] = {'status': 'failed', 'error': str(error)}
+            write_json(path, report)
+            print(json.dumps(report['editorial_publication'], indent=2))
+            return int(report['editorial_publication']['status'] != 'published')
         try:
             report['publication'] = publish(report, args.endpoint, lambda: write_json(path, report))
         except Exception as error:

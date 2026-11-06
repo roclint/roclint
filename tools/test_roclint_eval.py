@@ -1,5 +1,6 @@
 """Checks evaluator failure accounting and publication independence without model/SDK dependencies."""
 import json
+import hashlib
 from pathlib import Path
 import subprocess
 import sys
@@ -113,10 +114,50 @@ class EvaluationTests(unittest.TestCase):
         self.assertTrue(evaluation.score_rewrite(case, {'contract': {'withheld': True, 'proposal_published': False}})['passed'])
         self.assertFalse(evaluation.score_rewrite(case, {'contract': {'withheld': False, 'proposal_published': True}})['passed'])
 
+    def test_frozen_dataset_accepts_git_line_ending_conversion_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'data.json'
+            original = b'{"version": 2}\n'
+            path.write_bytes(original)
+            freeze = Path(temporary) / 'freeze.json'
+            freeze.write_text(json.dumps({'datasets': {'ast': {'path': str(path),
+                'sha256': evaluation.sha256(path), 'lf_content_sha256': hashlib.sha256(original).hexdigest()}}, 'thresholds': {}}))
+            path.write_bytes(original.replace(b'\n', b'\r\n'))
+            evaluation.verify_freeze({'ast': path}, freeze)
+            path.write_bytes(b'{"version": 3}\r\n')
+            with self.assertRaises(ValueError):
+                evaluation.verify_freeze({'ast': path}, freeze)
+
     def test_ambiguity_cannot_be_satisfied_by_not_found(self):
         case = {'expected': {'grounding': {'no_verified': True, 'required_statuses': ['AMBIGUOUS']}}}
         actual = {'grounding': {'evidence': [{'status': 'NOT_FOUND_IN_SCOPE'}]}}
         self.assertIn('grounding:missing_status:AMBIGUOUS', evaluation.grounding_errors(case, actual))
+
+    def editorial_fixture(self):
+        reply = {'status': 'rewritten', 'rewritten_prompt': 'Keep the request.'}
+        report = {'run_id': 'reviewed-run', 'source': {'head': 'commit-a'},
+                  'results': [{'suite': 'rewrite', 'id': 'case', 'actual': {'reply': reply}}]}
+        review = {'reviewer_kind': 'AGENT', 'source_run': 'reviewed-run', 'source_commit': 'commit-a',
+                  'reviews': [{'case_id': 'case', 'reply_sha256': hashlib.sha256(json.dumps(reply, sort_keys=True).encode()).hexdigest(),
+                               'agent_label': 'concern', 'clarity_delta': 0, 'usefulness_delta': -1}]}
+        return report, review
+
+    def test_editorial_annotation_cannot_move_to_another_reply(self):
+        report, review = self.editorial_fixture()
+        evaluation.verify_editorial_review(report, review)
+        report['results'][0]['actual']['reply']['rewritten_prompt'] = 'Different output'
+        with self.assertRaises(ValueError):
+            evaluation.verify_editorial_review(report, review)
+
+    def test_agent_review_cannot_claim_human_authority_or_foreign_run(self):
+        report, review = self.editorial_fixture()
+        review['reviewer_kind'] = 'HUMAN'
+        with self.assertRaises(ValueError):
+            evaluation.verify_editorial_review(report, review)
+        review['reviewer_kind'] = 'AGENT'
+        review['source_run'] = 'another-run'
+        with self.assertRaises(ValueError):
+            evaluation.verify_editorial_review(report, review)
 
     def test_outage_keeps_existing_local_results_and_fails_strict_mode(self):
         with tempfile.TemporaryDirectory() as temporary:

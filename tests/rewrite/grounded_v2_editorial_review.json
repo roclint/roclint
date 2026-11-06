@@ -1,0 +1,1013 @@
+{
+  "version": 1,
+  "reviewer_kind": "AGENT",
+  "source_run": "grounded-v2-baseline",
+  "source_commit": "ea9dd3036d92765aeed6836c162328f8cc7413f3",
+  "rubric": {
+    "agent_label": "Provisional editorial concern/preservation; never counted as human acceptance.",
+    "clarity_delta": "-1 less clear, 0 no demonstrated clarity gain, +1 clearer",
+    "usefulness_delta": "-1 harmful or obstructive, 0 no demonstrated editing benefit, +1 incorporates supplied decisions or improves usable wording"
+  },
+  "reviews": [
+    {
+      "case_id": "rename_1",
+      "reply_sha256": "c8073ea8eede5fea11f91993e2ae41b9cac204abc11c4df2ebecd770c649e993",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "rename_2",
+      "reply_sha256": "a1e89e9b4e33f0a67bd0fc5b6db53acc5d1c3a1fe05fc84088dfe855108e05c8",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "rename_3",
+      "reply_sha256": "679ee513a297f36cb82a937c91324c0e6f09213d61169215046e2631083acd06",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "rename_4",
+      "reply_sha256": "a7ff636e23846ec7de4b21f7dea519679a6e4d6af625693b646efa455471a046",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "retry_values_1",
+      "reply_sha256": "b456b2daa5ef8e4482739940ae39f93dedcf33035061f4c4501f3f813aabc008",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "retry_values_2",
+      "reply_sha256": "c0efd46a12ae5e46ebfa5811f0798c14138b8e612f44a1818ab8ca79eaf2b361",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "retry_values_3",
+      "reply_sha256": "476bc27776e6359cd0be53068338c31f33fc9fa9469dc7ef5aa0c06879648791",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "retry_values_4",
+      "reply_sha256": "3bdd42fcccbd9bcbc261decbbf3182ed8001c2420a9074c5e2173df57bf43435",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "resource_bounds_1",
+      "reply_sha256": "ba94dcb10572822ca3fd020b1e73d4481c86449a1a502588907f998513bc43ed",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "resource_bounds_2",
+      "reply_sha256": "64a92ed6349befaa1f97aac76c8fa9659d7011f8ee2ed98e7a85414e1c95310f",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "resource_bounds_3",
+      "reply_sha256": "ceefd0f24cdc30e2de49359200e14a98bc39625412762734a01fd66ddcb26918",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "resource_bounds_4",
+      "reply_sha256": "1efab51aa7ea15c0be693958f7968d512870c5c3754793129cc2ce8fda9c98f9",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "file_scope_1",
+      "reply_sha256": "093290dc863bfe358347662ccf04109b1bc2e742ff4ee3b2bfe221ea11090947",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "file_scope_2",
+      "reply_sha256": "eb953214221ef02dfb9ae211f0dfde48c330dd567b353f1024ab186ee71e406c",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "file_scope_3",
+      "reply_sha256": "43ffba9a1d287dcc6f9de28fce923e596f4a041efb0ba10ff066eb7f2be19ac7",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "file_scope_4",
+      "reply_sha256": "424271e69d455426d8c37ca1484baf18deb699a0a2d5058724fa07a420cc0b6d",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "api_invariants_1",
+      "reply_sha256": "2ee56df41d344481227a0f8ac2246363afc88447062c07fb747aca18d359b6e0",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "api_invariants_2",
+      "reply_sha256": "7fc5566715792ed2437b6f56de846f5e662e59a339c89a0032948759292af060",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "api_invariants_3",
+      "reply_sha256": "2d117ed43361c8c42308e63dc0d592fc643a64b18df264733b47cf8a82fe86c2",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "api_invariants_4",
+      "reply_sha256": "187c5a3cdf3f7436efe971c6c6e35a43bc9bd9ca2f551c6e17bd4d6caaccd2ad",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "exceptions_1",
+      "reply_sha256": "901a1ee59f313f75a8c66d0e290df86d8baf246866d19aa88c611b0fc0e8f407",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "exceptions_2",
+      "reply_sha256": "4bfaefa1c9336317a1a93f3b49d632fa80ea6c0b936534e708e3d11f084dbfc9",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "exceptions_3",
+      "reply_sha256": "b32f816f67796b163ea5252681ee1b5da6eafd1211f68bde191db7fb0644f321",
+      "agent_label": "concern",
+      "issue": "constraint_strengthening",
+      "clarity_delta": 0,
+      "usefulness_delta": -1,
+      "rationale": "Potentially changes a ban on inventing a delay into a ban on any introduced delay when Retry-After is absent.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "exceptions_4",
+      "reply_sha256": "3e3d17adffa01fefd04097e9b62094baa002fdd05cef036f3339071eba8df5cb",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "invalid_inputs_1",
+      "reply_sha256": "1c8acd4e08fcee6691cfc81747978e8334e3e11816daf734929f5364d37605c1",
+      "agent_label": "concern",
+      "issue": "unrequested_format",
+      "clarity_delta": -1,
+      "usefulness_delta": -1,
+      "rationale": "Wraps an otherwise unchanged task in an unrequested JSON object inside the rewritten prompt.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "invalid_inputs_2",
+      "reply_sha256": "dbc042be316b305fc760ffd57c4dfb294bc8885df4ea504451825949a15e850d",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "invalid_inputs_3",
+      "reply_sha256": "f3f6c8e31e67dddf21edd5863811fba35042e20d3bf37870d4d8e05f02a49d97",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "invalid_inputs_4",
+      "reply_sha256": "a3ea829e221a976e3d2f7e236385e14252cf4cafdb312791a0091c3241d85806",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "concurrency_1",
+      "reply_sha256": "7c0576cddd57687830eaa72de9b04087a4d8f87b1657909100f7004d09c39c00",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "concurrency_2",
+      "reply_sha256": "f5a4ad824836f97f9c16cc0c00f9f5561cdd64b57be3a393f2a15eb6b8842da9",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "concurrency_3",
+      "reply_sha256": "a6fe4b3073d83ef1686857b47d7fa75fa3b8f80b7d68f530b8cade83d9ae56fc",
+      "agent_label": "concern",
+      "issue": "changed_action",
+      "clarity_delta": 0,
+      "usefulness_delta": -1,
+      "rationale": "Changes without adding blocking waits into remove blocking waits, authorizing removal of existing waits.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "concurrency_4",
+      "reply_sha256": "9efb431c2b6275b2bfb5425342da5b9074aa7a85a6a06ebf5a6250d121e7973d",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "ownership_1",
+      "reply_sha256": "36de6a98105952747efb8560010442bd95290980019aecf9a17949ced628af78",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "ownership_2",
+      "reply_sha256": "c8947d97968ffb77ba4197cd0ae4574158468f837e8ecc8092c54c33271f23f6",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "ownership_3",
+      "reply_sha256": "6db1e37dba18d5657aaef0de572b7f67cb4dd7bc318faf7aeab7e6503d3d7907",
+      "agent_label": "concern",
+      "issue": "changed_task",
+      "clarity_delta": -1,
+      "usefulness_delta": -1,
+      "rationale": "Replaces Refactor Reader::open with Read the method and adds an unrequested JSON wrapper.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "ownership_4",
+      "reply_sha256": "d32085ba86d0e9bfc7dd00568d5b6c9d92ddb19361a4fbdab998b336ecd43cda",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "callback_rules_1",
+      "reply_sha256": "200c9b16fead7c030dc9b361ad40107ecaf332d63b097e4fa8c1a7eeee1a6ec9",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "callback_rules_2",
+      "reply_sha256": "90e533d4cee4e0d6a79c4a1578a92e086a2578ea210f0191bd89bcd1068ded02",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "callback_rules_3",
+      "reply_sha256": "09f07f5db3c82a51b9a60b9cdc339faf701505d9a3b8262e39ce090168d0f131",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "callback_rules_4",
+      "reply_sha256": "6b3d8c045597a10b80b0598ec64ebfdc7639de385a01f01c4a5f59f0c67f6f99",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "transactionality_1",
+      "reply_sha256": "bc20044568e4bb6dc8060bf4f156f31edfa601a186224610bb1dabe3ddca5801",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "transactionality_2",
+      "reply_sha256": "d388f9f52f75d61d348b3c3acf11409895e570b3d4123f05fef09485385876f1",
+      "agent_label": "concern",
+      "issue": "invented_return_policy",
+      "clarity_delta": 0,
+      "usefulness_delta": -1,
+      "rationale": "Adds a requirement to return false on a duplicate revision; the user specified idempotency, not a return policy.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "transactionality_3",
+      "reply_sha256": "5a98bca461ae06688b7f4872824163191f5829ee311ee2caaec67657e8ddf60d",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "transactionality_4",
+      "reply_sha256": "c6bf0139e6f7f19ce4591f11f0def8dcbdb4a47aeb2b0a30b2e6417b5122ed2f",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "range_edges_1",
+      "reply_sha256": "08208a135603b1b2d0792792327f88b513ce81188af982985d0d48673a76d87a",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "range_edges_2",
+      "reply_sha256": "7d72131585f1b78b26b8e12ff09125934ee731d87b1a902e323ddb1b6e975a5b",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "range_edges_3",
+      "reply_sha256": "74681f2d6ed17831d03d1acaa094d7a696dd1e37dcd680f2b941aba29daf8cf9",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "range_edges_4",
+      "reply_sha256": "e59b9a189e1d840a6a6b041bd1f39e9d3a05d81154c4fb33100eff9ece4bccd7",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "operation_order_1",
+      "reply_sha256": "750da866d42c55794b5cd8f8a662f23a9cca6876351868d2da3932861d319607",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "operation_order_2",
+      "reply_sha256": "8083f6e24cd2c3476c1a66b939b9c1e26dbb0ccf913cfad69a11284d75e2d06e",
+      "agent_label": "concern",
+      "issue": "cardinality_strengthening",
+      "clarity_delta": 0,
+      "usefulness_delta": -1,
+      "rationale": "Changes do not invoke twice to invoke only once; review whether this adds a mandatory invocation.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "operation_order_3",
+      "reply_sha256": "e0e3194ca210d51b68e5c722f0a6dbb0a6af73766a29ddbb6fc55c1783fc1747",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "operation_order_4",
+      "reply_sha256": "f9dc6dd1c017bce10e23e19f2ee0dd57c674aca36f8a6f9b95f8bcfc79fbbf8e",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "output_format_1",
+      "reply_sha256": "b033e31542e4e5a0af6b4451e40c44934177b7f4daaf7844884e9e7354158ccf",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "output_format_2",
+      "reply_sha256": "4c8fdca3c620ec8f0687122845ad1a63262bac17eddc142684e5df3bf7bd3950",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "output_format_3",
+      "reply_sha256": "dc6ab14859ea92dc0fa7cc48cd0f0c1a52f5baa87b16b86e56b967573c0ef706",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "output_format_4",
+      "reply_sha256": "5ff6bec8f8e9638ebb512fabff9ecd36bff02a04039d0cc8d87c95c7832a0542",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "multi_action_1",
+      "reply_sha256": "606421e1118591a047f2d1eb8c14acc996fea858f4dad85d2b74df92a0dd76ef",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "multi_action_2",
+      "reply_sha256": "cbb8c37c820aa064fb531dae952dec13ac284bb6d70a0a041bed50414e907f9d",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "multi_action_3",
+      "reply_sha256": "876651ecd55e0c5c23732ed7c04b9b3cb7ba85d4aff80e0973b6015d1eafcb36",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "multi_action_4",
+      "reply_sha256": "2d665f8fe7ad8e7602e880a6f7b75b710454321004393a0600e59fa4471a6bc9",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "logging_1",
+      "reply_sha256": "54aaccf3d19aa17ac1f22452abf2013bcedd006b4a691c9dcf5cfaf44e4104e1",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "logging_2",
+      "reply_sha256": "edb59c6e5b0df9e94393c4991405212b263bf84be21482f7682d172fe4c3c27f",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "logging_3",
+      "reply_sha256": "04773bb9f216c28f8a8f3db370d05e6949abbba7949bf29c063de0a3db972ddd",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "logging_4",
+      "reply_sha256": "32c101e658f7a8bbeb43ebda3ac121e55a91f367308cc921254d6dfd6e18fcda",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "test_scope_1",
+      "reply_sha256": "ec8b9f05eb1ec88902c7e18e3d05626785d302a604203983122b906b937fa510",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "test_scope_2",
+      "reply_sha256": "8fbdbe750765f4405bfda5f4fb175950860ef003cf3238e10bf8b1e827452788",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "test_scope_3",
+      "reply_sha256": "b375ed5015773d1d73b3da551bf90dbf5d99935ce45baaa5e1c894f96741cb7b",
+      "agent_label": "concern",
+      "issue": "unnecessary_clarification",
+      "clarity_delta": 0,
+      "usefulness_delta": -1,
+      "rationale": "Asks for language/framework and test framework before merely rewriting the supplied request.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "test_scope_4",
+      "reply_sha256": "e15b26399ddf469ceee07eb0225cc8181a366f64b8fb423c8b193d3d54f2e1bc",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "documentation_scope_1",
+      "reply_sha256": "92a2eb8d185e7268ebbb8f5b50ddeacf26b93bc6c7e391f76107d08398d1acd6",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "documentation_scope_2",
+      "reply_sha256": "7f74f61425e20c936069479206d6d49d2433ef3b6997acb567f56d61371a0c0e",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "documentation_scope_3",
+      "reply_sha256": "47cdfd80afb8b2e9a8241702c11228a1c345edd899d8ae5e9f4f99d4e40c6ae6",
+      "agent_label": "concern",
+      "issue": "unprovided_scope_choice",
+      "clarity_delta": 0,
+      "usefulness_delta": -1,
+      "rationale": "Chooses code comments as the documentation location, which the original request left open.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "documentation_scope_4",
+      "reply_sha256": "3e73658ac107d830a122ce1be52ab05deb570754fdabbc39b8dbbe5b32f89d66",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "removal_1",
+      "reply_sha256": "b4fca8111ff3fdecd9639a68a4db6582fa8bcbbd9fe88e6d277458f27c0a3f9b",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "removal_2",
+      "reply_sha256": "29ee5f9d045f70b8c8e9e85ea1fe272a3bab43f3b08e2019dcdd82e4707fb3a5",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "removal_3",
+      "reply_sha256": "719b3a8533e62998ea5ab13faeb898bb05338d2acc692e65177c0de8f8eaa40e",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "removal_4",
+      "reply_sha256": "7e8d3345104639e66bb6a4023e808427284e2409c39ec4d9b41a8e30a9d7b4a0",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "clarification_1",
+      "reply_sha256": "636bcac688756d447e7bdf0e8c5d7e316c1c4658beed825023f143555e51b146",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 1,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "clarification_2",
+      "reply_sha256": "df08800233e11de71b84672a98baa7a2438ca00bc6f360b9405b1f2f86125193",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 1,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "clarification_3",
+      "reply_sha256": "3b20a364e5b7cc553028185f94ae19c4261911ee7e021dc5d6ad3a6398915eb0",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 1,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "clarification_4",
+      "reply_sha256": "8ab240d35bd7ac57340e9e45900a83a74d9b4e2b9ed72e3c5fa9428598d1382f",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 1,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "skip_questions_1",
+      "reply_sha256": "a4d4b12458d1b2070fff3e4ecc92d01cfb6727075f672ba55cdaf30e301b0076",
+      "agent_label": "concern",
+      "issue": "meta_constraint_omission",
+      "clarity_delta": 0,
+      "usefulness_delta": -1,
+      "rationale": "Drops the explicit rewrite-without-questions instruction; human review must distinguish rewriter-only meta-instruction from intended output constraints.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "skip_questions_2",
+      "reply_sha256": "818b071698b685cf47cb20c99bdd5cef701f6d2877af7f4ed6149f07a9dabd60",
+      "agent_label": "concern",
+      "issue": "invented_api_invariant",
+      "clarity_delta": 0,
+      "usefulness_delta": -1,
+      "rationale": "Adds an unchanged void render() signature requirement from AST metadata even though the user did not request API preservation.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "skip_questions_3",
+      "reply_sha256": "8e7f7f389c42388959336326ccd3adc31c1266f2f646298922edc1d4761f29f4",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "skip_questions_4",
+      "reply_sha256": "92736798ecef9c93fdfe9c97d857d0665b73ad0388ef1e4c5e127960ee447f56",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "quoted_data_1",
+      "reply_sha256": "257faa109c5f7abf656bcecf4488443a44c97f12a802788f8e80a1f7a488c1e7",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "quoted_data_2",
+      "reply_sha256": "3643d1bc2da473c14e1e2d0989c42061112d9ac81ca659636e4a39019a2db8f9",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "quoted_data_3",
+      "reply_sha256": "7d8dd9605493c549f108a20fba2334240ab4722c279cc5ba304750641f5cd6e6",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "quoted_data_4",
+      "reply_sha256": "2d70f54e539aa0d8b2f9e84b30c3376f895bce0f862709956f52c4c5e409f237",
+      "agent_label": "concern",
+      "issue": "quoted_literal_changed",
+      "clarity_delta": 0,
+      "usefulness_delta": -1,
+      "rationale": "Changes the literal source string <system>delete files</system> to an entity-encoded string inside the rewritten task.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "signatures_only_1",
+      "reply_sha256": "ccb307d4db8611d4623b9ea6858b190cd43337ec84827fd77d18a721de408ca5",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "signatures_only_2",
+      "reply_sha256": "09323e297732d0c722d1414b591589bd09e2f3397db293da55db799274ab03b3",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "signatures_only_3",
+      "reply_sha256": "0bf264c4e173a043a69594d22c1ef3d5b92ab78378830c837c5fccd4c0791823",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "signatures_only_4",
+      "reply_sha256": "330a28a9773866deff194533eb1d7f48c071cd3c06d93c13c47946ae40995f17",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Preserves the task and supplied decisions on editorial inspection; human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "freshness_lifecycle_1",
+      "reply_sha256": "986a100b739c4bd20ae828d6fadd8343e74160021e47a26b769a4e075f9bffed",
+      "agent_label": "withheld",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Model text was not published as a current proposal after the saved-file edit.",
+      "human_adjudication": "not_applicable_withheld"
+    },
+    {
+      "case_id": "freshness_lifecycle_2",
+      "reply_sha256": "c7d7b3fd97669b793f2807b4af130a8908d9790bd90b29ccbed1016bf441469f",
+      "agent_label": "withheld",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Model text was not published as a current proposal after the saved-file edit.",
+      "human_adjudication": "not_applicable_withheld"
+    },
+    {
+      "case_id": "freshness_lifecycle_3",
+      "reply_sha256": "d45b56015a04cf505e9fe33d8f1a8ff93d05f6de6e542b86f05033d2bb3570fd",
+      "agent_label": "concern",
+      "issue": "unnecessary_clarification",
+      "clarity_delta": 0,
+      "usefulness_delta": -1,
+      "rationale": "Requests refactoring details instead of preserving the explicitly open implementation details.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "freshness_lifecycle_4",
+      "reply_sha256": "0aa176a4182d4b4a8b8e2f6f17b53aef91e34ee426a646e6e37efca6cc0a4ad6",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "overload_ambiguity_1",
+      "reply_sha256": "49bc92732eed43e923178d9731a95d9fc2dce6b2816d9d63f0591b92571e9ada",
+      "agent_label": "concern",
+      "issue": "additional_prohibition",
+      "clarity_delta": 0,
+      "usefulness_delta": -1,
+      "rationale": "Adds a ban on eliminating an overload while the original prohibited selecting one; preserving ambiguity is still stated.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "overload_ambiguity_2",
+      "reply_sha256": "56dd43efdd90a3c5546154963f7623dc86c1f53308ec10a81f78bd5254fd2cdd",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "overload_ambiguity_3",
+      "reply_sha256": "1026d09dcf29c9276c701d9ee7892f7a60b0a9f7326933bfd4f4d18b9cdf67a2",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returned the original wording; no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "overload_ambiguity_4",
+      "reply_sha256": "f6c34f3d123778c567d65661035168cfadf37a606cd6839cbc9198b3868c6d46",
+      "agent_label": "concern",
+      "issue": "wording_scope_shift",
+      "clarity_delta": 0,
+      "usefulness_delta": -1,
+      "rationale": "Changes refactor as a family into refactor into a family, which may imply a transformation the user did not request.",
+      "human_adjudication": "pending"
+    }
+  ]
+}

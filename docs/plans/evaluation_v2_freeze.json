@@ -32,7 +32,8 @@
         "scope_focus": "development",
         "scope_ties": "heldout",
         "unsupported_syntax": "heldout"
-      }
+      },
+      "lf_content_sha256": "23a017b003f33f18abf59f5090ae23d40e182330698da369c0a2ac6bbfaed84a"
     },
     "rewrite": {
       "path": "tests/rewrite/rewrite_fidelity_evaluation_v2.json",
@@ -68,7 +69,8 @@
         "skip_questions": "development",
         "test_scope": "development",
         "transactionality": "development"
-      }
+      },
+      "lf_content_sha256": "93e33fb341d272bb8352f36cb9097f29731cefc1e5948915d2781a55dcb6efb7"
     }
   },
   "thresholds": {
@@ -85,5 +87,6 @@
     "Initial fixture annotation QA precedes this freeze and is documented in the AST dataset.",
     "No model, runtime, sampling or prompt instruction configuration is changed for the baseline.",
     "Agent editorial assessments are not human semantic acceptance."
-  ]
+  ],
+  "hash_policy": "Original raw-byte hashes preserve baseline provenance; LF-normalized content hashes permit only Git LF/CRLF conversion across checkouts. Fixture content, labels, splits and thresholds remain frozen."
 }

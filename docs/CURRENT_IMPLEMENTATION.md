@@ -11,6 +11,14 @@ AST / six-case native rewrite smoke set and local Phoenix publication/readback.
 Semantic rewrite acceptance, held-out datasets and native macOS validation remain
 separate gates. Phoenix is not a desktop application dependency.
 
+The [expanded grounded-rewrite evaluation](audit/grounded_evaluation_v2_2026-11-05.md)
+now freezes 100 AST and 100 rewrite cases. AST component checks pass 100/100;
+only 48/100 rewrite cases satisfy grounding/mechanical checks. The baseline
+exposes extraction and semantic-fidelity issues; tuning/release quality gates
+are not passed. Agent editorial notes are provisional and do not replace human
+adjudication. An isolated lexical-target experiment is retained as a proposed
+patch and has not changed application-core behavior.
+
 The original upstream HUD/dashboard design and workspace/scope controls are retained. [Upstream integration](UPSTREAM_INTEGRATION.md) records the subsequent compatibility pass and intentional command/runtime changes. The default shortcut is Ctrl/Cmd+Shift+L; saved user preferences take precedence.
 
 ## Normal workflow
