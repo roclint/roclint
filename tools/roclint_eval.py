@@ -22,7 +22,7 @@ import xml.etree.ElementTree as ET
 import check_granite_runtime as native
 
 ROOT = Path(__file__).resolve().parents[1]
-EVALUATOR_VERSION = 2
+EVALUATOR_VERSION = 3
 
 
 def sha256(path):
@@ -200,6 +200,8 @@ def score_rewrite(case, actual):
     if reply.get('status') != 'rewritten' or not isinstance(text, str) or not text.strip():
         errors.append('missing_rewrite')
         text = ''
+    if case['expected'].get('requires_wording_change') and text == case.get('prompt'):
+        errors.append('unchanged_rough_draft')
     contract = actual.get('contract', {})
     if not contract.get('parse_valid') or not contract.get('structurally_valid'):
         errors.append('production_contract')

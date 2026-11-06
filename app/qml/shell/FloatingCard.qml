@@ -1495,11 +1495,17 @@ Window {
                     onReviewRequested: rootWindow.analyzeNow()
                     onRevealReviewItem: function(item) { rootWindow.revealReviewItem(item); }
                     onEditDraftRequested: {
-                        rootWindow.editingDraft = true;
                         if (rootWindow.isAmbientMode && !rootWindow.isDetailedExpanded) {
                             rootWindow.toggleDetailedExpanded();
                         }
-                        promptInput.forceActiveFocus();
+                        if (rootWindow.isCompiledPreview) {
+                            // Preview hides the editor until the old proposal
+                            // is discarded. Focus it after that command completes.
+                            rootWindow.revertToDraft();
+                        } else {
+                            rootWindow.editingDraft = true;
+                            promptInput.forceActiveFocus();
+                        }
                     }
                     visible: true
                     Layout.fillHeight: false

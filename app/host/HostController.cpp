@@ -2516,7 +2516,9 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
     emit stateVersionChanged();
     const auto pending = validation.pendingAcknowledgments.size();
     setProposalStatus(ProposalUiStatus::ReadyForReview,
-                      pending == 0 ? QStringLiteral("Review the suggested wording, then choose Insert or Copy.")
+                      proposal.rewrittenText == proposal.originalText
+                          ? QStringLiteral("No wording changes suggested. This is your original prompt.")
+                      : pending == 0 ? QStringLiteral("Review the suggested wording, then choose Insert or Copy.")
                                    : QStringLiteral("Check the %1 highlighted item(s), then approve the wording.").arg(pending));
 
     co_return;

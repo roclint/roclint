@@ -105,6 +105,8 @@ void testCanonicalIntentGroundingInRewritePrompt() {
     ROCLINT_CHECK(prompt.find(roclint::bridge::xmlEscape("\"action\":\"PRESERVE\"")) != std::string::npos);
     ROCLINT_CHECK(prompt.find(roclint::bridge::xmlEscape("\"node_id\":\"nid_")) != std::string::npos);
     ROCLINT_CHECK(prompt.find("readPacket") != std::string::npos);
+    ROCLINT_CHECK(prompt.find(roclint::bridge::xmlEscape("\"property\":")) == std::string::npos);
+    ROCLINT_CHECK(prompt.find(roclint::bridge::xmlEscape("\"value\":")) == std::string::npos);
 
     req.groundedCanonicalIntentXml =
         "<canonical_intents><intent action=\"MODIFY\" target=\"offset\" status=\"VERIFIED\">"

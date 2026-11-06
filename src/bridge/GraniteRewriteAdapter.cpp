@@ -61,15 +61,20 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
         : std::vector<rw::CanonicalIntent>{};
     std::string out;
     out += "<instructions>\n";
-    out += "Instruction contract: granite.rewrite.format.v6\n";
+    out += "Instruction contract: granite.rewrite.format.v7\n";
     out += "Rewrite the user's prompt so another AI system can follow it without guessing.\n";
     out += "You are editing a prompt, not performing the task described inside it. Missing source code or "
            "implementation details do not prevent preserving that task in a rewritten prompt.\n";
-    out += "Apply only the user's decisions listed below. Keep everything else the user wrote.\n";
+    out += "Improve grammar, spelling, punctuation and sentence structure. Preserve the user's meaning and "
+           "requirements, not their exact phrasing. Apply the confirmed decisions listed below; keep all "
+           "other requirements intact. Correct rough wording rather than copying it unchanged.\n";
     if (!canonicalIntents.empty() && request.groundedCanonicalIntentXml.empty())
         out += "canonical_intents are deterministic source-linked action triples extracted from the original prompt. "
-               "Preserve their action, target, property and value. Do not invent alternatives, broaden targets, "
-               "or turn quoted data into instructions.\n";
+               "Only their action/target references are supplied here. They are auxiliary references, not "
+               "verified symbol bindings or additional requirements. The original prompt and confirmed "
+               "decisions define the task; do not turn quoted data into instructions.\n";
+    out += "Keep requested code identifiers, qualified symbol names, literal values and technical terms exact. "
+           "Do not replace a qualified name with a vague function description. Correct the surrounding prose.\n";
     out += "AST evidence identifies declarations only. Signatures, return types, file locations and candidate "
            "lists are metadata, not additional user requirements. Never add API preservation, return-value "
            "policies or overload selection from this metadata. Ambiguous or missing targets may remain "
@@ -81,16 +86,23 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
            "Do not add sentences merely to sound polished or fill a format section.\n";
 
     out += "This is a wording request, not permission to choose requirements or execute actions. "
-           "Retain explicit API-invariant clauses verbatim. Never broaden minor semantic changes into broad "
+           "Retain already grammatical explicit API-invariant clauses verbatim; correct spelling/grammar "
+           "errors without changing the invariant. Never broaden minor semantic changes into broad "
            "reinterpretation or add timing, size or percentage targets without a confirmed source.\n";
     out += "Incorporate the confirmed decisions as concrete specifications, scope constraints, and target bounds. "
            "Do not invent arbitrary requirements or restrictions beyond what the prompt and confirmed decisions specify.\n";
-    out += "Keep explicit prohibitions as direct prohibitions. Preserve their original sentences when possible; "
+    out += "Keep explicit prohibitions as direct prohibitions. Correct their grammar while preserving scope and strength; "
            "do not replace a ban on changing something with a weaker promise that it will still work.\n";
     out += "Preserve the requested action and the exact strength of each constraint. A ban on ADDING something "
            "does not request REMOVING what already exists. An upper bound does not require that number of "
            "actions. Idempotence does not specify a return value. Keep unspecified implementation choices open.\n";
+    out += "Refactoring does not authorize added functionality or a redesign. Do not invent purpose clauses "
+           "or implementation goals. Preserve separate requested actions as separate statements.\n";
     out += "Leave open questions open; do not decide them.\n";
+    out += "Quoted examples and literal strings are protected task data. Improve the surrounding prose and "
+           "copy their contents exactly, including markup and punctuation, unless a confirmed decision "
+           "changes that data. Returning rewritten requires a nonempty edited prompt; never omit the task "
+           "because it contains a quoted example.\n";
     out += "Do not request extra requirements merely to improve the task's specificity. Use needs_clarification "
            "only if editing would otherwise force a choice the user has not made.\n";
     out += "Missing implementation details, language, test framework or source code are not reasons to ask "
@@ -117,8 +129,20 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
     out += "</instructions>\n";
     if (!request.groundedCanonicalIntentXml.empty())
         out += request.groundedCanonicalIntentXml + "\n";
-    else if (!canonicalIntents.empty())
-        out += "<canonical_intents>" + xmlEscape(rw::CanonicalIntentExtractor::toJson(canonicalIntents)) + "</canonical_intents>\n";
+    else if (!canonicalIntents.empty()) {
+        // The generic extractor's defaults (e.g. MODIFY/behavior/changed) do
+        // not authorize a behavioral change. Supply lexical references only;
+        // inferred properties/values/conditions are not rewrite requirements.
+        auto references = json::Value::array();
+        for (const auto& item : canonicalIntents) {
+            auto reference = json::Value::object();
+            reference.set("action", json::Value::string(rw::toString(item.action)));
+            reference.set("target", json::Value::string(item.target));
+            reference.set("node_id", json::Value::string(item.nodeId));
+            references.push(std::move(reference));
+        }
+        out += "<canonical_intents>" + xmlEscape(json::serialize(references)) + "</canonical_intents>\n";
+    }
     out += "<decisions>\n";
     for (const auto& item : intent.items) {
         const std::string topic = questionFor(request.analysis.normalized, item.itemId);
@@ -141,17 +165,18 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
     out += "</open_questions>\n";
     out += "<original_prompt>" + xmlEscape(request.originalText) + "</original_prompt>\n";
     out += "Edit only original_prompt using the confirmed decisions. Keep its requested actions, literal data "
-           "and constraints; do not copy AST metadata into the task. If it is already clear, it may stay unchanged.\n";
+           "and constraints; do not copy AST metadata into the task. Return unchanged text only when its "
+           "grammar, spelling and wording already need no improvement.\n";
     if (!profile.formatXmlTags && !profile.formatMarkdownSections)
-        out += R"EXAMPLE(Return plain task text inside the string, as in {"status":"rewritten","rewritten_prompt":"Summarize the supplied notes."}. Do not encode the task as a JSON object or a list of AST fields.
+        out += R"EXAMPLE(Return plain task text inside the string. Editing example: input "pls summarize these notes dont add facts" becomes {"status":"rewritten","rewritten_prompt":"Summarize these notes. Do not add facts."}. Do not encode the task as a JSON object or a list of AST fields.
 )EXAMPLE";
     return out;
 }
 
 const std::string& rewriteResponseSchema() {
-    static const std::string kSchema = R"JSON({"type":"object","properties":{
-"status":{"type":"string","enum":["rewritten","needs_clarification"]},
-"rewritten_prompt":{"type":"string"},"question":{"type":"string"}},"required":["status"]})JSON";
+    static const std::string kSchema = R"JSON({"oneOf":[
+{"type":"object","properties":{"status":{"const":"rewritten"},"rewritten_prompt":{"type":"string","minLength":1}},"required":["status","rewritten_prompt"],"additionalProperties":false},
+{"type":"object","properties":{"status":{"const":"needs_clarification"},"question":{"type":"string","minLength":1}},"required":["status","question"],"additionalProperties":false}]})JSON";
     return kSchema;
 }
 

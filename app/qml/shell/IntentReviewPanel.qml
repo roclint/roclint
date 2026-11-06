@@ -679,7 +679,10 @@ FocusScope {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         textFormat: Text.PlainText
-                        text: reviewPanel.status === "READY_FOR_REVIEW" ? qsTr("Review the changes and confirm your choice.")
+                        text: reviewPanel.status === "READY_FOR_REVIEW"
+                            ? (rootWindow.hc && hostController.proposalText === hostController.currentRevisionText
+                               ? qsTr("No wording changes suggested. This is your original prompt.")
+                               : qsTr("Review the changes and confirm your choice."))
                             : rootWindow.hc ? hostController.proposalMessage : ""
                         wrapMode: Text.Wrap
                         font.family: rootWindow.sansFont

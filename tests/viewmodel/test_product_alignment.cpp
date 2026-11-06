@@ -9,6 +9,7 @@
 
 #include <QClipboard>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFont>
 #include <QFontDatabase>
 #include <QGuiApplication>
@@ -1021,6 +1022,77 @@ void testTypingDebouncesAnalysisInQml() {
     std::cout << "  [PASS] Typing debounces one analysis, waits for storage, rejects stale results and never retries cancelled/failed drafts.\n";
 }
 
+void testEditPromptFromProposalUsesNewHudDraft() {
+    QSettings().clear();
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    auto* observed = bridge.get();
+    HostController controller(":memory:", std::move(bridge));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
+    controller.setLegacyDiscoveryForTesting(true);
+    controller.setAmbientModeEnabled(false);
+    std::atomic<int> calls{0}; prepare(controller, calls);
+    const auto original = QString::fromStdString(fx::kChainPrompt);
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(original, controller.stateVersion())));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.confirmChoice("alt_0_0", controller.stateVersion())));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.hasProposal());
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("hostController", &controller);
+    engine.load(QUrl("qrc:/shell/FloatingCard.qml"));
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    auto* editor = window->findChild<QQuickItem*>("promptInput");
+    auto* panel = window->findChild<QObject*>("intentReviewPanel");
+    ROCLINT_CHECK(window && editor && panel);
+    window->setProperty("autoAnalysisDelayMs", 60000);
+    window->setProperty("isDetailedExpanded", true);
+    window->show(); ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
+    QMetaObject::invokeMethod(window, "setEditorText", Q_ARG(QVariant, original));
+    ROCLINT_CHECK(!window->property("showPromptEditor").toBool());
+
+    // This is the panel action used in the captured-editor journey, not the
+    // footer's separate discard action. It must actually leave preview mode.
+    ROCLINT_CHECK(QMetaObject::invokeMethod(panel, "editDraftRequested"));
+    const auto requireEventually = [](auto predicate) {
+        QElapsedTimer timeout; timeout.start();
+        while (!predicate() && timeout.elapsed() < 3000) QTest::qWait(10);
+        ROCLINT_CHECK(predicate());
+    };
+    requireEventually([&]() { return !controller.hasProposal(); });
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    requireEventually([&]() { return editor->isVisible(); });
+    requireEventually([&]() { return editor->hasActiveFocus(); });
+    ROCLINT_CHECK(!controller.hasApproval() && observed->injections.empty());
+
+    const QString rough = "pls refactor Queue::push so its easier to read, dont add blocking waits & keep the same producer ordering";
+    editor->setProperty("text", rough);
+    ROCLINT_CHECK(controller.isDraftDirty());
+    QString rewriteInstructions;
+    controller.setTransportOverrideForTesting([&rewriteInstructions](std::string_view instructions) -> Result<std::string> {
+        if (instructions.find("<instructions>") == std::string_view::npos)
+            return std::string(R"({"status":"no_ambiguity","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[]})");
+        rewriteInstructions = QString::fromUtf8(instructions.data(), static_cast<qsizetype>(instructions.size()));
+        return fx::rewriteReply("Refactor Queue::push for readability. Do not add blocking waits. Preserve the existing producer ordering.");
+    });
+    ROCLINT_CHECK(QMetaObject::invokeMethod(window, "analyzeNow"));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    ROCLINT_CHECK(controller.currentRevisionText() == rough && !controller.isDraftDirty());
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.hasProposal());
+    ROCLINT_CHECK(rewriteInstructions.contains("Queue::push") && !rewriteInstructions.contains(QString::fromStdString(fx::kChainPrompt)));
+    ROCLINT_CHECK(!controller.hasApproval() && observed->injections.empty());
+    controller.setTransportOverrideForTesting([rough](std::string_view) -> Result<std::string> {
+        return fx::rewriteReply(rough.toStdString());
+    });
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.hasProposal());
+    ROCLINT_CHECK(controller.proposalMessage().contains("No wording changes suggested"));
+    auto* heading = window->findChild<QObject*>("reviewHeading");
+    ROCLINT_CHECK(heading && heading->property("text").toString().contains("No wording changes suggested"));
+    ROCLINT_CHECK(!controller.hasApproval() && observed->injections.empty());
+    std::cout << "  [PASS] Panel edit leaves proposal preview, focuses the draft and rewrites the newly frozen text.\n";
+}
+
 void testAutoAnalysisResumesAfterDelivery() {
     QSettings().clear();
     auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
@@ -1327,6 +1399,11 @@ int main(int argc, char* argv[]) {
     QCoreApplication::setApplicationName(QStringLiteral("ProductAlignment"));
     QSettings::setDefaultFormat(QSettings::IniFormat);
     QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsDirectory.path());
+    if (qEnvironmentVariableIsSet("ROCLINT_QT_ASSERTION_GUARD_PROBE")) {
+        (void)QTest::qVerify(false, "intentional guard probe", "", __FILE__, __LINE__);
+        ROCLINT_CHECK(!QTest::currentTestFailed());
+        return 0;
+    }
     if (qEnvironmentVariableIsSet("ROCLINT_NATIVE_UI_TEST")) {
         testCompactHudControlsStayInsideWindow();
         testCaptureControlsEnableAmbientBadge();
@@ -1336,7 +1413,12 @@ int main(int argc, char* argv[]) {
         testHudPresentationSurvivesDraftAndDelivery();
         testTypingDebouncesAnalysisInQml();
         testAutoAnalysisResumesAfterDelivery();
+        ROCLINT_CHECK(!QTest::currentTestFailed());
         std::cout << "[Native HUD] Presentation regression PASSED.\n";
+        return 0;
+    }
+    if (qEnvironmentVariableIsSet("ROCLINT_EDIT_DRAFT_REGRESSION_ONLY")) {
+        testEditPromptFromProposalUsesNewHudDraft();
         return 0;
     }
     testOptionalPresentationFromPersistedV5();
@@ -1358,9 +1440,11 @@ int main(int argc, char* argv[]) {
     testLiveCapturedDraftAndCancelRetryInQml();
     testHudPresentationSurvivesDraftAndDelivery();
     testTypingDebouncesAnalysisInQml();
+    testEditPromptFromProposalUsesNewHudDraft();
     testAutoAnalysisResumesAfterDelivery();
     testManualRemainderCanFinishAndGeneratePreview();
     testForbiddenColorOptionIsBlockedInUiAndController();
+    ROCLINT_CHECK(!QTest::currentTestFailed());
     std::cout << "[Product Alignment] All tests PASSED.\n";
     return 0;
 }

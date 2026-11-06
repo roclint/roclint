@@ -86,6 +86,20 @@ class EvaluationTests(unittest.TestCase):
         actual['reply']['rewritten_prompt'] = 'Change run to 500.'
         self.assertFalse(evaluation.score_rewrite(case, actual)['passed'])
 
+    def test_rough_draft_must_change_but_changes_do_not_prove_fidelity(self):
+        case = {'prompt': 'pls refactor Queue::push', 'expected': {
+            'must_preserve_literals': ['Queue::push'], 'requires_wording_change': True}}
+        actual = {'reply': {'status': 'rewritten', 'rewritten_prompt': case['prompt']},
+                  'contract': {'parse_valid': True, 'structurally_valid': True}}
+        self.assertIn('unchanged_rough_draft', evaluation.score_rewrite(case, actual)['errors'])
+        actual['reply']['rewritten_prompt'] = 'Refactor Queue::push.'
+        score = evaluation.score_rewrite(case, actual)
+        self.assertTrue(score['passed'])
+        self.assertIsNone(score['fully_faithful'])
+        case['expected']['requires_wording_change'] = False
+        actual['reply']['rewritten_prompt'] = case['prompt']
+        self.assertTrue(evaluation.score_rewrite(case, actual)['passed'])
+
     def test_remote_or_credentialed_publication_is_rejected(self):
         for url in ('https://example.com', 'http://127.0.0.1@evil.test',
                     'http://user:password@localhost:6006', 'http://localhost:6006/v1'):
