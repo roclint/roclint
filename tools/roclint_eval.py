@@ -38,7 +38,17 @@ def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     pending = path.with_suffix(path.suffix + '.tmp')
     pending.write_text(json.dumps(value, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
-    pending.replace(path)
+    # Windows readers/antivirus may briefly hold the destination without delete
+    # sharing. Retain atomic replacement and the prior report; never truncate it
+    # as a workaround. Permanent permission failures still surface, bounded.
+    for attempt in range(8):
+        try:
+            pending.replace(path)
+            return
+        except PermissionError:
+            if attempt == 7:
+                raise
+            time.sleep(0.02 * (2 ** attempt))
 
 
 def source_identity():
@@ -353,7 +363,7 @@ def publish(report, endpoint, checkpoint=lambda: None):
     previous = report.get('publication', {})
     if previous.get('experiments'):
         report.setdefault('publication_attempts', []).append(previous)
-    state = {'status': 'publishing', 'experiments': []}
+    state = {'status': 'publishing', 'experiments': [], 'publisher_source': source_identity()}
     report['publication'] = state
     checkpoint()
     for suite in sorted({row['suite'] for row in report['results']}):

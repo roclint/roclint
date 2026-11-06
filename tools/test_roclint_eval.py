@@ -6,11 +6,37 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 import roclint_eval as evaluation
 
 
 class EvaluationTests(unittest.TestCase):
+    def test_atomic_report_replacement_retries_locks_but_preserves_prior_on_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'report.json'
+            path.write_text('{"old":true}', encoding='utf-8')
+            replace = Path.replace
+            attempts = []
+            def transient(pending, destination):
+                attempts.append(1)
+                if len(attempts) < 3:
+                    self.assertEqual(json.loads(path.read_text()), {'old': True})
+                    raise PermissionError('simulated Windows sharing violation')
+                return replace(pending, destination)
+            with mock.patch.object(Path, 'replace', autospec=True, side_effect=transient), \
+                    mock.patch.object(evaluation.time, 'sleep'):
+                evaluation.write_json(path, {'measured': 200})
+            self.assertEqual(len(attempts), 3)
+            self.assertEqual(json.loads(path.read_text()), {'measured': 200})
+            with mock.patch.object(Path, 'replace', side_effect=PermissionError('permanent')) as blocked, \
+                    mock.patch.object(evaluation.time, 'sleep'):
+                with self.assertRaises(PermissionError):
+                    evaluation.write_json(path, {'replacement': True})
+            self.assertEqual(blocked.call_count, 8)
+            self.assertEqual(json.loads(path.read_text()), {'measured': 200})
+            self.assertEqual(json.loads(path.with_suffix('.json.tmp').read_text()), {'replacement': True})
+
     def fixture(self):
         case = {'expected': {'status': 'Verified', 'target': 'Engine::run',
                              'file': 'src/a.hpp', 'complete': True}}
