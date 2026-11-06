@@ -4,6 +4,53 @@
   "scope": "Development regressions from hands-on testing. A changed string is necessary for annotated rough drafts, not proof of semantic fidelity or user benefit. This does not replace the frozen v2 preservation corpus.",
   "cases": [
     {
+      "id": "vague_goal_unanswered",
+      "category": "open_goal",
+      "group": "hands_on_clarification",
+      "split": "development",
+      "profile": "GENERIC@1",
+      "synthetic": true,
+      "prompt": "Make Reader::open better.",
+      "request_mode": "skip_questions",
+      "discovery_reply": {
+        "status": "options_generated",
+        "choice_groups": [{"question": "What should improve in Reader::open?", "material": true,
+          "alternatives": [
+            {"label": "Readability", "why_material": "Structure", "evidence": ["better"]},
+            {"label": "Reliability", "why_material": "Error handling", "evidence": ["better"]},
+            {"label": "Performance", "why_material": "Execution cost", "evidence": ["better"]}]}]
+      },
+      "expected": {
+        "must_preserve_literals": ["Reader::open"],
+        "forbidden_patterns": ["efficien|user.friendly|usab|reliab|performance|error.handl|format.detection|readab"],
+        "semantic_rubric": "No goal was selected. Preserve the open improvement request without choosing usability, efficiency, reliability or a feature. Unchanged text is acceptable."
+      }
+    },
+    {
+      "id": "vague_goal_explicit_skip",
+      "category": "open_goal",
+      "group": "hands_on_clarification",
+      "split": "development",
+      "profile": "GENERIC@1",
+      "synthetic": true,
+      "prompt": "pls make Reader::open better. rewrite without questions and leave the improvement goal open",
+      "request_mode": "skip_questions",
+      "discovery_reply": {
+        "status": "options_generated",
+        "choice_groups": [{"question": "What should improve in Reader::open?", "material": true,
+          "alternatives": [
+            {"label": "Readability", "why_material": "Structure", "evidence": ["better"]},
+            {"label": "Reliability", "why_material": "Error handling", "evidence": ["better"]},
+            {"label": "Performance", "why_material": "Execution cost", "evidence": ["better"]}]}]
+      },
+      "expected": {
+        "requires_wording_change": true,
+        "must_preserve_literals": ["Reader::open"],
+        "forbidden_patterns": ["efficien|user.friendly|usab|reliab|performance|error.handl|format.detection|readab"],
+        "semantic_rubric": "Correct grammar while keeping the improvement goal open, with no invented goal or implementation choice."
+      }
+    },
+    {
       "id": "rough_queue",
       "category": "editing_usefulness",
       "group": "rough_wording",

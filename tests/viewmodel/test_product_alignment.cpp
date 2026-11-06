@@ -1040,6 +1040,7 @@ void testEditPromptFromProposalUsesNewHudDraft() {
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("hostController", &controller);
     engine.load(QUrl("qrc:/shell/FloatingCard.qml"));
+    ROCLINT_CHECK(!engine.rootObjects().isEmpty());
     auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
     auto* editor = window->findChild<QQuickItem*>("promptInput");
     auto* panel = window->findChild<QObject*>("intentReviewPanel");
@@ -1091,6 +1092,103 @@ void testEditPromptFromProposalUsesNewHudDraft() {
     ROCLINT_CHECK(heading && heading->property("text").toString().contains("No wording changes suggested"));
     ROCLINT_CHECK(!controller.hasApproval() && observed->injections.empty());
     std::cout << "  [PASS] Panel edit leaves proposal preview, focuses the draft and rewrites the newly frozen text.\n";
+}
+
+void testExplicitClarificationAndDeferredRewrite() {
+    QSettings().clear();
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    auto* observed = bridge.get();
+    HostController controller(":memory:", std::move(bridge));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
+    controller.setLegacyDiscoveryForTesting(true);
+    controller.setAmbientModeEnabled(false);
+    const QString draft = "Make Reader::open better. Make Queue::push faster.";
+    const std::string choices = R"({"status":"options_generated","assistance_kind":"clarification","choice_groups":[
+      {"question":"What should improve in Reader::open?","material":true,"alternatives":[
+        {"label":"Readability","why_material":"Structure","evidence":["better"]},
+        {"label":"Reliability","why_material":"Error handling","evidence":["better"]},
+        {"label":"Performance","why_material":"Execution cost","evidence":["better"]}]},
+      {"question":"Which kind of speed matters?","material":true,"alternatives":[
+        {"label":"Lower latency","why_material":"Individual calls","evidence":["faster"]},
+        {"label":"Higher throughput","why_material":"Batches","evidence":["faster"]}]}]})";
+    int discoveryCalls = 0, rewriteCalls = 0;
+    QString instructions;
+    controller.setTransportOverrideForTesting([&](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("<instructions>") != std::string_view::npos) {
+            ++rewriteCalls;
+            instructions = QString::fromUtf8(prompt.data(), static_cast<qsizetype>(prompt.size()));
+            return fx::rewriteReply(draft.toStdString());
+        }
+        if (++discoveryCalls == 1) return std::string(R"({"status":"no_ambiguity","choice_groups":[]})");
+        return choices;
+    });
+    ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(draft, controller.stateVersion())));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && !controller.isClarifying());
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("hostController", &controller);
+    engine.load(QUrl("qrc:/shell/FloatingCard.qml"));
+    ROCLINT_CHECK(!engine.rootObjects().isEmpty());
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    ROCLINT_CHECK(window);
+    window->setProperty("autoAnalysisDelayMs", 60000);
+    QMetaObject::invokeMethod(window, "setEditorText", Q_ARG(QVariant, draft));
+    window->show(); ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
+    auto* clarify = window->findChild<QQuickItem*>("reviewPromptButton");
+    auto* skip = window->findChild<QQuickItem*>("rewriteWithoutQuestionsButton");
+    ROCLINT_CHECK(clarify && skip && clarify->isVisible() && clarify->property("label").toString() == "Clarify");
+    ROCLINT_CHECK(QMetaObject::invokeMethod(clarify, "clicked"));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.isClarifying());
+    ROCLINT_CHECK(controller.activeAlternatives().size() == 3 && rewriteCalls == 0);
+    ROCLINT_CHECK(skip->isVisible() && skip->isEnabled());
+    savePreview(window, QStringLiteral("clarification-options.png"));
+    ROCLINT_CHECK(QMetaObject::invokeMethod(skip, "clicked"));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.hasProposal());
+    ROCLINT_CHECK(rewriteCalls == 1 && instructions.contains("<open_questions>") && instructions.contains("Which kind of speed matters?"));
+    ROCLINT_CHECK(controller.getConfirmedIntentPayload()["items"].toList().isEmpty());
+    ROCLINT_CHECK(controller.getConfirmedIntentPayload()["unresolvedItemIds"].toStringList().size() == 2);
+    ROCLINT_CHECK(!controller.hasApproval() && observed->injections.empty() && clarify->isVisible());
+
+    // Clarification stays available even from a completed rewrite preview.
+    ROCLINT_CHECK(QMetaObject::invokeMethod(clarify, "clicked"));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.isClarifying() && !controller.hasProposal());
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.submitCustomIntent("Improve readability only", controller.stateVersion())));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    const auto stale = controller.stateVersion() - 1;
+    ROCLINT_CHECK(!controller.waitForCommandForTesting(controller.rewriteWithoutQuestions(stale)));
+    ROCLINT_CHECK(rewriteCalls == 1);
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.rewriteWithoutQuestions(controller.stateVersion())));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.hasProposal());
+    ROCLINT_CHECK(instructions.contains("Improve readability only"));
+    ROCLINT_CHECK(controller.getConfirmedIntentPayload()["items"].toList().size() == 1);
+    ROCLINT_CHECK(controller.getConfirmedIntentPayload()["unresolvedItemIds"].toStringList().size() == 1);
+    ROCLINT_CHECK(!controller.hasApproval() && observed->injections.empty());
+    // A reentrant edit during publication must not start a rewrite of old text.
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.reviewPrompt(draft, controller.stateVersion())));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.isClarifying());
+    bool editOnPublication = true;
+    QObject::connect(&controller, &HostController::intentChanged, [&]() {
+        if (editOnPublication && controller.hasConfirmedIntent()) {
+            editOnPublication = false;
+            ROCLINT_CHECK(controller.noteDraftEdited(controller.stateVersion()));
+        }
+    });
+    ROCLINT_CHECK(!controller.waitForCommandForTesting(controller.rewriteWithoutQuestions(controller.stateVersion())));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.isDraftDirty() && rewriteCalls == 2);
+
+    HostController conflict(":memory:");
+    ROCLINT_CHECK(conflict.waitForStorageForTesting());
+    conflict.setLegacyDiscoveryForTesting(true);
+    conflict.setTransportOverrideForTesting([](std::string_view) -> Result<std::string> {
+        return std::string(R"({"status":"needs_clarification","choice_groups":[],"conflicts":[{"description":"Three and five exclusive bullets","blocking":true}]})");
+    });
+    ROCLINT_CHECK(conflict.markModelReadyForTesting(fx::testModel()));
+    ROCLINT_CHECK(conflict.waitForCommandForTesting(conflict.analyzePrompt("Use exactly three bullets. Use exactly five bullets.", conflict.stateVersion())));
+    ROCLINT_CHECK(conflict.waitForIdleForTesting(3000));
+    const auto conflictVersion = conflict.stateVersion();
+    ROCLINT_CHECK(!conflict.waitForCommandForTesting(conflict.rewriteWithoutQuestions(conflictVersion)));
+    ROCLINT_CHECK(conflict.stateVersion() == conflictVersion && !conflict.hasProposal() && !conflict.hasApproval());
+    std::cout << "  [PASS] Clarify stays available; explicit skip preserves unanswered questions and custom choices without delivery.\n";
 }
 
 void testAutoAnalysisResumesAfterDelivery() {
@@ -1421,6 +1519,11 @@ int main(int argc, char* argv[]) {
         testEditPromptFromProposalUsesNewHudDraft();
         return 0;
     }
+    if (qEnvironmentVariableIsSet("ROCLINT_CLARIFICATION_REGRESSION_ONLY")) {
+        testExplicitClarificationAndDeferredRewrite();
+        ROCLINT_CHECK(!QTest::currentTestFailed());
+        return 0;
+    }
     testOptionalPresentationFromPersistedV5();
     testReviewGeometryAndExplicitExpansion();
     testProductionReviewPresentation();
@@ -1441,6 +1544,7 @@ int main(int argc, char* argv[]) {
     testHudPresentationSurvivesDraftAndDelivery();
     testTypingDebouncesAnalysisInQml();
     testEditPromptFromProposalUsesNewHudDraft();
+    testExplicitClarificationAndDeferredRewrite();
     testAutoAnalysisResumesAfterDelivery();
     testManualRemainderCanFinishAndGeneratePreview();
     testForbiddenColorOptionIsBlockedInUiAndController();

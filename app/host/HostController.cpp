@@ -1081,7 +1081,7 @@ AsyncTask<core::Status> HostController::beginAttempt(PipelineTicket& ticket, con
         ticket.configuration = std::string("revision=") + JuliaRuntime::kRevision + "; choice+noul; strict_encoding=true";
         if (std::string(stage) == "julia_triage")
             ticket.configuration = std::string("revision=") + JuliaRuntime::kRevision +
-                "; template=" + analysis::kPromptTriageTemplateId + "; threshold=0.70; four_independent_noul_heads";
+                "; template=" + analysis::kPromptTriageTemplateId + "; threshold=0.70; broad_heads_and_corroborated_goal_check";
         ticket.configuration += "; execution_configuration=" + ss(m_julia->executionConfigurationId()) +
                                 "; device=" + ss(m_julia->executionDevice()) + "; precision=" + ss(m_julia->executionPrecision()) +
                                 "; actual_cpu_threads=" + std::to_string(m_julia->executionCpuThreads());
@@ -2235,6 +2235,37 @@ QVariantMap HostController::getConfirmedIntentPayload() const {
 // ----------------------------------------------------------------------------------------------
 // Rewrite proposal and approval
 // ----------------------------------------------------------------------------------------------
+
+AsyncTask<core::Status> HostController::rewriteWithoutQuestionsOperation(quint64 expectedVersion) {
+    if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
+    if (!m_currentAnalysis || !m_revisionState || m_revisionState->isDraftDirty())
+        co_return makeError(ErrorCode::PreconditionFailed, "Review the current draft before requesting a rewrite.");
+    // A wording request cannot silently settle a conflict or a blocking missing decision.
+    for (const auto& item : m_currentAnalysis->conflicts)
+        if (item.blocking && !m_workingIntent.isResolved(item.id))
+            co_return makeError(ErrorCode::PreconditionFailed, "Conflicting requirements remain open. Edit or resolve them before rewriting.");
+    for (const auto& item : m_currentAnalysis->missingDecisions)
+        if (item.blocking && !m_workingIntent.isResolved(item.id))
+            co_return makeError(ErrorCode::PreconditionFailed, "A required detail remains open. Edit or answer it before rewriting.");
+    const auto epoch = m_workspaceEpoch;
+    const auto revision = m_revisionState->currentRevision().revisionId().value();
+    const auto status = co_await applyTransition("rewriteWithoutQuestions", expectedVersion,
+        [this](intent::WorkingIntentState& state) {
+            const auto defer = [&state](const auto& item) {
+                if (!state.isResolved(item.id) && !state.isSkipped(item.id)) state.skippedItemIds.push_back(item.id);
+            };
+            for (const auto& item : m_currentAnalysis->choiceGroups) defer(item);
+            for (const auto& item : m_currentAnalysis->assumptions) defer(item);
+            // Deferral is not an answer and consumes no guided-question round.
+            return Status::success();
+        });
+    if (!status.ok()) co_return status;
+    if (epoch != m_workspaceEpoch || !m_revisionState ||
+        m_revisionState->currentRevision().revisionId().value() != revision ||
+        m_revisionState->stateVersion() != expectedVersion + 1)
+        co_return makeError(ErrorCode::StaleVersion, "The draft or workspace changed before rewriting.");
+    co_return (co_await synthesizeRewriteOperation(m_revisionState->stateVersion()));
+}
 
 AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expectedVersion) {
 
@@ -4688,6 +4719,10 @@ quint64 HostController::switchToManual(quint64 expectedVersion) {
 
 quint64 HostController::skipCurrentItem(quint64 expectedVersion) {
     return enqueueStorageCommand("skipCurrentItem", [=, this]() { return skipCurrentItemOperation(expectedVersion); });
+}
+
+quint64 HostController::rewriteWithoutQuestions(quint64 expectedVersion) {
+    return enqueueStorageCommand("rewriteWithoutQuestions", [=, this]() { return rewriteWithoutQuestionsOperation(expectedVersion); });
 }
 
 quint64 HostController::resolveActiveAssumption(bool accepted, quint64 expectedVersion) {

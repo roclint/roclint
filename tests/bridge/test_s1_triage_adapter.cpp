@@ -100,6 +100,13 @@ void testV1AndV2HashDomainsAreDistinct() {
     // New seals must default to V2.
     analysis::PromptTriage fresh;
     ROCLINT_CHECK(fresh.hashVersion == analysis::TriageHashVersion::V2);
+    for (const auto* historical : {"julia.prompt_triage.categories.v1", "julia.prompt_triage.categories.v2"}) {
+        r.templateId = historical;
+        const auto legacy = analysis::sealPromptTriage(r, prompt);
+        ROCLINT_CHECK(legacy.ok() && analysis::validatePromptTriage(legacy.value()).ok());
+        auto changed = legacy.value(); changed.templateId = analysis::kPromptTriageTemplateId;
+        ROCLINT_CHECK(!analysis::validatePromptTriage(changed).ok());
+    }
 }
 
 void testPerHeadPolicyRouting() {

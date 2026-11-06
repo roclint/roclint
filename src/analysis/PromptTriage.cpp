@@ -76,7 +76,8 @@ Status validatePromptTriage(const PromptTriage& triage) {
                              triage.modelId, triage.modelRevision, triage.configurationId})
         if (!token(value)) return invalid("Prompt triage is missing a bounded identity/binding");
     if (triage.provider != "julia_local" ||
-        (triage.templateId != kPromptTriageTemplateId && triage.templateId != "julia.prompt_triage.categories.v1") ||
+        (triage.templateId != kPromptTriageTemplateId && triage.templateId != "julia.prompt_triage.categories.v2" &&
+         triage.templateId != "julia.prompt_triage.categories.v1") ||
         triage.stateVersion == 0 || triage.stateVersion > 9007199254740991ULL ||
         !digest(triage.revisionTextHash) || !digest(triage.weightsSha256)) return invalid("Prompt triage provenance is invalid");
     if (triage.execution != TriageExecution::Model && triage.execution != TriageExecution::Mock)

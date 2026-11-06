@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "purpose": "Development-only routing probes; not held-out or human acceptance evidence.",
+  "cases": [
+    {"id":"vague_reader","prompt":"Make Reader::open better.","clarify":true},
+    {"id":"vague_refactor","prompt":"Improve Cache::lookup.","clarify":true},
+    {"id":"missing_failure","prompt":"Fix Reader::open. It is broken.","clarify":true},
+    {"id":"performance_tradeoff","prompt":"Make Queue::push faster.","clarify":true},
+    {"id":"vague_cleanup","prompt":"Clean up Worker::process and improve it.","clarify":true},
+    {"id":"clear_rename","prompt":"Rename Engine::run to execute. Preserve behavior and the public API.","clarify":false},
+    {"id":"clear_readability","prompt":"Refactor Queue::push for readability. Do not add blocking waits. Preserve producer ordering.","clarify":false},
+    {"id":"clear_error_messages","prompt":"Improve Reader::open error messages by including the failing path and OS error code. Preserve return values.","clarify":false},
+    {"id":"clear_bug","prompt":"Fix Reader::open leaking its temporary handle when fopen fails. Close the temporary handle on that error path. Do not close caller-owned handles.","clarify":false},
+    {"id":"clear_latency","prompt":"Reduce p95 latency in Queue::push without changing producer ordering or adding blocking waits.","clarify":false},
+    {"id":"open_choice","prompt":"Suggest several ways to improve Reader::open. Leave the choice to me; do not implement anything.","clarify":false},
+    {"id":"quoted_vagueness","prompt":"Add the literal text \"make it better\" to the README heading. Do not change source code.","clarify":false},
+    {"id":"clear_summary","prompt":"Summarize the supplied notes in three bullets. Do not add facts.","clarify":false},
+    {"id":"intentional_creative","prompt":"Brainstorm five creative names for a local prompt assistant. Choose any style.","clarify":false},
+    {"id":"clear_retry","prompt":"Set retryDelayMs to 250 ms and retain maxRetries at 3.","clarify":false},
+    {"id":"clear_explanation","prompt":"Explain Reader::open in plain English without changing code.","clarify":false}
+  ]
+}

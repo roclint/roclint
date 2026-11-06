@@ -3,6 +3,7 @@ import copy
 import hashlib
 import json
 import os
+import math
 import queue
 import threading
 import importlib.util
@@ -39,14 +40,31 @@ def request(groups=1, assumptions=1):
 
 
 class JuliaPromptTriageTests(unittest.TestCase):
+    def test_focused_goal_requires_independent_broad_agreement(self):
+        class GoalEngine(Engine):
+            def __init__(self, action, goal):
+                super().__init__()
+                self.action, self.goal = action, goal
+            def logits(self, rows):
+                self.rows = rows
+                return [[math.log(1-p), math.log(p)] for p in
+                        [self.action if i == 0 else self.goal if row['question'] == worker.TRIAGE_GOAL_HEAD[1] else .1
+                         for i, row in enumerate(rows)]]
+        for broad, goal, expected in ((.589, .98, .98), (.499, .99, .499), (.50, .95, .95), (.60, .69, .60)):
+            result = worker.triage(GoalEngine(broad, goal), {'triage_plan_version':2, 'prompt':'Make Reader::open better.'})
+            self.assertAlmostEqual(result['category_scores'][0]['score'], expected)
+            self.assertAlmostEqual(result['atomic_scores']['ACTION'], broad)
+            self.assertAlmostEqual(result['atomic_scores']['GOAL_CHOICE'], goal)
+        self.assertNotIn('route', result)
+
     def test_triage_is_one_independent_real_engine_call(self):
         engine = Engine()
         result = worker.triage(engine, {"triage_plan_version": 2, "prompt": "Review this request."})
         self.assertEqual(engine.calls, 1)
-        self.assertEqual(len(engine.rows), 4)
+        self.assertEqual(len(engine.rows), 5)
         self.assertTrue(all(row["state"] == "Review this request." for row in engine.rows))
         self.assertTrue(all(row["type"] == "noul" for row in engine.rows))
-        self.assertEqual(result["template_id"], "julia.prompt_triage.categories.v2")
+        self.assertEqual(result["template_id"], "julia.prompt_triage.categories.v3")
         self.assertEqual([item["category"] for item in result["category_scores"]], list(worker.TRIAGE_CATEGORIES))
         for item in result["category_scores"]:
             self.assertAlmostEqual(item["score"], worker.softmax([0, 1])[1])
@@ -67,7 +85,7 @@ class JuliaPromptTriageTests(unittest.TestCase):
             "extended_heads": True
         })
         self.assertEqual(engine.calls, 1)
-        self.assertEqual(len(engine.rows), 6)  # 6 atomic heads
+        self.assertEqual(len(engine.rows), 7)  # six previous checks plus focused goal
         expected_state = (
             "Update the card clamping logic so it stays inside the screen margin...\n"
             "[Workspace AST Context: Target collision across: FloatingCard.qml, ScreenPlacement.cpp]"
@@ -75,7 +93,7 @@ class JuliaPromptTriageTests(unittest.TestCase):
         self.assertTrue(all(row["state"] == expected_state for row in engine.rows))
         self.assertTrue(all(row["type"] == "noul" for row in engine.rows))
         self.assertIn("atomic_scores", result)
-        self.assertEqual(len(result["atomic_scores"]), 6)
+        self.assertEqual(len(result["atomic_scores"]), 7)
         self.assertIn("NEGATIVE_ONLY", result["atomic_scores"])
         self.assertIn("SECURITY_BYPASS", result["atomic_scores"])
         # Canonical categories are always 4
@@ -90,7 +108,7 @@ class JuliaPromptTriageTests(unittest.TestCase):
             "candidate_choices": candidates
         })
         self.assertEqual(engine.calls, 1)
-        self.assertEqual(len(engine.rows), 5)  # 4 heads + 1 choice
+        self.assertEqual(len(engine.rows), 6)  # five checks plus one choice
         self.assertEqual(engine.rows[-1]["type"], "choice")
         self.assertEqual(engine.rows[-1]["options"], candidates)
         self.assertIn("choice_decision", result)

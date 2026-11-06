@@ -26,7 +26,7 @@ CONFIGURATION_ID = "julia.auto.bf16-fp32.v2"
 MAX_PENDING = 8
 MAX_ID = 9007199254740991
 TRIAGE_PLAN_VERSION = 2
-TRIAGE_TEMPLATE_ID = "julia.prompt_triage.categories.v2"
+TRIAGE_TEMPLATE_ID = "julia.prompt_triage.categories.v3"
 TRIAGE_CATEGORIES = ("ACTION", "TARGET", "RULE", "RULE_CONFLICT")
 
 # Temperature scaling for triage head probabilities.
@@ -58,6 +58,13 @@ TRIAGE_HEADS = (
      ["The request instructions are compatible, or the task has no conflicting requirements.",
       "Two or more active requirements directly contradict each other and cannot both be satisfied."])
 )
+
+# Corroborate a moderately uncertain action with a focused outcome question.
+# This is model evidence, not a keyword override or an instruction to pick a goal.
+TRIAGE_GOAL_HEAD = (
+    "GOAL_CHOICE", "Does the requested improvement leave its intended outcome unspecified?", [
+        "The user specifies the desired improvement or deliberately requests open-ended suggestions; no goal needs choosing.",
+        "The user asks to improve or fix something but has not specified what should become better; a goal must be chosen for them."])
 
 TRIAGE_CHECKLIST_HEADS = (
     ("ACTION",
@@ -354,7 +361,7 @@ def triage(engine, request):
             raise ValueError("Candidate choices must contain 2 to 20 nonempty strings")
 
     use_extended = bool(request.get("extended_heads"))
-    heads_def = TRIAGE_CHECKLIST_HEADS if use_extended else TRIAGE_HEADS
+    heads_def = (TRIAGE_CHECKLIST_HEADS if use_extended else TRIAGE_HEADS) + (TRIAGE_GOAL_HEAD,)
 
     rows = [{"state": state_payload, "question": question, "options": list(options), "type": "noul"}
             for _, question, options in heads_def]
@@ -409,8 +416,15 @@ def triage(engine, request):
     )
     effective_conflict = max(atomic_scores["RULE_CONFLICT"], negative_roadblock, security_roadblock)
 
+    # Extra questions alone produced false positives in development. Require
+    # independent agreement: the broad action head must already be uncertain
+    # (>= .50), and the focused goal head must strongly flag a missing outcome.
+    # Clear broad-action evidence is never overridden by the focused head.
+    action_score = atomic_scores["ACTION"]
+    if action_score >= 0.50 and atomic_scores["GOAL_CHOICE"] >= 0.70:
+        action_score = max(action_score, atomic_scores["GOAL_CHOICE"])
     canonical_scores = [
-        {"category": "ACTION", "score": atomic_scores["ACTION"]},
+        {"category": "ACTION", "score": action_score},
         {"category": "TARGET", "score": atomic_scores["TARGET"]},
         {"category": "RULE", "score": atomic_scores["RULE"]},
         {"category": "RULE_CONFLICT", "score": effective_conflict}

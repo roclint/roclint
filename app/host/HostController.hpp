@@ -565,6 +565,8 @@ public slots:
 
     // Rewrite review. synthesizeRewrite only produces and validates a proposal.
     Q_INVOKABLE quint64 synthesizeRewrite(quint64 expectedVersion);
+    // Explicit wording-only request: defer unanswered choices without selecting them.
+    Q_INVOKABLE quint64 rewriteWithoutQuestions(quint64 expectedVersion);
     Q_INVOKABLE quint64 acknowledgeConstraint(QString constraintId, bool acknowledged, quint64 expectedVersion);
     // Persists the approval, then delivers the approved text: into the captured field for an
     // ambient capture (falling back to the clipboard if that fails), otherwise to the clipboard.
@@ -766,6 +768,7 @@ private:
     AsyncTask<core::Status> approveAndCopyRewriteOperation(quint64 expectedVersion);
     AsyncTask<core::Status> acknowledgeConstraintOperation(QString constraintId, bool acknowledged, quint64 expectedVersion);
     AsyncTask<core::Status> synthesizeRewriteOperation(quint64 expectedVersion);
+    AsyncTask<core::Status> rewriteWithoutQuestionsOperation(quint64 expectedVersion);
     AsyncTask<core::Status> setRewriteProfileOperation(QString profile, quint64 expectedVersion);
     AsyncTask<core::Status> switchToManualOperation(quint64 expectedVersion);
     AsyncTask<core::Status> skipCurrentItemOperation(quint64 expectedVersion);

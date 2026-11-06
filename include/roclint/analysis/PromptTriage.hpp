@@ -12,7 +12,7 @@ namespace roclint::core::analysis {
 // v1 compatibility only: used exclusively for reconstructing historical v1 hashes.
 // Do not use this constant in new routing or policy code.
 inline constexpr double kPromptTriageThreshold = 0.70;
-inline constexpr const char* kPromptTriageTemplateId = "julia.prompt_triage.categories.v2";
+inline constexpr const char* kPromptTriageTemplateId = "julia.prompt_triage.categories.v3";
 
 // Version of the cryptographic seal.
 // V1: bakes kPromptTriageThreshold into the hash domain (legacy; read-only for historical records).

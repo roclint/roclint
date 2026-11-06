@@ -292,7 +292,7 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     request.set("is_non_technical", json::Value::boolean(req.isNonTechnicalPrompt));
 
     std::string out;
-    out += "Instruction contract: granite.discovery.selective.v7\n";
+    out += "Instruction contract: granite.discovery.selective.v8\n";
     out += "Ask the FEWEST questions necessary. Usually zero or one; three is a ceiling, never a quota. "
            "An explicit color, shape, output format or prohibition is already a decision. Keep it fixed. "
            "Do not turn how to implement that decision into an ambiguity about whether to obey it.\n";
@@ -315,6 +315,11 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     out += "For an underspecified bug, ask what actually happens (nothing, an error, or a wrong result), "
            "not its technical cause. For an interactive feature, ask what it should do only if unresolved; "
            "do not ask whether a fully specified feature should work. Do not invent a backend.\n";
+    out += "For a vague request to improve existing code without a chosen outcome, ask which improvement "
+           "matters. Offer distinct general goals such as readability, reliability or performance when relevant. "
+           "Do not substitute new features or an implementation strategy for an improvement goal. Offer three "
+           "choices when three materially distinct readings exist, otherwise two; the user may supply their "
+           "own answer or leave the goal open. Never choose a goal on the user's behalf.\n";
     out += "For many requested features, optional decomposition may offer sequencing while retaining ALL goals. "
            "Do not drop features or invent priorities. Optional help uses choice_groups only, without "
            "assumptions, conflicts or missing_decisions. Ask one useful initial question when possible.\n";

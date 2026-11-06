@@ -268,25 +268,31 @@ FocusScope {
         id: workflowColumn
         width: parent.width
         spacing: 8
-        RowLayout {
+        Flow {
             Layout.fillWidth: true
+            spacing: 8
             ActionButton {
                 objectName: "reviewPromptButton"
-                visible: !rootWindow.previewActive
-                label: qsTr("Review prompt")
-                active: rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy && !hostController.isAnalyzing
+                label: qsTr("Clarify")
+                active: rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy && !hostController.isAnalyzing && hostController.proposalStatus !== "GENERATING"
                 onClicked: rootWindow.reviewRequested()
             }
             ActionButton {
+                objectName: "rewriteWithoutQuestionsButton"
+                label: qsTr("Rewrite without questions")
+                visible: rootWindow.hc && !rootWindow.previewActive && (hostController.hasConfirmedIntent || hostController.isClarifying)
+                active: rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy && !hostController.isAnalyzing && !hostController.isDraftDirty
+                onClicked: hostController.rewriteWithoutQuestions(hostController.stateVersion)
+            }
+            ActionButton {
                 objectName: "editDraftInHudButton"
-                visible: rootWindow.hc && hostController.isAmbientAttached
+                visible: rootWindow.hc && (hostController.isAmbientAttached || rootWindow.previewActive)
                 label: qsTr("Edit prompt in HUD")
                 onClicked: {
                     rootWindow.editDraftRequested();
                     if (rootWindow.hc) hostController.pauseAmbientFollowing();
                 }
             }
-            Item { Layout.fillWidth: true }
             Text {
                 objectName: "reviewDiagnosticsButton"
                 text: rootWindow.showDiagnostics ? qsTr("Hide details") : qsTr("Technical details")
