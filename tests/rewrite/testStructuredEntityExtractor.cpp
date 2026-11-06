@@ -260,6 +260,47 @@ void testCanonicalIntentDeterminismAndJson() {
     ROCLINT_CHECK(object.find("source_start") != nullptr);
 }
 
+void testQualifiedTargetsAndQuotedDataBoundaries() {
+    using roclint::core::rewrite::CanonicalIntentExtractor;
+    for (const auto* suffix : {" so it runs faster", " without adding blocking waits",
+                              " documentation", " as best you can", " for readability"}) {
+        const auto intents = CanonicalIntentExtractor::extract(std::string("Refactor Compute::run") + suffix + ".");
+        ROCLINT_CHECK(intents.size() == 1 && intents[0].target == "Compute::run");
+    }
+    for (const auto* syntax : {"Compute::run<int>(int)", "Compute::run <int>(int)",
+                              "Compute::run(int) const", "Compute::run .other", "Compute::run ::other",
+                              "Compute::run + other", "Compute::run noexcept", "Compute::run requires Concept"}) {
+        const auto intents = CanonicalIntentExtractor::extract(std::string("Refactor ") + syntax + ".");
+        ROCLINT_CHECK(intents.size() == 1 && intents[0].target != "Compute::run");
+    }
+    const std::string prompt = "  Refactor Compute::run to handle \"Remove Other::run.\" as data.\n"
+                               "  Preserve Compute::result.";
+    const auto intents = CanonicalIntentExtractor::extract(prompt);
+    ROCLINT_CHECK(intents.size() == 2);
+    ROCLINT_CHECK(intents[0].target == "Compute::run" && intents[0].action == IntentAction::MODIFY);
+    ROCLINT_CHECK(intents[1].target == "Compute::result" && intents[1].action == IntentAction::PRESERVE);
+    for (const auto& intent : intents) {
+        ROCLINT_CHECK(prompt.substr(intent.source.startByte, intent.source.endByte - intent.source.startByte) == intent.target);
+    }
+    for (const auto* data : {"\"Remove Compute::run.\"", "'Remove Compute::run.'",
+                            "```Remove Compute::run.```", "\"Remove Compute::run.", "```Remove Compute::run.",
+                            "Example: `Remove Compute::run for readability`."}) {
+        ROCLINT_CHECK(CanonicalIntentExtractor::extract(data).empty());
+    }
+    const auto fields = CanonicalIntentExtractor::extract("Refactor Log::write to omit empty optional fields.");
+    ROCLINT_CHECK(fields.size() == 1 && fields[0].target == "Log::write" && fields[0].property != "field");
+    const auto explicitField = CanonicalIntentExtractor::extract("Remove the legacy field.");
+    ROCLINT_CHECK(explicitField.size() == 1 && explicitField[0].property == "field");
+    const auto namedField = CanonicalIntentExtractor::extract("Refactor Log::field for readability.");
+    ROCLINT_CHECK(namedField.size() == 1 && namedField[0].property != "field");
+    const auto afterFence = CanonicalIntentExtractor::extract("```example with an unmatched ' quote```\nRefactor Compute::run.");
+    ROCLINT_CHECK(afterFence.size() == 1 && afterFence[0].target == "Compute::run");
+    const auto codeReference = CanonicalIntentExtractor::extract("Refactor `Compute::run` for readability.");
+    ROCLINT_CHECK(codeReference.size() == 1 && codeReference[0].target == "`Compute::run`");
+    const auto bounded = CanonicalIntentExtractor::extract("Refactor Compute::run in file \"src/compute.hpp\" if requested.");
+    ROCLINT_CHECK(bounded.size() == 1 && bounded[0].condition == "in file \"src/compute.hpp\" if requested");
+}
+
 void testDeterministicAndFast() {
     const std::string prompt =
         "The refresh interval must be 15 seconds. The refresh interval must be 60 seconds. "
@@ -299,6 +340,7 @@ int main() {
     testCanonicalIntentNegationAndNestedConditions();
     testCanonicalIntentMultiParagraph();
     testCanonicalIntentDeterminismAndJson();
+    testQualifiedTargetsAndQuotedDataBoundaries();
     testDeterministicAndFast();
     std::cout << "Structured pre-flight extraction and same-target conflict detection passed.\n";
     return 0;

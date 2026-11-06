@@ -15,7 +15,7 @@
   "sampling": {"temperature": 1.0, "top_p": 0.95, "seed": 42, "grammar_strategy": "llama_common_rejection_v1"},
   "sampling_reference": "https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md",
   "analysis_instruction_contract": "granite.discovery.selective.v7",
-  "rewrite_instruction_contract": "granite.rewrite.format.v5",
+  "rewrite_instruction_contract": "granite.rewrite.format.v6",
   "output_format": "compact_json",
   "grammar_transform": "json_gbnf_space_empty_v1",
   "profiles": {

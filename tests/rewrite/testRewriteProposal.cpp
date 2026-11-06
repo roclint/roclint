@@ -231,7 +231,7 @@ void testLeanWordingContractPreservesRequestedContent() {
         const auto request=fx::wordingRequest(item,index++);
         const auto profile=ProfileRegistry::getProfile(item.profile); ROCLINT_CHECK(profile.has_value());
         const auto instructions=roclint::bridge::buildRewritePrompt(request,*profile);
-        ROCLINT_CHECK(instructions.find("granite.rewrite.format.v5") != std::string::npos);
+        ROCLINT_CHECK(instructions.find("granite.rewrite.format.v6") != std::string::npos);
         ROCLINT_CHECK(instructions.find("shortest wording") != std::string::npos);
         ROCLINT_CHECK(instructions.find("Retain explicitly requested usability, accessibility and quality") != std::string::npos);
         ROCLINT_CHECK(instructions.find(roclint::bridge::xmlEscape(item.original)) != std::string::npos);

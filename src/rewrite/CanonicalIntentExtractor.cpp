@@ -249,8 +249,10 @@ std::vector<Clause> splitClauses(std::string_view text) {
     std::size_t start = 0;
     auto push = [&](std::size_t end) {
         if (end <= start) return;
-        const auto sentence = trimClause(text.substr(start, end - start));
-        if (!sentence.empty()) clauses.push_back({sentence, start});
+        auto contentStart = start;
+        while (contentStart < end && std::isspace(static_cast<unsigned char>(text[contentStart]))) ++contentStart;
+        const auto sentence = trimClause(text.substr(contentStart, end - contentStart));
+        if (!sentence.empty()) clauses.push_back({sentence, contentStart});
     };
     for (std::size_t index = 0; index < text.size(); ++index) {
         const char character = text[index];
@@ -267,8 +269,7 @@ std::vector<Clause> splitClauses(std::string_view text) {
         start = index + 1;
     }
     if (start < text.size()) {
-        const auto sentence = trimClause(text.substr(start));
-        if (!sentence.empty()) clauses.push_back({sentence, start});
+        push(text.size());
     }
     return clauses;
 }
@@ -292,20 +293,54 @@ std::vector<QuoteSpan> quotedSpans(std::string_view text) {
         if (character == '"' && index + 2 < text.size() && text.substr(index, 3) == "\"\"\"") delimiterLength = 3;
         const auto delimiter = text.substr(index, delimiterLength);
         const auto close = text.find(delimiter, index + delimiterLength);
-        if (close == std::string_view::npos) break;
+        if (close == std::string_view::npos) {
+            spans.push_back({index, text.size()});
+            break;
+        }
         spans.push_back({index, close + delimiterLength});
         index = close + delimiterLength;
     }
     return spans;
 }
 
-bool overlapsQuotedSpan(const std::vector<QuoteSpan>& spans, std::size_t start, std::size_t end) {
-    for (const auto& span : spans) {
-        const auto overlapStart = std::max(start, span.start);
-        const auto overlapEnd = std::min(end, span.end);
-        if (overlapEnd > overlapStart) return true;
+std::string maskQuotedData(std::string_view text) {
+    std::string masked(text);
+    const auto mask = [&](std::size_t begin, std::size_t end) {
+        // Preserve offsets and sentence boundaries outside the literal. Quoted
+        // verbs, punctuation and identifiers cannot become executable intents.
+        std::fill(masked.begin() + begin, masked.begin() + end, ' ');
+    };
+    for (std::size_t begin = 0; (begin = text.find("```", begin)) != std::string_view::npos;) {
+        const auto close = text.find("```", begin + 3);
+        const auto end = close == std::string_view::npos ? text.size() : close + 3;
+        mask(begin, end);
+        begin = end;
     }
-    return false;
+    // Inline code can name a symbol/path/signature, but a backticked prose
+    // example must not contribute actions. Keep actual code references intact.
+    static const std::regex inlineReference(
+        R"(^(?:[A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)*(?:\([^`\r\n]*\))?|[A-Za-z0-9_./\\:-]+)$)",
+        std::regex::optimize);
+    for (std::size_t begin = 0; (begin = masked.find('`', begin)) != std::string::npos;) {
+        const auto close = masked.find('`', begin + 1);
+        if (close == std::string::npos) {
+            mask(begin, masked.size());
+            break;
+        }
+        if (!std::regex_match(masked.substr(begin + 1, close - begin - 1), inlineReference)) mask(begin, close + 1);
+        begin = close + 1;
+    }
+    // Quotes inside a fenced example cannot open a quote spanning subsequent
+    // instructions outside that fence.
+    for (const auto& span : quotedSpans(masked)) {
+        // Preserve quoted identifiers/paths, especially explicit scope and file
+        // bounds. Erasing "Missing" from 'in "Missing"' would widen to global.
+        const auto literal = std::string_view(masked).substr(span.start, span.end - span.start);
+        const bool codeReference = literal.size() >= 2 && literal.front() == literal.back() &&
+            std::regex_match(std::string(literal.substr(1, literal.size() - 2)), inlineReference);
+        if (!codeReference) mask(span.start, span.end);
+    }
+    return masked;
 }
 
 bool looksLikeCodeToken(const std::string& token) {
@@ -333,6 +368,21 @@ std::string firstCodeTarget(const std::string& text) {
 std::string phraseAfterVerb(const std::string& clause, const ActionMatch& action) {
     const auto begin = std::min(clause.size(), action.verbStart + action.verbLength);
     auto phrase = cleanTarget(std::string_view(clause).substr(begin));
+    // A qualified identifier at the action's object boundary is an exact name,
+    // not the prose following it. Never reduce explicit unsupported syntax to
+    // a supported prefix (templates, signatures, member access or operators).
+    static const std::regex qualifiedPrefix(
+        R"(^(?:(?:all|both)\s+)?([A-Za-z_][A-Za-z0-9_]*(?:::[A-Za-z_][A-Za-z0-9_]*)+)(?=$|[\s,;]))",
+        std::regex::optimize);
+    std::smatch matched;
+    if (std::regex_search(phrase, matched, qualifiedPrefix)) {
+        const auto remainder = trim(std::string_view(phrase).substr(matched.length()));
+        static const std::regex declaratorTail(R"(^(?:const|volatile|noexcept|requires|override|final)\b)",
+                                               std::regex::optimize);
+        if (!std::regex_search(remainder, declaratorTail) &&
+            (remainder.empty() || std::isalpha(static_cast<unsigned char>(remainder.front())) ||
+             remainder.front() == ',' || remainder.front() == ';')) return matched[1].str();
+    }
     for (const auto* marker : {" in ", " on ", " for ", " with ", " to ", " under ", " except ", " unless ",
                                " if ", " when ", " only if "}) {
         const auto position = lower(phrase).find(marker);
@@ -352,6 +402,12 @@ std::string detectProperty(const std::string& text, IntentAction action, const s
     const auto lowerText = lower(text);
     const auto targetLower = lower(target);
     for (const auto& property : kPropertyWords) {
+        // A field elsewhere in the task describes behavior, not the target's
+        // AST kind. Only an explicit field noun in the target can constrain it.
+        if (property == "field") {
+            static const std::regex fieldNoun(R"((?:^|\s)fields?(?:$|\s))", std::regex::optimize);
+            if (!std::regex_search(targetLower, fieldNoun)) continue;
+        }
         if (lowerText.find(property) != std::string::npos || targetLower.find(property) != std::string::npos)
             return property;
     }
@@ -418,17 +474,16 @@ std::string extractValue(const std::string& clause, IntentAction action) {
 
 std::string extractCondition(const std::string& clause) {
     const auto lowerClause = lower(clause);
+    std::size_t first = std::string::npos;
     for (const auto* marker : {" only if ", " only when ", " except ", " unless ", " provided ", " if ",
-                               " when ", " while "}) {
+                               " when ", " while ", " in ", " on ", " for ", " with ",
+                               " within ", " inside ", " from "}) {
         const auto position = lowerClause.find(marker);
-        if (position != std::string::npos) return cleanTarget(std::string_view(clause).substr(position + 1));
+        first = std::min(first, position);
     }
-    // Preserve a trailing location/scope as a condition when it is not part of the target.
-    for (const auto* marker : {" in ", " on ", " for ", " with "}) {
-        const auto position = lowerClause.find(marker);
-        if (position != std::string::npos) return cleanTarget(std::string_view(clause).substr(position + 1));
-    }
-    return {};
+    // Keep the entire trailing context. Choosing 'if' ahead of an earlier file
+    // clause would discard an explicit bound and permit a global lookup.
+    return first == std::string::npos ? std::string{} : cleanTarget(std::string_view(clause).substr(first + 1));
 }
 
 std::string normalizedNodeKey(const CanonicalIntent& intent) {
@@ -477,11 +532,9 @@ std::vector<CanonicalIntent> CanonicalIntentExtractor::extract(std::string_view 
     std::vector<CanonicalIntent> intents;
     if (promptText.empty() || promptText.size() > kMaxPromptBytes) return intents;
 
-    const auto quotes = quotedSpans(promptText);
+    const auto instructionText = maskQuotedData(promptText);
     std::set<std::string> seen;
-    for (const auto& clause : splitClauses(promptText)) {
-        const auto clauseEnd = std::min(promptText.size(), clause.startByte + clause.text.size());
-        if (overlapsQuotedSpan(quotes, clause.startByte, clauseEnd)) continue;
+    for (const auto& clause : splitClauses(instructionText)) {
         const auto lowerClause = lower(clause.text);
         const auto action = detectAction(lowerClause);
         if (!action.has_value()) continue;

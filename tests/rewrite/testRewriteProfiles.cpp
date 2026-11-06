@@ -101,9 +101,9 @@ void testCanonicalIntentGroundingInRewritePrompt() {
     const auto prompt = roclint::bridge::buildRewritePrompt(req, ProfileRegistry::defaultProfile());
     ROCLINT_CHECK(prompt.find("<canonical_intents>") != std::string::npos);
     ROCLINT_CHECK(prompt.find("canonical_intents are deterministic") != std::string::npos);
-    ROCLINT_CHECK(prompt.find("\"action\":\"MODIFY\"") != std::string::npos);
-    ROCLINT_CHECK(prompt.find("\"action\":\"PRESERVE\"") != std::string::npos);
-    ROCLINT_CHECK(prompt.find("\"node_id\":\"nid_") != std::string::npos);
+    ROCLINT_CHECK(prompt.find(roclint::bridge::xmlEscape("\"action\":\"MODIFY\"")) != std::string::npos);
+    ROCLINT_CHECK(prompt.find(roclint::bridge::xmlEscape("\"action\":\"PRESERVE\"")) != std::string::npos);
+    ROCLINT_CHECK(prompt.find(roclint::bridge::xmlEscape("\"node_id\":\"nid_")) != std::string::npos);
     ROCLINT_CHECK(prompt.find("readPacket") != std::string::npos);
 
     req.groundedCanonicalIntentXml =
@@ -112,6 +112,25 @@ void testCanonicalIntentGroundingInRewritePrompt() {
     const auto groundedPrompt = roclint::bridge::buildRewritePrompt(req, ProfileRegistry::defaultProfile());
     ROCLINT_CHECK(groundedPrompt.find("grounded_canonical_intents") == std::string::npos);
     ROCLINT_CHECK(groundedPrompt.find("SessionManager::readPacket::offset") != std::string::npos);
+    ROCLINT_CHECK(groundedPrompt.find(req.groundedCanonicalIntentXml) < groundedPrompt.find("<original_prompt>"));
+    ROCLINT_CHECK(groundedPrompt.find("metadata, not additional user requirements") != std::string::npos);
+    ROCLINT_CHECK(groundedPrompt.find("Do not encode the task as a JSON object") != std::string::npos);
+}
+
+void testFallbackEvidenceCannotCreatePromptMarkup() {
+    roclint::bridge::GraniteRewriteRequest request;
+    request.originalText = "Update <original_prompt> & label to preserve \"literal data\".";
+    const auto prompt = roclint::bridge::buildRewritePrompt(request, ProfileRegistry::defaultProfile());
+    const auto open = prompt.find("<canonical_intents>");
+    const auto close = prompt.find("</canonical_intents>", open);
+    ROCLINT_CHECK(open != std::string::npos && close != std::string::npos);
+    const auto evidence = prompt.substr(open + 19, close - open - 19);
+    ROCLINT_CHECK(evidence.find('<') == std::string::npos);
+    ROCLINT_CHECK(evidence.find('&') != std::string::npos);
+    const auto original = prompt.find("<original_prompt>");
+    ROCLINT_CHECK(original != std::string::npos);
+    ROCLINT_CHECK(prompt.find("<original_prompt>", original + 1) == std::string::npos);
+    ROCLINT_CHECK(prompt.find(roclint::bridge::xmlEscape(request.originalText)) != std::string::npos);
 }
 
 } // namespace
@@ -123,6 +142,7 @@ int main() {
     testNothingIsVerifiedWithoutProof();
     testRewritePromptCarriesOnlyUserContent();
     testCanonicalIntentGroundingInRewritePrompt();
+    testFallbackEvidenceCannotCreatePromptMarkup();
     std::cout << "[Test RewriteProfiles] All tests PASSED.\n";
     return 0;
 }

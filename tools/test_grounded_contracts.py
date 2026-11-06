@@ -75,6 +75,46 @@ class GroundedContractsTests(unittest.TestCase):
         self.assertTrue(any(e['status'] == 'AMBIGUOUS' for e in contract['grounding']['evidence']))
         self.assertFalse(any(e['status'] == 'VERIFIED' for e in contract['grounding']['evidence']))
 
+    def test_qualified_prose_targets_are_exact_and_unrelated_fields_do_not_impose_kind(self):
+        for suffix in ('so it runs faster', 'without adding blocking waits',
+                       'to omit empty optional fields', 'documentation',
+                       'to handle "Remove Other::run." as data'):
+            with self.subTest(suffix=suffix):
+                contract = self.prepare(prompt='Refactor Engine::run ' + suffix + '.')
+                evidence = contract['grounding']['evidence']
+                self.assertTrue(any(e['qualifiedTarget'] == 'Engine::run' and e['status'] == 'VERIFIED'
+                                    for e in evidence), evidence)
+                self.assertFalse(any(e['qualifiedTarget'] == 'Other::run' for e in evidence))
+
+    def test_file_clause_does_not_invent_trailing_scope(self):
+        for prompt in ('Refactor Engine::run in file src/engine.hpp for readability.',
+                       'Refactor Engine::run IN FILE src/engine.hpp for readability.',
+                       'Refactor Engine::run inside file src/engine.hpp for readability.',
+                       'Refactor run in Engine in file src/engine.hpp for readability.',
+                       'Refactor run in "Engine" in file "src/engine.hpp" if requested.',
+                       'Refactor run in "Missing" in file "src/engine.hpp" if requested.',
+                       'Refactor run in Missing in file src/engine.hpp for readability.'):
+            with self.subTest(prompt=prompt):
+                contract = self.prepare(prompt=prompt)
+                evidence = contract['grounding']['evidence']
+                verified = any(e['status'] == 'VERIFIED' for e in evidence)
+                self.assertEqual(verified, 'Missing' not in prompt, evidence)
+
+    def test_condition_after_file_cannot_discard_file_bound(self):
+        for prompt in ('Refactor Engine::run in file missing.hpp if requested.',
+                       'Refactor Engine::run for readability in file missing.hpp when requested.',
+                       'Refactor Engine::run inside file "missing.hpp" if requested.'):
+            with self.subTest(prompt=prompt):
+                contract = self.prepare(prompt=prompt)
+                self.assertFalse(any(e['status'] == 'VERIFIED' for e in contract['grounding']['evidence']))
+
+    def test_unsupported_name_suffixes_cannot_verify_a_prefix(self):
+        for suffix in ('<int>(int)', ' <int>(int)', '(int) const', '.other', ' .other', ' ::other',
+                       ' + other', ' noexcept', ' requires Concept'):
+            with self.subTest(suffix=suffix):
+                contract = self.prepare(prompt='Refactor Engine::run' + suffix + '.')
+                self.assertFalse(any(e['status'] == 'VERIFIED' for e in contract['grounding']['evidence']))
+
     def discovery(self):
         return {'status': 'options_generated', 'choice_groups': [{'dimension': 'performance',
             'question': 'What should faster mean?', 'material': True, 'alternatives': [

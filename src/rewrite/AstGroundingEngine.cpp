@@ -37,6 +37,8 @@ const std::regex scopeRe(
 const std::regex fileRe(
     R"(\bfile\s+((?:`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|"[^"]+"|'[^']+'|[A-Za-z0-9_./\\:-]+)))",
     std::regex::icase | std::regex::optimize);
+const std::regex filePrepositionRe(R"(\b(?:in|within|inside|from|at)\s*$)",
+                                    std::regex::icase | std::regex::optimize);
 
 std::string trimText(std::string_view text) {
     std::size_t begin = 0;
@@ -405,8 +407,19 @@ ConditionConstraints parseCondition(std::string_view condition) {
         constraints.hasFile = !constraints.file.empty();
         // Remove the file clause before looking for an enclosing scope so a
         // directory named "in" cannot be mistaken for a scope marker.
-        remaining.erase(static_cast<std::size_t>(match.position(0)),
-                        static_cast<std::size_t>(match.length(0)));
+        auto begin = static_cast<std::size_t>(match.position(0));
+        auto count = static_cast<std::size_t>(match.length(0));
+        // Consume the file clause's own preposition as well. Leaving "in"
+        // behind would join it to trailing prose ("in for readability") and
+        // invent an explicit scope named "for".
+        const auto prefix = remaining.substr(0, begin);
+        std::smatch preposition;
+        if (std::regex_search(prefix, preposition, filePrepositionRe)) {
+            const auto prepStart = static_cast<std::size_t>(preposition.position());
+            count += begin - prepStart;
+            begin = prepStart;
+        }
+        remaining.erase(begin, count);
     }
     if (std::regex_search(remaining, match, scopeRe)) {
         constraints.scope = normalizeIdentifier(match[1].str());
