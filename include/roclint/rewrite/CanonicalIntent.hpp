@@ -41,6 +41,18 @@ struct AstGroundingEvidence {
     std::string signature{};
     std::vector<std::string> candidates{};
 
+    // False when a candidate query used for this decision was truncated or
+    // failed, or when the index generation changed during the batch. Truncated
+    // evidence can never be Verified or prove absence.
+    bool complete{true};
+    // Host-set freshness metadata. Grounding leaves this true; the host sets it
+    // false when validateFileHash reports that the selected file bytes changed.
+    bool hashValidated{true};
+    // Stable reason code for this resolution attempt: "file", "signature",
+    // "parameter", "scope", "qualified", "active-file" or "unique". Empty when
+    // no match strategy applies (unsupported form, ungrounded ADD, ...).
+    std::string matchReason{};
+
     bool operator==(const AstGroundingEvidence&) const = default;
 };
 

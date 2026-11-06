@@ -243,6 +243,8 @@ if(BUILD_DESKTOP)
             app/host/HostController.hpp
             app/host/HostController.cpp
             app/host/HostControllerWorkspace.cpp
+            app/host/CodebaseWatcher.hpp
+            app/host/CodebaseWatcher.cpp
             app/host/HostControllerTriage.cpp
             app/host/HostControllerResidency.cpp
             app/host/GraniteResidencyPolicy.hpp
@@ -599,6 +601,17 @@ if(BUILD_TESTING)
     roclint_add_test(roclint_storage               tests/storage/test_database.cpp                   roclint_storage_testing)
     roclint_add_test(roclint_ast_symbol_extractor  tests/storage/testAstSymbolExtractor.cpp           roclint_storage_testing)
     roclint_add_test(roclint_ast_grounding         tests/storage/testAstGroundingEngine.cpp           roclint_storage_testing)
+    target_compile_definitions(roclint_ast_grounding_tests PRIVATE
+        ROCLINT_AST_GROUNDING_CORPUS="${CMAKE_CURRENT_SOURCE_DIR}/tests/storage/ast_grounding_corpus.json")
+    roclint_add_test(roclint_codebase_index_freshness tests/storage/testCodebaseIndexFreshness.cpp      roclint_storage_testing)
+    target_include_directories(roclint_codebase_index_freshness_tests PRIVATE app/host)
+    if(TARGET llama-common AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/models/granite-4.2-3b/granite-4.2-3b-Q8_0.gguf")
+        roclint_add_test(roclint_ast_token_budget tests/storage/testAstTokenBudget.cpp roclint_storage_testing llama-common)
+        target_include_directories(roclint_ast_token_budget_tests SYSTEM PRIVATE
+            "${ROCLINT_LLAMA_SOURCE_DIR}/include")
+        target_compile_definitions(roclint_ast_token_budget_tests PRIVATE
+            ROCLINT_GRANITE_TOKENIZER_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/models/granite-4.2-3b/granite-4.2-3b-Q8_0.gguf")
+    endif()
     roclint_add_test(roclint_prompt_repository     tests/storage/test_prompt_repository.cpp          roclint_storage_testing)
     roclint_add_test(roclint_source_span           tests/analysis/testSourceSpan.cpp                 roclint_core_testing)
     roclint_add_test(roclint_normalized_analysis   tests/analysis/testNormalizedAnalysis.cpp         roclint_core_testing)
@@ -641,6 +654,9 @@ if(BUILD_TESTING)
         roclint_add_test(roclint_host_persistence  tests/viewmodel/test_host_persistence.cpp  roclint_host_lib_testing Qt6::Core)
         roclint_add_test(roclint_scored_history    tests/viewmodel/test_scored_history.cpp    roclint_host_lib_testing Qt6::Core Qt6::Gui)
         roclint_add_test(roclint_host_controller   tests/viewmodel/test_host_controller.cpp   roclint_host_lib_testing Qt6::Core Qt6::Gui Qt6::Network)
+        roclint_add_test(roclint_ast_freshness_integration tests/viewmodel/test_ast_freshness_integration.cpp roclint_host_lib_testing Qt6::Core Qt6::Gui)
+        roclint_add_test(roclint_ast_stale_recovery tests/viewmodel/test_ast_stale_recovery.cpp roclint_host_lib_testing Qt6::Core Qt6::Gui)
+        roclint_add_test(roclint_codebase_watcher tests/viewmodel/test_codebase_watcher.cpp roclint_host_lib_testing Qt6::Core)
         roclint_add_test(roclint_workspace_inspection tests/viewmodel/test_workspace_inspection.cpp roclint_host_lib_testing Qt6::Core)
         add_dependencies(roclint_workspace_inspection_tests roclint_workspace_runtime_files)
         roclint_add_test(roclint_host_context      tests/viewmodel/test_host_context.cpp      roclint_host_lib_testing Qt6::Core Qt6::Gui)

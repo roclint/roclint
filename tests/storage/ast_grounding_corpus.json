@@ -1,0 +1,347 @@
+{
+  "version": 1,
+  "description": "Deterministic AST grounding acceptance corpus. Each case is a tiny declaration-only fixture; the test never prints prompt or source text.",
+  "expectedMetrics": {
+    "totalCases": 13,
+    "categoryCounts": {
+      "supported": 2,
+      "ambiguous": 1,
+      "unsupported": 1,
+      "missing": 2,
+      "stale": 1,
+      "overload": 2,
+      "scope": 1,
+      "file": 1,
+      "parameter": 2
+    },
+    "expectedStatusCounts": {
+      "Verified": 9,
+      "Ambiguous": 2,
+      "NotFoundInScope": 1,
+      "Ungrounded": 1
+    },
+    "expectedCorrectResolutions": 13,
+    "expectedWrongVerified": 0,
+    "coverage": 1.0
+  },
+  "cases": [
+    {
+      "id": "supported_unique_name",
+      "category": "supported",
+      "note": "A unique exact parameter name is Verified without scope or focus.",
+      "files": {
+        "src/ledger.hpp": "class Ledger { public: bool postEntry(int accountId, double amount); };\n"
+      },
+      "activeFile": "src/ledger.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "accountId",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Ledger::postEntry::accountId",
+        "file": "src/ledger.hpp",
+        "signatureContains": "int accountId",
+        "matchReason": "unique",
+        "complete": true
+      }
+    },
+    {
+      "id": "supported_qualified_name",
+      "category": "supported",
+      "note": "A namespace-qualified target resolves by exact qualified name.",
+      "files": {
+        "src/widget.hpp": "namespace alpha { class Widget { public: int run(int first); }; }\n"
+      },
+      "activeFile": "src/widget.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "alpha::Widget::run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "alpha::Widget::run",
+        "file": "src/widget.hpp",
+        "signatureContains": "run(int first)",
+        "matchReason": "qualified",
+        "complete": true
+      }
+    },
+    {
+      "id": "ambiguous_qualified_overloads",
+      "category": "ambiguous",
+      "note": "Two declaration sites with the same qualified name remain distinguishable.",
+      "files": {
+        "src/engine_a.hpp": "class Engine { public: bool run(int first); };\n",
+        "src/engine_b.hpp": "class Engine { public: bool run(double second); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "target": "Engine::run",
+        "matchReason": "qualified",
+        "complete": true,
+        "minCandidates": 2,
+        "candidatesDistinct": true
+      }
+    },
+    {
+      "id": "unsupported_template_arguments",
+      "category": "unsupported",
+      "note": "Explicit template arguments are outside the documented exact form and fail closed.",
+      "files": {
+        "src/template_engine.hpp": "class Engine { public: template <typename T> bool run(T value); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run<int>(int)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "target": "Engine::run<int>",
+        "matchReason": "",
+        "complete": false
+      }
+    },
+    {
+      "id": "missing_scoped_target",
+      "category": "missing",
+      "note": "A complete exact scoped search proves absence.",
+      "files": {
+        "src/engine.hpp": "class Engine { public: bool run(int first); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "absent",
+        "property": "name",
+        "value": "changed",
+        "condition": "in Engine"
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "target": "Engine::absent",
+        "matchReason": "scope",
+        "complete": true
+      }
+    },
+    {
+      "id": "missing_add_target",
+      "category": "missing",
+      "note": "ADD of a brand-new unconstrained symbol is Ungrounded, not a false absence.",
+      "files": {
+        "src/engine.hpp": "class Engine { public: bool run(int first); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "ADD",
+        "target": "brandNew",
+        "property": "membership",
+        "value": "present",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ungrounded",
+        "matchReason": "",
+        "complete": true
+      }
+    },
+    {
+      "id": "stale_modified_file",
+      "category": "stale",
+      "note": "Grounding binds the indexed bytes; the host must reject currentness after a byte change.",
+      "files": {
+        "src/stale.hpp": "class Stale { public: int value; };\n"
+      },
+      "mutate": {
+        "src/stale.hpp": "class Stale { public: int value; int extra; };\n"
+      },
+      "activeFile": "src/stale.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "in Stale"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Stale::value",
+        "file": "src/stale.hpp",
+        "signatureContains": "int value",
+        "matchReason": "scope",
+        "complete": true,
+        "hashValidatedDefault": true,
+        "validateFileHash": false,
+        "hostPromotes": false
+      }
+    },
+    {
+      "id": "overload_signature_int",
+      "category": "overload",
+      "note": "An explicit int signature selects the int overload even with another active file.",
+      "files": {
+        "src/engine.hpp": "class Engine { public: bool run(int first); bool run(const std::string& label); };\n",
+        "src/other.hpp": "class Other { public: int idle; };\n"
+      },
+      "activeFile": "src/other.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run(int)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Engine::run",
+        "file": "src/engine.hpp",
+        "signatureContains": "run(int first)",
+        "signatureKey": "Engine::run(int)",
+        "matchReason": "signature",
+        "complete": true
+      }
+    },
+    {
+      "id": "overload_signature_const_ref",
+      "category": "overload",
+      "note": "A const-reference signature is matched syntactically, not by parameter name.",
+      "files": {
+        "src/engine.hpp": "class Engine { public: bool run(int first); bool run(const std::string& label); };\n",
+        "src/other.hpp": "class Other { public: int idle; };\n"
+      },
+      "activeFile": "src/other.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run(const std::string&)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Engine::run",
+        "file": "src/engine.hpp",
+        "signatureContains": "run(const std::string& label)",
+        "signatureKey": "Engine::run(const std::string&)",
+        "matchReason": "signature",
+        "complete": true
+      }
+    },
+    {
+      "id": "scope_precedence_over_focus",
+      "category": "scope",
+      "note": "An explicit scope beats the active file.",
+      "files": {
+        "src/session.hpp": "class SessionManager { public: bool readPacket(int offset); };\n",
+        "src/log.hpp": "class LogClient { public: bool readPacket(int offset); };\n"
+      },
+      "activeFile": "src/log.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "readPacket",
+        "property": "name",
+        "value": "changed",
+        "condition": "in SessionManager"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "SessionManager::readPacket",
+        "file": "src/session.hpp",
+        "signatureContains": "readPacket(int offset)",
+        "matchReason": "scope",
+        "complete": true
+      }
+    },
+    {
+      "id": "file_precedence_over_focus",
+      "category": "file",
+      "note": "An explicit file constraint beats the active file.",
+      "files": {
+        "src/widget_a.hpp": "class Widget { public: int value; };\n",
+        "src/widget_b.hpp": "class Widget { public: int value; };\n"
+      },
+      "activeFile": "src/widget_b.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "file src/widget_a.hpp"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Widget::value",
+        "file": "src/widget_a.hpp",
+        "signatureContains": "int value",
+        "matchReason": "file",
+        "complete": true
+      }
+    },
+    {
+      "id": "parameter_by_name",
+      "category": "parameter",
+      "note": "Property parameter with value name selects the declared parameter.",
+      "files": {
+        "src/service.hpp": "class Service { public: bool submit(int count, double limit); };\n"
+      },
+      "activeFile": "src/service.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "submit",
+        "property": "parameter",
+        "value": "count",
+        "condition": "in Service"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Service::submit::count",
+        "file": "src/service.hpp",
+        "signatureContains": "int count",
+        "matchReason": "parameter",
+        "complete": true
+      }
+    },
+    {
+      "id": "parameter_by_position",
+      "category": "parameter",
+      "note": "Property parameter with value #2 selects the second declared parameter.",
+      "files": {
+        "src/service.hpp": "class Service { public: bool submit(int count, double limit); };\n"
+      },
+      "activeFile": "src/service.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "submit",
+        "property": "parameter",
+        "value": "#2",
+        "condition": "in Service"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Service::submit::limit",
+        "file": "src/service.hpp",
+        "signatureContains": "double limit",
+        "matchReason": "parameter",
+        "complete": true
+      }
+    }
+  ]
+}

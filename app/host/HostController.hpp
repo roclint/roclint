@@ -12,14 +12,17 @@
 
 #include <cstdint>
 #include <algorithm>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <set>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "HostContext.hpp"
+#include "CodebaseWatcher.hpp"
 #include "AsyncRepository.hpp"
 #include "roclint/storage/CodebaseIndex.hpp"
 #include <deque>
@@ -83,12 +86,55 @@ enum class CaptureSource {
     Ambient // Read from another app's focused field; written back into that field
 };
 
+// One grounded target as presented to the host/HUD. Fields are display metadata;
+// the proposal hash still binds only file hashes, byte spans and signatures.
+struct GroundedEvidenceView {
+    std::string target{};
+    std::string qualifiedTarget{};
+    std::string signature{};
+    std::string filePath{};
+    std::string fileHash{}; // internal freshness binding, not rendered by the HUD
+    std::uint32_t line{0};
+    std::string status{};      // VERIFIED, AMBIGUOUS, NOT_FOUND_IN_SCOPE, ...
+    std::string matchReason{};
+    bool complete{true};
+    bool hashValidated{true};
+    std::vector<std::string> candidates{};
+
+    bool operator==(const GroundedEvidenceView&) const = default;
+};
+
+// Thread-safe inputs for grounding. A worker opens its own read-only index
+// connection; the host must not touch SQLite or source files on the UI thread.
+struct GroundingInputs {
+    std::string prompt{};
+    std::filesystem::path indexPath{};
+    std::filesystem::path workspaceRoot{};
+    std::string activeFile{};
+    std::string workspaceIdentity{};
+    std::uint64_t workspaceEpoch{0};
+    bool consented{false};
+    bool ready{false};
+};
+
 // Grounded intents plus the hash of the exact verified AST evidence used to
-// render them. The hash is empty when no intent was verified.
+// render them. The hash is empty when no intent was verified or when the
+// selected files changed during enrichment.
 struct GroundedPromptContext {
     std::string xml{};
     std::string astSnapshotHash{};
+    std::vector<GroundedEvidenceView> evidence{};
+    std::string prompt{};      // exact prompt used for revalidation
+    std::string activeFile{};  // exact active-file hint used for revalidation
+    std::uint64_t workspaceEpoch{0};
+    std::vector<std::string> stalePaths{}; // rendered files whose saved bytes changed
+    bool available{false};   // consented index was ready and queried
+    bool complete{false};    // every candidate set used for the decision was complete
+    bool validated{false};   // file hashes and snapshot generation stayed coherent
+    std::uint64_t snapshotGeneration{0};
 };
+
+[[nodiscard]] GroundedPromptContext computeGroundedPromptContext(const GroundingInputs& inputs);
 
 // The single owner of authoritative prompt state for the desktop host. QML only forwards user
 // gestures; every mutation goes through a version-checked command below.
@@ -166,6 +212,8 @@ class HostController : public QObject {
     Q_PROPERTY(bool canApprove READ canApprove NOTIFY rewriteProposalChanged)
     Q_PROPERTY(bool hasApproval READ hasApproval NOTIFY approvalChanged)
     Q_PROPERTY(QString approvalLabel READ approvalLabel NOTIFY approvalChanged)
+    Q_PROPERTY(QVariantList groundedEvidence READ groundedEvidence NOTIFY groundingChanged)
+    Q_PROPERTY(QString groundingStatus READ groundingStatus NOTIFY groundingChanged)
 
     Q_PROPERTY(bool accessibilityTrusted READ isAccessibilityTrusted NOTIFY accessibilityTrustedChanged)
     Q_PROPERTY(bool hasAmbientPermissions READ isAccessibilityTrusted NOTIFY accessibilityTrustedChanged)
@@ -330,6 +378,8 @@ public:
     [[nodiscard]] bool canApprove() const;
     [[nodiscard]] bool hasApproval() const noexcept { return m_currentApproval.has_value(); }
     [[nodiscard]] QString approvalLabel() const;
+    [[nodiscard]] QVariantList groundedEvidence() const;
+    [[nodiscard]] QString groundingStatus() const { return m_groundingStatus; }
 
     [[nodiscard]] bool isAccessibilityTrusted() const;
     [[nodiscard]] QString accessibilityStatus() const;
@@ -445,7 +495,13 @@ public:
     void setCodebaseContextConsentedForTesting(bool consented) { m_codebaseContextConsented = consented; }
     void setCodebaseIndexPathForTesting(QString path);
     void setCodebaseRefreshLimitsForTesting(std::optional<storage::CodebaseIndexLimits> limits);
+    void setCodebaseWatcherLimitsForTesting(std::optional<CodebaseWatcher::Limits> limits);
+    void startCodebaseRefreshForTesting(const QString& projectPath, bool consented = true);
     [[nodiscard]] bool codebaseIndexReadyForTesting() const noexcept { return m_codebaseIndexReady; }
+    [[nodiscard]] std::uint64_t workspaceEpochForTesting() const noexcept { return m_workspaceEpoch; }
+    [[nodiscard]] int codebaseRefreshStartsForTesting() const noexcept { return m_codebaseRefreshStartsForTesting; }
+    [[nodiscard]] bool codebaseWatcherDegradedForTesting() const noexcept { return m_codebaseWatcherDegraded; }
+    [[nodiscard]] double lastGroundingApplyMsForTesting() const noexcept { return m_lastGroundingApplyMs; }
     [[nodiscard]] QString groundedIntentXmlForTesting(const QString& prompt);
     void setResidencyInputsForTesting(std::optional<qint64> idleMs, std::optional<bool> lowMemory) {
         m_residencyIdleOverride = idleMs; m_residencyPressureOverride = lowMemory; applyResidencyPolicy();
@@ -590,6 +646,7 @@ signals:
     void rewriteProposalChanged();
     void inferenceSpeedChanged();
     void approvalChanged();
+    void groundingChanged();
     void accessibilityTrustedChanged();
     void ambientModeEnabledChanged();
     void captureSourceChanged();
@@ -647,6 +704,7 @@ private:
         std::uint64_t draftEditGeneration{0};
         std::uint64_t proposalEditGeneration{0};
         std::uint64_t serial{0};
+        std::uint64_t workspaceEpoch{0};
         core::analysis::ReviewTrigger reviewTrigger{core::analysis::ReviewTrigger::Automatic};
         std::string attemptId;
         std::string configuration;
@@ -760,9 +818,11 @@ private:
     void onDiscoveryFinished(PipelineTicket ticket, core::Result<bridge::GraniteOptionDiscoveryResponse> result);
     AsyncTask<void> onDiscoveryFinishedAsync(PipelineTicket ticket,
                              core::Result<bridge::GraniteOptionDiscoveryResponse> result);
-    void onRewriteFinished(PipelineTicket ticket, core::Result<core::rewrite::RewriteProposal> result);
+    void onRewriteFinished(PipelineTicket ticket, core::Result<core::rewrite::RewriteProposal> result,
+                           GroundedPromptContext grounding, bool evidenceCurrent);
     AsyncTask<void> onRewriteFinishedAsync(PipelineTicket ticket,
-                           core::Result<core::rewrite::RewriteProposal> result);
+                           core::Result<core::rewrite::RewriteProposal> result,
+                           GroundedPromptContext grounding, bool evidenceCurrent);
     AsyncTask<void> onHealthFinished(HealthResult result);
     AsyncTask<void> rebuildFromRestore(storage::RestoredSession restored);
 
@@ -802,8 +862,21 @@ private:
     void finishQuitWhenRuntimesStopped();
     // Resolves lexical intents against the local AST index and renders the bounded prompt block.
     [[nodiscard]] GroundedPromptContext groundedCanonicalIntentContext(std::string_view prompt);
+    [[nodiscard]] GroundingInputs groundingInputs(std::string prompt) const;
+    void applyGroundingContext(const GroundedPromptContext& context);
+    void setGroundingUnavailable(const QString& status);
+    void scheduleGroundingRevalidation();
     [[nodiscard]] QString codebaseIndexPathForHost() const;
     void startCodebaseRefresh(const QString& projectPath);
+    void startCodebaseWatcher(const QString& projectPath);
+    void stopCodebaseWatcher();
+    void maybeRecoverCodebaseWatcher();
+    void resetCodebaseWatcherRecovery();
+    void scheduleCodebaseWatcherRecovery();
+    void scheduleCodebasePathsRefresh(const QStringList& relativePaths);
+    void startCodebasePathsRefresh(const QString& projectPath, const QStringList& relativePaths);
+    void scheduleStalePathRecovery(const std::vector<std::string>& relativePaths);
+    void resetStalePathRecovery();
     void startPendingNativeDownload();
     [[nodiscard]] std::string currentTransportName() const;
     core::Status copyToClipboard(const QString& text);
@@ -934,13 +1007,29 @@ private:
     QStringList m_projectFiles;
     quint64 m_projectScanSerial{0};
     bool m_codebaseContextConsented{false};
-    std::unique_ptr<storage::CodebaseIndex> m_codebaseIndex;
     QString m_codebaseActiveFile;
     QString m_codebaseIndexPathOverride;
     std::optional<storage::CodebaseIndexLimits> m_codebaseRefreshLimitsForTesting;
     int m_codebaseRefreshSerial{0};
     bool m_codebaseRefreshInFlight{false};
     bool m_codebaseIndexReady{false};
+    int m_codebaseIncompleteRetries{0};
+    int m_codebasePathsRetries{0};
+    std::unique_ptr<CodebaseWatcher> m_codebaseWatcher;
+    quint64 m_codebaseWatcherSerial{0};
+    QStringList m_pendingCodebasePaths;
+    quint64 m_codebasePathsCoalesceSerial{0};
+    bool m_codebaseFullRefreshQueued{false};
+    int m_codebaseWatcherRecoveryAttempts{0};
+    bool m_codebaseWatcherDeliberateRecovery{false};
+    bool m_codebaseWatcherDegraded{false};
+    quint64 m_codebaseWatcherRecoverySerial{0};
+    int m_codebaseRefreshStartsForTesting{0};
+    std::uint64_t m_codebaseSnapshotGeneration{0};
+    std::uint64_t m_workspaceEpoch{0};
+    std::uint64_t m_proposalWorkspaceEpoch{0};
+    QHash<QString, int> m_staleRecoveryAttempts;
+    std::optional<CodebaseWatcher::Limits> m_codebaseWatcherLimitsForTesting;
     QString m_modelDirectory;
     std::shared_ptr<bridge::GraniteAdapter> m_graniteAdapter;
     std::optional<OllamaClient> m_ollama;
@@ -972,6 +1061,17 @@ private:
     std::optional<core::rewrite::RewriteProposal> m_currentProposal;
     std::set<std::string> m_acknowledgedConstraints;
     std::optional<core::review::ApprovalRecord> m_currentApproval;
+    std::vector<GroundedEvidenceView> m_activeGroundedEvidence;
+    std::uint64_t m_activeGroundingGeneration{0};
+    std::string m_activeGroundingPrompt;
+    std::string m_activeGroundingActiveFile;
+    std::string m_activeGroundingProposalId;
+    std::string m_activeGroundingSessionId;
+    std::string m_activeGroundingRevisionId;
+    quint64 m_groundingValidationSerial{0};
+    QVariantList m_groundedEvidenceViews;
+    QString m_groundingStatus{QStringLiteral("UNAVAILABLE")};
+    double m_lastGroundingApplyMs{0.0};
 
     std::unique_ptr<IAccessibilityBridge> m_accessibility;
     bool m_ambientModeEnabled{false};

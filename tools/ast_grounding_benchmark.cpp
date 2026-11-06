@@ -25,12 +25,46 @@ int main(int argc, char** argv) {
             std::cerr << "index refresh failed: " << refresh.error().message << "\n";
             return 1;
         }
-        std::cout << "files_visited=" << refresh.value().filesVisited
-                  << " files_indexed=" << refresh.value().filesIndexed
-                  << " files_recovered=" << refresh.value().filesRecovered
-                  << " symbols=" << refresh.value().symbolsIndexed
-                  << " index_ms=" << refresh.value().elapsedMs
-                  << " incomplete=" << refresh.value().incomplete << "\n";
+        auto complete = refresh.value();
+        std::size_t indexedSymbols = complete.symbolsIndexed;
+        double totalIndexMs = complete.elapsedMs;
+        int indexPasses = 1;
+        std::cout << "files_visited=" << complete.filesVisited
+                  << " files_indexed=" << complete.filesIndexed
+                  << " files_recovered=" << complete.filesRecovered
+                  << " symbols=" << complete.symbolsIndexed
+                  << " index_ms=" << complete.elapsedMs
+                  << " incomplete=" << complete.incomplete << "\n";
+        // The default 2 s scan budget can stop a cold pass on a large tree.
+        // Retry with the same bounded budget; unchanged files are hash-skipped
+        // instead of re-parsed. Report the complete operation, not just the
+        // first chunk.
+        while (complete.incomplete && indexPasses < 3) {
+            const auto retry = index.refresh(workspace);
+            if (!retry.ok()) {
+                std::cerr << "index retry failed: " << retry.error().message << "\n";
+                return 1;
+            }
+            totalIndexMs += retry.value().elapsedMs;
+            indexedSymbols += retry.value().symbolsIndexed;
+            complete = retry.value();
+            ++indexPasses;
+        }
+        std::cout << "complete_index_ms=" << totalIndexMs
+                  << " complete_passes=" << indexPasses
+                  << " complete_files_visited=" << complete.filesVisited
+                  << " complete_symbols_indexed=" << indexedSymbols
+                  << " complete_incomplete=" << complete.incomplete << "\n";
+
+        const auto unchanged = index.refresh(workspace);
+        if (!unchanged.ok()) {
+            std::cerr << "unchanged refresh failed: " << unchanged.error().message << "\n";
+            return 1;
+        }
+        std::cout << "unchanged_refresh_ms=" << unchanged.value().elapsedMs
+                  << " unchanged_files=" << unchanged.value().filesVisited
+                  << " unchanged_symbols=" << unchanged.value().symbolsIndexed
+                  << " unchanged_incomplete=" << unchanged.value().incomplete << "\n";
 
         std::vector<roclint::core::rewrite::CanonicalIntent> intents;
         for (const auto* target : {"readPacket", "offset", "GraniteAdapter", "HostController"}) {
@@ -61,6 +95,73 @@ int main(int argc, char** argv) {
             }
         }
         std::cout << "grounding_average_ms=" << totalMs / kSamples << "\n";
+
+        const auto groundedSample =
+            roclint::core::rewrite::AstGroundingEngine::groundIntents(intents, activeFile, index);
+        std::string evidenceFile;
+        std::string evidenceHash;
+        for (const auto& intent : groundedSample) {
+            if (!intent.grounding.has_value() || intent.grounding->filePath.empty()) continue;
+            evidenceFile = intent.grounding->filePath;
+            evidenceHash = intent.grounding->fileHash;
+            break;
+        }
+
+        if (!evidenceFile.empty()) {
+            const auto singleStarted = std::chrono::steady_clock::now();
+            const auto single = index.refreshPaths(workspace, {evidenceFile});
+            const double singleMs = static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - singleStarted).count()) / 1e6;
+            if (!single.ok()) {
+                std::cerr << "single-file refresh failed: " << single.error().message << "\n";
+                return 1;
+            }
+            std::cout << "single_file_refresh_ms=" << singleMs
+                      << " single_file_incomplete=" << single.value().incomplete << "\n";
+
+            if (!evidenceHash.empty()) {
+                constexpr int kHashSamples = 100;
+                const auto hashStarted = std::chrono::steady_clock::now();
+                bool match = true;
+                for (int sample = 0; sample < kHashSamples; ++sample) {
+                    const auto checked = index.validateFileHash(evidenceFile, evidenceHash);
+                    match = match && checked.ok() && checked.value();
+                }
+                const double hashMs = static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - hashStarted).count()) / 1e6 / kHashSamples;
+                std::cout << "hash_validation_ms=" << hashMs << " hash_match=" << match << "\n";
+            }
+
+            // Use a stable simple name: a fully qualified anonymous-namespace
+            // label is not a valid exact-name lookup key.
+            const std::string lookupName = "HostController";
+            constexpr int kLookupSamples = 500;
+            const auto lookupStarted = std::chrono::steady_clock::now();
+            bool found = false;
+            for (int sample = 0; sample < kLookupSamples; ++sample) {
+                const auto queried = index.findByName(lookupName, {}, {}, 16, false);
+                found = found || (queried.ok() && !queried.value().symbols.empty());
+            }
+            const double lookupMs = static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - lookupStarted).count()) / 1e6 / kLookupSamples;
+            std::cout << "warm_lookup_ms=" << lookupMs << " warm_lookup_found=" << found
+                      << " warm_lookup_name=" << lookupName << "\n";
+        }
+
+        constexpr int kRenderSamples = 100;
+        const auto renderStarted = std::chrono::steady_clock::now();
+        std::size_t renderedBytes = 0;
+        for (int sample = 0; sample < kRenderSamples; ++sample)
+            renderedBytes = roclint::core::rewrite::AstGroundingEngine::renderPromptXml(groundedSample).size();
+        const double renderMs = static_cast<double>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::steady_clock::now() - renderStarted).count()) / 1e6 / kRenderSamples;
+        std::cout << "render_xml_ms=" << renderMs << " rendered_bytes=" << renderedBytes << "\n";
+
+        const auto snapshot = index.snapshotInfo();
+        if (snapshot.ok())
+            std::cout << "snapshot_generation=" << snapshot.value().generation
+                      << " snapshot_complete=" << snapshot.value().complete
+                      << " snapshot_available=" << snapshot.value().available << "\n";
     }
     bool keep = false;
 #ifdef _WIN32

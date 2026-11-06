@@ -311,6 +311,41 @@ FocusScope {
             color: rootWindow.mutedTextColor
             font.pixelSize: 11
         }
+        ColumnLayout {
+            objectName: "groundedEvidenceList"
+            visible: rootWindow.showDiagnostics && rootWindow.hc && hostController.groundedEvidence.length > 0
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
+            spacing: 2
+            Text {
+                objectName: "groundingStatusLabel"
+                Layout.fillWidth: true
+                text: qsTr("Code evidence: %1").arg(rootWindow.hc ? hostController.groundingStatus : "")
+                color: rootWindow.mutedTextColor
+                font.pixelSize: 11
+            }
+            Repeater {
+                model: rootWindow.hc ? hostController.groundedEvidence : []
+                delegate: Text {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    textFormat: Text.PlainText
+                    wrapMode: Text.WrapAnywhere
+                    color: modelData.status === "VERIFIED" ? rootWindow.fgColor : rootWindow.mutedTextColor
+                    font.family: rootWindow.monoFont
+                    font.pixelSize: 11
+                    text: "[" + modelData.status + "] " + modelData.qualifiedTarget
+                          + (modelData.signature.length ? "  " + modelData.signature : "")
+                          + (modelData.filePath.length ? "\n" + modelData.filePath + ":" + modelData.line : "")
+                          + (modelData.matchReason.length ? "  · " + modelData.matchReason : "")
+                          + (modelData.complete ? "" : "  · incomplete")
+                          + (modelData.hashValidated ? "" : "  · stale")
+                          + (modelData.candidates && modelData.candidates.length
+                             ? "\nCandidates: " + modelData.candidates.join(" · ") : "")
+                }
+            }
+        }
             // Clarification panel
             Rectangle {
                 id: clarifyPanel

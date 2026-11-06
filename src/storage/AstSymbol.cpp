@@ -19,4 +19,23 @@ const char* toString(AstNodeKind kind) noexcept {
     return "UNKNOWN";
 }
 
+const char* toString(AstSymbolRole role) noexcept {
+    switch (role) {
+        case AstSymbolRole::Unknown: return "UNKNOWN";
+        case AstSymbolRole::Namespace: return "NAMESPACE";
+        case AstSymbolRole::Type: return "TYPE";
+        case AstSymbolRole::Function: return "FUNCTION";
+        case AstSymbolRole::Method: return "METHOD";
+        case AstSymbolRole::Constructor: return "CONSTRUCTOR";
+        case AstSymbolRole::Destructor: return "DESTRUCTOR";
+        case AstSymbolRole::Operator: return "OPERATOR";
+        case AstSymbolRole::Variable: return "VARIABLE";
+        case AstSymbolRole::Field: return "FIELD";
+        case AstSymbolRole::Parameter: return "PARAMETER";
+        case AstSymbolRole::Enumerator: return "ENUMERATOR";
+        case AstSymbolRole::TypeAlias: return "TYPE_ALIAS";
+    }
+    return "UNKNOWN";
+}
+
 } // namespace roclint::storage

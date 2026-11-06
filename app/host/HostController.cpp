@@ -26,11 +26,21 @@
 #include <QUuid>
 #include <QtConcurrent/QtConcurrentRun>
 
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+#include <QThread>
+#endif
+
 #include <algorithm>
 #include <exception>
 #include <filesystem>
 
 namespace roclint::host {
+
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+// Defined in HostControllerWorkspace.cpp. Delays only the asynchronous
+// proposal revalidation worker so tests can order superseded results.
+int codebaseRevalidationDelayForTesting();
+#endif
 
 using core::ErrorCode;
 using core::makeError;
@@ -41,6 +51,22 @@ namespace rewrite = core::rewrite;
 namespace review = core::review;
 
 namespace {
+
+void clearActiveGroundingBinding(std::vector<GroundedEvidenceView>& evidence,
+                                 std::string& prompt,
+                                 std::string& activeFile,
+                                 std::string& proposalId,
+                                 std::string& sessionId,
+                                 std::string& revisionId,
+                                 quint64& validationSerial) {
+    evidence.clear();
+    prompt.clear();
+    activeFile.clear();
+    proposalId.clear();
+    sessionId.clear();
+    revisionId.clear();
+    ++validationSerial;
+}
 
 QString qs(const std::string& s) {
     return QString::fromUtf8(s.data(), static_cast<qsizetype>(s.size()));
@@ -290,6 +316,7 @@ HostController::HostController(const QString& dbPathOverride,
 }
 
 HostController::~HostController() {
+    stopCodebaseWatcher();
     m_residencyTimer.stop();
     if (m_nativeInstaller) { m_nativeInstaller->disconnect(this); m_nativeInstaller->cancel(); }
     if (m_native) { m_native->disconnect(this); m_native->stop(); }
@@ -561,6 +588,9 @@ void HostController::requestQuit() {
     hideDashboard();
     if (m_cancelWorkspaceScan) m_cancelWorkspaceScan();
     m_hostState = HostState::Quitting;
+    // Pending watcher recovery belongs to this run; cancel it before anything
+    // can restart the watcher during shutdown.
+    stopCodebaseWatcher();
     invalidateDownstreamPipeline();
     emit hostStateChanged();
     connect(m_julia.get(), &JuliaRuntime::stopped, this, &HostController::finishQuitWhenRuntimesStopped, Qt::QueuedConnection);
@@ -885,8 +915,13 @@ void HostController::invalidateDownstreamPipeline() {
     m_activeScore.reset();
     m_confirmedIntent.reset();
     m_currentProposal.reset();
+    m_proposalWorkspaceEpoch = 0;
     m_acknowledgedConstraints.clear();
     m_currentApproval.reset();
+    clearActiveGroundingBinding(m_activeGroundedEvidence, m_activeGroundingPrompt,
+                                m_activeGroundingActiveFile, m_activeGroundingProposalId,
+                                m_activeGroundingSessionId, m_activeGroundingRevisionId,
+                                m_groundingValidationSerial);
     m_proposalStatus = ProposalUiStatus::None;
     m_proposalMessage.clear();
     m_streamingPreview.clear();
@@ -941,8 +976,13 @@ AsyncTask<core::Status> HostController::invalidateProposalArtifacts() {
     if (auto status = (co_await advanceProposalGeneration()); !status.ok()) co_return status;
     m_pendingNativeRewrite.reset();
     m_currentProposal.reset();
+    m_proposalWorkspaceEpoch = 0;
     m_acknowledgedConstraints.clear();
     m_currentApproval.reset();
+    clearActiveGroundingBinding(m_activeGroundedEvidence, m_activeGroundingPrompt,
+                                m_activeGroundingActiveFile, m_activeGroundingProposalId,
+                                m_activeGroundingSessionId, m_activeGroundingRevisionId,
+                                m_groundingValidationSerial);
     m_proposalStatus = ProposalUiStatus::None;
     m_proposalMessage.clear();
     m_streamingPreview.clear();
@@ -969,6 +1009,7 @@ HostController::PipelineTicket HostController::makeTicket() const {
     t.draftEditGeneration = m_revisionState->draftEditGeneration();
     t.proposalEditGeneration = m_revisionState->proposalEditGeneration();
     t.serial = m_pipelineSerial;
+    t.workspaceEpoch = m_workspaceEpoch;
     t.reviewTrigger = m_reviewTrigger;
     return t;
 }
@@ -977,7 +1018,8 @@ bool HostController::isTicketCurrent(const PipelineTicket& ticket, bool checkPro
     if (!m_revisionState) {
         return false;
     }
-    return ticket.serial == m_pipelineSerial && ticket.sessionId == currentSessionId() &&
+    return ticket.serial == m_pipelineSerial && ticket.workspaceEpoch == m_workspaceEpoch &&
+           ticket.sessionId == currentSessionId() &&
            ticket.revisionId == m_revisionState->currentRevision().revisionId().value() &&
            ticket.stateVersion == m_revisionState->stateVersion() &&
            ticket.draftEditGeneration == m_revisionState->draftEditGeneration() &&
@@ -1233,7 +1275,6 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
     request.sessionId = ticket.sessionId;
     request.revisionId = ticket.revisionId;
     request.promptString = m_revisionState->currentRevision().text();
-    request.groundedCanonicalIntentXml = groundedCanonicalIntentContext(request.promptString).xml;
     request.hostContextCategory = ss(m_hostContext.categoryString());
     request.reviewTrigger = ticket.reviewTrigger;
     if (promptTriageRoutingEnabled()) request.promptTriage = m_promptTriage;
@@ -1258,20 +1299,27 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
 
     using DiscoveryResult = core::Result<bridge::GraniteOptionDiscoveryResponse>;
     auto adapter = m_graniteAdapter;
+    auto grounding = std::make_shared<GroundedPromptContext>();
+    const auto groundingInput = groundingInputs(request.promptString);
     auto* watcher = new QFutureWatcher<DiscoveryResult>(this);
     ++m_inFlight;
     const bool nativeWork = nativeGraniteSelected() && !usesTransportOverride();
     if (nativeWork) ++m_nativeSemanticInFlight;
-    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, ticket, nativeWork]() {
+    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, ticket, nativeWork, grounding]() {
         --m_inFlight;
         if (nativeWork) --m_nativeSemanticInFlight;
         const DiscoveryResult result = watcher->result();
         watcher->deleteLater();
+        // The grounding view belongs to the ticket that produced it. A stale
+        // ticket must not paint evidence into a newer workspace/revision.
+        if (isTicketCurrent(ticket, false)) applyGroundingContext(*grounding);
         onDiscoveryFinished(ticket, result);
         finishQuitWhenRuntimesStopped();
     });
-    watcher->setFuture(QtConcurrent::run([adapter, request, transport]() -> DiscoveryResult {
+    watcher->setFuture(QtConcurrent::run([adapter, request, transport, groundingInput, grounding]() mutable -> DiscoveryResult {
         try {
+            *grounding = computeGroundedPromptContext(groundingInput);
+            request.groundedCanonicalIntentXml = grounding->xml;
             return adapter->discoverOptions(request, transport);
         } catch (const std::exception& ex) {
             return makeError(ErrorCode::Internal, std::string("Discovery crashed: ") + ex.what());
@@ -1530,6 +1578,8 @@ AsyncTask<bool> HostController::applyAnalysis(analysis::NormalizedAnalysis norma
                                     std::string scorerAttemptId,
                                     std::optional<bridge::SnapshotEvaluationResponse> evaluation,
                                     std::optional<analysis::PromptTriage> triage, analysis::AssistanceKind assistance) {
+    const auto operationWorkspaceEpoch = m_workspaceEpoch;
+    const auto operationPipelineSerial = m_pipelineSerial;
     auto scored = evaluation ? std::move(*evaluation) :
         triage ? bridge::SnapshotEvaluationResponse{} : m_s1Adapter.evaluateSnapshot(normalized);
 #if defined(ROCLINT_ENABLE_TEST_MOCKS)
@@ -1563,7 +1613,13 @@ AsyncTask<bool> HostController::applyAnalysis(analysis::NormalizedAnalysis norma
         setLastError(status.error());
         co_return false;
     }
+    const bool stillCurrent = operationWorkspaceEpoch == m_workspaceEpoch &&
+                              operationPipelineSerial == m_pipelineSerial;
+    // insertAnalysisSnapshot advanced the persisted session state. Keep the
+    // in-memory revision version aligned even when a workspace/scope change
+    // means the analysis itself must not be published.
     *m_revisionState = std::move(nextState);
+    if (!stillCurrent) co_return false;
     m_currentSnapshot = std::move(result).value();
     m_currentAnalysis = m_currentSnapshot->normalized;
     m_currentSnapshotEval = m_currentSnapshot->evaluation;
@@ -1571,6 +1627,7 @@ AsyncTask<bool> HostController::applyAnalysis(analysis::NormalizedAnalysis norma
     m_workingIntent = intent::WorkingIntentState{};
     m_confirmedIntent.reset();
     (co_await reevaluateIntervention());
+    if (operationWorkspaceEpoch != m_workspaceEpoch || operationPipelineSerial != m_pipelineSerial) co_return false;
     emit stateVersionChanged();
     co_return true;
 }
@@ -1725,6 +1782,8 @@ AsyncTask<core::Status> HostController::finalizeIntentIfQuiet() {
     if (!m_repository) {
         co_return storageUnavailable();
     }
+    const auto operationWorkspaceEpoch = m_workspaceEpoch;
+    const auto operationPipelineSerial = m_pipelineSerial;
     const std::int64_t now = nowMs();
     auto built = intent::IntentProvenanceBuilder::buildConfirmedIntent(*m_currentSnapshot, m_currentPolicyResult,
                                                                        m_workingIntent, now);
@@ -1733,6 +1792,13 @@ AsyncTask<core::Status> HostController::finalizeIntentIfQuiet() {
     }
     if (auto st = (co_await m_repository->insertIntentVersion(built.value(), now)); !st.ok()) {
         co_return st;
+    }
+    if (operationWorkspaceEpoch != m_workspaceEpoch || operationPipelineSerial != m_pipelineSerial ||
+        !m_currentAnalysis || !m_currentSnapshot) {
+        // The workspace/scope changed or the analysis was cancelled while the
+        // intent row was written. The current UI must not inherit a confirmed
+        // intent derived from old grounding/analysis state.
+        co_return Status::success();
     }
     m_confirmedIntent = std::move(built).value();
     co_return Status::success();
@@ -1748,6 +1814,7 @@ AsyncTask<core::Status> HostController::applyTransition(const char* /*name*/, qu
         if (m_revisionState->isDraftDirty()) {
             co_return makeError(ErrorCode::StaleVersion, "The prompt changed after it was analyzed. Analyze it again.");
         }
+        const auto operationWorkspaceEpoch = m_workspaceEpoch;
         intent::WorkingIntentState next = m_workingIntent;
         if (auto st = transition(next); !st.ok()) {
             co_return st;
@@ -1767,7 +1834,14 @@ AsyncTask<core::Status> HostController::applyTransition(const char* /*name*/, qu
         } else {
             if (auto status = (co_await m_repository->advanceSessionState(nextState, expectedVersion, nowMs())); !status.ok()) co_return status;
         }
+        const bool stillCurrent = operationWorkspaceEpoch == m_workspaceEpoch;
         *m_revisionState = std::move(nextState);
+        if (!stillCurrent) {
+            // The persisted revision state advanced; do not publish the old
+            // workspace's working/confirmed intent into the new epoch.
+            emit stateVersionChanged();
+            co_return Status::success();
+        }
         m_workingIntent = std::move(next);
         m_followAmbientDraft = false; // An explicit decision freezes the reviewed draft and destination.
         m_currentDecision = std::move(decision);
@@ -1775,7 +1849,12 @@ AsyncTask<core::Status> HostController::applyTransition(const char* /*name*/, qu
         m_currentApproval.reset();
         if (clearProposal) {
             m_currentProposal.reset();
+            m_proposalWorkspaceEpoch = 0;
             m_acknowledgedConstraints.clear();
+            clearActiveGroundingBinding(m_activeGroundedEvidence, m_activeGroundingPrompt,
+                                        m_activeGroundingActiveFile, m_activeGroundingProposalId,
+                                        m_activeGroundingSessionId, m_activeGroundingRevisionId,
+                                        m_groundingValidationSerial);
             m_proposalStatus = ProposalUiStatus::None;
             m_proposalMessage.clear();
             emit rewriteProposalChanged();
@@ -2212,7 +2291,16 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
             co_return makeError(ErrorCode::ProviderUnavailable, ss(modelEngineStatus()));
         }
 
+        const auto operationWorkspaceEpoch = m_workspaceEpoch;
         if (auto status = (co_await invalidateProposalArtifacts()); !status.ok()) co_return status;
+        // The invalidation write may yield to the event loop. A workspace or
+        // scope change during it must abort before the captured analysis/intent
+        // state is used.
+        if (operationWorkspaceEpoch != m_workspaceEpoch || !m_currentSnapshot || !m_confirmedIntent ||
+            !m_revisionState) {
+            co_return makeError(ErrorCode::StaleVersion,
+                                "The workspace changed before the rewrite could start.");
+        }
         PipelineTicket ticket = makeTicket();
         if (auto st = (co_await beginAttempt(ticket, "rewrite")); !st.ok()) {
             co_return st;
@@ -2222,9 +2310,6 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
         request.sessionId = ticket.sessionId;
         request.revisionId = ticket.revisionId;
         request.originalText = m_revisionState->currentRevision().text();
-        const auto grounded = groundedCanonicalIntentContext(request.originalText);
-        request.groundedCanonicalIntentXml = grounded.xml;
-        request.astSnapshotHash = grounded.astSnapshotHash;
         request.analysis = *m_currentSnapshot;
         request.confirmedIntent = *m_confirmedIntent;
         request.rewriteProfileId = profile->id;
@@ -2242,38 +2327,59 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
 
         using RewriteResult = core::Result<rewrite::RewriteProposal>;
         auto adapter = m_graniteAdapter;
+        auto grounding = std::make_shared<GroundedPromptContext>();
+        auto evidenceCurrent = std::make_shared<bool>(true);
+        const auto groundingInput = groundingInputs(request.originalText);
         auto* watcher = new QFutureWatcher<RewriteResult>(this);
         ++m_inFlight;
         const bool nativeWork = nativeGraniteSelected() && !usesTransportOverride();
         if (nativeWork) ++m_nativeSemanticInFlight;
-        connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, ticket, nativeWork]() {
-            --m_inFlight;
-            if (nativeWork) --m_nativeSemanticInFlight;
-            const RewriteResult result = watcher->result();
-            watcher->deleteLater();
-            onRewriteFinished(ticket, result);
-            finishQuitWhenRuntimesStopped();
-        });
+        connect(watcher, &QFutureWatcherBase::finished, this,
+            [this, watcher, ticket, nativeWork, grounding, evidenceCurrent]() {
+                --m_inFlight;
+                if (nativeWork) --m_nativeSemanticInFlight;
+                const RewriteResult result = watcher->result();
+                watcher->deleteLater();
+                if (isTicketCurrent(ticket, true)) applyGroundingContext(*grounding);
+                onRewriteFinished(ticket, result, *grounding, *evidenceCurrent);
+                finishQuitWhenRuntimesStopped();
+            });
         const std::int64_t startedAt = nowMs();
-        watcher->setFuture(QtConcurrent::run([adapter, request, transport, startedAt]() -> RewriteResult {
-            try {
-                return bridge::GraniteRewriteAdapter::synthesizeRewrite(request, *adapter, transport, startedAt);
-            } catch (const std::exception& ex) {
-                return makeError(ErrorCode::Internal, std::string("Rewrite crashed: ") + ex.what());
-            }
-        }));
+        watcher->setFuture(QtConcurrent::run(
+            [adapter, request, transport, startedAt, groundingInput, grounding, evidenceCurrent]() mutable -> RewriteResult {
+                try {
+                    *grounding = computeGroundedPromptContext(groundingInput);
+                    request.groundedCanonicalIntentXml = grounding->xml;
+                    request.astSnapshotHash = grounding->astSnapshotHash;
+                    auto result = bridge::GraniteRewriteAdapter::synthesizeRewrite(
+                        request, *adapter, transport, startedAt);
+                    if (grounding->available && grounding->validated) {
+                        const auto post = computeGroundedPromptContext(groundingInput);
+                        *evidenceCurrent = post.available && post.validated &&
+                            post.astSnapshotHash == grounding->astSnapshotHash;
+                    }
+                    return result;
+                } catch (const std::exception& ex) {
+                    return makeError(ErrorCode::Internal, std::string("Rewrite crashed: ") + ex.what());
+                }
+            }));
         co_return Status::success();
 
 }
 
-void HostController::onRewriteFinished(PipelineTicket ticket, core::Result<rewrite::RewriteProposal> result) {
-    queueModelCompletion("finishRewrite", [this, ticket = std::move(ticket), result = std::move(result)]() mutable {
-        return onRewriteFinishedAsync(std::move(ticket), std::move(result));
-    });
+void HostController::onRewriteFinished(PipelineTicket ticket, core::Result<rewrite::RewriteProposal> result,
+                                       GroundedPromptContext grounding, bool evidenceCurrent) {
+    queueModelCompletion("finishRewrite",
+        [this, ticket = std::move(ticket), result = std::move(result),
+         grounding = std::move(grounding), evidenceCurrent]() mutable {
+            return onRewriteFinishedAsync(std::move(ticket), std::move(result), std::move(grounding),
+                                          evidenceCurrent);
+        });
 }
 
 AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
-                                       core::Result<rewrite::RewriteProposal> result) {
+                                       core::Result<rewrite::RewriteProposal> result,
+                                       GroundedPromptContext grounding, bool evidenceCurrent) {
     if (m_healthRecheckRequested && !m_healthCheckInFlight) refreshAvailableModels();
     emit modelEngineStatusChanged();
     if (m_ambientCheckPending) {
@@ -2299,6 +2405,25 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
     }
 
     const rewrite::RewriteProposal& proposal = result.value();
+    if (!evidenceCurrent ||
+        (!proposal.astSnapshotHash.empty() &&
+         (!grounding.validated || proposal.astSnapshotHash != grounding.astSnapshotHash))) {
+        completeAttempt(ticket, storage::AttemptStatus::DiscardedStale,
+                        "Code evidence changed while writing the rewrite");
+        m_currentProposal.reset();
+        m_proposalWorkspaceEpoch = 0;
+        m_acknowledgedConstraints.clear();
+        m_currentApproval.reset();
+        clearActiveGroundingBinding(m_activeGroundedEvidence, m_activeGroundingPrompt,
+                                    m_activeGroundingActiveFile, m_activeGroundingProposalId,
+                                    m_activeGroundingSessionId, m_activeGroundingRevisionId,
+                                    m_groundingValidationSerial);
+        setGroundingUnavailable(QStringLiteral("STALE"));
+        setProposalStatus(ProposalUiStatus::Failed,
+                          QStringLiteral("Code evidence changed while writing the rewrite. Review again."));
+        emit approvalChanged();
+        co_return;
+    }
     bridge::GraniteModelInfo model;
     model.modelId = proposal.modelId;
     model.digest = proposal.modelDigest;
@@ -2318,19 +2443,40 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
     }
     auto persistProposal = [&]() -> AsyncTask<core::Status> {
         if (auto status = (co_await m_repository->insertProposal(proposal, nowMs(), ticket.stateVersion)); !status.ok()) co_return status;
+        // The workspace/scope may have changed while the proposal row was
+        // persisted. Keep the in-memory revision version aligned with the row
+        // that was just written, but do not publish it into the new epoch.
+        const bool stillCurrent = isTicketCurrent(ticket, false);
         *m_revisionState = nextState;
         m_currentApproval.reset();
+        if (!stillCurrent) {
+            co_return makeError(ErrorCode::StaleVersion,
+                                "The workspace changed before the rewrite was saved.");
+        }
         co_return Status::success();
     };
 
     if (proposal.status == rewrite::ProposalStatus::NeedsClarification) {
         if (auto st = (co_await persistProposal()); !st.ok()) {
             completeAttempt(ticket, storage::AttemptStatus::Failed, st.error().message, &model);
+            if (ticket.workspaceEpoch != m_workspaceEpoch || ticket.serial != m_pipelineSerial) co_return;
             setProposalStatus(ProposalUiStatus::Failed, plainError(st.error()));
             co_return;
         }
         completeAttempt(ticket, storage::AttemptStatus::Succeeded, std::string(), &model);
         m_currentProposal = proposal;
+        m_proposalWorkspaceEpoch = ticket.workspaceEpoch;
+        if (grounding.available && grounding.validated) {
+            m_activeGroundedEvidence = grounding.evidence;
+        } else {
+            m_activeGroundedEvidence.clear();
+        }
+        m_activeGroundingGeneration = grounding.validated ? grounding.snapshotGeneration : 0;
+        m_activeGroundingPrompt = grounding.prompt.empty() ? proposal.originalText : grounding.prompt;
+        m_activeGroundingActiveFile = grounding.activeFile;
+        m_activeGroundingProposalId = proposal.id;
+        m_activeGroundingSessionId = ticket.sessionId;
+        m_activeGroundingRevisionId = ticket.revisionId;
         setProposalStatus(ProposalUiStatus::NeedsClarification, qs(proposal.clarificationQuestion));
         emit stateVersionChanged();
         co_return;
@@ -2346,6 +2492,7 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
     }
     if (auto st = (co_await persistProposal()); !st.ok()) {
         completeAttempt(ticket, storage::AttemptStatus::Failed, st.error().message, &model);
+        if (ticket.workspaceEpoch != m_workspaceEpoch || ticket.serial != m_pipelineSerial) co_return;
         setProposalStatus(ProposalUiStatus::Failed, plainError(st.error()));
         setLastError(st.error());
         co_return;
@@ -2353,7 +2500,19 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
     completeAttempt(ticket, storage::AttemptStatus::Succeeded, std::string(), &model);
 
     m_currentProposal = proposal;
+    m_proposalWorkspaceEpoch = ticket.workspaceEpoch;
     m_acknowledgedConstraints.clear();
+    if (grounding.available && grounding.validated) {
+        m_activeGroundedEvidence = grounding.evidence;
+    } else {
+        m_activeGroundedEvidence.clear();
+    }
+    m_activeGroundingGeneration = grounding.validated ? grounding.snapshotGeneration : 0;
+    m_activeGroundingPrompt = grounding.prompt.empty() ? proposal.originalText : grounding.prompt;
+    m_activeGroundingActiveFile = grounding.activeFile;
+    m_activeGroundingProposalId = proposal.id;
+    m_activeGroundingSessionId = ticket.sessionId;
+    m_activeGroundingRevisionId = ticket.revisionId;
     emit stateVersionChanged();
     const auto pending = validation.pendingAcknowledgments.size();
     setProposalStatus(ProposalUiStatus::ReadyForReview,
@@ -2364,7 +2523,8 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
 }
 
 rewrite::ValidationResult HostController::validateCurrentProposal() const {
-    if (!m_currentProposal || !m_confirmedIntent || !m_revisionState) {
+    if (!m_currentProposal || !m_confirmedIntent || !m_revisionState ||
+        m_proposalWorkspaceEpoch != m_workspaceEpoch) {
         return rewrite::ValidationResult{};
     }
     return rewrite::RewriteValidator::validateProposal(*m_currentProposal, currentSessionId(),
@@ -2373,7 +2533,8 @@ rewrite::ValidationResult HostController::validateCurrentProposal() const {
 }
 
 std::optional<review::ApprovalContext> HostController::approvalContext() const {
-    if (!m_revisionState || !m_currentAnalysis || !m_confirmedIntent || !m_currentProposal) {
+    if (!m_revisionState || !m_currentAnalysis || !m_confirmedIntent || !m_currentProposal ||
+        m_proposalWorkspaceEpoch != m_workspaceEpoch) {
         return std::nullopt;
     }
     review::ApprovalContext ctx;
@@ -2397,13 +2558,24 @@ AsyncTask<core::Status> HostController::acknowledgeConstraintOperation(QString c
         if (m_proposalStatus != ProposalUiStatus::ReadyForReview || !m_currentProposal) {
             co_return makeError(ErrorCode::PreconditionFailed, "There is no suggested rewrite to review.");
         }
+        if (m_proposalWorkspaceEpoch != m_workspaceEpoch) {
+            co_return makeError(ErrorCode::PreconditionFailed,
+                                "The workspace changed after this rewrite was prepared. Review the prompt again.");
+        }
         const std::string id = ss(constraintId);
         const auto constraint = m_currentProposal->getConstraint(id);
         if (!constraint.has_value() || constraint->status != rewrite::ConstraintStatus::SemanticReviewRequired) {
             co_return makeError(ErrorCode::InvalidInput, "That item doesn't need your review.");
         }
         if ((m_acknowledgedConstraints.count(id) > 0) == acknowledged) co_return Status::success();
+        const auto operationWorkspaceEpoch = m_workspaceEpoch;
+        const auto operationProposalId = m_currentProposal->id;
         if (auto status = (co_await advanceCommandVersion(expectedVersion)); !status.ok()) co_return status;
+        if (operationWorkspaceEpoch != m_workspaceEpoch || m_proposalWorkspaceEpoch != operationWorkspaceEpoch ||
+            !m_currentProposal || m_currentProposal->id != operationProposalId) {
+            co_return makeError(ErrorCode::StaleVersion,
+                                "The workspace changed before the review item was saved.");
+        }
         if (acknowledged) {
             m_acknowledgedConstraints.insert(id);
         } else {
@@ -2421,7 +2593,8 @@ bool HostController::beginInsertionTargetSelection(quint64 expectedVersion) {
         if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) return status;
         if (!isAmbientActive())
             return makeError(ErrorCode::PreconditionFailed, "Enable Live prompt capture in Settings to connect an insertion field.");
-        if (!m_revisionState || !m_currentProposal || m_proposalStatus != ProposalUiStatus::ReadyForReview)
+        if (!m_revisionState || !m_currentProposal || m_proposalStatus != ProposalUiStatus::ReadyForReview ||
+            m_proposalWorkspaceEpoch != m_workspaceEpoch)
             return makeError(ErrorCode::PreconditionFailed, "Finish generating the rewrite before connecting its destination.");
         if (m_pendingDelivery)
             return makeError(ErrorCode::PreconditionFailed, "An insertion is already in progress.");
@@ -2440,9 +2613,15 @@ AsyncTask<core::Status> HostController::approveAndCopyRewriteOperation(quint64 e
         if (m_proposalStatus != ProposalUiStatus::ReadyForReview || !m_currentProposal) {
             co_return makeError(ErrorCode::PreconditionFailed, "There is no suggested rewrite to approve.");
         }
+        if (m_proposalWorkspaceEpoch != m_workspaceEpoch) {
+            co_return makeError(ErrorCode::PreconditionFailed,
+                                "The workspace changed after this rewrite was prepared. Review the prompt again.");
+        }
         if (!m_repository) {
             co_return storageUnavailable();
         }
+        const auto operationWorkspaceEpoch = m_workspaceEpoch;
+        const auto operationProposalId = m_currentProposal->id;
         const auto validation = validateCurrentProposal();
         if (!validation.structurallyValid) {
             setProposalStatus(ProposalUiStatus::ValidationFailed,
@@ -2471,7 +2650,25 @@ AsyncTask<core::Status> HostController::approveAndCopyRewriteOperation(quint64 e
         if (auto st = (co_await m_repository->insertApproval(approval.value(), expectedVersion)); !st.ok()) {
             co_return st;
         }
+        // The approval write may yield to the event loop. If the workspace or
+        // proposal changed, discard this approval instead of delivering it.
+        const bool stillCurrent = operationWorkspaceEpoch == m_workspaceEpoch &&
+            m_proposalWorkspaceEpoch == operationWorkspaceEpoch &&
+            m_currentProposal && m_currentProposal->id == operationProposalId;
+        // insertApproval advanced the persisted session state; align memory even
+        // when the approval itself must be rejected.
         *m_revisionState = nextState;
+        if (!stillCurrent) {
+            if (m_repository) {
+                if (auto invalidated = (co_await m_repository->invalidateApprovals(
+                        core::SessionId(approval.value().sessionId)));
+                    !invalidated.ok()) {
+                    setLastError(invalidated.error());
+                }
+            }
+            co_return makeError(ErrorCode::StaleVersion,
+                                "The workspace changed before the approval completed.");
+        }
         m_currentApproval = approval.value();
         const auto deliveryTicket = makeTicket();
         const auto deliveryText = qs(approval.value().approvedText);
@@ -2583,7 +2780,8 @@ QString HostController::proposalStatus() const {
 }
 
 bool HostController::hasProposal() const noexcept {
-    return m_currentProposal.has_value() && m_proposalStatus == ProposalUiStatus::ReadyForReview;
+    return m_currentProposal.has_value() && m_proposalStatus == ProposalUiStatus::ReadyForReview &&
+           m_proposalWorkspaceEpoch == m_workspaceEpoch;
 }
 
 QString HostController::proposalText() const {
@@ -2618,6 +2816,202 @@ int HostController::pendingReviewCount() const {
 
 bool HostController::canApprove() const {
     return isStorageAvailable() && hasProposal() && validateCurrentProposal().isValid;
+}
+
+QVariantList HostController::groundedEvidence() const {
+    return m_groundedEvidenceViews;
+}
+
+void HostController::applyGroundingContext(const GroundedPromptContext& context) {
+    // The context must belong to the workspace/scope epoch that is current on
+    // the UI thread before any view is published. There is no epoch-0 bypass:
+    // every production and test helper context carries the captured epoch.
+    if (context.workspaceEpoch != m_workspaceEpoch) return;
+    QElapsedTimer applyTimer;
+    applyTimer.start();
+    m_groundedEvidenceViews.clear();
+    constexpr std::size_t kMaximumViews = 16;
+    for (std::size_t index = 0; index < context.evidence.size() && index < kMaximumViews; ++index) {
+        const auto& evidence = context.evidence[index];
+        QVariantMap item;
+        item[QStringLiteral("target")] = qs(evidence.target);
+        item[QStringLiteral("qualifiedTarget")] = qs(evidence.qualifiedTarget);
+        item[QStringLiteral("signature")] = qs(evidence.signature);
+        item[QStringLiteral("filePath")] = qs(evidence.filePath);
+        item[QStringLiteral("line")] = static_cast<int>(evidence.line);
+        item[QStringLiteral("status")] = qs(evidence.status);
+        item[QStringLiteral("matchReason")] = qs(evidence.matchReason);
+        item[QStringLiteral("complete")] = evidence.complete;
+        item[QStringLiteral("hashValidated")] = evidence.hashValidated;
+        QStringList candidates;
+        for (const auto& candidate : evidence.candidates) candidates.append(qs(candidate));
+        item[QStringLiteral("candidates")] = candidates;
+        m_groundedEvidenceViews.append(item);
+    }
+    m_groundingStatus = !context.available ? QStringLiteral("UNAVAILABLE")
+        : !context.validated ? QStringLiteral("STALE")
+        : !context.complete ? QStringLiteral("INCOMPLETE") : QStringLiteral("CURRENT");
+    if (context.validated) m_activeGroundingGeneration = context.snapshotGeneration;
+    if (context.validated) {
+        // A validated snapshot is the only proof that the withheld paths have
+        // recovered; it clears the bounded per-path retry state.
+        resetStalePathRecovery();
+    } else {
+        scheduleStalePathRecovery(context.stalePaths);
+    }
+    m_lastGroundingApplyMs = static_cast<double>(applyTimer.nsecsElapsed()) / 1e6;
+    emit groundingChanged();
+}
+
+void HostController::setGroundingUnavailable(const QString& status) {
+    m_groundedEvidenceViews.clear();
+    m_groundingStatus = status;
+    emit groundingChanged();
+}
+
+void HostController::scheduleGroundingRevalidation() {
+    if (!m_codebaseContextConsented || m_projectScanPath.isEmpty() || !m_currentProposal) return;
+    if (m_proposalWorkspaceEpoch != m_workspaceEpoch) return;
+    const auto workspace = m_projectScanPath;
+    const auto workspaceEpoch = m_workspaceEpoch;
+    const auto proposalId = m_currentProposal->id;
+    const auto proposalAstHash = m_currentProposal->astSnapshotHash;
+    // A proposal accepted in this session has an exact evidence baseline. A
+    // restored proposal has only its persisted AST hash; its current evidence
+    // becomes the baseline once it has been re-resolved successfully.
+    const bool bindingKnown = !proposalId.empty() && m_activeGroundingProposalId == proposalId;
+    const auto sessionId = bindingKnown && !m_activeGroundingSessionId.empty()
+        ? m_activeGroundingSessionId : currentSessionId();
+    const auto revisionId = bindingKnown && !m_activeGroundingRevisionId.empty()
+        ? m_activeGroundingRevisionId
+        : (m_revisionState ? m_revisionState->currentRevision().revisionId().value() : std::string{});
+    if (revisionId.empty()) return;
+    // The snapshot generation is part of the binding. A readable result from a
+    // different generation is superseded; an unreadable result is a current
+    // validation failure even though it has no generation to compare.
+    const auto snapshotGeneration = m_codebaseSnapshotGeneration;
+
+    auto evidence = m_activeGroundedEvidence;
+    if (!bindingKnown) evidence.clear();
+
+    std::string prompt = bindingKnown ? m_activeGroundingPrompt : std::string{};
+    if (prompt.empty() && m_currentProposal) prompt = m_currentProposal->originalText;
+    if (prompt.empty() && m_revisionState) prompt = m_revisionState->currentRevision().text();
+    auto inputs = groundingInputs(std::move(prompt));
+    if (bindingKnown) inputs.activeFile = m_activeGroundingActiveFile;
+    if (inputs.indexPath.empty()) return;
+
+    const auto serial = ++m_groundingValidationSerial;
+    auto* watcher = new QFutureWatcher<GroundedPromptContext>(this);
+    ++m_inFlight;
+    connect(watcher, &QFutureWatcher<GroundedPromptContext>::finished, this,
+        [this, watcher, serial, workspace, workspaceEpoch, proposalId, sessionId, revisionId,
+         snapshotGeneration, evidence, proposalAstHash, bindingKnown]() {
+            --m_inFlight;
+            const auto current = watcher->result();
+            watcher->deleteLater();
+            const auto stillCurrent = [&]() {
+                if (serial != m_groundingValidationSerial) return false;
+                if (workspace != m_projectScanPath) return false;
+                if (workspaceEpoch != m_workspaceEpoch) return false;
+                if (m_hostState == HostState::Quitting) return false;
+                if (!m_currentProposal || m_currentProposal->id != proposalId) return false;
+                if (m_proposalWorkspaceEpoch != workspaceEpoch) return false;
+                if (currentSessionId() != sessionId) return false;
+                if (!m_revisionState ||
+                    m_revisionState->currentRevision().revisionId().value() != revisionId)
+                    return false;
+                return true;
+            };
+            if (!stillCurrent()) {
+                finishQuitWhenRuntimesStopped();
+                return;
+            }
+
+            // A readable snapshot from another generation belongs to a newer
+            // refresh. Discard it without touching the bound proposal. A
+            // missing/unreadable/zero-generation result is not supersession:
+            // the current validation itself failed and must invalidate.
+            const bool readable = current.available && current.snapshotGeneration != 0;
+            // A zero captured generation means this host has no baseline yet
+            // (for example a restored proposal before the first refresh). The
+            // readable result becomes the baseline instead of being called a
+            // different generation.
+            const bool superseded = readable && snapshotGeneration != 0 &&
+                (current.snapshotGeneration != snapshotGeneration ||
+                 snapshotGeneration != m_codebaseSnapshotGeneration);
+            if (superseded) {
+                finishQuitWhenRuntimesStopped();
+                return;
+            }
+
+            bool equivalent = readable && current.validated && current.complete &&
+                              current.astSnapshotHash == proposalAstHash;
+            if (equivalent && bindingKnown && current.evidence != evidence) equivalent = false;
+            if (equivalent && !bindingKnown && proposalAstHash.empty()) {
+                // There is no stored evidence vector to compare against. A
+                // restored proposal must not stay reviewable when the current
+                // resolution is already ambiguous or locally incomplete.
+                for (const auto& item : current.evidence) {
+                    if (!item.complete || item.status == "AMBIGUOUS") {
+                        equivalent = false;
+                        break;
+                    }
+                }
+            }
+
+            if (!equivalent) {
+                m_activeGroundedEvidence.clear();
+                setGroundingUnavailable(QStringLiteral("STALE"));
+                if (m_currentProposal || m_currentApproval ||
+                    m_proposalStatus == ProposalUiStatus::Generating) {
+                    queueModelCompletion("invalidateStaleCodeEvidence",
+                        [this, serial, workspace, workspaceEpoch, proposalId, sessionId, revisionId]() -> AsyncTask<void> {
+                            // Recheck the whole binding after queuing: a newer
+                            // proposal, workspace, revision or epoch must
+                            // survive an older validation failure.
+                            if (serial != m_groundingValidationSerial) co_return;
+                            if (workspace != m_projectScanPath) co_return;
+                            if (workspaceEpoch != m_workspaceEpoch) co_return;
+                            if (m_hostState == HostState::Quitting) co_return;
+                            if (!m_currentProposal || m_currentProposal->id != proposalId) co_return;
+                            if (m_proposalWorkspaceEpoch != workspaceEpoch) co_return;
+                            if (currentSessionId() != sessionId) co_return;
+                            if (!m_revisionState ||
+                                m_revisionState->currentRevision().revisionId().value() != revisionId)
+                                co_return;
+                            if (auto status = (co_await invalidateProposalArtifacts()); !status.ok())
+                                setLastError(status.error());
+                        });
+                }
+                finishQuitWhenRuntimesStopped();
+                return;
+            }
+
+            // Equivalent evidence: unrelated changes are harmless. Adopt the
+            // baseline for a restored proposal, then only generation advances.
+            if (!bindingKnown) {
+                m_activeGroundedEvidence = current.evidence;
+                m_activeGroundingPrompt = current.prompt;
+                m_activeGroundingActiveFile = current.activeFile;
+                m_activeGroundingProposalId = proposalId;
+                m_activeGroundingSessionId = sessionId;
+                m_activeGroundingRevisionId = revisionId;
+            }
+            m_activeGroundingGeneration = current.snapshotGeneration;
+            finishQuitWhenRuntimesStopped();
+        });
+    watcher->setFuture(QtConcurrent::run([inputs]() -> GroundedPromptContext {
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+        if (const int delayMs = codebaseRevalidationDelayForTesting(); delayMs > 0)
+            QThread::msleep(static_cast<unsigned long>(delayMs));
+#endif
+        try {
+            return computeGroundedPromptContext(inputs);
+        } catch (...) {
+            return GroundedPromptContext{};
+        }
+    }));
 }
 
 QString HostController::approvalLabel() const {
@@ -2710,6 +3104,8 @@ AsyncTask<core::Status> HostController::restoreSessionOperation(QString sessionI
 }
 
 AsyncTask<void> HostController::rebuildFromRestore(storage::RestoredSession r) {
+    const auto operationWorkspaceEpoch = m_workspaceEpoch;
+    const auto operationPipelineSerial = m_pipelineSerial;
     if (!r.analysis.has_value()) {
         if (r.legacyAnalysisRequiresReview) setAnalysisStatus(AnalysisStatus::Idle,
             QStringLiteral("This history predates saved scorer evidence. Analyze and review it again before rewriting."));
@@ -2786,6 +3182,7 @@ AsyncTask<void> HostController::rebuildFromRestore(storage::RestoredSession r) {
             setLastError(st.error());
         }
     }
+    if (operationWorkspaceEpoch != m_workspaceEpoch || operationPipelineSerial != m_pipelineSerial) co_return;
     setAnalysisStatus(AnalysisStatus::Ready, QStringLiteral("Restored the saved analysis for this prompt."));
     emit interventionChanged();
     emit intentChanged();
@@ -2797,6 +3194,7 @@ AsyncTask<void> HostController::rebuildFromRestore(storage::RestoredSession r) {
     const auto& proposal = *r.proposal;
     if (proposal.status == rewrite::ProposalStatus::NeedsClarification) {
         m_currentProposal = proposal;
+        m_proposalWorkspaceEpoch = m_workspaceEpoch;
         setProposalStatus(ProposalUiStatus::NeedsClarification, qs(proposal.clarificationQuestion));
         co_return;
     }
@@ -2806,6 +3204,10 @@ AsyncTask<void> HostController::rebuildFromRestore(storage::RestoredSession r) {
         co_return;
     }
     m_currentProposal = proposal;
+    // A restored proposal is admitted only into the restore path's current
+    // workspace epoch. AST-bound proposals are still revalidated below before
+    // approval can remain enabled.
+    m_proposalWorkspaceEpoch = m_workspaceEpoch;
     if (r.approval.has_value()) {
         const auto ctx = approvalContext();
         if (ctx.has_value() && review::ApprovalFactory::isApprovalValid(*r.approval, *ctx)) {
@@ -2816,8 +3218,10 @@ AsyncTask<void> HostController::rebuildFromRestore(storage::RestoredSession r) {
             setLastError(st.error());
         }
     }
+    if (operationWorkspaceEpoch != m_workspaceEpoch || operationPipelineSerial != m_pipelineSerial) co_return;
     setProposalStatus(ProposalUiStatus::ReadyForReview, QStringLiteral("Restored the saved rewrite for review."));
     emit approvalChanged();
+    scheduleGroundingRevalidation();
 
     co_return;
 }
@@ -3992,12 +4396,12 @@ void HostController::startAmbientCheck() {
     request.sessionId = "sess_ambient";
     request.revisionId = "rev_sess_ambient_1";
     request.promptString = ss(observation.prompt);
-    request.groundedCanonicalIntentXml = groundedCanonicalIntentContext(request.promptString).xml;
     request.hostContextCategory = m_hostContextEnabled ? ss(HostContextObservation{HostContextDetector::mapIdentityToCategory(
                                                                 observation.field.appIdentifier),
                                                             QString(), QString()}
                                          .categoryString()) : "UNKNOWN";
     const auto configurationGeneration = m_configurationGeneration;
+    const auto workspaceEpoch = m_workspaceEpoch;
 
     struct CheckResult {
         core::Result<bridge::GraniteOptionDiscoveryResponse> response{makeError(ErrorCode::Internal, "not run")};
@@ -4005,17 +4409,27 @@ void HostController::startAmbientCheck() {
     };
     m_ambientCheckInFlight = true;
     auto adapter = m_graniteAdapter;
+    auto grounding = std::make_shared<GroundedPromptContext>();
+    const auto groundingInput = groundingInputs(request.promptString);
     auto* watcher = new QFutureWatcher<CheckResult>(this);
     ++m_inFlight;
     const bool nativeWork = nativeGraniteSelected() && !usesTransportOverride();
     if (nativeWork) ++m_nativeSemanticInFlight;
-    connect(watcher, &QFutureWatcherBase::finished, this, [this, watcher, observation, configurationGeneration, nativeWork]() {
+    connect(watcher, &QFutureWatcherBase::finished, this,
+        [this, watcher, observation, configurationGeneration, workspaceEpoch, nativeWork, grounding]() {
         --m_inFlight;
         if (nativeWork) --m_nativeSemanticInFlight;
         finishQuitWhenRuntimesStopped();
         m_ambientCheckInFlight = false;
         const CheckResult result = watcher->result();
         watcher->deleteLater();
+        // An ambient check started in an older workspace epoch must not publish
+        // its evidence view or its preview into the new workspace.
+        if (workspaceEpoch != m_workspaceEpoch) {
+            if (m_ambientObservation.has_value()) m_ambientDebounce.start();
+            return;
+        }
+        applyGroundingContext(*grounding);
         if (m_healthRecheckRequested && !m_healthCheckInFlight) refreshAvailableModels();
         emit modelEngineStatusChanged();
 
@@ -4068,7 +4482,8 @@ void HostController::startAmbientCheck() {
             m_ambientDebounce.start();
         }
     });
-    watcher->setFuture(QtConcurrent::run([adapter, request, inner]() -> CheckResult {
+    watcher->setFuture(QtConcurrent::run(
+        [adapter, request, inner, groundingInput, grounding]() mutable -> CheckResult {
         CheckResult out;
         auto raw = std::make_shared<std::string>();
         const bridge::GraniteTransport capture = [inner, raw](std::string_view instruction) {
@@ -4079,6 +4494,8 @@ void HostController::startAmbientCheck() {
             return reply;
         };
         try {
+            *grounding = computeGroundedPromptContext(groundingInput);
+            request.groundedCanonicalIntentXml = grounding->xml;
             out.response = adapter->discoverOptions(request, capture);
         } catch (const std::exception& ex) {
             out.response = makeError(ErrorCode::Internal, std::string("Background check crashed: ") + ex.what());
