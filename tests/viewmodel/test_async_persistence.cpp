@@ -73,6 +73,7 @@ void testPendingApprovalCannotDeliverAfterEdit() {
     QTemporaryDir directory; const auto path = directory.path() + "/history.db";
     HostController controller(path); ready(controller); prepareProposal(controller);
     QGuiApplication::clipboard()->setText("untouched");
+    ROCLINT_CHECK(QGuiApplication::clipboard()->text() == "untouched");
     roclint::storage::Database blocker(std::filesystem::path(path.toStdString()));
     ROCLINT_CHECK(blocker.execute("BEGIN IMMEDIATE").ok());
     int ticks = 0; QTimer heartbeat; QObject::connect(&heartbeat, &QTimer::timeout, [&]() { ++ticks; }); heartbeat.start(2);
@@ -95,6 +96,7 @@ void testPendingApprovalCannotDeliverAfterEdit() {
 void testReentrantEditAtApprovalPublication() {
     HostController controller(":memory:"); ready(controller); prepareProposal(controller);
     QGuiApplication::clipboard()->setText("untouched");
+    ROCLINT_CHECK(QGuiApplication::clipboard()->text() == "untouched");
     QObject::connect(&controller, &HostController::stateVersionChanged, [&]() {
         if (controller.hasApproval()) ROCLINT_CHECK(controller.noteDraftEdited(controller.stateVersion()));
     });
@@ -237,6 +239,9 @@ void testShutdownDuringContention() {
 }
 }
 int main(int argc, char** argv) {
+    // Keep clipboard assertions local to this process: another desktop app can
+    // lock or replace the Windows clipboard while contention timers are running.
+    qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
     testContentionAndDraftBarrier(); testPendingApprovalCannotDeliverAfterEdit();
     testReentrantEditAtApprovalPublication(); testQueueBoundsAndCachedHistory(); testBusyFailureAndExplicitRecovery();
