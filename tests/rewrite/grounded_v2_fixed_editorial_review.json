@@ -1,0 +1,1014 @@
+{
+  "version": 1,
+  "reviewer_kind": "AGENT",
+  "source_run": "grounded-v2-fixed-all",
+  "source_commit": "bbc05e5621abe9d8810e5c3fb2c899d01fa19007",
+  "source_sha256": "854d2a3896ae767755e356118f71fdf570cf9b3852949f4b6d4d3ec953105458",
+  "rubric": {
+    "agent_label": "Provisional agent editorial judgment, never human semantic acceptance.",
+    "clarity_delta": "-1 concern, 0 no demonstrated benefit, +1 clearer supplied specification",
+    "usefulness_delta": "-1 concern, 0 no demonstrated benefit, +1 incorporates supplied user choice"
+  },
+  "reviews": [
+    {
+      "case_id": "rename_1",
+      "reply_sha256": "978fbb782107da16426406579eade35152050f1d3d9fc71266de69097d64ac3f",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "rename_2",
+      "reply_sha256": "a1e89e9b4e33f0a67bd0fc5b6db53acc5d1c3a1fe05fc84088dfe855108e05c8",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "rename_3",
+      "reply_sha256": "679ee513a297f36cb82a937c91324c0e6f09213d61169215046e2631083acd06",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "rename_4",
+      "reply_sha256": "a7ff636e23846ec7de4b21f7dea519679a6e4d6af625693b646efa455471a046",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "retry_values_1",
+      "reply_sha256": "b456b2daa5ef8e4482739940ae39f93dedcf33035061f4c4501f3f813aabc008",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "retry_values_2",
+      "reply_sha256": "c0efd46a12ae5e46ebfa5811f0798c14138b8e612f44a1818ab8ca79eaf2b361",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "retry_values_3",
+      "reply_sha256": "476bc27776e6359cd0be53068338c31f33fc9fa9469dc7ef5aa0c06879648791",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "retry_values_4",
+      "reply_sha256": "3bdd42fcccbd9bcbc261decbbf3182ed8001c2420a9074c5e2173df57bf43435",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "resource_bounds_1",
+      "reply_sha256": "ba94dcb10572822ca3fd020b1e73d4481c86449a1a502588907f998513bc43ed",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "resource_bounds_2",
+      "reply_sha256": "64a92ed6349befaa1f97aac76c8fa9659d7011f8ee2ed98e7a85414e1c95310f",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "resource_bounds_3",
+      "reply_sha256": "ceefd0f24cdc30e2de49359200e14a98bc39625412762734a01fd66ddcb26918",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "resource_bounds_4",
+      "reply_sha256": "1efab51aa7ea15c0be693958f7968d512870c5c3754793129cc2ce8fda9c98f9",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "file_scope_1",
+      "reply_sha256": "093290dc863bfe358347662ccf04109b1bc2e742ff4ee3b2bfe221ea11090947",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "file_scope_2",
+      "reply_sha256": "eb953214221ef02dfb9ae211f0dfde48c330dd567b353f1024ab186ee71e406c",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "file_scope_3",
+      "reply_sha256": "43ffba9a1d287dcc6f9de28fce923e596f4a041efb0ba10ff066eb7f2be19ac7",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "file_scope_4",
+      "reply_sha256": "424271e69d455426d8c37ca1484baf18deb699a0a2d5058724fa07a420cc0b6d",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "api_invariants_1",
+      "reply_sha256": "a16dc12ff9a1c4a64375629c389ba66d1c7a5c69dee5f83653b981087baaa433",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "On provisional editorial inspection the paraphrase retains the requested action and explicit bounds. No new implementation requirement is apparent. Human fidelity/clarity/usefulness adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "api_invariants_2",
+      "reply_sha256": "7fc5566715792ed2437b6f56de846f5e662e59a339c89a0032948759292af060",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "api_invariants_3",
+      "reply_sha256": "2d117ed43361c8c42308e63dc0d592fc643a64b18df264733b47cf8a82fe86c2",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "api_invariants_4",
+      "reply_sha256": "187c5a3cdf3f7436efe971c6c6e35a43bc9bd9ca2f551c6e17bd4d6caaccd2ad",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "exceptions_1",
+      "reply_sha256": "901a1ee59f313f75a8c66d0e290df86d8baf246866d19aa88c611b0fc0e8f407",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "exceptions_2",
+      "reply_sha256": "4bfaefa1c9336317a1a93f3b49d632fa80ea6c0b936534e708e3d11f084dbfc9",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "exceptions_3",
+      "reply_sha256": "265276b510683ab7e33f21e75a572e7771435288d9ae1dc910066b6341e331c2",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "exceptions_4",
+      "reply_sha256": "3e3d17adffa01fefd04097e9b62094baa002fdd05cef036f3339071eba8df5cb",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "invalid_inputs_1",
+      "reply_sha256": "989c4955db802f8df37cf2de5239a9225716b9f0d3d24426ffec02ad3affb4d5",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "invalid_inputs_2",
+      "reply_sha256": "dbc042be316b305fc760ffd57c4dfb294bc8885df4ea504451825949a15e850d",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "invalid_inputs_3",
+      "reply_sha256": "f3f6c8e31e67dddf21edd5863811fba35042e20d3bf37870d4d8e05f02a49d97",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "invalid_inputs_4",
+      "reply_sha256": "a3ea829e221a976e3d2f7e236385e14252cf4cafdb312791a0091c3241d85806",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "concurrency_1",
+      "reply_sha256": "1074f462d22b89dc0d002e89c81806ba7209d02b3a5f67aa4adb9794b4eedb43",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "On provisional editorial inspection the paraphrase retains the requested action and explicit bounds. No new implementation requirement is apparent. Human fidelity/clarity/usefulness adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "concurrency_2",
+      "reply_sha256": "b03d6f14c6d1782c00b550a6998c10c790cc9e5e65897adc757c577c2aa54841",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "concurrency_3",
+      "reply_sha256": "f648f326037ca61f1f122f1af59b619bcd99f16018deb49fcdf387ce1ba90af2",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "concurrency_4",
+      "reply_sha256": "82fd6fe504c7118663f473150ec54b21eef2959e99c443a6363ab7573ade3d74",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "ownership_1",
+      "reply_sha256": "8bdfe23a78311e2a0c712ab0f3b7d4f9ea522e2578e4d212b6490e31fe10adbb",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "On provisional editorial inspection the paraphrase retains the requested action and explicit bounds. No new implementation requirement is apparent. Human fidelity/clarity/usefulness adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "ownership_2",
+      "reply_sha256": "c8947d97968ffb77ba4197cd0ae4574158468f837e8ecc8092c54c33271f23f6",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "ownership_3",
+      "reply_sha256": "0cbce0082856afbfed29f243bab7c29cd87c71f0b7a2960e3acc1f24b42b99b9",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "ownership_4",
+      "reply_sha256": "d32085ba86d0e9bfc7dd00568d5b6c9d92ddb19361a4fbdab998b336ecd43cda",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "callback_rules_1",
+      "reply_sha256": "ce1a8879fc91f7487022b47ef4306822c58802bfc81bfd4d71e6f83dee135dbc",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "On provisional editorial inspection the paraphrase retains the requested action and explicit bounds. No new implementation requirement is apparent. Human fidelity/clarity/usefulness adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "callback_rules_2",
+      "reply_sha256": "90e533d4cee4e0d6a79c4a1578a92e086a2578ea210f0191bd89bcd1068ded02",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "callback_rules_3",
+      "reply_sha256": "09f07f5db3c82a51b9a60b9cdc339faf701505d9a3b8262e39ce090168d0f131",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "callback_rules_4",
+      "reply_sha256": "be0affd382f86d681447abb5c1ff8041d82f6014994f3da693d9290ecd2fe7e4",
+      "agent_label": "concern",
+      "issue": "error_policy_wording",
+      "clarity_delta": -1,
+      "usefulness_delta": -1,
+      "rationale": "The original routes callback exceptions through the existing error path. \"Propagated\" could imply an exception propagation policy that the original leaves to the existing path. Human adjudication is required; literal checks do not settle this.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "transactionality_1",
+      "reply_sha256": "8e93fc694070b0d2223cf370050c8c84f116ca5a735009041a9464ec657f67df",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "transactionality_2",
+      "reply_sha256": "0dde2e1121b3c79e91049608e51d0ffb8798641479d0a5e85c493293857ff826",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "transactionality_3",
+      "reply_sha256": "5a98bca461ae06688b7f4872824163191f5829ee311ee2caaec67657e8ddf60d",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "transactionality_4",
+      "reply_sha256": "c6bf0139e6f7f19ce4591f11f0def8dcbdb4a47aeb2b0a30b2e6417b5122ed2f",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "range_edges_1",
+      "reply_sha256": "08208a135603b1b2d0792792327f88b513ce81188af982985d0d48673a76d87a",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "range_edges_2",
+      "reply_sha256": "7d72131585f1b78b26b8e12ff09125934ee731d87b1a902e323ddb1b6e975a5b",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "range_edges_3",
+      "reply_sha256": "97a01358ad02c0a242430305169ab8c8f925e126ec349267a585556e6e3c1748",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "range_edges_4",
+      "reply_sha256": "e59b9a189e1d840a6a6b041bd1f39e9d3a05d81154c4fb33100eff9ece4bccd7",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "operation_order_1",
+      "reply_sha256": "487438f8434bdb83d33a96f73cbc6ca2ded4e7db840032dcf0a0100c67117e4e",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "operation_order_2",
+      "reply_sha256": "ff86307a701a2a06b7177645cd8ceef7f0a6ad31e638457f8611371988d7c697",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "operation_order_3",
+      "reply_sha256": "e0e3194ca210d51b68e5c722f0a6dbb0a6af73766a29ddbb6fc55c1783fc1747",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "operation_order_4",
+      "reply_sha256": "f9dc6dd1c017bce10e23e19f2ee0dd57c674aca36f8a6f9b95f8bcfc79fbbf8e",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "output_format_1",
+      "reply_sha256": "b033e31542e4e5a0af6b4451e40c44934177b7f4daaf7844884e9e7354158ccf",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "output_format_2",
+      "reply_sha256": "e0715a359a3dceaffa0f0bda571634b57f5bd81f2136ff1acf5010ffae3ea5f3",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "On provisional editorial inspection the paraphrase retains the requested action and explicit bounds. No new implementation requirement is apparent. Human fidelity/clarity/usefulness adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "output_format_3",
+      "reply_sha256": "651b2acbdc069108f3cec1479218eea2f4da80188aea47072be18ccaee80acad",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "output_format_4",
+      "reply_sha256": "9c1433535e2a7cbe901f5f870fa056f37ef546802363a5c0f3dacdcb60c74c28",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "multi_action_1",
+      "reply_sha256": "36e9b06b257197a7f4e64979ae414abf8bc107c1af7a399abe881e16f29cb693",
+      "agent_label": "concern",
+      "issue": "independent_action_wording",
+      "clarity_delta": -1,
+      "usefulness_delta": -1,
+      "rationale": "The original separately requests refactoring, a regression test and an example update. \"Refactor ... to add\" can subordinate those independent actions to the method refactor. All nouns remain, but the task relationship warrants human review.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "multi_action_2",
+      "reply_sha256": "cbb8c37c820aa064fb531dae952dec13ac284bb6d70a0a041bed50414e907f9d",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "multi_action_3",
+      "reply_sha256": "876651ecd55e0c5c23732ed7c04b9b3cb7ba85d4aff80e0973b6015d1eafcb36",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "multi_action_4",
+      "reply_sha256": "6f417149421424d099e64b0c2b9a8b3fe25de677df89546cd540fad08de3f237",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "On provisional editorial inspection the paraphrase retains the requested action and explicit bounds. No new implementation requirement is apparent. Human fidelity/clarity/usefulness adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "logging_1",
+      "reply_sha256": "54aaccf3d19aa17ac1f22452abf2013bcedd006b4a691c9dcf5cfaf44e4104e1",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "logging_2",
+      "reply_sha256": "edb59c6e5b0df9e94393c4991405212b263bf84be21482f7682d172fe4c3c27f",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "logging_3",
+      "reply_sha256": "04773bb9f216c28f8a8f3db370d05e6949abbba7949bf29c063de0a3db972ddd",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "logging_4",
+      "reply_sha256": "ea1c57eb401430e1bdeaa334cb1742a399cf6c777c78e5c2cec8640eadbda3ec",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "test_scope_1",
+      "reply_sha256": "ec8b9f05eb1ec88902c7e18e3d05626785d302a604203983122b906b937fa510",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "test_scope_2",
+      "reply_sha256": "8fbdbe750765f4405bfda5f4fb175950860ef003cf3238e10bf8b1e827452788",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "test_scope_3",
+      "reply_sha256": "803f6af12960ca0cb27537b371a3ecb574f030a71421c4ff3016ea30601ce8ff",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "test_scope_4",
+      "reply_sha256": "667130d8c1c0b3cda87bb2d351fe39ffeca1543843d25d226336315827d9a1b3",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "documentation_scope_1",
+      "reply_sha256": "92a2eb8d185e7268ebbb8f5b50ddeacf26b93bc6c7e391f76107d08398d1acd6",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "documentation_scope_2",
+      "reply_sha256": "7f74f61425e20c936069479206d6d49d2433ef3b6997acb567f56d61371a0c0e",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "documentation_scope_3",
+      "reply_sha256": "50b07b0b041e4accf105b8df41039738598e9f0a6c66e1554ee1cdbf448a8abb",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "documentation_scope_4",
+      "reply_sha256": "dac104a355d4e9545daff6e975dd8026e1457c145368345e1b5916850ceaeb2b",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "removal_1",
+      "reply_sha256": "b4fca8111ff3fdecd9639a68a4db6582fa8bcbbd9fe88e6d277458f27c0a3f9b",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "removal_2",
+      "reply_sha256": "29ee5f9d045f70b8c8e9e85ea1fe272a3bab43f3b08e2019dcdd82e4707fb3a5",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "removal_3",
+      "reply_sha256": "719b3a8533e62998ea5ab13faeb898bb05338d2acc692e65177c0de8f8eaa40e",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "removal_4",
+      "reply_sha256": "7e8d3345104639e66bb6a4023e808427284e2409c39ec4d9b41a8e30a9d7b4a0",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "clarification_1",
+      "reply_sha256": "636bcac688756d447e7bdf0e8c5d7e316c1c4658beed825023f143555e51b146",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 1,
+      "usefulness_delta": 1,
+      "rationale": "Incorporates the explicitly supplied latency/throughput decision while retaining the original constraint. These are fixture-provided user choices, not decisions invented from AST metadata. Human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "clarification_2",
+      "reply_sha256": "df08800233e11de71b84672a98baa7a2438ca00bc6f360b9405b1f2f86125193",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 1,
+      "usefulness_delta": 1,
+      "rationale": "Incorporates the explicitly supplied latency/throughput decision while retaining the original constraint. These are fixture-provided user choices, not decisions invented from AST metadata. Human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "clarification_3",
+      "reply_sha256": "a5eca9add4cb83baee04e871b18d1545264c908ee232ad24141188f621887c43",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 1,
+      "usefulness_delta": 1,
+      "rationale": "Incorporates the explicitly supplied latency/throughput decision while retaining the original constraint. These are fixture-provided user choices, not decisions invented from AST metadata. Human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "clarification_4",
+      "reply_sha256": "d3ca534c72d90d1398d9150787fab94433c67ea4a3f2b6545a6af7331101296f",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 1,
+      "usefulness_delta": 1,
+      "rationale": "Incorporates the explicitly supplied latency/throughput decision while retaining the original constraint. These are fixture-provided user choices, not decisions invented from AST metadata. Human adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "skip_questions_1",
+      "reply_sha256": "1597c3c120371293b4f6d1e752dc385fa7f935cdcb03e545d16539a3bbf4a983",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "On provisional editorial inspection the paraphrase retains the requested action and explicit bounds. No new implementation requirement is apparent. Human fidelity/clarity/usefulness adjudication remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "skip_questions_2",
+      "reply_sha256": "134a5a75a96e825b101102dd3613a1d54dddc09b6bebb2402204e0b15c413a9e",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "skip_questions_3",
+      "reply_sha256": "8e7f7f389c42388959336326ccd3adc31c1266f2f646298922edc1d4761f29f4",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "skip_questions_4",
+      "reply_sha256": "92736798ecef9c93fdfe9c97d857d0665b73ad0388ef1e4c5e127960ee447f56",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "quoted_data_1",
+      "reply_sha256": "257faa109c5f7abf656bcecf4488443a44c97f12a802788f8e80a1f7a488c1e7",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "quoted_data_2",
+      "reply_sha256": "40511ed08f90c41e55c50f31834d58e760ecce9544f39b0a7191365ecb4e8c86",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "quoted_data_3",
+      "reply_sha256": "7d8dd9605493c549f108a20fba2334240ab4722c279cc5ba304750641f5cd6e6",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "quoted_data_4",
+      "reply_sha256": "7804bd9148049082a368efdd697f3551dcde1449794723a50552a8ea7933c396",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "signatures_only_1",
+      "reply_sha256": "ccb307d4db8611d4623b9ea6858b190cd43337ec84827fd77d18a721de408ca5",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "signatures_only_2",
+      "reply_sha256": "09323e297732d0c722d1414b591589bd09e2f3397db293da55db799274ab03b3",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "signatures_only_3",
+      "reply_sha256": "0bf264c4e173a043a69594d22c1ef3d5b92ab78378830c837c5fccd4c0791823",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "signatures_only_4",
+      "reply_sha256": "9141efc2019679315e3bf3eec9db4ca4cc8c539d3d756a46d8b1217cee7b4aaf",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "freshness_lifecycle_1",
+      "reply_sha256": "ed5fb8a7cb06c11f2bc0d9eabc067c55df0d323f89e907d636cf06f0791c2dda",
+      "agent_label": "withheld",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "The saved-file edit after generation invalidated the old proposal. Raw model wording is not authorized as a current proposal; editorial acceptance is not applicable.",
+      "human_adjudication": "not_applicable"
+    },
+    {
+      "case_id": "freshness_lifecycle_2",
+      "reply_sha256": "c7d7b3fd97669b793f2807b4af130a8908d9790bd90b29ccbed1016bf441469f",
+      "agent_label": "withheld",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "The saved-file edit after generation invalidated the old proposal. Raw model wording is not authorized as a current proposal; editorial acceptance is not applicable.",
+      "human_adjudication": "not_applicable"
+    },
+    {
+      "case_id": "freshness_lifecycle_3",
+      "reply_sha256": "e273ed61fbb39c9ece7c9037e175795718844919698b556a89f8f939bb6bfa68",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "freshness_lifecycle_4",
+      "reply_sha256": "0aa176a4182d4b4a8b8e2f6f17b53aef91e34ee426a646e6e37efca6cc0a4ad6",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "overload_ambiguity_1",
+      "reply_sha256": "f9631c32072bc9ac9ad3ac0ac5848818812ec0d2a153a52cd01486e9e852521e",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "overload_ambiguity_2",
+      "reply_sha256": "56dd43efdd90a3c5546154963f7623dc86c1f53308ec10a81f78bd5254fd2cdd",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "overload_ambiguity_3",
+      "reply_sha256": "1026d09dcf29c9276c701d9ee7892f7a60b0a9f7326933bfd4f4d18b9cdf67a2",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "overload_ambiguity_4",
+      "reply_sha256": "08adb611004c90fcd50e0f0c3497a28c182f10c2516f28808559ecf3dfcfe769",
+      "agent_label": "preserved_provisionally",
+      "issue": null,
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "rationale": "Returns the original wording exactly. This avoids a wording change but demonstrates no editing benefit; human usefulness/acceptance remains pending.",
+      "human_adjudication": "pending"
+    }
+  ]
+}

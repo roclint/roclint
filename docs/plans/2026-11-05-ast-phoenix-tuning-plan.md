@@ -1,10 +1,11 @@
 # Roclint AST completion and Phoenix evaluation plan
 
-Date: 2026-11-05, America/Los_Angeles. Status: Milestone 0 committed as `deadd39`; Milestone 1 implemented. Version 2 freezes 100 AST and 100 rewrite cases with family-level development/held-out splits in `evaluation_v2_freeze.json`. The clean-commit baseline is measured and published: AST 100/100, grounded rewrites 48/100 mechanical/grounding checks. Quality gates fail and human semantic adjudication remains open. A development-only extraction prototype is recorded but not adopted.
+Date: 2026-11-05, America/Los_Angeles. Updated 2026-11-06. Milestone 0 is committed as `deadd39`; Milestone 1 is implemented. Version 2 freezes 100 AST and 100 rewrite cases with family-level development/held-out splits in `evaluation_v2_freeze.json`. The original baseline measured AST 100/100 and grounded rewrites 48/100. Application remediation `bbc05e5` now measures 100/100 in each suite, including the held-out groups, with zero wrong Verified bindings. Full Windows build/CTest and local publication/readback pass. Human semantic/usefulness acceptance remains open, with two provisional agent wording concerns. No native macOS result or release signoff is claimed.
 
 Execution evidence: [AST baseline verification](../audit/ast_baseline_verification_2026-11-05.md).
 Runner and initial publication evidence: [Phoenix smoke baseline](../audit/phoenix_evaluation_baseline_2026-11-05.md).
 Expanded baseline, editorial findings, and candidate experiment: [Grounded evaluation v2](../audit/grounded_evaluation_v2_2026-11-05.md).
+Implemented remediation and final frozen results: [AST/rewrite tuning](../audit/ast_rewrite_tuning_2026-11-06.md).
 
 ## Objective and boundary
 
