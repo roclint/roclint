@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "reviewer_kind": "AGENT",
+  "source_run": "baseline-20261105",
+  "source_commit": "83db08cd6663ced08d0ea4952538ca3e036a694c",
+  "rubric": {
+    "clarity_delta": "-1 worse, 0 unchanged/no demonstrated gain, 1 clearer",
+    "usefulness_delta": "-1 harmful, 0 no demonstrated editing benefit, 1 useful wording improvement",
+    "fidelity_assessment": "Agent editorial assessment; never counted as human semantic acceptance."
+  },
+  "reviews": [
+    {
+      "case_id": "rename_scoped_local",
+      "output_sha256": "4e9c06a085d60090f7217fdf2f0b5675672c6bc499827d8ec51d627c3dd3de5e",
+      "fidelity_assessment": "preserved",
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "notes": "Already concise input was returned unchanged; faithful but no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "numeric_negative_constraint",
+      "output_sha256": "b513ce6e41fa2c5847a86739bd8adeedc62c56a5874149a2248bb0306654f9fd",
+      "fidelity_assessment": "preserved",
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "notes": "Already concise input was returned unchanged; faithful but no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "file_and_negative_scope",
+      "output_sha256": "250ef27cfc9911deda3b4622a527a97f9a0cb58d9eaf2ab0798cbee45af6a3dd",
+      "fidelity_assessment": "preserved",
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "notes": "Already concise input was returned unchanged; faithful but no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "action_order_and_preservation",
+      "output_sha256": "42e8626d9221492a9e840cfbfa19c9fdc551151933921fc93c9cb3cf234043eb",
+      "fidelity_assessment": "preserved",
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "notes": "Already concise input was returned unchanged; faithful but no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "quoted_instruction_is_data",
+      "output_sha256": "fc740a95b2513d4c543d55551aa92d2697d83b0268178475ccb2d1057ad65b8a",
+      "fidelity_assessment": "preserved",
+      "clarity_delta": 1,
+      "usefulness_delta": 1,
+      "notes": "Makes the test/non-execution distinction explicit; no new task requirement.",
+      "human_adjudication": "pending"
+    },
+    {
+      "case_id": "rewrite_without_clarification",
+      "output_sha256": "308b0ba13abad570d06f06b5ca6a73808dd65e7988d2d7369dd896cc4d76b962",
+      "fidelity_assessment": "preserved",
+      "clarity_delta": 0,
+      "usefulness_delta": 0,
+      "notes": "Already concise input was returned unchanged; faithful but no demonstrated editing benefit.",
+      "human_adjudication": "pending"
+    }
+  ]
+}

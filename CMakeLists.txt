@@ -346,7 +346,7 @@ if(BUILD_DESKTOP)
         roclint_apply_warnings(roclint_host)
 
         add_executable(roclint_granite_contracts tools/granite_contracts.cpp)
-        target_link_libraries(roclint_granite_contracts PRIVATE roclint_core Qt6::Core)
+        target_link_libraries(roclint_granite_contracts PRIVATE roclint_host_lib Qt6::Core)
         roclint_apply_warnings(roclint_granite_contracts)
 
         add_executable(roclint_report_verification_probe tools/report_verification_probe.cpp)
@@ -631,6 +631,12 @@ if(BUILD_TESTING)
         set_tests_properties(roclint_granite_probe PROPERTIES TIMEOUT 30 ENVIRONMENT "PYTHONUTF8=1;PYTHONNOUSERSITE=1")
         add_test(NAME roclint_evaluation_runner COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_roclint_eval.py")
         set_tests_properties(roclint_evaluation_runner PROPERTIES TIMEOUT 30 ENVIRONMENT "PYTHONUTF8=1;PYTHONNOUSERSITE=1")
+        if(TARGET roclint_granite_contracts)
+            add_test(NAME roclint_grounded_rewrite_contracts COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_grounded_contracts.py")
+            set_tests_properties(roclint_grounded_rewrite_contracts PROPERTIES TIMEOUT 60
+                ENVIRONMENT "PYTHONUTF8=1;PYTHONNOUSERSITE=1;ROCLINT_CONTRACTS_TOOL=$<TARGET_FILE:roclint_granite_contracts>"
+                ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+        endif()
     endif()
     roclint_add_test(roclint_materiality_policy    tests/analysis/testMaterialityPolicy.cpp          roclint_core_testing)
     roclint_add_test(roclint_analysis_checkpoint   tests/analysis/test_analysis_checkpoint.cpp       roclint_core_testing)

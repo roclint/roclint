@@ -1,6 +1,6 @@
 # Roclint AST completion and Phoenix evaluation plan
 
-Date: 2026-11-05, America/Los_Angeles. Status: Milestone 0 committed as `deadd39`; Milestone 1 implemented and exercised with a 30-AST / six-rewrite smoke set. Milestone 2 dataset expansion and held-out semantic acceptance remain open; tuning has not started.
+Date: 2026-11-05, America/Los_Angeles. Status: Milestone 0 committed as `deadd39`; Milestone 1 implemented and exercised with a 30-AST / six-rewrite smoke set. Version 2 now freezes 100 AST and 100 rewrite cases with family-level development/held-out splits in `evaluation_v2_freeze.json`. The grounded production-host adapter path is implemented; baseline measurement is in progress. Human semantic adjudication remains open.
 
 Execution evidence: [AST baseline verification](../audit/ast_baseline_verification_2026-11-05.md).
 Runner and initial publication evidence: [Phoenix smoke baseline](../audit/phoenix_evaluation_baseline_2026-11-05.md).

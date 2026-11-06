@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import subprocess
 import time
 import urllib.error
@@ -21,7 +22,7 @@ import xml.etree.ElementTree as ET
 import check_granite_runtime as native
 
 ROOT = Path(__file__).resolve().parents[1]
-EVALUATOR_VERSION = 1
+EVALUATOR_VERSION = 2
 
 
 def sha256(path):
@@ -63,16 +64,69 @@ def local_endpoint(value):
 
 def load_cases(path, suite):
     data = json.loads(Path(path).read_text(encoding='utf-8-sig'))
-    if data.get('synthetic') is not True or data.get('version') != 1:
+    if data.get('synthetic') is not True or data.get('version') not in (1, 2):
         raise ValueError('Only versioned, explicitly synthetic evaluation fixtures are accepted')
     cases = data['cases']
     if not cases or len({case['id'] for case in cases}) != len(cases):
         raise ValueError('Fixture IDs must be unique and nonempty')
     for case in cases:
-        if not case.get('id') or not case.get('category') or 'expected' not in case:
+        if (not re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]{0,95}', case.get('id', '')) or
+                not case.get('category') or 'expected' not in case):
             raise ValueError('Fixture annotations are incomplete')
+        if data['version'] == 2 and (not case.get('group') or
+                case.get('split') not in ('development', 'heldout')):
+            raise ValueError('Version 2 requires explicit group and split annotations')
         case['suite'] = suite
     return cases
+
+
+def validate_splits(cases):
+    groups = {}
+    for case in cases:
+        key = (case['suite'], case.get('group') or case['id'])
+        split = case.get('split', 'smoke')
+        if key in groups and groups[key] != split:
+            raise ValueError('A related fixture group crosses dataset splits')
+        groups[key] = split
+
+
+def verify_freeze(paths, manifest_path):
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+    for suite, path in paths.items():
+        expected = manifest['datasets'][suite]
+        if path.resolve() != (ROOT / expected['path']).resolve() or sha256(path) != expected['sha256']:
+            raise ValueError('Fixture bytes differ from the frozen evaluation dataset')
+    return {'sha256': sha256(manifest_path), 'thresholds': manifest['thresholds']}
+
+
+def grounding_errors(case, actual):
+    expected = case['expected'].get('grounding')
+    if expected is None:
+        return []
+    context = actual.get('grounding', {})
+    errors = []
+    for key in ('available', 'complete', 'validated'):
+        if key in expected and context.get(key) != expected[key]:
+            errors.append('grounding:' + key)
+    if 'hash_nonempty' in expected and bool(context.get('ast_hash')) != expected['hash_nonempty']:
+        errors.append('grounding:hash')
+    if 'xml_empty' in expected and (not context.get('xml')) != expected['xml_empty']:
+        errors.append('grounding:xml')
+    verified = {item['qualifiedTarget'] for item in context.get('evidence', [])
+                if item['status'] == 'VERIFIED'}
+    for target in expected.get('verified_targets', []):
+        if target not in verified:
+            errors.append('grounding:missing_verified:' + target)
+    if expected.get('no_verified') and verified:
+        errors.append('grounding:unexpected_verified')
+    statuses = {item['status'] for item in context.get('evidence', [])}
+    for status in expected.get('required_statuses', []):
+        if status not in statuses:
+            errors.append('grounding:missing_status:' + status)
+    if (expected.get('hash_nonempty') and not case['expected'].get('post_generation_withheld') and
+            actual.get('contract', {}).get('proposal_ast_hash') != context.get('ast_hash')):
+        errors.append('grounding:proposal_hash_binding')
+    return errors
 
 
 def checked_json(command, *, payload=None, environment=None, timeout=30):
@@ -96,6 +150,9 @@ def score_ast(case, actual):
             errors.append(key)
     if expected.get('signatureContains', '') not in observed.get('signature', ''):
         errors.append('signatureContains')
+    for forbidden in expected.get('signatureMustNotContain', []):
+        if forbidden in observed.get('signature', ''):
+            errors.append('signature_body_exclusion')
     if observed.get('candidates', 0) < expected.get('minCandidates', 0):
         errors.append('minCandidates')
     xml = actual.get('xml', '')
@@ -121,7 +178,13 @@ def score_ast(case, actual):
 def score_rewrite(case, actual):
     reply = actual.get('reply', {})
     text = reply.get('rewritten_prompt', '')
-    errors = []
+    errors = grounding_errors(case, actual)
+    if case['expected'].get('post_generation_withheld'):
+        contract = actual.get('contract', {})
+        if not contract.get('withheld') or contract.get('proposal_published') is not False:
+            errors.append('stale_proposal_not_withheld')
+        return {'passed': not errors, 'errors': errors, 'semantic_verdict': 'withheld',
+                'fully_faithful': None}
     if reply.get('status') != 'rewritten' or not isinstance(text, str) or not text.strip():
         errors.append('missing_rewrite')
         text = ''
@@ -133,9 +196,14 @@ def score_rewrite(case, actual):
             errors.append('missing_literal:' + literal)
     for phrase in case['expected'].get('prohibition_patterns', []):
         # Exact prohibitions are smoke assertions, not a general semantic judge.
-        import re
         if not re.search(phrase, text, re.IGNORECASE):
             errors.append('missing_prohibition:' + phrase)
+    for phrase in case['expected'].get('required_patterns', []):
+        if not re.search(phrase, text, re.IGNORECASE | re.DOTALL):
+            errors.append('missing_requirement:' + phrase)
+    for phrase in case['expected'].get('forbidden_patterns', []):
+        if re.search(phrase, text, re.IGNORECASE):
+            errors.append('forbidden_addition:' + phrase)
     return {'passed': not errors, 'errors': errors,
             'semantic_verdict': 'human_review_required', 'fully_faithful': None}
 
@@ -217,7 +285,7 @@ def publish(report, endpoint, checkpoint=lambda: None):
                    **row.get('input', {})} for row in rows]
         outputs = [row['expected'] for row in rows]
         identity = hashlib.sha256(json.dumps([inputs, outputs], sort_keys=True).encode()).hexdigest()
-        name = f"roclint-{suite}-smoke-{identity[:16]}"
+        name = f"roclint-{suite}-{report.get('split', 'smoke')}-{identity[:16]}"
         existing = api('/v1/datasets?' + urllib.parse.urlencode({'name': name, 'limit': 2}))['data']
         if existing:
             if len(existing) != 1:
@@ -225,9 +293,11 @@ def publish(report, endpoint, checkpoint=lambda: None):
             dataset_id = existing[0]['id']
         else:
             uploaded = api('/v1/datasets/upload?sync=true', {'name': name, 'action': 'create',
-                'description': 'Synthetic component smoke; no held-out or semantic acceptance claim.',
+                'description': 'Versioned synthetic evaluation; semantic acceptance requires independent review.',
                 'inputs': inputs, 'outputs': outputs,
-                'metadata': [{'case_id': row['id'], 'split': 'smoke'} for row in rows]})['data']
+                'metadata': [{'case_id': row['id'], 'split': row.get('split', 'smoke'),
+                              'group': row.get('group', row['id'])} for row in rows],
+                'splits': [row.get('split', 'smoke') for row in rows]})['data']
             dataset_id = uploaded['dataset_id']
         dataset = api(f'/v1/datasets/{dataset_id}/examples')['data']
         examples = {item['input']['case_id']: item for item in dataset['examples']}
@@ -241,7 +311,8 @@ def publish(report, endpoint, checkpoint=lambda: None):
             'name': report['run_id'], 'version_id': dataset['version_id'], 'repetitions': 1,
             'metadata': {'source_sha256': report['source']['source_sha256'],
                 'head': report['source']['head'], 'evaluator_version': EVALUATOR_VERSION,
-                'fixture_sha256': report['fixture_sha256'], 'measurement_scope': 'component_smoke'}})['data']
+                'fixture_sha256': report['fixture_sha256'], 'split': report.get('split', 'smoke'),
+                'measurement_scope': 'grounded_production_adapters; no native HUD/insertion claim'}})['data']
         publication = {'suite': suite, 'dataset_id': dataset_id,
             'dataset_version_id': dataset['version_id'], 'experiment_id': experiment['id'],
             'run_ids': [], 'url': endpoint + f"/datasets/{dataset_id}/compare?experimentId={experiment['id']}"}
@@ -334,18 +405,28 @@ def publish(report, endpoint, checkpoint=lambda: None):
 
 def execute(args):
     cases, fixture_hashes = [], {}
+    fixture_paths = {}
     for suite, path in (('ast', args.ast_fixtures), ('rewrite', args.rewrite_fixtures)):
         if args.suite in (suite, 'all'):
             cases.extend(load_cases(path, suite))
             fixture_hashes[suite] = sha256(path)
+            fixture_paths[suite] = path
+    freeze = None if args.no_freeze_check else verify_freeze(fixture_paths, args.freeze_manifest)
+    validate_splits(cases)
+    cases = [case for case in cases if args.split == 'all' or case.get('split', 'smoke') == args.split]
     if args.limit:
         cases = cases[:args.limit]
+    if not cases:
+        raise ValueError('No cases match the selected split')
     args.output.mkdir(parents=True, exist_ok=False)
     environment = os.environ.copy()
     if args.qt_bin:
         environment['PATH'] = str(args.qt_bin) + os.pathsep + environment.get('PATH', '')
     report = {'schema_version': 1, 'run_id': args.output.name,
               'source': source_identity(), 'fixture_sha256': fixture_hashes,
+              'split': args.split,
+              'freeze': freeze,
+              'binary_sha256': {'ast': sha256(args.ast_tool)} if any(c['suite'] == 'ast' for c in cases) else {},
               'evaluator_version': EVALUATOR_VERSION, 'platform': platform.platform(),
               'logical_cpus': os.cpu_count(), 'scope': 'synthetic component smoke; not held-out acceptance',
               'selected_case_ids': [case['suite'] + ':' + case['id'] for case in cases],
@@ -355,7 +436,8 @@ def execute(args):
         for case in cases:
             row = {'id': case['id'], 'category': case['category'], 'suite': case['suite'],
                    'expected': case['expected'], 'start_ns': time.time_ns(), 'status': 'error',
-                   'input': {key: case[key] for key in ('prompt', 'intent', 'activeFile') if key in case}}
+                   'split': case.get('split', 'smoke'), 'group': case.get('group', case['id']),
+                   'input': {key: case[key] for key in ('prompt', 'intent', 'activeFile', 'request_mode') if key in case}}
             try:
                 if case['suite'] == 'ast':
                     actual = checked_json([args.ast_tool], payload=case, environment=environment)
@@ -386,6 +468,17 @@ def execute(args):
                         {key: contract[key] for key in ('prompt', 'instructions', 'schema')}, contract)
                     if not measurement['response']['ok']:
                         raise RuntimeError(json.dumps(measurement['response'].get('error', {})))
+                    mutations = case.get('mutate_after_generation', {})
+                    if mutations:
+                        workspace = Path(contract['_grounding_inputs']['root']).resolve()
+                        if not workspace.is_relative_to(args.output.resolve()):
+                            raise RuntimeError('Synthetic mutation workspace escaped run directory')
+                        for relative, content in mutations.items():
+                            path = (workspace / relative).resolve()
+                            if not path.is_relative_to(workspace):
+                                raise ValueError('Invalid post-generation fixture path')
+                            path.parent.mkdir(parents=True, exist_ok=True)
+                            path.write_text(content, encoding='utf-8')
                     raw = {**contract, **measurement}
                     validation_path = args.output / ('validation-' + case['id'] + '.json')
                     write_json(validation_path, {'runs': [{'quantization': 'Q8_0', 'cases': [raw]}]})
@@ -393,6 +486,7 @@ def execute(args):
                                               environment=environment)[0]
                     result = measurement['response']['result']
                     actual = {'reply': json.loads(result['text']), 'contract': validation,
+                              'grounding': contract.get('grounding', {}),
                               'exchange_ms': measurement['elapsed_ms'],
                               **{k: v for k, v in result.items() if k != 'text'}}
                     row['score'] = score_rewrite(case, actual)
@@ -413,7 +507,8 @@ def execute(args):
     report['source_after'] = source_identity()
     report['source_changed'] = report['source_after'] != report['source']
     report['evaluation_status'] = 'pass' if (not report['source_changed'] and
-        report['summary']['checks_passed'] == len(cases)) else 'fail'
+        report['summary']['checks_passed'] == len(cases) and
+        report.get('shutdown', {}).get('graceful', True)) else 'fail'
     if args.publish:
         try:
             report['publication'] = publish(report, args.endpoint,
@@ -432,8 +527,11 @@ def execute(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--suite', choices=('ast', 'rewrite', 'all'), default='all')
-    parser.add_argument('--ast-fixtures', type=Path, default=ROOT / 'tests/storage/ast_grounding_evaluation.json')
-    parser.add_argument('--rewrite-fixtures', type=Path, default=ROOT / 'tests/rewrite/rewrite_fidelity_evaluation.json')
+    parser.add_argument('--ast-fixtures', type=Path, default=ROOT / 'tests/storage/ast_grounding_evaluation_v2.json')
+    parser.add_argument('--rewrite-fixtures', type=Path, default=ROOT / 'tests/rewrite/rewrite_fidelity_evaluation_v2.json')
+    parser.add_argument('--split', choices=('development', 'heldout', 'smoke', 'all'), default='development')
+    parser.add_argument('--freeze-manifest', type=Path, default=ROOT / 'docs/plans/evaluation_v2_freeze.json')
+    parser.add_argument('--no-freeze-check', action='store_true', help='Explicit unfrozen diagnostic run; never held-out acceptance evidence')
     parser.add_argument('--ast-tool', type=Path, default=native.find_binary('roclint_ast_evaluator'))
     parser.add_argument('--worker', type=Path, default=native.find_binary('roclint_granite_worker', 'runtime'))
     parser.add_argument('--contracts-tool', type=Path, default=native.find_binary('roclint_granite_contracts'))

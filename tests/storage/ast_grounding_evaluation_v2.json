@@ -1,0 +1,2455 @@
+{
+  "version": 2,
+  "synthetic": true,
+  "scope": "Versioned exact-AST evaluation. Family-level splits are frozen before tuning. Raw resolver freshness is checked separately from host authority.",
+  "cases": [
+    {
+      "id": "supported_unique_name",
+      "category": "supported",
+      "note": "A unique exact parameter name is Verified without scope or focus.",
+      "files": {
+        "src/ledger.hpp": "class Ledger { public: bool postEntry(int accountId, double amount); };\n"
+      },
+      "activeFile": "src/ledger.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "accountId",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Ledger::postEntry::accountId",
+        "file": "src/ledger.hpp",
+        "signatureContains": "int accountId",
+        "matchReason": "unique",
+        "complete": true
+      },
+      "group": "exact_basics",
+      "split": "development"
+    },
+    {
+      "id": "supported_qualified_name",
+      "category": "supported",
+      "note": "A namespace-qualified target resolves by exact qualified name.",
+      "files": {
+        "src/widget.hpp": "namespace alpha { class Widget { public: int run(int first); }; }\n"
+      },
+      "activeFile": "src/widget.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "alpha::Widget::run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "alpha::Widget::run",
+        "file": "src/widget.hpp",
+        "signatureContains": "run(int first)",
+        "matchReason": "qualified",
+        "complete": true
+      },
+      "group": "exact_basics",
+      "split": "development"
+    },
+    {
+      "id": "ambiguous_qualified_overloads",
+      "category": "ambiguous",
+      "note": "Two declaration sites with the same qualified name remain distinguishable.",
+      "files": {
+        "src/engine_a.hpp": "class Engine { public: bool run(int first); };\n",
+        "src/engine_b.hpp": "class Engine { public: bool run(double second); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "target": "Engine::run",
+        "matchReason": "qualified",
+        "complete": true,
+        "minCandidates": 2,
+        "candidatesDistinct": true
+      },
+      "group": "overload_ties",
+      "split": "development"
+    },
+    {
+      "id": "unsupported_template_arguments",
+      "category": "unsupported",
+      "note": "Explicit template arguments are outside the documented exact form and fail closed.",
+      "files": {
+        "src/template_engine.hpp": "class Engine { public: template <typename T> bool run(T value); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run<int>(int)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "target": "Engine::run<int>",
+        "matchReason": "",
+        "complete": false
+      },
+      "group": "unsupported_syntax",
+      "split": "heldout"
+    },
+    {
+      "id": "missing_scoped_target",
+      "category": "missing",
+      "note": "A complete exact scoped search proves absence.",
+      "files": {
+        "src/engine.hpp": "class Engine { public: bool run(int first); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "absent",
+        "property": "name",
+        "value": "changed",
+        "condition": "in Engine"
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "target": "Engine::absent",
+        "matchReason": "scope",
+        "complete": true
+      },
+      "group": "missing_actions",
+      "split": "development"
+    },
+    {
+      "id": "missing_add_target",
+      "category": "missing",
+      "note": "ADD of a brand-new unconstrained symbol is Ungrounded, not a false absence.",
+      "files": {
+        "src/engine.hpp": "class Engine { public: bool run(int first); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "ADD",
+        "target": "brandNew",
+        "property": "membership",
+        "value": "present",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ungrounded",
+        "matchReason": "",
+        "complete": true
+      },
+      "group": "missing_actions",
+      "split": "development"
+    },
+    {
+      "id": "stale_modified_file",
+      "category": "stale",
+      "note": "Grounding binds the indexed bytes; the host must reject currentness after a byte change.",
+      "files": {
+        "src/stale.hpp": "class Stale { public: int value; };\n"
+      },
+      "mutate": {
+        "src/stale.hpp": "class Stale { public: int value; int extra; };\n"
+      },
+      "activeFile": "src/stale.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "in Stale"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Stale::value",
+        "file": "src/stale.hpp",
+        "signatureContains": "int value",
+        "matchReason": "scope",
+        "complete": true,
+        "hashValidatedDefault": true,
+        "validateFileHash": false,
+        "hostPromotes": false
+      },
+      "group": "saved_freshness",
+      "split": "heldout"
+    },
+    {
+      "id": "overload_signature_int",
+      "category": "overload",
+      "note": "An explicit int signature selects the int overload even with another active file.",
+      "files": {
+        "src/engine.hpp": "class Engine { public: bool run(int first); bool run(const std::string& label); };\n",
+        "src/other.hpp": "class Other { public: int idle; };\n"
+      },
+      "activeFile": "src/other.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run(int)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Engine::run",
+        "file": "src/engine.hpp",
+        "signatureContains": "run(int first)",
+        "signatureKey": "Engine::run(int)",
+        "matchReason": "signature",
+        "complete": true
+      },
+      "group": "overload_signatures",
+      "split": "development"
+    },
+    {
+      "id": "overload_signature_const_ref",
+      "category": "overload",
+      "note": "A const-reference signature is matched syntactically, not by parameter name.",
+      "files": {
+        "src/engine.hpp": "class Engine { public: bool run(int first); bool run(const std::string& label); };\n",
+        "src/other.hpp": "class Other { public: int idle; };\n"
+      },
+      "activeFile": "src/other.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run(const std::string&)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Engine::run",
+        "file": "src/engine.hpp",
+        "signatureContains": "run(const std::string& label)",
+        "signatureKey": "Engine::run(const std::string&)",
+        "matchReason": "signature",
+        "complete": true
+      },
+      "group": "overload_signatures",
+      "split": "development"
+    },
+    {
+      "id": "scope_precedence_over_focus",
+      "category": "scope",
+      "note": "An explicit scope beats the active file.",
+      "files": {
+        "src/session.hpp": "class SessionManager { public: bool readPacket(int offset); };\n",
+        "src/log.hpp": "class LogClient { public: bool readPacket(int offset); };\n"
+      },
+      "activeFile": "src/log.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "readPacket",
+        "property": "name",
+        "value": "changed",
+        "condition": "in SessionManager"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "SessionManager::readPacket",
+        "file": "src/session.hpp",
+        "signatureContains": "readPacket(int offset)",
+        "matchReason": "scope",
+        "complete": true
+      },
+      "group": "scope_focus",
+      "split": "development"
+    },
+    {
+      "id": "file_precedence_over_focus",
+      "category": "file",
+      "note": "An explicit file constraint beats the active file.",
+      "files": {
+        "src/widget_a.hpp": "class Widget { public: int value; };\n",
+        "src/widget_b.hpp": "class Widget { public: int value; };\n"
+      },
+      "activeFile": "src/widget_b.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "file src/widget_a.hpp"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Widget::value",
+        "file": "src/widget_a.hpp",
+        "signatureContains": "int value",
+        "matchReason": "file",
+        "complete": true
+      },
+      "group": "file_constraints",
+      "split": "development"
+    },
+    {
+      "id": "parameter_by_name",
+      "category": "parameter",
+      "note": "Property parameter with value name selects the declared parameter.",
+      "files": {
+        "src/service.hpp": "class Service { public: bool submit(int count, double limit); };\n"
+      },
+      "activeFile": "src/service.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "submit",
+        "property": "parameter",
+        "value": "count",
+        "condition": "in Service"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Service::submit::count",
+        "file": "src/service.hpp",
+        "signatureContains": "int count",
+        "matchReason": "parameter",
+        "complete": true
+      },
+      "group": "parameter_selection",
+      "split": "heldout"
+    },
+    {
+      "id": "parameter_by_position",
+      "category": "parameter",
+      "note": "Property parameter with value #2 selects the second declared parameter.",
+      "files": {
+        "src/service.hpp": "class Service { public: bool submit(int count, double limit); };\n"
+      },
+      "activeFile": "src/service.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "submit",
+        "property": "parameter",
+        "value": "#2",
+        "condition": "in Service"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Service::submit::limit",
+        "file": "src/service.hpp",
+        "signatureContains": "double limit",
+        "matchReason": "parameter",
+        "complete": true
+      },
+      "group": "parameter_selection",
+      "split": "heldout"
+    },
+    {
+      "id": "global_variable",
+      "category": "variable",
+      "group": "global_variables",
+      "split": "development",
+      "files": {
+        "src/count.cpp": "int counter;\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "counter",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "counter",
+        "file": "src/count.cpp",
+        "matchReason": "unique",
+        "complete": true
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "namespace_function_definition",
+      "category": "definition",
+      "group": "namespace_definitions",
+      "split": "heldout",
+      "files": {
+        "src/flush.cpp": "namespace telemetry { void flush() { int hiddenBody = 2; } }\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "telemetry::flush",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "telemetry::flush",
+        "file": "src/flush.cpp",
+        "matchReason": "qualified",
+        "complete": true,
+        "signatureContains": "void flush()"
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "nested_struct_field",
+      "category": "field",
+      "group": "field_declarators",
+      "split": "development",
+      "files": {
+        "src/point.hpp": "namespace geometry { struct Point { double x; double y; }; }\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "geometry::Point::x",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "geometry::Point::x",
+        "file": "src/point.hpp",
+        "matchReason": "qualified",
+        "complete": true
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "late_member_139",
+      "category": "large_scope",
+      "group": "large_scopes",
+      "split": "heldout",
+      "files": {
+        "src/large.hpp": "class Large { public: int m0; int m1; int m2; int m3; int m4; int m5; int m6; int m7; int m8; int m9; int m10; int m11; int m12; int m13; int m14; int m15; int m16; int m17; int m18; int m19; int m20; int m21; int m22; int m23; int m24; int m25; int m26; int m27; int m28; int m29; int m30; int m31; int m32; int m33; int m34; int m35; int m36; int m37; int m38; int m39; int m40; int m41; int m42; int m43; int m44; int m45; int m46; int m47; int m48; int m49; int m50; int m51; int m52; int m53; int m54; int m55; int m56; int m57; int m58; int m59; int m60; int m61; int m62; int m63; int m64; int m65; int m66; int m67; int m68; int m69; int m70; int m71; int m72; int m73; int m74; int m75; int m76; int m77; int m78; int m79; int m80; int m81; int m82; int m83; int m84; int m85; int m86; int m87; int m88; int m89; int m90; int m91; int m92; int m93; int m94; int m95; int m96; int m97; int m98; int m99; int m100; int m101; int m102; int m103; int m104; int m105; int m106; int m107; int m108; int m109; int m110; int m111; int m112; int m113; int m114; int m115; int m116; int m117; int m118; int m119; int m120; int m121; int m122; int m123; int m124; int m125; int m126; int m127; int m128; int m129; int m130; int m131; int m132; int m133; int m134; int m135; int m136; int m137; int m138; int m139; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "m139",
+        "property": "field",
+        "value": "changed",
+        "condition": "in Large"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Large::m139",
+        "file": "src/large.hpp",
+        "matchReason": "scope",
+        "complete": true
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "formatted_scope_and_target",
+      "category": "formatting",
+      "group": "identifier_formatting",
+      "split": "development",
+      "files": {
+        "src/engine.hpp": "class Engine { public: int run(int count); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "**run**",
+        "property": "name",
+        "value": "changed",
+        "condition": "in `Engine`"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Engine::run",
+        "file": "src/engine.hpp",
+        "matchReason": "scope",
+        "complete": true
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "quoted_target",
+      "category": "formatting",
+      "group": "identifier_formatting",
+      "split": "development",
+      "files": {
+        "src/a.hpp": "int value;\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "\"value\"",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/a.hpp",
+        "matchReason": "unique",
+        "complete": true
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "padded_target",
+      "category": "formatting",
+      "group": "identifier_formatting",
+      "split": "development",
+      "files": {
+        "src/a.hpp": "int value;\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "   value   ",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/a.hpp",
+        "matchReason": "unique",
+        "complete": true
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "missing_explicit_scope_no_global_fallback",
+      "category": "missing_scope",
+      "group": "scope_absence",
+      "split": "heldout",
+      "files": {
+        "src/a.hpp": "int run();\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "name",
+        "value": "changed",
+        "condition": "in Missing"
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "target": "Missing::run",
+        "matchReason": "scope",
+        "complete": true
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "absent_explicit_file",
+      "category": "missing_file",
+      "group": "file_constraints",
+      "split": "development",
+      "files": {
+        "src/other.hpp": "int run();\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "name",
+        "value": "changed",
+        "condition": "file src/missing.hpp"
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "matchReason": "file",
+        "complete": true
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "active_file_exact_tie",
+      "category": "active_file",
+      "group": "scope_focus",
+      "split": "development",
+      "files": {
+        "src/a.hpp": "namespace a { int run(); }\n",
+        "src/b.hpp": "namespace b { int run(); }\n"
+      },
+      "activeFile": "src/a.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "a::run",
+        "file": "src/a.hpp",
+        "matchReason": "active-file",
+        "complete": true
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "unfocused_global_ambiguity",
+      "category": "ambiguity",
+      "group": "overload_ties",
+      "split": "development",
+      "files": {
+        "src/a.hpp": "namespace a { int run(); }\n",
+        "src/b.hpp": "namespace b { int run(); }\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "target": "run",
+        "complete": true,
+        "minCandidates": 2
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "function_requested_as_parameter",
+      "category": "type_mismatch",
+      "group": "kind_mismatch",
+      "split": "development",
+      "files": {
+        "src/a.hpp": "int run();\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "parameter",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "TypeMismatch",
+        "target": "run",
+        "complete": true
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "missing_second_parameter",
+      "category": "parameter_missing",
+      "group": "parameter_selection",
+      "split": "heldout",
+      "files": {
+        "src/a.hpp": "class Service { public: void submit(int count); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "submit",
+        "property": "parameter",
+        "value": "#2",
+        "condition": "in Service"
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "matchReason": "parameter",
+        "complete": true
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "signature_two_arguments",
+      "category": "signature",
+      "group": "overload_signatures",
+      "split": "development",
+      "files": {
+        "src/a.hpp": "class Engine { public: void run(int first, double second); void run(double first, int second); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run(int,double)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Engine::run",
+        "file": "src/a.hpp",
+        "matchReason": "signature",
+        "complete": true
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "unsupported_trailing_signature_qualifier",
+      "category": "unsupported_signature",
+      "group": "unsupported_syntax",
+      "split": "heldout",
+      "files": {
+        "src/a.hpp": "class Engine { public: void run(int first) const; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run(int) const",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "complete": false
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "file_constraint_over_existing_focus",
+      "category": "file",
+      "group": "file_constraints",
+      "split": "development",
+      "files": {
+        "src/a.hpp": "int value;\n",
+        "src/b.hpp": "double value;\n"
+      },
+      "activeFile": "src/b.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "file src/a.hpp"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/a.hpp",
+        "matchReason": "file",
+        "complete": true
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "field_lambda_body_exclusion",
+      "category": "body_exclusion",
+      "group": "body_boundaries",
+      "split": "development",
+      "files": {
+        "src/a.hpp": "struct Task { int value = [](){ int secretBody = 7; return secretBody; }(); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Task::value",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Task::value",
+        "file": "src/a.hpp",
+        "matchReason": "qualified",
+        "complete": true,
+        "signatureContains": "int value"
+      },
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "field_scalar",
+      "group": "field_declarators",
+      "category": "field_declarators",
+      "files": {
+        "src/fixture.hpp": "struct Record { int value; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Record::value",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Record::value",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "field_initialized",
+      "group": "field_declarators",
+      "category": "field_declarators",
+      "files": {
+        "src/fixture.hpp": "struct Record { double value = 3.5; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Record::value",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Record::value",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "field_braced",
+      "group": "field_declarators",
+      "category": "field_declarators",
+      "files": {
+        "src/fixture.hpp": "struct Record { const int value{7}; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Record::value",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Record::value",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "field_static",
+      "group": "field_declarators",
+      "category": "field_declarators",
+      "files": {
+        "src/fixture.hpp": "struct Record { static int value; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Record::value",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Record::value",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "field_bitfield",
+      "group": "field_declarators",
+      "category": "field_declarators",
+      "files": {
+        "src/fixture.hpp": "struct Record { unsigned value : 3; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Record::value",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Record::value",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "field_array",
+      "group": "field_declarators",
+      "category": "field_declarators",
+      "files": {
+        "src/fixture.hpp": "struct Record { int values[4]; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Record::values",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Record::values",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "field_pointer",
+      "group": "field_declarators",
+      "category": "field_declarators",
+      "files": {
+        "src/fixture.hpp": "struct Record { const char* name; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Record::name",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Record::name",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "field_boolean",
+      "group": "field_declarators",
+      "category": "field_declarators",
+      "files": {
+        "src/fixture.hpp": "struct Record { bool active{true}; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Record::active",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Record::active",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "field_template_type",
+      "group": "field_declarators",
+      "category": "field_declarators",
+      "files": {
+        "src/fixture.hpp": "struct Record { std::vector<int> items; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Record::items",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Record::items",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "field_reference",
+      "group": "field_declarators",
+      "category": "field_declarators",
+      "files": {
+        "src/fixture.hpp": "struct Record { const int& count; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Record::count",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Record::count",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "method_static",
+      "group": "method_qualifiers",
+      "category": "method_qualifiers",
+      "files": {
+        "src/fixture.hpp": "class Reader { public: static int read(); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Reader::read",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Reader::read",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "method_const",
+      "group": "method_qualifiers",
+      "category": "method_qualifiers",
+      "files": {
+        "src/fixture.hpp": "class Reader { public: int read() const; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Reader::read",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Reader::read",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "method_ref",
+      "group": "method_qualifiers",
+      "category": "method_qualifiers",
+      "files": {
+        "src/fixture.hpp": "class Reader { public: int read() &; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Reader::read",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Reader::read",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "method_noexcept",
+      "group": "method_qualifiers",
+      "category": "method_qualifiers",
+      "files": {
+        "src/fixture.hpp": "class Reader { public: int read() noexcept; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Reader::read",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Reader::read",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "method_pure_virtual",
+      "group": "method_qualifiers",
+      "category": "method_qualifiers",
+      "files": {
+        "src/fixture.hpp": "class Reader { public: virtual int read() = 0; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Reader::read",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Reader::read",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "method_body",
+      "group": "method_qualifiers",
+      "category": "method_qualifiers",
+      "files": {
+        "src/fixture.hpp": "class Reader { public: int read() { int hidden = 2; return hidden; } };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Reader::read",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Reader::read",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "scope_nested_namespace",
+      "group": "nested_scopes",
+      "category": "nested_scopes",
+      "files": {
+        "src/fixture.hpp": "namespace top { namespace detail { struct Box { int value; }; } }"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "within top::detail::Box"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "top::detail::Box::value",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "scope_struct_inside_class",
+      "group": "nested_scopes",
+      "category": "nested_scopes",
+      "files": {
+        "src/fixture.hpp": "class Outer { public: struct Inner { int value; }; };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "inside Outer::Inner"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Outer::Inner::value",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "scope_missing_bold",
+      "group": "scope_absence",
+      "category": "scope_absence",
+      "files": {
+        "src/fixture.hpp": "int run();"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "name",
+        "value": "changed",
+        "condition": "in **Absent**"
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "complete": true
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "scope_missing_quoted",
+      "group": "scope_absence",
+      "category": "scope_absence",
+      "files": {
+        "src/fixture.hpp": "int run();"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "name",
+        "value": "changed",
+        "condition": "in \"Absent\""
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "complete": true
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "scope_two_common_members",
+      "group": "scope_ties",
+      "category": "scope_ties",
+      "files": {
+        "src/fixture.hpp": "namespace a { struct Box { int value; }; } namespace b { struct Box { int value; }; }"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "in Box"
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "complete": true,
+        "minCandidates": 2
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "scope_unique_child_among_ties",
+      "group": "scope_ties",
+      "category": "scope_ties",
+      "files": {
+        "src/fixture.hpp": "namespace a { struct Box { int value; }; } namespace b { struct Box { int other; }; }"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "in Box"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "a::Box::value",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "scope_qualified_missing_no_global",
+      "group": "scope_absence",
+      "category": "scope_absence",
+      "files": {
+        "src/fixture.hpp": "int run();"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Missing::run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "complete": true
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "scope_precedes_active_namespace",
+      "group": "scope_focus",
+      "category": "scope_focus",
+      "files": {
+        "src/a.hpp": "namespace a { struct Box { int run(); }; }",
+        "src/b.hpp": "namespace b { struct Box { int run(); }; }"
+      },
+      "activeFile": "src/a.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "name",
+        "value": "changed",
+        "condition": "in b::Box"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "b::Box::run",
+        "file": "src/b.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "file_quoted",
+      "group": "file_constraints",
+      "category": "file_constraints",
+      "files": {
+        "src/a.hpp": "int value;",
+        "src/b.hpp": "double value;"
+      },
+      "activeFile": "src/b.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "file \"src/a.hpp\""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/a.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "file_backtick",
+      "group": "file_constraints",
+      "category": "file_constraints",
+      "files": {
+        "src/a.hpp": "int value;",
+        "src/b.hpp": "double value;"
+      },
+      "activeFile": "src/b.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "file `src/a.hpp`"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/a.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "file_dot",
+      "group": "file_constraints",
+      "category": "file_constraints",
+      "files": {
+        "src/a.hpp": "int value;",
+        "src/b.hpp": "double value;"
+      },
+      "activeFile": "src/b.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "file ./src/a.hpp"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/a.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "file_windows",
+      "group": "file_constraints",
+      "category": "file_constraints",
+      "files": {
+        "src/a.hpp": "int value;",
+        "src/b.hpp": "double value;"
+      },
+      "activeFile": "src/b.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "file src\\a.hpp"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/a.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "file_case_is_exact",
+      "group": "file_constraints",
+      "category": "file_constraints",
+      "files": {
+        "src/a.hpp": "int value;",
+        "src/b.hpp": "double value;"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "file src/A.hpp"
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "file_overload_constraint",
+      "group": "file_constraints",
+      "category": "file_constraints",
+      "files": {
+        "src/a.hpp": "struct Box { int run(int n); };",
+        "src/b.hpp": "struct Box { int run(double n); };"
+      },
+      "activeFile": "src/b.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "name",
+        "value": "changed",
+        "condition": "file src/a.hpp"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::run",
+        "file": "src/a.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "parameter_first",
+      "group": "parameter_selection",
+      "category": "parameter_selection",
+      "files": {
+        "src/fixture.hpp": "struct Service { void send(int first, double second, bool enabled = true); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "send",
+        "property": "parameter",
+        "value": "#1",
+        "condition": "in Service"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Service::send::first",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "parameter_third",
+      "group": "parameter_selection",
+      "category": "parameter_selection",
+      "files": {
+        "src/fixture.hpp": "struct Service { void send(int first, double second, bool enabled = true); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "send",
+        "property": "parameter",
+        "value": "#3",
+        "condition": "in Service"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Service::send::enabled",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "parameter_named",
+      "group": "parameter_selection",
+      "category": "parameter_selection",
+      "files": {
+        "src/fixture.hpp": "struct Service { void send(int first, double second, bool enabled = true); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "send",
+        "property": "parameter",
+        "value": "second",
+        "condition": "in Service"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Service::send::second",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "parameter_missing_name",
+      "group": "parameter_selection",
+      "category": "parameter_selection",
+      "files": {
+        "src/fixture.hpp": "struct Service { void send(int first, double second, bool enabled = true); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "send",
+        "property": "parameter",
+        "value": "missingParameter",
+        "condition": "in Service"
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "complete": true
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "parameter_missing_position",
+      "group": "parameter_selection",
+      "category": "parameter_selection",
+      "files": {
+        "src/fixture.hpp": "struct Service { void send(int first, double second, bool enabled = true); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "send",
+        "property": "parameter",
+        "value": "#4",
+        "condition": "in Service"
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "complete": true
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "parameter_signature_filter",
+      "group": "parameter_selection",
+      "category": "parameter_selection",
+      "files": {
+        "src/fixture.hpp": "struct Service { void send(int count); void send(double amount); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Service::send(int)",
+        "property": "parameter",
+        "value": "count",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Service::send::count",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "signature_empty",
+      "group": "overload_signatures",
+      "category": "overload_signatures",
+      "files": {
+        "src/fixture.hpp": "struct Box { int run(); int run(int n); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::run()",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::run",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "signature_bool",
+      "group": "overload_signatures",
+      "category": "overload_signatures",
+      "files": {
+        "src/fixture.hpp": "struct Box { int run(bool enabled); int run(int n); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::run(bool)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::run",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "signature_pointer",
+      "group": "overload_signatures",
+      "category": "overload_signatures",
+      "files": {
+        "src/fixture.hpp": "struct Box { int run(const char* name); int run(int n); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::run(const char*)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::run",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "signature_reference",
+      "group": "overload_signatures",
+      "category": "overload_signatures",
+      "files": {
+        "src/fixture.hpp": "struct Box { int run(int& n); int run(double n); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::run(int&)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::run",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "signature_two",
+      "group": "overload_signatures",
+      "category": "overload_signatures",
+      "files": {
+        "src/fixture.hpp": "struct Box { int run(bool flag, int n); int run(int n, bool flag); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::run(bool,int)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::run",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "overload_unqualified_tie",
+      "group": "overload_ties",
+      "category": "overload_ties",
+      "files": {
+        "src/fixture.hpp": "struct Box { int run(int n); int run(double n); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "complete": true,
+        "minCandidates": 2
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "unsupported_template",
+      "group": "unsupported_syntax",
+      "category": "unsupported_syntax",
+      "files": {
+        "src/fixture.hpp": "struct Box { int run(int n); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::run<int>(int)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "complete": false
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "unsupported_nested_type",
+      "group": "unsupported_syntax",
+      "category": "unsupported_syntax",
+      "files": {
+        "src/fixture.hpp": "struct Box { int run(int n); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::run(std::function<void(int)>)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "complete": false
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "unsupported_trailing_const",
+      "group": "unsupported_syntax",
+      "category": "unsupported_syntax",
+      "files": {
+        "src/fixture.hpp": "struct Box { int run(int n); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::run(int) const",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "complete": false
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "unsupported_unclosed",
+      "group": "unsupported_syntax",
+      "category": "unsupported_syntax",
+      "files": {
+        "src/fixture.hpp": "struct Box { int run(int n); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::run(int",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "complete": false
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "unsupported_function_pointer",
+      "group": "unsupported_syntax",
+      "category": "unsupported_syntax",
+      "files": {
+        "src/fixture.hpp": "struct Box { int run(int n); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::run(void(*)(int))",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "complete": false
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "identifier_backticks",
+      "group": "identifier_formatting",
+      "category": "identifier_formatting",
+      "files": {
+        "src/fixture.hpp": "int value;"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "`value`",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "identifier_bold",
+      "group": "identifier_formatting",
+      "category": "identifier_formatting",
+      "files": {
+        "src/fixture.hpp": "int value;"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "**value**",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "identifier_underline",
+      "group": "identifier_formatting",
+      "category": "identifier_formatting",
+      "files": {
+        "src/fixture.hpp": "int value;"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "__value__",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "identifier_single_quote",
+      "group": "identifier_formatting",
+      "category": "identifier_formatting",
+      "files": {
+        "src/fixture.hpp": "int value;"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "'value'",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "identifier_punctuation",
+      "group": "identifier_formatting",
+      "category": "identifier_formatting",
+      "files": {
+        "src/fixture.hpp": "int value;"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value;",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/fixture.hpp",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "missing_action_modify",
+      "group": "missing_actions",
+      "category": "missing_actions",
+      "files": {
+        "src/fixture.hpp": "int existing;"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "absent",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "missing_action_remove",
+      "group": "missing_actions",
+      "category": "missing_actions",
+      "files": {
+        "src/fixture.hpp": "int existing;"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "REMOVE",
+        "target": "absent",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "missing_action_preserve",
+      "group": "missing_actions",
+      "category": "missing_actions",
+      "files": {
+        "src/fixture.hpp": "int existing;"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "PRESERVE",
+        "target": "absent",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "missing_action_constrain",
+      "group": "missing_actions",
+      "category": "missing_actions",
+      "files": {
+        "src/fixture.hpp": "int existing;"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "CONSTRAIN",
+        "target": "absent",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "kind_function_as_field",
+      "group": "kind_mismatch",
+      "category": "kind_mismatch",
+      "files": {
+        "src/fixture.hpp": "int run();"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "TypeMismatch",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "kind_field_as_parameter",
+      "group": "kind_mismatch",
+      "category": "kind_mismatch",
+      "files": {
+        "src/fixture.hpp": "struct Box { int value; };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::value",
+        "property": "parameter",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "TypeMismatch",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "kind_parameter_as_field",
+      "group": "kind_mismatch",
+      "category": "kind_mismatch",
+      "files": {
+        "src/fixture.hpp": "int run(int count);"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run::count",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "TypeMismatch",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "kind_namespace_as_field",
+      "group": "kind_mismatch",
+      "category": "kind_mismatch",
+      "files": {
+        "src/fixture.hpp": "namespace box { int value; }"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "box",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "TypeMismatch",
+        "complete": true
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "freshness_empty",
+      "group": "saved_freshness",
+      "category": "saved_freshness",
+      "files": {
+        "src/fixture.hpp": "struct Box { int value = 1; };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::value",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::value",
+        "file": "src/fixture.hpp",
+        "complete": true,
+        "validateFileHash": false
+      },
+      "mutate": {
+        "src/fixture.hpp": ""
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "freshness_rename",
+      "group": "saved_freshness",
+      "category": "saved_freshness",
+      "files": {
+        "src/fixture.hpp": "struct Box { int value = 1; };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::value",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::value",
+        "file": "src/fixture.hpp",
+        "complete": true,
+        "validateFileHash": false
+      },
+      "mutate": {
+        "src/fixture.hpp": "struct Box { int changed; };"
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "freshness_initializer",
+      "group": "saved_freshness",
+      "category": "saved_freshness",
+      "files": {
+        "src/fixture.hpp": "struct Box { int value = 1; };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::value",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::value",
+        "file": "src/fixture.hpp",
+        "complete": true,
+        "validateFileHash": false
+      },
+      "mutate": {
+        "src/fixture.hpp": "struct Box { int value = 2; };"
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "freshness_unchanged",
+      "group": "saved_freshness",
+      "category": "saved_freshness",
+      "files": {
+        "src/fixture.hpp": "struct Box { int value = 1; };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::value",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::value",
+        "file": "src/fixture.hpp",
+        "complete": true,
+        "validateFileHash": true
+      },
+      "mutate": {
+        "src/fixture.hpp": "struct Box { int value = 1; };"
+      },
+      "split": "heldout",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "signature_body_method",
+      "group": "body_boundaries",
+      "category": "body_boundaries",
+      "files": {
+        "src/fixture.hpp": "struct Box { int run() { int hidden = 7; return hidden; } };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::run",
+        "file": "src/fixture.hpp",
+        "complete": true,
+        "signatureMustNotContain": [
+          "hidden"
+        ]
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "signature_body_constructor",
+      "group": "body_boundaries",
+      "category": "body_boundaries",
+      "files": {
+        "src/fixture.hpp": "struct Box { int value; Box(): value(7) {} int run() { return value; } };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::run",
+        "file": "src/fixture.hpp",
+        "complete": true,
+        "signatureMustNotContain": [
+          "return"
+        ]
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "signature_body_field_lambda",
+      "group": "body_boundaries",
+      "category": "body_boundaries",
+      "files": {
+        "src/fixture.hpp": "struct Box { int value = [](){ int hidden = 7; return hidden; }(); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::value",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::value",
+        "file": "src/fixture.hpp",
+        "complete": true,
+        "signatureMustNotContain": [
+          "hidden"
+        ]
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "signature_body_field_braces",
+      "group": "body_boundaries",
+      "category": "body_boundaries",
+      "files": {
+        "src/fixture.hpp": "struct Box { int value{7}; };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::value",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::value",
+        "file": "src/fixture.hpp",
+        "complete": true,
+        "signatureMustNotContain": [
+          "{7}"
+        ]
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "signature_body_default_argument",
+      "group": "body_boundaries",
+      "category": "body_boundaries",
+      "files": {
+        "src/fixture.hpp": "struct Box { int run(int n = 9); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::run",
+        "file": "src/fixture.hpp",
+        "complete": true,
+        "signatureMustNotContain": [
+          "= 9"
+        ]
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    },
+    {
+      "id": "signature_body_comment",
+      "group": "body_boundaries",
+      "category": "body_boundaries",
+      "files": {
+        "src/fixture.hpp": "struct Box { int run(/* hidden */ int n); };"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Box::run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Box::run",
+        "file": "src/fixture.hpp",
+        "complete": true,
+        "signatureMustNotContain": [
+          "hidden"
+        ]
+      },
+      "split": "development",
+      "note": "Expected binding is annotated from the declaration and documented exact-match contract before resolver execution."
+    }
+  ],
+  "annotation_qa": [
+    "Pre-freeze annotation QA changed parameter selector absent to missingParameter because absent is a documented generic property state, not a named parameter selector.",
+    "Pre-freeze QA replaced unsupported function property with the supported field kind filter; expectations were not changed to fit an observed binding."
+  ]
+}

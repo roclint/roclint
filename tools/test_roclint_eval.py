@@ -91,6 +91,33 @@ class EvaluationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 evaluation.load_cases(path, 'ast')
 
+    def test_related_groups_cannot_cross_splits(self):
+        rows = [{'suite': 'rewrite', 'group': 'same', 'split': 'development'},
+                {'suite': 'rewrite', 'group': 'same', 'split': 'heldout'}]
+        with self.assertRaises(ValueError):
+            evaluation.validate_splits(rows)
+
+    def test_freeze_rejects_changed_dataset_bytes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / 'cases.json'
+            path.write_text('{"version": 2}')
+            freeze = Path(temporary) / 'freeze.json'
+            freeze.write_text(json.dumps({'datasets': {'ast': {'path': str(path), 'sha256': evaluation.sha256(path)}}, 'thresholds': {}}))
+            evaluation.verify_freeze({'ast': path}, freeze)
+            path.write_text('{"version": 3}')
+            with self.assertRaises(ValueError):
+                evaluation.verify_freeze({'ast': path}, freeze)
+
+    def test_stale_proposal_must_be_withheld_and_not_published(self):
+        case = {'expected': {'post_generation_withheld': True}}
+        self.assertTrue(evaluation.score_rewrite(case, {'contract': {'withheld': True, 'proposal_published': False}})['passed'])
+        self.assertFalse(evaluation.score_rewrite(case, {'contract': {'withheld': False, 'proposal_published': True}})['passed'])
+
+    def test_ambiguity_cannot_be_satisfied_by_not_found(self):
+        case = {'expected': {'grounding': {'no_verified': True, 'required_statuses': ['AMBIGUOUS']}}}
+        actual = {'grounding': {'evidence': [{'status': 'NOT_FOUND_IN_SCOPE'}]}}
+        self.assertIn('grounding:missing_status:AMBIGUOUS', evaluation.grounding_errors(case, actual))
+
     def test_outage_keeps_existing_local_results_and_fails_strict_mode(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / 'report.json'
