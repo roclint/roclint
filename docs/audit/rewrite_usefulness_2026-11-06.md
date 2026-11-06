@@ -135,6 +135,14 @@ This is an editing-activity measure, not a quality improvement score. More
 editing also exposes additional semantic risks. No semantic release gate is
 declared passed, and all output still requires the existing explicit review.
 
+Final Phoenix publication was attempted but stopped after its Python/dependency
+startup stalled without creating a publication receipt. An alternate dependency
+probe also stalled and was stopped. No final Phoenix publication/readback is
+claimed; complete results and output-bound agent annotations remain saved
+locally. The pre-existing Phoenix server was left running. Resume publication
+from the saved run once that environment is responsive; inference need not be
+replayed.
+
 Next work: confirm draft editing in the visible HUD; reproduce the development
 semantic concerns as separate fidelity work; independently adjudicate frozen
 outputs. Do not tune on held-out outputs or weaken the frozen rubric. Windows
