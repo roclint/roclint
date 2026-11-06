@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "synthetic": true,
+  "scope": "Literal-only confirmed intent through production rewrite adapters. No HUD or discovery execution claim. Smoke assertions are not semantic truth.",
+  "cases": [
+    {
+      "id": "rename_scoped_local",
+      "category": "rename",
+      "group": "rename",
+      "split": "smoke",
+      "synthetic": true,
+      "profile": "GENERIC@1",
+      "prompt": "Rename the local variable count to itemCount inside parseItems. Preserve behavior. Do not change public APIs.",
+      "expected": {
+        "must_preserve_literals": [
+          "count",
+          "itemCount",
+          "parseItems"
+        ],
+        "prohibition_patterns": [
+          "(?:do not|without|preserve|maintain|unchanged).{0,50}(?:public|API)"
+        ],
+        "semantic_rubric": "Preserve actions, targets, scope, values and prohibitions; add no requirements. Human review required."
+      }
+    },
+    {
+      "id": "numeric_negative_constraint",
+      "category": "values",
+      "group": "values",
+      "split": "smoke",
+      "synthetic": true,
+      "profile": "GENERIC@1",
+      "prompt": "Increase retryDelayMs from 100 to 250. Keep maxRetries at 3. Do not change other retry settings.",
+      "expected": {
+        "must_preserve_literals": [
+          "retryDelayMs",
+          "250",
+          "maxRetries",
+          "3"
+        ],
+        "prohibition_patterns": [
+          "(?:do not|without|unchanged|preserve|maintain|retain).{0,60}(?:other|settings|retry)"
+        ],
+        "semantic_rubric": "Preserve actions, targets, scope, values and prohibitions; add no requirements. Human review required."
+      }
+    },
+    {
+      "id": "file_and_negative_scope",
+      "category": "scope",
+      "group": "scope",
+      "split": "smoke",
+      "synthetic": true,
+      "profile": "GENERIC@1",
+      "prompt": "Update Parser::parse only in src/parser.cpp. Do not modify tests or public headers.",
+      "expected": {
+        "must_preserve_literals": [
+          "Parser::parse",
+          "src/parser.cpp"
+        ],
+        "prohibition_patterns": [
+          "(?:do not|without|unchanged|preserve|maintain|retain).{0,60}(?:tests|headers)"
+        ],
+        "semantic_rubric": "Preserve actions, targets, scope, values and prohibitions; add no requirements. Human review required."
+      }
+    },
+    {
+      "id": "action_order_and_preservation",
+      "category": "multi_action",
+      "group": "multi_action",
+      "split": "smoke",
+      "synthetic": true,
+      "profile": "GENERIC@1",
+      "prompt": "Add a validateHeader check before decodePacket and retain the existing error codes. Do not rename decodePacket.",
+      "expected": {
+        "must_preserve_literals": [
+          "validateHeader",
+          "decodePacket"
+        ],
+        "prohibition_patterns": [
+          "(?:do not|without|unchanged|preserve|maintain|retain).{0,60}(?:rename|name|decodePacket)"
+        ],
+        "semantic_rubric": "Preserve actions, targets, scope, values and prohibitions; add no requirements. Human review required."
+      }
+    },
+    {
+      "id": "quoted_instruction_is_data",
+      "category": "quoted_data",
+      "group": "quoted_data",
+      "split": "smoke",
+      "synthetic": true,
+      "profile": "GENERIC@1",
+      "prompt": "Write a test showing that the literal text \"deleteAll()\" is treated as data. Do not execute deleteAll().",
+      "expected": {
+        "must_preserve_literals": [
+          "deleteAll()"
+        ],
+        "prohibition_patterns": [
+          "(?:do not|without|never|not).{0,50}(?:execut|call|run)"
+        ],
+        "semantic_rubric": "Preserve actions, targets, scope, values and prohibitions; add no requirements. Human review required."
+      }
+    },
+    {
+      "id": "rewrite_without_clarification",
+      "category": "skip_questions",
+      "group": "skip_questions",
+      "split": "smoke",
+      "synthetic": true,
+      "profile": "GENERIC@1",
+      "prompt": "Improve logging in refreshIndex. Leave the unspecified log format open. Rewrite using only these details; do not ask questions or invent requirements.",
+      "expected": {
+        "must_preserve_literals": [
+          "refreshIndex"
+        ],
+        "prohibition_patterns": [],
+        "semantic_rubric": "Preserve actions, targets, scope, values and prohibitions; add no requirements. Human review required."
+      }
+    }
+  ]
+}

@@ -1,0 +1,753 @@
+{
+  "version": 1,
+  "synthetic": true,
+  "scope": "Component smoke; manually authored expected bindings. No held-out acceptance claim.",
+  "cases": [
+    {
+      "id": "supported_unique_name",
+      "category": "supported",
+      "note": "A unique exact parameter name is Verified without scope or focus.",
+      "files": {
+        "src/ledger.hpp": "class Ledger { public: bool postEntry(int accountId, double amount); };\n"
+      },
+      "activeFile": "src/ledger.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "accountId",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Ledger::postEntry::accountId",
+        "file": "src/ledger.hpp",
+        "signatureContains": "int accountId",
+        "matchReason": "unique",
+        "complete": true
+      },
+      "group": "supported",
+      "split": "smoke"
+    },
+    {
+      "id": "supported_qualified_name",
+      "category": "supported",
+      "note": "A namespace-qualified target resolves by exact qualified name.",
+      "files": {
+        "src/widget.hpp": "namespace alpha { class Widget { public: int run(int first); }; }\n"
+      },
+      "activeFile": "src/widget.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "alpha::Widget::run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "alpha::Widget::run",
+        "file": "src/widget.hpp",
+        "signatureContains": "run(int first)",
+        "matchReason": "qualified",
+        "complete": true
+      },
+      "group": "supported",
+      "split": "smoke"
+    },
+    {
+      "id": "ambiguous_qualified_overloads",
+      "category": "ambiguous",
+      "note": "Two declaration sites with the same qualified name remain distinguishable.",
+      "files": {
+        "src/engine_a.hpp": "class Engine { public: bool run(int first); };\n",
+        "src/engine_b.hpp": "class Engine { public: bool run(double second); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "target": "Engine::run",
+        "matchReason": "qualified",
+        "complete": true,
+        "minCandidates": 2,
+        "candidatesDistinct": true
+      },
+      "group": "ambiguous",
+      "split": "smoke"
+    },
+    {
+      "id": "unsupported_template_arguments",
+      "category": "unsupported",
+      "note": "Explicit template arguments are outside the documented exact form and fail closed.",
+      "files": {
+        "src/template_engine.hpp": "class Engine { public: template <typename T> bool run(T value); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run<int>(int)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "target": "Engine::run<int>",
+        "matchReason": "",
+        "complete": false
+      },
+      "group": "unsupported",
+      "split": "smoke"
+    },
+    {
+      "id": "missing_scoped_target",
+      "category": "missing",
+      "note": "A complete exact scoped search proves absence.",
+      "files": {
+        "src/engine.hpp": "class Engine { public: bool run(int first); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "absent",
+        "property": "name",
+        "value": "changed",
+        "condition": "in Engine"
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "target": "Engine::absent",
+        "matchReason": "scope",
+        "complete": true
+      },
+      "group": "missing",
+      "split": "smoke"
+    },
+    {
+      "id": "missing_add_target",
+      "category": "missing",
+      "note": "ADD of a brand-new unconstrained symbol is Ungrounded, not a false absence.",
+      "files": {
+        "src/engine.hpp": "class Engine { public: bool run(int first); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "ADD",
+        "target": "brandNew",
+        "property": "membership",
+        "value": "present",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ungrounded",
+        "matchReason": "",
+        "complete": true
+      },
+      "group": "missing",
+      "split": "smoke"
+    },
+    {
+      "id": "stale_modified_file",
+      "category": "stale",
+      "note": "Grounding binds the indexed bytes; the host must reject currentness after a byte change.",
+      "files": {
+        "src/stale.hpp": "class Stale { public: int value; };\n"
+      },
+      "mutate": {
+        "src/stale.hpp": "class Stale { public: int value; int extra; };\n"
+      },
+      "activeFile": "src/stale.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "in Stale"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Stale::value",
+        "file": "src/stale.hpp",
+        "signatureContains": "int value",
+        "matchReason": "scope",
+        "complete": true,
+        "hashValidatedDefault": true,
+        "validateFileHash": false,
+        "hostPromotes": false
+      },
+      "group": "stale",
+      "split": "smoke"
+    },
+    {
+      "id": "overload_signature_int",
+      "category": "overload",
+      "note": "An explicit int signature selects the int overload even with another active file.",
+      "files": {
+        "src/engine.hpp": "class Engine { public: bool run(int first); bool run(const std::string& label); };\n",
+        "src/other.hpp": "class Other { public: int idle; };\n"
+      },
+      "activeFile": "src/other.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run(int)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Engine::run",
+        "file": "src/engine.hpp",
+        "signatureContains": "run(int first)",
+        "signatureKey": "Engine::run(int)",
+        "matchReason": "signature",
+        "complete": true
+      },
+      "group": "overload",
+      "split": "smoke"
+    },
+    {
+      "id": "overload_signature_const_ref",
+      "category": "overload",
+      "note": "A const-reference signature is matched syntactically, not by parameter name.",
+      "files": {
+        "src/engine.hpp": "class Engine { public: bool run(int first); bool run(const std::string& label); };\n",
+        "src/other.hpp": "class Other { public: int idle; };\n"
+      },
+      "activeFile": "src/other.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run(const std::string&)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Engine::run",
+        "file": "src/engine.hpp",
+        "signatureContains": "run(const std::string& label)",
+        "signatureKey": "Engine::run(const std::string&)",
+        "matchReason": "signature",
+        "complete": true
+      },
+      "group": "overload",
+      "split": "smoke"
+    },
+    {
+      "id": "scope_precedence_over_focus",
+      "category": "scope",
+      "note": "An explicit scope beats the active file.",
+      "files": {
+        "src/session.hpp": "class SessionManager { public: bool readPacket(int offset); };\n",
+        "src/log.hpp": "class LogClient { public: bool readPacket(int offset); };\n"
+      },
+      "activeFile": "src/log.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "readPacket",
+        "property": "name",
+        "value": "changed",
+        "condition": "in SessionManager"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "SessionManager::readPacket",
+        "file": "src/session.hpp",
+        "signatureContains": "readPacket(int offset)",
+        "matchReason": "scope",
+        "complete": true
+      },
+      "group": "scope",
+      "split": "smoke"
+    },
+    {
+      "id": "file_precedence_over_focus",
+      "category": "file",
+      "note": "An explicit file constraint beats the active file.",
+      "files": {
+        "src/widget_a.hpp": "class Widget { public: int value; };\n",
+        "src/widget_b.hpp": "class Widget { public: int value; };\n"
+      },
+      "activeFile": "src/widget_b.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "file src/widget_a.hpp"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Widget::value",
+        "file": "src/widget_a.hpp",
+        "signatureContains": "int value",
+        "matchReason": "file",
+        "complete": true
+      },
+      "group": "file",
+      "split": "smoke"
+    },
+    {
+      "id": "parameter_by_name",
+      "category": "parameter",
+      "note": "Property parameter with value name selects the declared parameter.",
+      "files": {
+        "src/service.hpp": "class Service { public: bool submit(int count, double limit); };\n"
+      },
+      "activeFile": "src/service.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "submit",
+        "property": "parameter",
+        "value": "count",
+        "condition": "in Service"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Service::submit::count",
+        "file": "src/service.hpp",
+        "signatureContains": "int count",
+        "matchReason": "parameter",
+        "complete": true
+      },
+      "group": "parameter",
+      "split": "smoke"
+    },
+    {
+      "id": "parameter_by_position",
+      "category": "parameter",
+      "note": "Property parameter with value #2 selects the second declared parameter.",
+      "files": {
+        "src/service.hpp": "class Service { public: bool submit(int count, double limit); };\n"
+      },
+      "activeFile": "src/service.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "submit",
+        "property": "parameter",
+        "value": "#2",
+        "condition": "in Service"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Service::submit::limit",
+        "file": "src/service.hpp",
+        "signatureContains": "double limit",
+        "matchReason": "parameter",
+        "complete": true
+      },
+      "group": "parameter",
+      "split": "smoke"
+    },
+    {
+      "id": "global_variable",
+      "category": "variable",
+      "group": "variable",
+      "split": "smoke",
+      "files": {
+        "src/count.cpp": "int counter;\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "counter",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "counter",
+        "file": "src/count.cpp",
+        "matchReason": "unique",
+        "complete": true
+      }
+    },
+    {
+      "id": "namespace_function_definition",
+      "category": "definition",
+      "group": "definition",
+      "split": "smoke",
+      "files": {
+        "src/flush.cpp": "namespace telemetry { void flush() { int hiddenBody = 2; } }\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "telemetry::flush",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "telemetry::flush",
+        "file": "src/flush.cpp",
+        "matchReason": "qualified",
+        "complete": true,
+        "signatureContains": "void flush()"
+      }
+    },
+    {
+      "id": "nested_struct_field",
+      "category": "field",
+      "group": "field",
+      "split": "smoke",
+      "files": {
+        "src/point.hpp": "namespace geometry { struct Point { double x; double y; }; }\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "geometry::Point::x",
+        "property": "field",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "geometry::Point::x",
+        "file": "src/point.hpp",
+        "matchReason": "qualified",
+        "complete": true
+      }
+    },
+    {
+      "id": "late_member_139",
+      "category": "large_scope",
+      "group": "large_scope",
+      "split": "smoke",
+      "files": {
+        "src/large.hpp": "class Large { public: int m0; int m1; int m2; int m3; int m4; int m5; int m6; int m7; int m8; int m9; int m10; int m11; int m12; int m13; int m14; int m15; int m16; int m17; int m18; int m19; int m20; int m21; int m22; int m23; int m24; int m25; int m26; int m27; int m28; int m29; int m30; int m31; int m32; int m33; int m34; int m35; int m36; int m37; int m38; int m39; int m40; int m41; int m42; int m43; int m44; int m45; int m46; int m47; int m48; int m49; int m50; int m51; int m52; int m53; int m54; int m55; int m56; int m57; int m58; int m59; int m60; int m61; int m62; int m63; int m64; int m65; int m66; int m67; int m68; int m69; int m70; int m71; int m72; int m73; int m74; int m75; int m76; int m77; int m78; int m79; int m80; int m81; int m82; int m83; int m84; int m85; int m86; int m87; int m88; int m89; int m90; int m91; int m92; int m93; int m94; int m95; int m96; int m97; int m98; int m99; int m100; int m101; int m102; int m103; int m104; int m105; int m106; int m107; int m108; int m109; int m110; int m111; int m112; int m113; int m114; int m115; int m116; int m117; int m118; int m119; int m120; int m121; int m122; int m123; int m124; int m125; int m126; int m127; int m128; int m129; int m130; int m131; int m132; int m133; int m134; int m135; int m136; int m137; int m138; int m139; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "m139",
+        "property": "field",
+        "value": "changed",
+        "condition": "in Large"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Large::m139",
+        "file": "src/large.hpp",
+        "matchReason": "scope",
+        "complete": true
+      }
+    },
+    {
+      "id": "formatted_scope_and_target",
+      "category": "formatting",
+      "group": "formatting",
+      "split": "smoke",
+      "files": {
+        "src/engine.hpp": "class Engine { public: int run(int count); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "**run**",
+        "property": "name",
+        "value": "changed",
+        "condition": "in `Engine`"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Engine::run",
+        "file": "src/engine.hpp",
+        "matchReason": "scope",
+        "complete": true
+      }
+    },
+    {
+      "id": "quoted_target",
+      "category": "formatting",
+      "group": "formatting",
+      "split": "smoke",
+      "files": {
+        "src/a.hpp": "int value;\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "\"value\"",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/a.hpp",
+        "matchReason": "unique",
+        "complete": true
+      }
+    },
+    {
+      "id": "padded_target",
+      "category": "formatting",
+      "group": "formatting",
+      "split": "smoke",
+      "files": {
+        "src/a.hpp": "int value;\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "   value   ",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/a.hpp",
+        "matchReason": "unique",
+        "complete": true
+      }
+    },
+    {
+      "id": "missing_explicit_scope_no_global_fallback",
+      "category": "missing_scope",
+      "group": "missing_scope",
+      "split": "smoke",
+      "files": {
+        "src/a.hpp": "int run();\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "name",
+        "value": "changed",
+        "condition": "in Missing"
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "target": "Missing::run",
+        "matchReason": "scope",
+        "complete": true
+      }
+    },
+    {
+      "id": "absent_explicit_file",
+      "category": "missing_file",
+      "group": "missing_file",
+      "split": "smoke",
+      "files": {
+        "src/other.hpp": "int run();\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "name",
+        "value": "changed",
+        "condition": "file src/missing.hpp"
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "matchReason": "file",
+        "complete": true
+      }
+    },
+    {
+      "id": "active_file_exact_tie",
+      "category": "active_file",
+      "group": "active_file",
+      "split": "smoke",
+      "files": {
+        "src/a.hpp": "namespace a { int run(); }\n",
+        "src/b.hpp": "namespace b { int run(); }\n"
+      },
+      "activeFile": "src/a.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "a::run",
+        "file": "src/a.hpp",
+        "matchReason": "active-file",
+        "complete": true
+      }
+    },
+    {
+      "id": "unfocused_global_ambiguity",
+      "category": "ambiguity",
+      "group": "ambiguity",
+      "split": "smoke",
+      "files": {
+        "src/a.hpp": "namespace a { int run(); }\n",
+        "src/b.hpp": "namespace b { int run(); }\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "target": "run",
+        "complete": true,
+        "minCandidates": 2
+      }
+    },
+    {
+      "id": "function_requested_as_parameter",
+      "category": "type_mismatch",
+      "group": "type_mismatch",
+      "split": "smoke",
+      "files": {
+        "src/a.hpp": "int run();\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "run",
+        "property": "parameter",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "TypeMismatch",
+        "target": "run",
+        "complete": true
+      }
+    },
+    {
+      "id": "missing_second_parameter",
+      "category": "parameter_missing",
+      "group": "parameter_missing",
+      "split": "smoke",
+      "files": {
+        "src/a.hpp": "class Service { public: void submit(int count); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "submit",
+        "property": "parameter",
+        "value": "#2",
+        "condition": "in Service"
+      },
+      "expected": {
+        "status": "NotFoundInScope",
+        "matchReason": "parameter",
+        "complete": true
+      }
+    },
+    {
+      "id": "signature_two_arguments",
+      "category": "signature",
+      "group": "signature",
+      "split": "smoke",
+      "files": {
+        "src/a.hpp": "class Engine { public: void run(int first, double second); void run(double first, int second); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run(int,double)",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Engine::run",
+        "file": "src/a.hpp",
+        "matchReason": "signature",
+        "complete": true
+      }
+    },
+    {
+      "id": "unsupported_trailing_signature_qualifier",
+      "category": "unsupported_signature",
+      "group": "unsupported_signature",
+      "split": "smoke",
+      "files": {
+        "src/a.hpp": "class Engine { public: void run(int first) const; };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Engine::run(int) const",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Ambiguous",
+        "complete": false
+      }
+    },
+    {
+      "id": "file_constraint_over_existing_focus",
+      "category": "file",
+      "group": "file",
+      "split": "smoke",
+      "files": {
+        "src/a.hpp": "int value;\n",
+        "src/b.hpp": "double value;\n"
+      },
+      "activeFile": "src/b.hpp",
+      "intent": {
+        "action": "MODIFY",
+        "target": "value",
+        "property": "name",
+        "value": "changed",
+        "condition": "file src/a.hpp"
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "value",
+        "file": "src/a.hpp",
+        "matchReason": "file",
+        "complete": true
+      }
+    },
+    {
+      "id": "field_lambda_body_exclusion",
+      "category": "body_exclusion",
+      "group": "body_exclusion",
+      "split": "smoke",
+      "files": {
+        "src/a.hpp": "struct Task { int value = [](){ int secretBody = 7; return secretBody; }(); };\n"
+      },
+      "activeFile": "",
+      "intent": {
+        "action": "MODIFY",
+        "target": "Task::value",
+        "property": "name",
+        "value": "changed",
+        "condition": ""
+      },
+      "expected": {
+        "status": "Verified",
+        "target": "Task::value",
+        "file": "src/a.hpp",
+        "matchReason": "qualified",
+        "complete": true,
+        "signatureContains": "int value"
+      }
+    }
+  ]
+}

@@ -2,6 +2,15 @@
 
 Roclint is a resident native prompt-engineering application built with C++20, Qt Quick/QML and SQLite. The supplied Stardust v4.2 product contracts guide the implementation.
 
+The AST correctness baseline is sealed at `deadd39` with workspace/scope epochs,
+failed-cache invalidation, meaningful bounded renderer identity and automatic
+stale-path recovery. [Baseline verification](audit/ast_baseline_verification_2026-11-05.md)
+records the Windows reproductions and gates. The optional development-only
+[evaluation runner](audit/phoenix_evaluation_baseline_2026-11-05.md) has a 30-case
+AST / six-case native rewrite smoke set and local Phoenix publication/readback.
+Semantic rewrite acceptance, held-out datasets and native macOS validation remain
+separate gates. Phoenix is not a desktop application dependency.
+
 The original upstream HUD/dashboard design and workspace/scope controls are retained. [Upstream integration](UPSTREAM_INTEGRATION.md) records the subsequent compatibility pass and intentional command/runtime changes. The default shortcut is Ctrl/Cmd+Shift+L; saved user preferences take precedence.
 
 ## Normal workflow

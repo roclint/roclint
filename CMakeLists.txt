@@ -180,6 +180,11 @@ endfunction()
 
 roclint_add_storage_library(roclint_storage roclint_core)
 
+# Development-only synthetic evaluation adapter; no Phoenix dependency in the host.
+add_executable(roclint_ast_evaluator tools/ast_grounding_evaluator.cpp)
+target_link_libraries(roclint_ast_evaluator PRIVATE roclint_storage)
+roclint_apply_warnings(roclint_ast_evaluator)
+
 include(CTest)
 if(BUILD_TESTING)
     roclint_add_core_library(roclint_core_testing ON)
@@ -624,6 +629,8 @@ if(BUILD_TESTING)
         set_tests_properties(roclint_julia_worker PROPERTIES TIMEOUT 30 ENVIRONMENT "PYTHONUTF8=1;PYTHONNOUSERSITE=1")
         add_test(NAME roclint_granite_probe COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_check_granite_runtime.py")
         set_tests_properties(roclint_granite_probe PROPERTIES TIMEOUT 30 ENVIRONMENT "PYTHONUTF8=1;PYTHONNOUSERSITE=1")
+        add_test(NAME roclint_evaluation_runner COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_roclint_eval.py")
+        set_tests_properties(roclint_evaluation_runner PROPERTIES TIMEOUT 30 ENVIRONMENT "PYTHONUTF8=1;PYTHONNOUSERSITE=1")
     endif()
     roclint_add_test(roclint_materiality_policy    tests/analysis/testMaterialityPolicy.cpp          roclint_core_testing)
     roclint_add_test(roclint_analysis_checkpoint   tests/analysis/test_analysis_checkpoint.cpp       roclint_core_testing)

@@ -1,8 +1,9 @@
 # Roclint AST completion and Phoenix evaluation plan
 
-Date: 2026-11-05, America/Los_Angeles. Status: Milestone 0 verified on Windows; evaluation runner implementation is next. Evaluation and tuning completion are separate gates.
+Date: 2026-11-05, America/Los_Angeles. Status: Milestone 0 committed as `deadd39`; Milestone 1 implemented and exercised with a 30-AST / six-rewrite smoke set. Milestone 2 dataset expansion and held-out semantic acceptance remain open; tuning has not started.
 
 Execution evidence: [AST baseline verification](../audit/ast_baseline_verification_2026-11-05.md).
+Runner and initial publication evidence: [Phoenix smoke baseline](../audit/phoenix_evaluation_baseline_2026-11-05.md).
 
 ## Objective and boundary
 

@@ -116,11 +116,29 @@ QJsonArray validateRuns(const QJsonObject& report) {
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     const bool validate = argc == 3 && std::string_view(argv[1]) == "--validate";
-    if (argc != 2 && !validate) { std::cerr << "Usage: roclint_granite_contracts <fixtures.json> | --validate <benchmark-report.json>\n"; return 2; }
+    const bool rewriteFixture = argc == 3 && std::string_view(argv[1]) == "--rewrite-fixture";
+    if (argc != 2 && !validate && !rewriteFixture) { std::cerr << "Usage: roclint_granite_contracts <fixtures.json> | --validate <benchmark-report.json> | --rewrite-fixture <fixture.json>\n"; return 2; }
     try {
-        QFile file(QString::fromLocal8Bit(argv[validate ? 2 : 1]));
+        QFile file(QString::fromLocal8Bit(argv[validate || rewriteFixture ? 2 : 1]));
         if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("Could not read the frozen fixture corpus");
         const auto fixtures = QJsonDocument::fromJson(file.readAll()).object();
+        if (rewriteFixture) {
+            if (!fixtures.value(QStringLiteral("synthetic")).toBool())
+                throw std::runtime_error("Only explicitly synthetic fixtures are supported");
+            const auto prompt = fixtures.value(QStringLiteral("prompt")).toString();
+            const auto profileId = fixtures.value(QStringLiteral("profile")).toString(QStringLiteral("GENERIC@1"));
+            const auto profile = roclint::core::rewrite::ProfileRegistry::getProfile(ss(profileId));
+            if (prompt.trimmed().isEmpty() || !profile) throw std::runtime_error("Invalid rewrite fixture");
+            const auto request = rewriteRequest(prompt, profileId);
+            const QJsonObject result{{QStringLiteral("id"), fixtures.value(QStringLiteral("id"))},
+                {QStringLiteral("op"), QStringLiteral("granite_rewrite")},
+                {QStringLiteral("prompt"), prompt}, {QStringLiteral("rewrite_profile_id"), profileId},
+                {QStringLiteral("intent_id"), qs(request.confirmedIntent.id)},
+                {QStringLiteral("instructions"), qs(roclint::bridge::buildRewritePrompt(request, *profile))},
+                {QStringLiteral("schema"), qs(roclint::bridge::rewriteResponseSchema())}};
+            std::cout << QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString() << '\n';
+            return 0;
+        }
         if (validate) {
             if (fixtures.value(QStringLiteral("runs")).toArray().isEmpty()) throw std::runtime_error("Benchmark report contains no runs");
             const auto results = validateRuns(fixtures);
