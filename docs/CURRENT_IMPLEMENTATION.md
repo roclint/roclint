@@ -27,6 +27,15 @@ The original upstream HUD/dashboard design and workspace/scope controls are reta
 
 ## Normal workflow
 
+November 6 hands-on follow-up: editing from a rewrite preview now discards the
+old proposal before revealing/focusing the draft. Rewrite contract v7 corrects
+rough prose, removes inferred requirements from fallback canonical context,
+and reports identical output explicitly. Windows checks passed 52/52 CTests,
+77 Python tests (one platform skip), and 200/200 frozen automatic evaluation
+checks. Actual native-host replay reworded the rough Queue draft correctly.
+Agent review still flags seven semantic concerns; human acceptance and native
+macOS validation remain open. See [the current audit](audit/rewrite_usefulness_2026-11-06.md).
+
 1. Focus the prompt field in a supported application and invoke Roclint using the configured global shortcut. Alternatively, open the HUD and type or paste a draft explicitly. Opening Roclint never imports the clipboard automatically.
 2. Review or edit the captured draft, optionally clearing the one-shot coarse app-category hint.
 3. With the HUD open, pause typing for 800 ms to check the latest draft automatically, or choose **Review prompt** for deeper review, including after a low S1 score. Draft persistence completes before analysis starts. Julia/S1 first classifies the frozen prompt. Automatic checks use its existing threshold/dead band; explicit review can invoke Granite regardless of that score. Results distinguish ready, one useful question, and optional assistance. Original wording remains available. An unavailable scorer cannot establish a clear route.
