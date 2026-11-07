@@ -167,6 +167,193 @@
         "must_preserve_literals": ["Engine::run", "execute", "behavior", "public API"],
         "semantic_rubric": "Unchanged text is allowed for this polished control. Do not invent further scope."
       }
+    },
+    {
+      "id": "confirmed_reader_readability",
+      "category": "confirmed_goal",
+      "group": "hands_on_clarification",
+      "split": "development",
+      "profile": "GENERIC@1",
+      "synthetic": true,
+      "prompt": "Make Reader::open better.",
+      "request_mode": "clarified",
+      "discovery_reply": {
+        "status": "options_generated",
+        "choice_groups": [
+          {
+            "question": "What should improve in Reader::open?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Readability",
+                "why_material": "Structure",
+                "evidence": [
+                  "better"
+                ]
+              },
+              {
+                "label": "Reliability",
+                "why_material": "Error handling",
+                "evidence": [
+                  "better"
+                ]
+              },
+              {
+                "label": "Performance",
+                "why_material": "Execution cost",
+                "evidence": [
+                  "better"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "must_preserve_literals": [
+          "Reader::open"
+        ],
+        "required_patterns": [
+          "readab"
+        ],
+        "semantic_rubric": "Incorporate the explicitly selected Reader improvement goal; do not leave that confirmed choice open."
+      },
+      "confirmed_alternatives": {
+        "grp_0": "alt_0_0"
+      }
+    },
+    {
+      "id": "confirmed_reader_reliability",
+      "category": "confirmed_goal",
+      "group": "hands_on_clarification",
+      "split": "development",
+      "profile": "GENERIC@1",
+      "synthetic": true,
+      "prompt": "Make Reader::open better.",
+      "request_mode": "clarified",
+      "discovery_reply": {
+        "status": "options_generated",
+        "choice_groups": [
+          {
+            "question": "What should improve in Reader::open?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Readability",
+                "why_material": "Structure",
+                "evidence": [
+                  "better"
+                ]
+              },
+              {
+                "label": "Reliability",
+                "why_material": "Error handling",
+                "evidence": [
+                  "better"
+                ]
+              },
+              {
+                "label": "Performance",
+                "why_material": "Execution cost",
+                "evidence": [
+                  "better"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "must_preserve_literals": [
+          "Reader::open"
+        ],
+        "required_patterns": [
+          "reliab|error.handl"
+        ],
+        "semantic_rubric": "Incorporate the explicitly selected Reader improvement goal; do not leave that confirmed choice open."
+      },
+      "confirmed_alternatives": {
+        "grp_0": "alt_0_1"
+      }
+    },
+    {
+      "id": "confirmed_reader_with_open_queue",
+      "category": "mixed_goal",
+      "group": "hands_on_clarification",
+      "split": "development",
+      "profile": "GENERIC@1",
+      "synthetic": true,
+      "prompt": "Make Reader::open better. Make Queue::push faster.",
+      "request_mode": "skip_questions",
+      "discovery_reply": {
+        "status": "options_generated",
+        "choice_groups": [
+          {
+            "question": "What should improve in Reader::open?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Readability",
+                "why_material": "Structure",
+                "evidence": [
+                  "better"
+                ]
+              },
+              {
+                "label": "Reliability",
+                "why_material": "Error handling",
+                "evidence": [
+                  "better"
+                ]
+              },
+              {
+                "label": "Performance",
+                "why_material": "Execution cost",
+                "evidence": [
+                  "better"
+                ]
+              }
+            ]
+          },
+          {
+            "question": "Which speed goal matters for Queue::push?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Lower latency",
+                "why_material": "Individual calls",
+                "evidence": [
+                  "faster"
+                ]
+              },
+              {
+                "label": "Higher throughput",
+                "why_material": "Batches",
+                "evidence": [
+                  "faster"
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "must_preserve_literals": [
+          "Reader::open",
+          "Queue::push"
+        ],
+        "required_patterns": [
+          "readab"
+        ],
+        "forbidden_patterns": [
+          "latency",
+          "throughput"
+        ],
+        "semantic_rubric": "Apply the confirmed Reader readability goal while leaving the Queue speed objective open."
+      },
+      "confirmed_alternatives": {
+        "grp_0": "alt_0_0"
+      }
     }
   ]
 }

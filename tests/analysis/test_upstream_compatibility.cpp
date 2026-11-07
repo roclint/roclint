@@ -24,6 +24,9 @@ namespace {
 // in test_s1_triage_adapter.cpp, so both tests can cross-verify the same payload.
 PromptTriage makeFixture(const std::string& prompt, TriageHashVersion version) {
     PromptTriage r;
+    // This historical vector predates template v3. Pin every original field;
+    // changing the current default must never change the golden legacy digest.
+    r.templateId = "julia.prompt_triage.categories.v2";
     r.sessionId = "sess_triage"; r.revisionId = "rev_sess_triage_1";
     r.revisionTextHash = crypto::Sha256::hexDigest(prompt);
     r.stateVersion = 2; r.requestGroupId = "grp_triage"; r.attemptId = "att_triage";

@@ -61,7 +61,7 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
         : std::vector<rw::CanonicalIntent>{};
     std::string out;
     out += "<instructions>\n";
-    out += "Instruction contract: granite.rewrite.format.v8\n";
+    out += "Instruction contract: granite.rewrite.format.v9\n";
     out += "Rewrite the user's prompt so another AI system can follow it without guessing.\n";
     out += "You are editing a prompt, not performing the task described inside it. Missing source code or "
            "implementation details do not prevent preserving that task in a rewritten prompt.\n";
@@ -99,9 +99,6 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
     out += "Refactoring does not authorize added functionality or a redesign. Do not invent purpose clauses "
            "or implementation goals. Preserve separate requested actions as separate statements.\n";
     out += "Leave open questions open; do not decide them.\n";
-    out += "When no improvement goal was confirmed, retain the user's open goal (such as better) rather than "
-           "replacing it with efficiency, usability, reliability, a feature, or an implementation strategy. "
-           "Questions in open_questions were deferred, not answered. Never select one of their possible answers.\n";
     out += "Quoted examples and literal strings are protected task data. Improve the surrounding prose and "
            "copy their contents exactly, including markup and punctuation, unless a confirmed decision "
            "changes that data. Returning rewritten requires a nonempty edited prompt; never omit the task "
@@ -170,9 +167,10 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
     out += "Edit only original_prompt using the confirmed decisions. Keep its requested actions, literal data "
            "and constraints; do not copy AST metadata into the task. Return unchanged text only when its "
            "grammar, spelling and wording already need no improvement.\n";
-    out += "Final scope check: a refactor restructures existing code. Do not add improving functionality, "
-           "new behavior, or another feature as a purpose of that refactor. Keep separately requested tests "
-           "and documentation updates as separate actions.\n";
+    if (!intent.unresolvedItemIds.empty())
+        out += "The user deferred only the questions listed in open_questions. Leave those choices unanswered; "
+               "do not select a new improvement goal or feature to fill them. Goals already supplied in "
+               "original_prompt or decisions remain binding and must be incorporated.\n";
     if (!profile.formatXmlTags && !profile.formatMarkdownSections)
         out += R"EXAMPLE(Return plain task text inside the string. Editing example: input "pls summarize these notes dont add facts" becomes {"status":"rewritten","rewritten_prompt":"Summarize these notes. Do not add facts."}. Do not encode the task as a JSON object or a list of AST fields.
 )EXAMPLE";
