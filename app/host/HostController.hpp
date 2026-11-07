@@ -251,6 +251,7 @@ class HostController : public QObject {
     Q_PROPERTY(bool isNativeGraniteQ4Installed READ isNativeGraniteQ4Installed NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(QString inferenceSpeed READ inferenceSpeed NOTIFY inferenceSpeedChanged)
     Q_PROPERTY(double tokensPerSecond READ tokensPerSecond NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(qint64 generationTokens READ generationTokens NOTIFY inferenceSpeedChanged)
     Q_PROPERTY(QString acceleratorName READ acceleratorName CONSTANT)
     Q_PROPERTY(QString nativeGraniteDiskStatus READ nativeGraniteDiskStatus NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(QString nativeGraniteMemoryStatus READ nativeGraniteMemoryStatus NOTIFY modelEngineStatusChanged)
@@ -437,6 +438,7 @@ public:
     [[nodiscard]] bool isNativeGraniteQ4Installed() const;
     [[nodiscard]] QString inferenceSpeed() const;
     [[nodiscard]] double tokensPerSecond() const;
+    [[nodiscard]] qint64 generationTokens() const;
     [[nodiscard]] QString acceleratorName() const {
         // ROCLINT_ACCELERATOR_NAME is injected by CMakeLists.txt (PUBLIC) from the resolved
         // _roclint_backend variable so it always matches the actual compiled backend

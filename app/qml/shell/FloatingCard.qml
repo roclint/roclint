@@ -36,6 +36,7 @@ Window {
     readonly property string serifFont: isMac ? "Times New Roman" : "Georgia"
 
     readonly property bool hc: typeof hostController !== "undefined" && hostController !== null
+    readonly property bool generationPending: hc && (hostController.isAnalyzing || hostController.proposalStatus === "GENERATING")
     property var projectList: hc ? hostController.recentProjects() : []
     property int currentProjectIndex: 0
     readonly property var activeProject: projectList.length > currentProjectIndex ? projectList[currentProjectIndex] : ({name: qsTr("Choose workspace"), path: ""})
@@ -523,16 +524,16 @@ Window {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         Layout.preferredHeight: 32
-                        Image {
-                            anchors.right: parent.right; anchors.bottom: parent.bottom
-                            width: Math.min(185, parent.width); height: 22
-                            visible: width > 75
-                            source: "assets/pixel-signal.png"
-                            sourceClipRect: Qt.rect(230, 250, 1900, 200)
-                            fillMode: Image.PreserveAspectFit
-                            smooth: false
-                            opacity: 0.75
-                            Accessible.ignored: true
+                        GenerationMeter {
+                            anchors.right: parent.right
+                            width: Math.min(185, parent.width)
+                            height: 32
+                            tokensPerSecond: rootWindow.hc && (!rootWindow.generationPending || hostController.isInferring) ? hostController.tokensPerSecond : 0
+                            tokenCount: rootWindow.hc && (!rootWindow.generationPending || hostController.isInferring) ? hostController.generationTokens : 0
+                            processing: rootWindow.visible && rootWindow.hc && (rootWindow.generationPending || hostController.isInferring)
+                            metricsAvailable: rootWindow.hc && hostController.nativeGraniteSelected
+                            currentTheme: rootWindow.currentTheme
+                            reducedMotion: rootWindow.reducedMotion
                         }
                         MouseArea { anchors.fill: parent; onPressed: rootWindow.startSystemMove() }
                     }
@@ -768,7 +769,6 @@ Window {
                                 if (rootWindow.isCompiledPreview) rootWindow.revertToDraft();
                                 else { rootWindow.editingDraft = true; promptInput.forceActiveFocus(); }
                             }
-                            diagnosticMetrics: qsTr("%1 characters · %2 words\nRevision %3").arg(promptInput.text.length).arg(rootWindow.getWordCount(promptInput.text)).arg(rootWindow.hc ? hostController.stateVersion : 0)
                         }
                         HudButton {
                             label: rootWindow.showWorkspaceOptions ? qsTr("Hide workspace options") : qsTr("Workspace options")

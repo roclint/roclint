@@ -11,6 +11,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QStringDecoder>
 
 #include <atomic>
 #include <chrono>
@@ -36,6 +37,7 @@
 namespace {
 using Clock = std::chrono::steady_clock;
 using roclint::runtime::GraniteEngine;
+using roclint::runtime::GraniteStreamProgress;
 using roclint::runtime::GraniteFailure;
 constexpr qsizetype kMaxFrame = 1024 * 1024;
 constexpr quint64 kMaxId = 9007199254740991ULL;
@@ -286,14 +288,18 @@ int main(int argc, char** argv) {
             QJsonObject response;
             try {
                 control.check();
-                // Stream each decoded text piece to the host as a partial_result frame.
-                const auto streamToken = [&](std::string_view piece) {
+                // The decoder preserves Unicode split across token/batch boundaries.
+                QStringDecoder streamDecoder(QStringDecoder::Utf8);
+                const auto streamToken = [&](const GraniteStreamProgress& progress) {
                     if (work.cancelled->load() || stopping.load()) return;
                     auto partial = work.request;
                     partial.remove(QStringLiteral("payload"));
                     partial.insert(QStringLiteral("type"), QStringLiteral("partial_result"));
                     partial.insert(QStringLiteral("ok"), true);
-                    partial.insert(QStringLiteral("chunk"), QString::fromUtf8(piece.data(), static_cast<qsizetype>(piece.size())));
+                    partial.insert(QStringLiteral("chunk"), QString(streamDecoder(QByteArrayView(progress.text.data(), static_cast<qsizetype>(progress.text.size())))));
+                    partial.insert(QStringLiteral("output_tokens"), progress.outputTokens);
+                    partial.insert(QStringLiteral("decode_ms"), progress.decodeMs);
+                    partial.insert(QStringLiteral("generation_ms"), progress.generationMs);
                     emitFrame(partial);
                 };
                 const auto result = engine.execute(work.request.value(QStringLiteral("op")).toString(),

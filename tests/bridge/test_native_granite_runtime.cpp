@@ -87,14 +87,27 @@ int fixture(const QString& mode) {
         }
         response.insert(QStringLiteral("result"), result);
         if (op == QLatin1String("granite_analyze") &&
-            (mode == QLatin1String("stream") || mode == QLatin1String("bad_stream") || mode == QLatin1String("unbound_stream"))) {
+            (mode == QLatin1String("stream") || mode == QLatin1String("stream_metrics") || mode == QLatin1String("invalid_metrics") || mode == QLatin1String("bad_stream") || mode == QLatin1String("unbound_stream"))) {
             auto partial = response;
             partial.remove(QStringLiteral("result"));
             partial.insert(QStringLiteral("type"), QStringLiteral("partial_result"));
             partial.insert(QStringLiteral("chunk"), QStringLiteral("token"));
             if (mode == QLatin1String("bad_stream")) partial.insert(QStringLiteral("session_id"), "wrong_session");
             if (mode == QLatin1String("unbound_stream")) partial = {{"type", "partial_result"}, {"request_id", response.value("request_id")}, {"chunk", "token"}};
-            for (int i = 0; i < 65; ++i) std::cout << QJsonDocument(partial).toJson(QJsonDocument::Compact).toStdString() << '\n';
+            if (mode == QLatin1String("stream_metrics")) QThread::msleep(100);
+            for (int i = 0; i < 65; ++i) {
+                if (mode == QLatin1String("stream_metrics") || mode == QLatin1String("invalid_metrics")) {
+                    partial.insert("output_tokens", mode == QLatin1String("invalid_metrics") ? 999999 : (i+1)*4);
+                    partial.insert("decode_ms", mode == QLatin1String("invalid_metrics") ? -1 : (i+1)*20);
+                    partial.insert("generation_ms", (i+1)*25);
+                }
+                std::cout << QJsonDocument(partial).toJson(QJsonDocument::Compact).toStdString() << '\n' << std::flush;
+                if (mode == QLatin1String("stream_metrics")) QThread::msleep(2);
+            }
+            if (mode == QLatin1String("stream_metrics")) {
+                result.insert("output_tokens",260); result.insert("decode_ms",1300); result.insert("generation_ms",1625);
+                response.insert("result",result);
+            }
             std::cout << std::flush;
         }
         const auto frame = QJsonDocument(response).toJson(QJsonDocument::Compact).toStdString() + "\n";
@@ -290,6 +303,20 @@ void protocolTests() {
     load(QStringLiteral("stream")); future = generate(runtime);
     waitUntil([&]() { return future.isFinished() && chunks == 65; });
     ROCLINT_CHECK(future.result().ok());
+    bool liveMetrics=false;
+    QObject::connect(&runtime,&NativeGraniteRuntime::speedMetricsChanged,[&]() {
+        if (runtime.state()=="BUSY" && runtime.lastOutputTokens()>0 && runtime.lastTokensPerSecond()==200.0)
+            liveMetrics=true;
+    });
+    load(QStringLiteral("stream_metrics")); future=generate(runtime);
+    waitUntil([&]() { return runtime.state()=="BUSY"; });
+    ROCLINT_CHECK(runtime.lastOutputTokens()==0 && runtime.lastTokensPerSecond()==0);
+    waitUntil([&]() { return future.isFinished() && liveMetrics; });
+    ROCLINT_CHECK(future.result().ok() && runtime.lastOutputTokens()==260 && runtime.lastTokensPerSecond()==200);
+    load(QStringLiteral("invalid_metrics")); future=generate(runtime);
+    waitUntil([&]() { return future.isFinished(); });
+    ROCLINT_CHECK(future.result().ok() && runtime.lastOutputTokens()==0 && runtime.lastTokensPerSecond()==0);
+    std::cout << "  [PASS] Live token metrics arrive before completion, reset per request, and ignore invalid telemetry.\n";
     ROCLINT_CHECK(runtime.modelInfo().transport == "local_native_llama_cpp");
     ROCLINT_CHECK(runtime.configurationDetail().contains(QStringLiteral("template_sha256=")));
     ROCLINT_CHECK(runtime.configurationDetail().contains(QStringLiteral("temperature=1; top_p=0.95; seed=42")));
@@ -442,22 +469,18 @@ void acceleratorNameTests() {
 // P1-B / F-04: tokensPerSecond() and inferenceSpeed() must be zero/empty after stop().
 void speedMetricsClearOnStopTests() {
     NativeGraniteRuntime runtime(nullptr, QCoreApplication::applicationFilePath());
-    runtime.load(QStringLiteral("partial"), QStringLiteral("Q4_K_M"));
+    runtime.load(QStringLiteral("stream_metrics"), QStringLiteral("Q4_K_M"));
     waitUntil([&]() { return runtime.isReady(); });
     auto future = generate(runtime);
     waitUntil([&]() { return future.isFinished(); });
     ROCLINT_CHECK(future.result().ok());
-    // After a completed inference the runtime reports non-zero tok/s through the mock.
-    // (The fixture does not supply decode_ms/output_tokens, so the runtime keeps 0.0 —
-    // the assertion is that stop() clears whatever value was present.)
-    const double tpsBefore = runtime.lastTokensPerSecond();
+    ROCLINT_CHECK(runtime.lastTokensPerSecond()==200 && runtime.lastOutputTokens()==260);
     runtime.stop();
     waitUntil([&]() { return !runtime.isRunning(); });
     ROCLINT_CHECK(runtime.lastTokensPerSecond() == 0.0);
     ROCLINT_CHECK(runtime.lastOutputTokens() == 0);
     ROCLINT_CHECK(runtime.lastDecodeMs() == 0.0);
     ROCLINT_CHECK(runtime.lastGenerationMs() == 0.0);
-    (void)tpsBefore; // value before stop; cleared post-stop is what we assert
     std::cout << "  [PASS] Speed metrics cleared to zero after stop().\n";
 }
 

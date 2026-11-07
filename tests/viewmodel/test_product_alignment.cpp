@@ -13,6 +13,7 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QGuiApplication>
+#include <QJSValue>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlExpression>
@@ -26,6 +27,7 @@
 #include <QtTest/QTest>
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <thread>
@@ -301,7 +303,7 @@ void testProductionReviewPresentation() {
     window->resize(560, 400);
     savePreview(window, "selective-review-compact.png");
     ROCLINT_CHECK(!c.hasApproval());
-    std::cout << "  [PASS] Production review hides mechanical badges until technical details are requested.\n";
+    std::cout << "  [PASS] Production HUD keeps mechanical metadata hidden.\n";
 }
 
 void testNativeGlobalShortcutDispatch() {
@@ -1254,6 +1256,49 @@ void testAutoAnalysisResumesAfterDelivery() {
     std::cout << "  [PASS] Delivery echoes do not trigger analysis; new source typing checks the next prompt automatically.\n";
 }
 
+void testGenerationMeterUsesMeasuredProgress() {
+    QSettings().clear();
+    HostController c(":memory:"); ROCLINT_CHECK(c.waitForStorageForTesting());
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("hostController",&c);
+    engine.load(QUrl("qrc:/shell/FloatingCard.qml"));
+    ROCLINT_CHECK(engine.rootObjects().size()==1);
+    auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    auto* meter=window->findChild<QQuickItem*>("generationMeter");
+    ROCLINT_CHECK(meter && !window->findChild<QObject*>("reviewDiagnosticsButton"));
+    const auto history=[&]() { return meter->property("history").value<QJSValue>().toVariant().toList(); };
+    const auto flat=[&]() { const auto samples=history(); return std::all_of(samples.begin(),samples.end(),[](const QVariant& v) { return v.toDouble()==0; }); };
+    ROCLINT_CHECK(meter->property("rateText").toString()=="— tok/s" && flat());
+    meter->setProperty("processing",true);
+    ROCLINT_CHECK(meter->property("rateText").toString()=="Preparing…" && flat());
+    meter->setProperty("sampledAt",1000.0);
+    meter->setProperty("tokenCount",12.0);
+    meter->setProperty("tokensPerSecond",42.5);
+    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"sample",Q_ARG(QVariant,QVariant(2000.0))));
+    ROCLINT_CHECK(history().last().toDouble()==12 && meter->property("rateText").toString()=="42.5 tok/s");
+    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"sample",Q_ARG(QVariant,QVariant(3000.0))));
+    ROCLINT_CHECK(history().last().toDouble()==0); // A stalled stream produces no invented activity.
+    window->show(); ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
+    meter->setProperty("processing",true);
+    meter->setProperty("sampledTokens",12.0);
+    meter->setProperty("sampledAt",3000.0);
+    for (int i=0; i<24; ++i) {
+        meter->setProperty("tokenCount",12.0+4.0*(i+1));
+        ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"sample",Q_ARG(QVariant,QVariant(3200.0+200.0*i))));
+    }
+    ROCLINT_CHECK(!flat());
+    savePreview(window,QStringLiteral("generation-meter-streaming.png"));
+    meter->setProperty("tokenCount",1.0); ROCLINT_CHECK(flat()); // New request / counter reset.
+    meter->setProperty("reducedMotion",true);
+    meter->setProperty("tokenCount",20.0);
+    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"sample",Q_ARG(QVariant,QVariant(4000.0))));
+    ROCLINT_CHECK(flat() && meter->property("rateText").toString()=="42.5 tok/s");
+    meter->setProperty("reducedMotion",false);
+    meter->setProperty("processing",false); ROCLINT_CHECK(flat());
+    savePreview(window,QStringLiteral("generation-meter-idle.png"));
+    std::cout << "  [PASS] Generation meter uses token deltas, pauses without tokens, and respects reduced motion; technical-details action is removed.\n";
+}
+
 void testUserRequestedRewriteFromNewDraft() {
     QSettings().clear();
     auto bridge=std::make_unique<roclint::test::MockAccessibilityBridge>();
@@ -1570,6 +1615,11 @@ int main(int argc, char* argv[]) {
         testEditPromptFromProposalUsesNewHudDraft();
         return 0;
     }
+    if (qEnvironmentVariableIsSet("ROCLINT_GENERATION_METER_ONLY")) {
+        testGenerationMeterUsesMeasuredProgress();
+        ROCLINT_CHECK(!QTest::currentTestFailed());
+        return 0;
+    }
     if (qEnvironmentVariableIsSet("ROCLINT_CLARIFICATION_REGRESSION_ONLY")) {
         testExplicitClarificationAndDeferredRewrite();
         ROCLINT_CHECK(!QTest::currentTestFailed());
@@ -1590,6 +1640,7 @@ int main(int argc, char* argv[]) {
     testOverBudgetAssumptionsRemainVisibleAndUnconfirmed();
     testResidencySettingsKeyboard();
     testClipboardFallbackDoesNotDismissQmlCard();
+    testGenerationMeterUsesMeasuredProgress();
     testUserRequestedRewriteFromNewDraft();
     testManualGraniteRewriteConnectsEditorWithoutLosingReview();
     testLiveCapturedDraftAndCancelRetryInQml();

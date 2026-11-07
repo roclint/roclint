@@ -27,6 +27,13 @@ struct GraniteWorkControl {
     void check() const;
 };
 
+struct GraniteStreamProgress {
+    std::string_view text;
+    int outputTokens;
+    double decodeMs;
+    double generationMs;
+};
+
 // Model state belongs only to the inference thread. status() reads atomic state;
 // cancellation/control I/O never waits on model loading or a decode operation.
 class GraniteEngine {
@@ -41,10 +48,10 @@ public:
     GraniteEngine& operator=(const GraniteEngine&) = delete;
     [[nodiscard]] QJsonObject identity() const;
     [[nodiscard]] QJsonObject status() const;
-    // progressCallback, if set, is invoked with each decoded text piece during generation.
+    // Bounded progress batches contain every byte and authoritative token/timing counts.
     [[nodiscard]] QJsonObject execute(const QString& operation, const QJsonObject& payload,
                                       GraniteWorkControl& control,
-                                      std::function<void(std::string_view)> progressCallback = {});
+                                      std::function<void(const GraniteStreamProgress&)> progressCallback = {});
 
 private:
     class Impl;

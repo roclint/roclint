@@ -15,7 +15,6 @@ FocusScope {
     property bool draftAvailable: hc && hostController.currentRevisionText.trim().length > 0
     signal revealReviewItem(var item)
     signal editDraftRequested()
-    property string diagnosticMetrics: ""
     readonly property bool previewActive: hc && (hostController.proposalStatus === "READY_FOR_REVIEW" || hostController.proposalStatus === "GENERATING")
     readonly property color questionTone: hc && hostController.isOptionalHelp ? borderColor : warnColor
     implicitHeight: workflowColumn.implicitHeight
@@ -268,29 +267,6 @@ FocusScope {
                     if (rootWindow.hc) hostController.pauseAmbientFollowing();
                 }
             }
-            Text {
-                objectName: "reviewDiagnosticsButton"
-                text: rootWindow.showDiagnostics ? qsTr("Hide details") : qsTr("Technical details")
-                color: rootWindow.mutedTextColor
-                font.pixelSize: 12
-                font.underline: true
-                activeFocusOnTab: true
-                Accessible.role: Accessible.Button
-                Accessible.name: text
-                function activate() { rootWindow.showDiagnostics = !rootWindow.showDiagnostics; }
-                Accessible.onPressAction: activate()
-                Keys.onReturnPressed: activate()
-                Keys.onSpacePressed: activate()
-                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: parent.activate() }
-            }
-        }
-        Text {
-            visible: rootWindow.showDiagnostics && rootWindow.hc
-            Layout.fillWidth: true
-            wrapMode: Text.Wrap
-            text: rootWindow.hc ? hostController.reviewDiagnostics + "\n" + hostController.interventionReason + "\n" + hostController.rankingStatus + "\n" + rootWindow.diagnosticMetrics : ""
-            color: rootWindow.mutedTextColor
-            font.pixelSize: 12
         }
         ColumnLayout {
             objectName: "groundedEvidenceList"
@@ -676,10 +652,12 @@ FocusScope {
                     Text {
                         visible: reviewPanel.status === "GENERATING" && text.length > 0
                         Layout.fillWidth: true
-                        text: reviewPanel.preview
+                        text: rootWindow.hc && hostController.isInferring && hostController.generationTokens > 0
+                            ? qsTr("Writing your rewrite… You'll review the complete prompt before inserting it.")
+                            : qsTr("Preparing your rewrite…")
                         textFormat: Text.PlainText
                         wrapMode: Text.WrapAnywhere
-                        font.family: rootWindow.monoFont
+                        font.family: rootWindow.sansFont
                         font.pixelSize: 14
                         color: rootWindow.mutedTextColor
                     }

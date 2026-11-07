@@ -16,6 +16,7 @@
 #include <QTimer>
 
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <mutex>
 #include <utility>
@@ -36,6 +37,7 @@ core::Error stale() { return core::makeError(core::ErrorCode::StaleVersion, "The
 struct NativeGraniteRuntimeWorker::Call {
     std::chrono::steady_clock::time_point deadline;
     qsizetype streamedBytes{0}; int streamedFrames{0}; // I/O-thread only
+    qint64 streamedTokens{0}; double streamedDecodeMs{0.0}, streamedGenerationMs{0.0};
     std::mutex mutex;
     std::condition_variable changed;
     std::optional<core::Result<std::string>> result;
@@ -167,11 +169,7 @@ void NativeGraniteRuntimeWorker::beginStop(bool failure, const QString& reason) 
     ++requestEpoch_;
     // Clear stale speed telemetry so the UI does not show a tok/s value from a
     // previous completed request while inference is stopped or has failed.
-    lastTokensPerSecond_ = 0.0;
-    lastOutputTokens_ = 0;
-    lastDecodeMs_ = 0.0;
-    lastGenerationMs_ = 0.0;
-    emit speedMetricsChanged();
+    resetSpeedMetrics();
     mailbox_->cancel(false, failure ? unavailable("Native Granite stopped before completing this request.") : stale());
     if (stopping_) { if (failure) state(QStringLiteral("FAILED"), reason); return; }
     stopping_ = true;
@@ -344,6 +342,15 @@ void NativeGraniteRuntimeWorker::readOutput() {
         QTimer::singleShot(0, this, [this]() { if (process_) readOutput(); });
 }
 
+void NativeGraniteRuntimeWorker::resetSpeedMetrics(quint64 requestId) {
+    metricsRequestId_ = requestId;
+    lastTokensPerSecond_ = 0.0;
+    lastOutputTokens_ = 0;
+    lastDecodeMs_ = 0.0;
+    lastGenerationMs_ = 0.0;
+    emit speedMetricsChanged();
+}
+
 void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
     // Streaming chunk — dispatched before the final result frame.
     if (response.value(QStringLiteral("type")) == QLatin1String("partial_result")) {
@@ -361,6 +368,27 @@ void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
             if (++pending.call->streamedFrames > 2048 || pending.call->streamedBytes > 65536) {
                 fail(QStringLiteral("Native stream exceeded its output budget.")); return;
             }
+            // Optional telemetry is non-authoritative: malformed/backwards metrics
+            // never change accepted text, request binding or model-result validation.
+            const auto countValue = response.value(QStringLiteral("output_tokens"));
+            const double count = countValue.toDouble(-1);
+            const double decode = response.value(QStringLiteral("decode_ms")).toDouble(-1);
+            const double elapsed = response.value(QStringLiteral("generation_ms")).toDouble(-1);
+            if (id == metricsRequestId_ && countValue.isDouble() && std::isfinite(count) &&
+                count > 0 && count <= manifest().value(QStringLiteral("output_tokens")).toInt() && std::floor(count) == count &&
+                count >= pending.call->streamedTokens && std::isfinite(decode) && std::isfinite(elapsed) &&
+                decode >= pending.call->streamedDecodeMs && elapsed >= pending.call->streamedGenerationMs) {
+                pending.call->streamedTokens = static_cast<qint64>(count);
+                pending.call->streamedDecodeMs = decode;
+                pending.call->streamedGenerationMs = elapsed;
+                lastOutputTokens_ = static_cast<qint64>(count);
+                lastDecodeMs_ = decode;
+                lastGenerationMs_ = elapsed;
+                const double duration = decode > 0.0 ? decode : elapsed;
+                const double speed = duration > 0.0 ? count * 1000.0 / duration : 0.0;
+                lastTokensPerSecond_ = std::isfinite(speed) ? speed : 0.0;
+                emit speedMetricsChanged();
+            }
             if (!chunk.isEmpty()) emit partialResultReceived(id, chunk);
         }
         return;
@@ -374,6 +402,7 @@ void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
     if (pending != pending_.cend() && std::chrono::steady_clock::now() >= pending->deadline) {
         if (pending->call) {
             const auto call = pending->call;
+            if (id == metricsRequestId_) resetSpeedMetrics();
             call->finish(core::makeError(core::ErrorCode::ValidationFailed, "NATIVE_TIMEOUT: Native reply arrived after its deadline."));
             pending_.remove(id);
             state(QStringLiteral("READY"), QStringLiteral("The late native result was discarded."));
@@ -398,6 +427,7 @@ void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
     const auto request = pending_.take(id);
     if (!ok) {
         if (request.call) {
+            if (id == metricsRequestId_) resetSpeedMetrics();
             const auto code = response.value(QStringLiteral("error_code")).toString();
             const bool tooLarge = code == QLatin1String("INPUT_TOO_LARGE");
             request.call->finish(core::makeError(tooLarge ? core::ErrorCode::PreconditionFailed : core::ErrorCode::ValidationFailed,
@@ -435,13 +465,13 @@ void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
         const auto outputTokens = result.value(QStringLiteral("output_tokens")).toInteger();
         const auto decodeMs = result.value(QStringLiteral("decode_ms")).toDouble();
         const auto genMs = result.value(QStringLiteral("generation_ms")).toDouble();
-        lastOutputTokens_ = outputTokens;
-        lastDecodeMs_ = decodeMs;
-        lastGenerationMs_ = genMs;
-        if (decodeMs > 0.0 && outputTokens > 0) {
-            lastTokensPerSecond_ = (static_cast<double>(outputTokens) * 1000.0) / decodeMs;
-        } else if (genMs > 0.0 && outputTokens > 0) {
-            lastTokensPerSecond_ = (static_cast<double>(outputTokens) * 1000.0) / genMs;
+        if (id == metricsRequestId_) {
+            lastOutputTokens_ = std::max<qint64>(0, outputTokens);
+            lastDecodeMs_ = std::isfinite(decodeMs) && decodeMs >= 0 ? decodeMs : 0;
+            lastGenerationMs_ = std::isfinite(genMs) && genMs >= 0 ? genMs : 0;
+            const double duration = lastDecodeMs_ > 0 ? lastDecodeMs_ : lastGenerationMs_;
+            const double speed = duration > 0 ? static_cast<double>(lastOutputTokens_) * 1000.0 / duration : 0;
+            lastTokensPerSecond_ = std::isfinite(speed) ? speed : 0;
         }
         if (!output.isString() || output.toString().toUtf8().size() > 64 * 1024) request.call->finish(core::makeError(core::ErrorCode::ValidationFailed, "Native output was absent or oversized."));
         else request.call->finish(ss(output.toString()));
@@ -471,6 +501,7 @@ void NativeGraniteRuntimeWorker::cancelCall(const std::shared_ptr<Call>& call) {
     for (const auto id : ids) {
         const auto it = pending_.find(id);
         if (it == pending_.end() || it->call != call) continue;
+        if (id == metricsRequestId_) resetSpeedMetrics();
         cancelled_.insert(id, it->envelope); pending_.erase(it);
         quiescing_.insert(id);
         const auto generation = generation_;
@@ -520,7 +551,9 @@ void NativeGraniteRuntimeWorker::submit(const RequestContext& context, const QSt
         if (id.toUtf8().size() > 256) { call->finish(core::makeError(core::ErrorCode::PreconditionFailed, "Native request binding exceeded its limit.")); return; }
     const QJsonObject payload{{QStringLiteral("prompt"), context.prompt}, {QStringLiteral("instructions"), instructions}, {QStringLiteral("schema"), schema}};
     const auto timeout = std::max(1, static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(call->deadline - std::chrono::steady_clock::now()).count()));
-    if (send(operation, payload, timeout, &context, call) == 0) { call->finish(unavailable("Native Granite could not accept this request.")); return; }
+    const auto id = send(operation, payload, timeout, &context, call);
+    if (id == 0) { call->finish(unavailable("Native Granite could not accept this request.")); return; }
+    resetSpeedMetrics(id);
     state(QStringLiteral("BUSY"), QStringLiteral("Native Granite is processing the frozen request locally."));
 }
 

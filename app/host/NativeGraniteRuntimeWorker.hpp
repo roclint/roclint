@@ -92,6 +92,7 @@ private:
     void submit(const RequestContext& context, const QString& operation, const QString& instructions,
                 const QString& schema, const std::shared_ptr<Call>& call);
     void cancelCall(const std::shared_ptr<Call>& call);
+    void resetSpeedMetrics(quint64 requestId = 0);
 
     QProcess* process_{nullptr};
     std::unique_ptr<OwnedProcessJob> job_;
@@ -121,6 +122,7 @@ private:
     quint64 restartEpoch_{0};
     quint64 requestEpoch_{0};
     double lastTokensPerSecond_{0.0};
+    quint64 metricsRequestId_{0};
     qint64 lastOutputTokens_{0};
     double lastDecodeMs_{0.0};
     double lastGenerationMs_{0.0};

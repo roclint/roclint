@@ -3708,6 +3708,10 @@ bool HostController::isNativeGraniteQ4Installed() const {
     return false;
 }
 
+qint64 HostController::generationTokens() const {
+    return nativeGraniteSelected() && m_native ? m_native->lastOutputTokens() : 0;
+}
+
 double HostController::tokensPerSecond() const {
     if (nativeGraniteSelected() && m_native) {
         return m_native->lastTokensPerSecond();

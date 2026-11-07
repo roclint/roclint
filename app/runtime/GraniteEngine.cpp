@@ -283,7 +283,7 @@ public:
     }
 
     QJsonObject generate(const QJsonObject& payload, GraniteWorkControl& control,
-                         const std::function<void(std::string_view)>& progressCallback) {
+                         const std::function<void(const GraniteStreamProgress&)>& progressCallback) {
         prepare(control);
         state_.store(ReadyState::Busy);
         const auto instructions = payload.value(QStringLiteral("instructions")).toString().toUtf8();
@@ -355,6 +355,7 @@ public:
         double firstTokenMs = -1;
         int generated = 0;
         int emitted = 0;
+        qsizetype streamedBytes = 0;
         bool ended = false;
         bool prefillCompleted = false;
         qint64 decodeNanoseconds = 0;
@@ -398,10 +399,20 @@ public:
                 output.append(piece.data(), length);
                 ++emitted;
                 if (output.size() > 64 * 1024) throw GraniteFailure(QStringLiteral("OUTPUT_TOO_LARGE"), "Native Granite exceeded the output byte limit.");
-                if (progressCallback && emitted % 4 == 0 && !control.aborted())
-                    progressCallback(std::string_view(piece.data(), static_cast<std::size_t>(length)));
                 timedDecode({token}, static_cast<llama_pos>(tokens.size()) + generated);
+                if (progressCallback && emitted % 4 == 0 && !control.aborted()) {
+                    progressCallback({std::string_view(output.constData() + streamedBytes,
+                        static_cast<std::size_t>(output.size() - streamedBytes)), emitted,
+                        static_cast<double>(decodeNanoseconds) / 1e6,
+                        static_cast<double>(timer.nsecsElapsed()) / 1e6});
+                    streamedBytes = output.size();
+                }
             }
+            if (progressCallback && output.size() > streamedBytes && !control.aborted())
+                progressCallback({std::string_view(output.constData() + streamedBytes,
+                    static_cast<std::size_t>(output.size() - streamedBytes)), emitted,
+                    static_cast<double>(decodeNanoseconds) / 1e6,
+                    static_cast<double>(timer.nsecsElapsed()) / 1e6});
             const auto latency = static_cast<double>(timer.nsecsElapsed()) / 1e6;
             llama_set_abort_callback(context_.get(), nullptr, nullptr);
             // Keep only the prompt tokens in the cache; generated tokens are removed
@@ -446,7 +457,7 @@ public:
     }
 
     QJsonObject execute(const QString& operation, const QJsonObject& payload, GraniteWorkControl& control,
-                        const std::function<void(std::string_view)>& progressCallback) {
+                        const std::function<void(const GraniteStreamProgress&)>& progressCallback) {
         try {
             if (operation == QLatin1String("load") || operation == QLatin1String("warm")) prepare(control);
             else if (operation == QLatin1String("reset_cache")) {
@@ -516,7 +527,7 @@ QJsonObject GraniteEngine::identity() const { return impl_->identity(); }
 QJsonObject GraniteEngine::status() const { return impl_->status(); }
 QJsonObject GraniteEngine::execute(const QString& operation, const QJsonObject& payload,
                                    GraniteWorkControl& control,
-                                   std::function<void(std::string_view)> progressCallback) {
+                                   std::function<void(const GraniteStreamProgress&)> progressCallback) {
     return impl_->execute(operation, payload, control, std::move(progressCallback));
 }
 } // namespace roclint::runtime

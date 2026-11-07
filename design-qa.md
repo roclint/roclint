@@ -13,6 +13,21 @@ Date: 2026-11-07. Scope: first native HUD refresh and ordinary Windows launch. T
 - Full-view evidence: source and implementation were presented together in the same comparison tool call. Focused inspection covered their header/logo, large question, option rows, custom answer and bottom actions at readable resolution. The implementation's extra workspace/model controls and three-option explanation text are intentional product requirements, not omitted source elements.
 - Installed native observation: computer-use returned `Roclint — prompt assistant` as a normal targetable window from `%LOCALAPPDATA%/Programs/Roclint/Roclint.exe`; its screenshot and accessibility tree exposed the prompt editor, Clarify, Rewrite prompt, settings and close controls. No terminal appeared.
 
+## Live meter follow-up — 2026-11-07
+
+The user's new reference is `docs/research/roclint-ui-2026-11-07-streaming-meter-reference.png` (502 × 144). It supersedes the decorative header waveform: remove Technical details and show tokens per second / streaming activity.
+
+Implementation evidence: `docs/research/roclint-ui-2026-11-07-streaming-meter-implemented.png` and `roclint-ui-2026-11-07-streaming-meter-idle.png`, each 820 × 600, Qt DPR 1. The active screenshot uses deterministic synthetic token-arrival data (42.5 tok/s is fixture data, not a benchmark). Compare the source's cobalt stepped motif with the implementation header region; the source is a crop without the app body, so canvas sizes are intentionally different. Source and implementation were inspected together. The numeric readout and flat idle state are required functional changes, not an attempt to reproduce a fixed decorative silhouette.
+
+- Typography: 12 px mono rate, 10 px in narrow space, bounded/elided to avoid overlapping window controls.
+- Spacing: the meter stays within the former 185 × 32 header area; removal of the diagnostic link closes its old gap.
+- Tokens/colors: same ink-blue/cobalt palette. Heights encode actual token arrival deltas with a relative recent peak; the text reports measured decode tok/s.
+- Image quality: Roc branding is preserved; the waveform is a native data chart rather than a generated image or invented logo.
+- Content: Technical details and its raw diagnostic summary are removed. Generating rewrite content shows friendly preparation/writing status instead of raw JSON. Idle has no invented speed; warmup hides the previous request's rate.
+- Motion/accessibility: no random/sine activity; no new tokens yields zero-height activity; idle stops the timer. Reduced motion keeps numeric updates and a quiet graph. The readout explicitly cannot take keyboard focus.
+
+Verification: full CTest 52/52, then the final UI workflow rerun passed. The focused meter fixture also passes token deltas, stalls, request rollback and reduced motion. A first screenshot fixture lost its synthetic processing flag when its window became visible; the fixture now sets that state after showing the window and asserts non-flat history before capture. Native installed observation confirmed ordinary launch, no Technical details action and actual completed decode rates of 220.5 and 181.8 tok/s on one synthetic local session. Those are observations, not release performance gates. Native before-completion telemetry is covered by the bound runtime fixture; the live desktop observations captured completed rates. No generated prompt was approved, copied or inserted.
+
 ## Required fidelity surfaces
 
 | Surface | Assessment |
@@ -20,7 +35,7 @@ Date: 2026-11-07. Scope: first native HUD refresh and ordinary Windows launch. T
 | Typography | Embedded Inter Variable for reading, 26 px question hierarchy, 14–15 px prose, Consolas/Menlo for compact utility labels. Corrected the initial `Inter` family mismatch that fell back to monospaced text. |
 | Spacing/layout | Rounded 18 px outer panel, 20 px normal gutters, bounded draft and diff, persistent footer; question padding/row gaps reduced so all three alternatives, custom answer and skip action fit the 820 × 600 fixture. Extremely small windows scroll content while preserving window controls and delivery actions. |
 | Colors/tokens | Ink-blue background, cobalt primary/keyboard choice, warm-white prose, pale-blue perimeter and focus, muted periwinkle utility text. Semantic warning remains in the clarity label; focus uses a pale-blue boundary. |
-| Images/icons | Actual generated transparent Roc and pixel signal assets; official Phosphor SVG controls with licenses/provenance. PNG assets retain aspect ratio and transparent surroundings. No text/emoji substitutes for logo or window icons. |
+| Images/icons | Actual generated transparent Roc and official Phosphor SVG controls with licenses/provenance. The header signal is now a data chart, as requested; its earlier decorative PNG is archived. PNG assets retain aspect ratio and transparent surroundings. No text/emoji substitutes for logo or window icons. |
 | Copy/content | User-facing actions include Clarify, Rewrite prompt, Skip & rewrite, Keep original, Show changes and explicit Approve & Copy/Insert. No question is selected automatically; identical output says it is the original prompt. Empty drafts disable inapplicable actions. |
 
 ## Comparison and repair history
