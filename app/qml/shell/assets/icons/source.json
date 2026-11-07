@@ -1,0 +1,19 @@
+{
+  "weight": "regular",
+  "icons": [
+    "x",
+    "gear-six",
+    "arrows-out-simple",
+    "push-pin",
+    "copy",
+    "caret-down",
+    "minus",
+    "pencil-simple",
+    "sparkle",
+    "arrow-left",
+    "arrow-right",
+    "check"
+  ],
+  "commit": "2b75f3ad12b420c9504ef05df8d2564a28f8500e",
+  "source": "https://github.com/phosphor-icons/core"
+}

@@ -7,7 +7,12 @@
 #include <QApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QIcon>
+#include <QMessageBox>
 #include <QLockFile>
+#include <QLocalServer>
+#include <QLocalSocket>
+#include <QCryptographicHash>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickWindow>
@@ -21,6 +26,7 @@
 int main(int argc, char* argv[]) {
     bool dryRun = false;
     bool autoShow = false;
+    bool backgroundOnly = false;
     int customWidth = 0;
     int customHeight = 0;
     QString screenshotPath;
@@ -56,6 +62,7 @@ int main(int argc, char* argv[]) {
         if (arg == "--show") {
             autoShow = true;
         }
+        if (arg == "--background") backgroundOnly = true;
         if (arg == "--scope" && i + 1 < argc) targetScope = QString::fromLocal8Bit(argv[++i]);
         if (arg == "--workspace" && i + 1 < argc) workspacePath = QString::fromLocal8Bit(argv[++i]);
         if (arg == "--file" && i + 1 < argc) targetFile = QString::fromLocal8Bit(argv[++i]);
@@ -95,26 +102,44 @@ int main(int argc, char* argv[]) {
         std::cerr << "[Roclint Host] --workspace must name an existing directory.\n"; return 2;
     }
 
+    // A normal Start-menu/double-click launch opens a real window. Background
+    // startup is an explicit option, rather than a silent tray-only default.
+    if (!dryRun && !backgroundOnly && !autoShow && !autoShowDashboard) autoShow = true;
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("Roclint"));
     const std::string_view coreVersion = roclint::core::get_version_string();
     app.setApplicationVersion(QString::fromUtf8(coreVersion.data(), static_cast<qsizetype>(coreVersion.size())));
     app.setOrganizationName(QStringLiteral("roclint"));
+    app.setWindowIcon(QIcon(QStringLiteral(":/shell/assets/roc-mark.png")));
     app.setQuitOnLastWindowClosed(false);
     roclint::host::configureHostProcess();
 
     // One resident host per user: a second instance would fight over the hotkey and the database.
     std::unique_ptr<QLockFile> instanceLock;
+    QString activationServerName;
     if (!dryRun) {
         const QString dataDir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+        activationServerName = QStringLiteral("roclint-activation-") + QString::fromLatin1(
+            QCryptographicHash::hash(dataDir.toUtf8(), QCryptographicHash::Sha256).toHex().left(24));
         QDir().mkpath(dataDir);
         instanceLock = std::make_unique<QLockFile>(dataDir + QStringLiteral("/roclint-host.lock"));
         if (!instanceLock->tryLock(100)) {
             if (instanceLock->removeStaleLockFile() && instanceLock->tryLock(100)) {
                 std::cout << "[Roclint Host] Recovered stale lock file.\n";
             } else {
-                std::cerr << "[Roclint Host] Another Roclint instance is already running. Exiting.\n";
-                return 0;
+                if (backgroundOnly) return 0;
+                QLocalSocket activation;
+                activation.connectToServer(activationServerName);
+                if (activation.waitForConnected(2000)) {
+                    activation.write(autoShow ? "hud\n" : "dashboard\n");
+                    activation.waitForBytesWritten(1000);
+                    return 0;
+                }
+                std::cerr << "[Roclint Host] The resident host could not be activated.\n";
+                QMessageBox::warning(nullptr, QStringLiteral("Roclint"),
+                    QStringLiteral("Roclint is already starting or running, but its window could not be reopened. "
+                                   "Try again in a moment. If it persists, quit Roclint from its tray menu and reopen it."));
+                return 1;
             }
         }
     }
@@ -180,7 +205,7 @@ int main(int argc, char* argv[]) {
                     const auto placement = roclint::host::ScreenPlacement::determineTargetPosition(window->width(), window->height());
                     window->setPosition(placement.x, placement.y);
                 }
-                if (controller->isAmbientAttached() || controller->isAmbientActive()) {
+                if (controller->isAmbientAttached()) {
                     roclint::host::showNonActivatingWindow(window);
                 } else {
                     window->showNormal();
@@ -224,7 +249,7 @@ int main(int argc, char* argv[]) {
             }
 
             if (autoShow && !dryRun) {
-                controller->showCard(); window->showNormal(); window->raise(); window->requestActivate();
+                controller->activateCard(); window->showNormal(); window->raise(); window->requestActivate();
                 roclint::host::installOutsideClickMonitor(window, [controller]() { controller->hideCard(); });
             }
 
@@ -369,10 +394,38 @@ int main(int argc, char* argv[]) {
 
     if (engine.rootObjects().size() != 3) {
         std::cerr << "[Roclint Host] Error: One or more required QML screens failed to load" << std::endl;
+        if (!dryRun) QMessageBox::critical(nullptr, QStringLiteral("Roclint"),
+            QStringLiteral("Roclint couldn't load its interface. Reinstall the complete application folder, including its Qt runtime."));
         return 1;
     }
 
     controller->markResident();
+
+    QLocalServer activationServer;
+    if (!dryRun) {
+        activationServer.setSocketOptions(QLocalServer::UserAccessOption);
+        // The lock is ours, so any old endpoint belongs to a stopped host.
+        QLocalServer::removeServer(activationServerName);
+        QObject::connect(&activationServer, &QLocalServer::newConnection, &app, [&]() {
+            while (auto* socket = activationServer.nextPendingConnection()) {
+                socket->setParent(&activationServer);
+                socket->setReadBufferSize(128);
+                QObject::connect(socket, &QLocalSocket::disconnected, socket, &QObject::deleteLater);
+                const auto receive = [socket, target = controller.get()]() {
+                    if (!socket->canReadLine()) return;
+                    const auto command = socket->readLine(32).trimmed();
+                    if (command == "hud") target->activateCard();
+                    else if (command == "dashboard") target->showDashboard();
+                    socket->disconnectFromServer();
+                };
+                QObject::connect(socket, &QLocalSocket::readyRead, &app, receive);
+                QTimer::singleShot(0, socket, receive);
+                QTimer::singleShot(2000, socket, &QLocalSocket::disconnectFromServer);
+            }
+        });
+        if (!activationServer.listen(activationServerName))
+            std::cerr << "[Roclint Host] Could not listen for repeat-launch activation.\n";
+    }
 
     if (dryRun) {
         std::cout << "[Roclint Host] Version: " << app.applicationVersion().toStdString() << std::endl;

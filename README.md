@@ -1,8 +1,14 @@
 # Roclint
 
-Roclint is the existing C++20 / Qt Quick resident HUD, with SQLite history, local Julia classification and local Granite choices/rewrites. This branch preserves the upstream HUD/dashboard design and build targets while fixing stale results, fabricated scores, implicit choices and unreviewed delivery.
+Roclint is a C++20 / Qt Quick desktop prompt assistant, with SQLite history, local Julia classification and local Granite choices/rewrites. The refreshed HUD uses the approved rounded Roc design while preserving explicit decisions, review and approval.
 
 The user's latest required model order is **Julia/S1 triage → unchanged original when clear, or Granite options → explicit choice → Granite rewrite when ambiguous**. [Model routing](docs/MODEL_ROUTING.md) records the implemented gate, persistence boundaries and open quality/performance requirements. The classifier is real local Julia inference; its current development results are not release-calibrated.
+
+## Windows launch
+
+Open **Roclint** from the Start menu or desktop shortcut. It opens the HUD without a terminal; opening it again activates the resident instance and retains the current draft/review. Close hides the HUD; **Quit** in the tray menu ends Roclint. Background-only startup is an explicit `--background` option and is not enabled automatically.
+
+Maintainers can deploy a complete staged build with `tools/register_windows_app.ps1 -StagedDirectory build/Release/bin -DesktopShortcut`. This copies the app to `%LOCALAPPDATA%/Programs/Roclint/Roclint.exe` and creates direct executable shortcuts. Everyday launch requires neither that script nor a BAT file. This local development deployment still depends on the configured Python/model environment; a signed, clean-machine installer, first-run model setup, upgrade and uninstall remain release work. See [Windows app delivery](docs/plans/2026-11-07-windows-app-delivery.md).
 
 ## Build
 

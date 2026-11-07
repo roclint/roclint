@@ -60,7 +60,7 @@ void savePreview(QQuickWindow* window, const QString& name) {
     QTest::qWait(300);
     for (int frame = 0; frame < 2; ++frame) {
         QSignalSpy rendered(window, &QQuickWindow::frameSwapped);
-        window->requestUpdate();
+        window->update();
         ROCLINT_CHECK(!rendered.isEmpty() || rendered.wait(2000));
     }
     ROCLINT_CHECK(window->grabWindow().save(directory + QLatin1Char('/') + name));
@@ -136,14 +136,14 @@ void testOptionalPresentationFromPersistedV5() {
     auto* action = window->findChild<QObject*>("analysisActionLabel");
     auto* card = findVisual(window->contentItem(), "clarifyPanel");
     auto* state = window->findChild<QObject*>("hudStateBadge");
-    ROCLINT_CHECK(badge && badge->property("text").toString() == "[ OPTIONAL ]");
-    ROCLINT_CHECK(action && action->property("text").toString().contains("OPTIONAL IDEAS"));
+    ROCLINT_CHECK(badge && badge->property("text").toString() == "OPTIONAL");
+    ROCLINT_CHECK(action && action->property("text").toString() == "Optional ideas");
     ROCLINT_CHECK(card && state);
     ROCLINT_CHECK(window->findChild<QObject*>("intentReviewPanel")->property("questionTone") == window->property("borderColor"));
     ROCLINT_CHECK(!c.hasConfirmedIntent() && !c.hasProposal() && !c.hasApproval());
     savePreview(window, "optional-ideas.png");
     auto* details = window->findChild<QObject*>("intentReviewPanel"); details->setProperty("showDiagnostics", true);
-    QTest::qWait(20); ROCLINT_CHECK(badge->property("text").toString() == "[ OPTIONAL ]");
+    QTest::qWait(20); ROCLINT_CHECK(badge->property("text").toString() == "OPTIONAL");
     ROCLINT_CHECK(c.currentRevisionText() == "Make the homepage cool.");
     details->setProperty("showDiagnostics", false);
     c.setTransportOverrideForTesting([](std::string_view) -> Result<std::string> { return fx::rewriteReply("Build a bold and playful homepage."); });
@@ -151,7 +151,7 @@ void testOptionalPresentationFromPersistedV5() {
     ROCLINT_CHECK(c.waitForCommandForTesting(c.confirmChoice("alt_0_0",c.stateVersion())));
     ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
     ROCLINT_CHECK(c.waitForIdleForTesting(3000));
-    ROCLINT_CHECK(badge->property("text").toString()=="[ REVIEW ]" && !c.hasApproval());
+    ROCLINT_CHECK(badge->property("text").toString()=="REVIEW" && !c.hasApproval());
     HostContextDetector::resetMock();
     std::cout << "  [PASS] Persisted v5 optional help has neutral, consistent presentation without inferred choices.\n";
 }
@@ -232,6 +232,15 @@ void testReviewGeometryAndExplicitExpansion() {
         ROCLINT_CHECK(diff->height()<=diffCap+1.0);
         ROCLINT_CHECK(QMetaObject::invokeMethod(window,"openReview"));
         QTest::qWait(100);
+        if (!fullyInViewport(window,diff) || !diff->hasActiveFocus()) {
+            const auto rect=diff->mapRectToItem(window->contentItem(),diff->boundingRect());
+            std::cerr << "Diff review geometry: " << size.width << 'x' << size.height
+                      << " rect=" << rect.x() << ',' << rect.y() << ',' << rect.width() << ',' << rect.height()
+                      << " visible=" << diff->isVisible() << " focus=" << diff->hasActiveFocus() << '\n';
+            std::cerr << "Viewport: height=" << viewport->height() << " contentY=" << viewport->property("contentY").toDouble()
+                      << " contentHeight=" << viewport->property("contentHeight").toDouble() << '\n';
+            savePreview(window,QStringLiteral("review-geometry-failure.png"));
+        }
         ROCLINT_CHECK(fullyInViewport(window,diff) && diff->hasActiveFocus());
         if (size.width==560) {
             ROCLINT_CHECK(diff->property("contentHeight").toDouble()>diff->height());
@@ -824,7 +833,7 @@ void testLiveCapturedDraftAndCancelRetryInQml() {
     ROCLINT_CHECK(editor->property("text").toString() == field.text && calls == 0);
     ROCLINT_CHECK(QMetaObject::invokeMethod(window, "analyzeNow"));
     QTRY_VERIFY_WITH_TIMEOUT(controller.isAnalyzing(), 3000);
-    ROCLINT_CHECK(action->property("text").toString().contains(QStringLiteral("CANCEL ANALYSIS")));
+    ROCLINT_CHECK(action->property("text").toString() == QStringLiteral("Cancel analysis"));
     ROCLINT_CHECK(QMetaObject::invokeMethod(window, "handleEnter"));
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(!controller.isAnalyzing());
@@ -1245,6 +1254,48 @@ void testAutoAnalysisResumesAfterDelivery() {
     std::cout << "  [PASS] Delivery echoes do not trigger analysis; new source typing checks the next prompt automatically.\n";
 }
 
+void testUserRequestedRewriteFromNewDraft() {
+    QSettings().clear();
+    auto bridge=std::make_unique<roclint::test::MockAccessibilityBridge>();
+    auto* observed=bridge.get();
+    HostController controller(":memory:",std::move(bridge));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
+    controller.setLegacyDiscoveryForTesting(true);
+    controller.setAmbientModeEnabled(false);
+    int discoveries=0, rewrites=0;
+    const QString draft="Refactor Reader::open for readability. Preserve behavior and caller-owned handles.";
+    controller.setTransportOverrideForTesting([&](std::string_view request) -> Result<std::string> {
+        if (request.find("<instructions>")!=std::string_view::npos) {
+            ++rewrites; return fx::rewriteReply(draft.toStdString());
+        }
+        ++discoveries; return std::string(R"({"status":"no_ambiguity","choice_groups":[]})");
+    });
+    ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("hostController",&controller);
+    engine.load(QUrl("qrc:/shell/FloatingCard.qml"));
+    ROCLINT_CHECK(engine.rootObjects().size()==1);
+    auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    window->setProperty("autoAnalysisDelayMs",60000);
+    auto* editor=window->findChild<QQuickItem*>("promptInput");
+    auto* rewrite=window->findChild<QQuickItem*>("rewriteWithoutQuestionsButton");
+    ROCLINT_CHECK(editor && rewrite);
+    window->show(); ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
+    ROCLINT_CHECK(!rewrite->isEnabled());
+    editor->setProperty("text",draft);
+    ROCLINT_CHECK(rewrite->isVisible() && rewrite->isEnabled());
+    ROCLINT_CHECK(QMetaObject::invokeMethod(rewrite,"clicked"));
+    QTRY_VERIFY_WITH_TIMEOUT(controller.hasProposal(),5000);
+    ROCLINT_CHECK(discoveries==1 && rewrites==1 && controller.currentRevisionText()==draft);
+    ROCLINT_CHECK(!controller.hasApproval() && observed->injections.empty());
+    controller.hideCard();
+    controller.activateCard();
+    ROCLINT_CHECK(controller.isCardVisible() && controller.hasProposal() && controller.currentRevisionText()==draft);
+    ROCLINT_CHECK(discoveries==1 && rewrites==1 && !controller.hasApproval() && observed->injections.empty());
+    savePreview(window,QStringLiteral("requested-rewrite.png"));
+    std::cout << "  [PASS] User-requested rewrite checks the new HUD draft then creates one unapproved preview.\n";
+}
+
 void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     QSettings().clear();
     HostContextDetector::setMockObservation(HostContextObservation{});
@@ -1346,7 +1397,7 @@ void testClipboardFallbackDoesNotDismissQmlCard() {
     auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
     auto* modelLabel = window->findChild<QObject*>(QStringLiteral("modelRuntimeLabel"));
     const auto labelText = modelLabel ? modelLabel->property("text").toString() : QString();
-    ROCLINT_CHECK(modelLabel && (labelText == "[ MODEL NOT LOADED ]" || labelText == "[ READY · STANDBY ]"));
+    ROCLINT_CHECK(modelLabel && (labelText == "Model not loaded" || labelText == "Ready · standby"));
     ROCLINT_CHECK(window);
     controller.showCard();
     window->show();
@@ -1539,6 +1590,7 @@ int main(int argc, char* argv[]) {
     testOverBudgetAssumptionsRemainVisibleAndUnconfirmed();
     testResidencySettingsKeyboard();
     testClipboardFallbackDoesNotDismissQmlCard();
+    testUserRequestedRewriteFromNewDraft();
     testManualGraniteRewriteConnectsEditorWithoutLosingReview();
     testLiveCapturedDraftAndCancelRetryInQml();
     testHudPresentationSurvivesDraftAndDelivery();

@@ -120,7 +120,8 @@
     "ROCLINT_PROJECT_OVERVIEW.md",
     "download_models.bat",
     "launch_roclint.ps1",
-    "start_roclint.bat"
+    "start_roclint.bat",
+    "design-qa.md"
   ],
   "vision": {
     "bundle": "Stardust_v4_2_with_RAG-20261001T213521Z-1-001",
@@ -151,6 +152,8 @@
     "app/host",
     "app/qml",
     "app/qml/shell",
+    "app/qml/shell/assets",
+    "app/qml/shell/assets/icons",
     "app/runtime",
     "bob_sessions",
     "bob_sessions/Jesse",

@@ -1,0 +1,27 @@
+{
+  "tool": "built-in image_gen imagegen",
+  "mode": "reference extraction/recreation",
+  "reference": "docs/research/roclint-ux-2026-11-05-approved-rounded-roc-long-prompt.png",
+  "generated_source": "C:/Users/kirby/.codex/generated_images/01a1b788-effc-7713-a375-3a156bf15cf5/exec-3c64ca7d-0acb-4f72-89cb-58fb518393fe.png",
+  "output": "app/qml/shell/assets/pixel-signal.png",
+  "width": 2172,
+  "height": 724,
+  "pixel_format": "RGBA",
+  "transparent_background": true,
+  "alpha_preserved": true,
+  "postprocessing": "None; built-in output copied byte-for-byte",
+  "alpha_128_bounds": [
+    243,
+    300,
+    2123,
+    448
+  ],
+  "suggested_display_source_rectangle": {
+    "width": 1900,
+    "height": 200,
+    "y": 250,
+    "x": 230
+  },
+  "prompt": "Use case: background-extraction. Asset: subtle pixel-signal header decoration for Roclint Qt/QML app, intended display 220 pixels wide by 22 pixels tall. Input image 1 is the approved UI reference. Isolate/recreate ONLY the short cobalt/periwinkle digital pixel skyline waveform at the upper-right edge of the dialog header. No other elements. This decoration is a quiet row of small rectangular pixel blocks sitting on a single horizontal baseline, with a few low stepped clusters of different heights. Preserve the reference visual concept, restrained blue palette and irregular stepped rhythm. Keep the left end very low and sparse, with 3 small uneven humps toward the middle and right. It should feel like a tiny low-amplitude digital signal skyline, not mountains or a city illustration. Output: a very wide horizontal transparent PNG strip, approximately 10:1 aspect ratio. Small flat cobalt and pale periwinkle rectangular solid blocks along the bottom edge; generous transparent empty space above, most blocks no more than one third of the canvas height, maximum peak about two thirds height. Clean sharp horizontal/vertical pixel steps, no curves, no outline, no gradients, no texture, no antialiased fuzz, no speckles, no shadow, no glow. Use flat fills, around 3 muted blue tones. All empty areas have actual alpha transparency. Do not include the Roc bird, logo, letters, words, punctuation, background, border, UI, buildings, windows, scenery or any other object. Single small pixel-signal strip.",
+  "qa": "Visually inspected. Genuine alpha 0-255. Sharp stepped flat blue waveform, no logo or UI. Tool returned a 3:1 transparent canvas despite requested 10:1; visible signal occupies x243..2123, y300..448. Suggested consumer source rectangle is x230 y250 width1900 height200 for desired quiet header composition. Some faint native-resolution alpha fringe remains; no manual cleanup performed."
+}

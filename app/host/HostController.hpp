@@ -527,6 +527,8 @@ public:
 public slots:
     void markResident();
     void showCard();
+    // App/Start-menu activation shows the retained draft without capturing another app.
+    void activateCard();
     void hideCard();
     void toggleCard();
     void showDashboard();

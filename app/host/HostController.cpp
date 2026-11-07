@@ -416,6 +416,10 @@ void HostController::markResident() {
     emit hostStateChanged();
 }
 
+void HostController::activateCard() {
+    showCardInternal(false);
+}
+
 void HostController::showCard() {
     const auto frontmost = HostContextDetector::captureFrontmost();
     if (m_selectingInsertionTarget && !isAmbientEligibleApp(frontmost.bundleOrExecutableId)) {

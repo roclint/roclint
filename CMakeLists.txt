@@ -328,6 +328,9 @@ if(BUILD_DESKTOP)
             app/host/main.cpp
             app/qml/shell/qml.qrc
         )
+        if(WIN32)
+            target_sources(roclint_host PRIVATE app/host/roclint.rc)
+        endif()
         if(ROCLINT_HOST_OUTPUT_DIRECTORY)
             set_target_properties(roclint_host PROPERTIES
                 RUNTIME_OUTPUT_DIRECTORY "${ROCLINT_HOST_OUTPUT_DIRECTORY}"
@@ -556,7 +559,7 @@ if(BUILD_DESKTOP)
 
         if(WIN32)
             set_target_properties(roclint_host PROPERTIES
-                WIN32_EXECUTABLE FALSE # Kept console during development/testing for diagnostics
+                WIN32_EXECUTABLE TRUE # Everyday launch is a native GUI app; redirected diagnostics still work.
             )
         endif()
     else()
@@ -678,6 +681,12 @@ if(BUILD_TESTING)
         roclint_add_test(roclint_product_alignment tests/viewmodel/test_product_alignment.cpp roclint_host_lib_testing Qt6::Quick Qt6::Qml Qt6::Test)
         roclint_add_test(roclint_upstream_compatibility tests/viewmodel/test_upstream_compatibility.cpp roclint_host_lib_testing Qt6::Core)
         target_sources(roclint_product_alignment_tests PRIVATE app/qml/shell/qml.qrc)
+        if(WIN32)
+            # A developer output folder can contain an older partial Qt deployment.
+            # Resolve newly used QML modules (including QtCore.Settings) from the matching kit.
+            set_property(TEST roclint_product_alignment APPEND PROPERTY ENVIRONMENT_MODIFICATION
+                "QML_IMPORT_PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>/../qml")
+        endif()
     endif()
 endif()
 

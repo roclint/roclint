@@ -1,0 +1,16 @@
+{
+  "tool": "built-in image_gen imagegen",
+  "mode": "reference extraction with edge-quality edit",
+  "reference": "docs/research/roclint-ux-2026-11-05-approved-rounded-roc-long-prompt.png",
+  "generated_source": "C:/Users/kirby/.codex/generated_images/01a1b788-effc-7713-a375-3a156bf15cf5/exec-a0f2a11a-bc02-4b5a-b937-c4485c470177.png",
+  "output": "app/qml/shell/assets/roc-mark.png",
+  "width": 1330,
+  "height": 1182,
+  "pixel_format": "RGBA",
+  "transparent_background": true,
+  "alpha_preserved": true,
+  "postprocessing": "None; selected built-in output copied byte-for-byte",
+  "extraction_prompt": "Use case: background-extraction. Extract/recreate ONLY the small white Roc bird shown at the upper left of the approved Roclint dialog, also repeated in the blue badge. Preserve the supplied brand concept: symmetrical upward-spread wings with stair-stepped pointed feathers, small central head, compact body, and narrow splayed feet/tail below. Clean crisp pixel art; warm-white wings/head and pale periwinkle-blue lower-body accents. Transparent background, one bird, no text, interface, badge, border, scenery or background.",
+  "final_edit_prompt": "Use case: precise-object-edit. Fix only the edge quality of this isolated pixel-art Roc mark. Preserve exactly its composition, silhouette, raised spread wings, colors, central head, body and tail. Remove ALL fuzzy white speckles, rough noise, thin dark outlines, cyan/blue edge halo, texture, and stray partly transparent pixels surrounding the stepped shape. Rebuild the edge as clean, straight horizontal and vertical hard pixel-art steps. Every solid part should be uniformly opaque with flat warm white (#F7F7F4) and restrained pale periwinkle blue (#83A6F8) regions; no gradient, highlights, shading, glow, shadow or outlines. All other pixels must be fully transparent. The result should look like crisp clean 32px pixel art enlarged with nearest-neighbor, not a painted or distressed version. Keep a modest transparent margin. Exactly one bird; no text or extra objects.",
+  "qa": "Verified genuine alpha ranging 0-255. Tool retains some fine edge speckling at native resolution despite targeted edit; intended display is 36x32 or 24px. No manual crop, drawing, or alpha modification applied."
+}

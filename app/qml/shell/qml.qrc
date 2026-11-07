@@ -1,4 +1,7 @@
 <RCC>
+    <qresource prefix="/">
+        <file alias="qtquickcontrols2.conf">qtquickcontrols2.conf</file>
+    </qresource>
     <qresource prefix="/shell">
         <file>FloatingCard.qml</file>
         <file>DashboardWindow.qml</file>
@@ -8,5 +11,22 @@
         <file>InvocationSettings.qml</file>
         <file>HudMouseArea.qml</file>
         <file>HudScrollBar.qml</file>
+        <file>RocTheme.qml</file>
+        <file>RocButton.qml</file>
+        <file>assets/roc-mark.png</file>
+        <file>assets/pixel-signal.png</file>
+        <file>assets/InterVariable.ttf</file>
+        <file>assets/icons/x.svg</file>
+        <file>assets/icons/gear-six.svg</file>
+        <file>assets/icons/arrows-out-simple.svg</file>
+        <file>assets/icons/push-pin.svg</file>
+        <file>assets/icons/copy.svg</file>
+        <file>assets/icons/caret-down.svg</file>
+        <file>assets/icons/minus.svg</file>
+        <file>assets/icons/pencil-simple.svg</file>
+        <file>assets/icons/sparkle.svg</file>
+        <file>assets/icons/arrow-left.svg</file>
+        <file>assets/icons/arrow-right.svg</file>
+        <file>assets/icons/check.svg</file>
     </qresource>
 </RCC>

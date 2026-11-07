@@ -5,8 +5,6 @@
 #include <QMenu>
 #include <QAction>
 #include <QIcon>
-#include <QPainter>
-#include <QPixmap>
 
 namespace roclint::host {
 
@@ -61,21 +59,8 @@ void TrayManager::createActions() {
 void TrayManager::createTrayIcon() {
     m_trayIcon = new QSystemTrayIcon(this);
     m_trayIcon->setContextMenu(m_trayMenu.get());
-    m_trayIcon->setToolTip(QStringLiteral("Roclint - Resident Host"));
-
-    // Programmatically drawn crisp vector icon fallback
-    QPixmap pixmap(32, 32);
-    pixmap.fill(Qt::transparent);
-    {
-        QPainter painter(&pixmap);
-        painter.setRenderHint(QPainter::Antialiasing);
-        painter.setBrush(QColor(80, 140, 240));
-        painter.setPen(Qt::NoPen);
-        painter.drawEllipse(4, 4, 24, 24);
-        painter.setBrush(Qt::white);
-        painter.drawEllipse(12, 12, 8, 8);
-    }
-    m_trayIcon->setIcon(QIcon(pixmap));
+    m_trayIcon->setToolTip(QStringLiteral("Roclint — prompt assistant"));
+    m_trayIcon->setIcon(QIcon(QStringLiteral(":/shell/assets/roc-mark.png")));
 
     connect(m_trayIcon, &QSystemTrayIcon::activated, this, &TrayManager::onTrayIconActivated);
 }

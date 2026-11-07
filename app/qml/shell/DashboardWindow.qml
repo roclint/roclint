@@ -4,7 +4,7 @@ import QtQuick.Layouts
 
 Window {
     id: dashboardWindow
-    title: qsTr("ROCLINT // SYSTEM CONTROL CENTER & PREFERENCES")
+    title: qsTr("Roclint — Settings")
     width: 940
     height: 620
     minimumWidth: 780
@@ -15,7 +15,7 @@ Window {
 
     readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property string monoFont: isMac ? "Menlo" : "Consolas"
-    readonly property string sansFont: isMac ? "Helvetica Neue" : "Arial"
+    readonly property string sansFont: "Inter Variable"
 
     // Multi-Palette Theme System (Mirrors FloatingCard.qml exactly)
     Connections {
@@ -28,61 +28,15 @@ Window {
 
     property string currentTheme: "dark" // "dark", "light", "acid", "amber"
 
-    readonly property color bgColor: {
-        if (currentTheme === "light") return "#F4F4F4";
-        if (currentTheme === "acid") return "#070D08";
-        if (currentTheme === "amber") return "#0F0902";
-        return "#050505";
-    }
-
-    readonly property color fgColor: {
-        if (currentTheme === "light") return "#050505";
-        if (currentTheme === "acid") return "#4ADE80";
-        if (currentTheme === "amber") return "#FBBF24";
-        return "#C9D1D9";
-    }
-
-    readonly property color borderColor: {
-        if (currentTheme === "light") return "#050505";
-        if (currentTheme === "acid") return "#22C55E";
-        if (currentTheme === "amber") return "#F59E0B";
-        return "#6E7681";
-    }
-
-    readonly property color dimColor: {
-        if (currentTheme === "light") return "#D1D5DB";
-        if (currentTheme === "acid") return "#14331B";
-        if (currentTheme === "amber") return "#3B2207";
-        return "#262626";
-    }
-
-    readonly property color mutedTextColor: {
-        if (currentTheme === "light") return "#4B5563";
-        if (currentTheme === "acid") return "#4ADE80";
-        if (currentTheme === "amber") return "#D97706";
-        return "#8B949E";
-    }
-
-    readonly property color commentColor: {
-        if (currentTheme === "light") return "#6B7280";
-        if (currentTheme === "acid") return "#22C55E";
-        if (currentTheme === "amber") return "#B45309";
-        return "#8B949E";
-    }
-
-    readonly property color inputBgColor: {
-        if (currentTheme === "light") return "#E5E7EB";
-        if (currentTheme === "acid") return "#0A140B";
-        if (currentTheme === "amber") return "#140D04";
-        return "#09090B";
-    }
-
-    readonly property color shadowColor: {
-        if (currentTheme === "light") return "#050505";
-        if (currentTheme === "acid") return "#22C55E";
-        if (currentTheme === "amber") return "#F59E0B";
-        return "#3B4252";
-    }
+    RocTheme { id: theme; mode: dashboardWindow.currentTheme }
+    readonly property color bgColor: theme.background
+    readonly property color fgColor: theme.foreground
+    readonly property color borderColor: theme.border
+    readonly property color dimColor: theme.hover
+    readonly property color mutedTextColor: theme.muted
+    readonly property color commentColor: theme.muted
+    readonly property color inputBgColor: theme.inset
+    readonly property color shadowColor: "#030918"
 
     // Active Navigation Tab Index (0: Models & Rewrite, 1: Integration & Theme, 2: SQLite History)
     property int currentTab: 0
@@ -139,7 +93,7 @@ Window {
         anchors.margins: 6
         color: dashboardWindow.bgColor
         border.color: dashboardWindow.borderColor
-        border.width: 2
+        border.width: 1
         radius: dashboardWindow.visibility === Window.Maximized ? 0 : 16
 
         MouseArea {
@@ -231,13 +185,13 @@ Window {
             anchors.margins: 5
             color: "transparent"
             border.color: dashboardWindow.borderColor
-            border.width: 1
+            border.width: 0
             radius: dashboardWindow.visibility === Window.Maximized ? 0 : 12
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 12
-                spacing: 10
+                anchors.margins: 18
+                spacing: 12
 
                 // =============================================================
                 // 1. TOP HEADER BAR
@@ -248,19 +202,15 @@ Window {
                     Layout.preferredHeight: 28
                     spacing: 8
 
-                    Rectangle {
-                        width: 8
-                        height: 8
-                        color: dashboardWindow.fgColor
-                        SequentialAnimation on opacity {
-                            loops: Animation.Infinite
-                            NumberAnimation { from: 1.0; to: 0.2; duration: 600; easing.type: Easing.InOutQuad }
-                            NumberAnimation { from: 0.2; to: 1.0; duration: 600; easing.type: Easing.InOutQuad }
-                        }
+                    Image {
+                        source: "assets/roc-mark.png"
+                        Layout.preferredWidth: 30
+                        Layout.preferredHeight: 28
+                        fillMode: Image.PreserveAspectFit
                     }
 
                     Text {
-                        text: "ROCLINT"
+                        text: "roclint"
                         font.family: dashboardWindow.monoFont
                         font.bold: true
                         font.pixelSize: 11
@@ -271,10 +221,10 @@ Window {
                     Text { text: "│"; font.family: dashboardWindow.monoFont; font.pixelSize: 10; color: dashboardWindow.mutedTextColor }
 
                     Text {
-                        text: "CONTROL CENTER & PREFERENCES"
+                        text: qsTr("Settings")
                         font.family: dashboardWindow.monoFont
                         font.bold: true
-                        font.pixelSize: 9
+                        font.pixelSize: 12
                         color: dashboardWindow.mutedTextColor
                     }
 
@@ -291,10 +241,10 @@ Window {
                         Text {
                             id: resText
                             anchors.centerIn: parent
-                            text: "HOST: RESIDENT"
+                            text: qsTr("Running locally")
                             font.family: dashboardWindow.monoFont
                             font.bold: true
-                            font.pixelSize: 8
+                            font.pixelSize: 11
                             color: "#7EE787"
                         }
                     }
@@ -312,7 +262,7 @@ Window {
                             anchors.centerIn: parent
                             text: "[-]"
                             font.family: dashboardWindow.monoFont
-                            font.pixelSize: 9
+                            font.pixelSize: 12
                             color: dashboardWindow.fgColor
                         }
                         HudMouseArea {
@@ -337,7 +287,7 @@ Window {
                             anchors.centerIn: parent
                             text: dashboardWindow.visibility === Window.Maximized ? "[=]" : "[+]"
                             font.family: dashboardWindow.monoFont
-                            font.pixelSize: 9
+                            font.pixelSize: 12
                             color: dashboardWindow.fgColor
                         }
                         HudMouseArea {
@@ -368,7 +318,7 @@ Window {
                             anchors.centerIn: parent
                             text: "[x]"
                             font.family: dashboardWindow.monoFont
-                            font.pixelSize: 9
+                            font.pixelSize: 12
                             color: dashboardWindow.fgColor
                         }
                         HudMouseArea {
@@ -413,7 +363,7 @@ Window {
                             Text {
                                 text: "/* NAVIGATION MATRIX */"
                                 font.family: dashboardWindow.monoFont
-                                font.pixelSize: 9
+                                font.pixelSize: 12
                                 font.bold: true
                                 color: dashboardWindow.commentColor
                             }
@@ -453,7 +403,7 @@ Window {
                                         Text {
                                             text: "[" + modelData.tag + "]"
                                             font.family: dashboardWindow.monoFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: 12
                                             font.bold: true
                                             color: dashboardWindow.currentTab === modelData.index
                                                 ? dashboardWindow.bgColor
@@ -465,7 +415,7 @@ Window {
                                             Layout.minimumWidth: 0
                                             text: modelData.label
                                             font.family: dashboardWindow.monoFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: 12
                                             font.bold: dashboardWindow.currentTab === modelData.index
                                             color: dashboardWindow.currentTab === modelData.index
                                                 ? dashboardWindow.bgColor
@@ -500,19 +450,19 @@ Window {
                                 Text {
                                     text: "SYSTEM: ROCLINT CORE"
                                     font.family: dashboardWindow.monoFont
-                                    font.pixelSize: 8
+                                    font.pixelSize: 11
                                     color: dashboardWindow.mutedTextColor
                                 }
                                 Text {
                                     text: "REVISION: v" + (typeof hostController !== "undefined" ? hostController.stateVersion : "0")
                                     font.family: dashboardWindow.monoFont
-                                    font.pixelSize: 8
+                                    font.pixelSize: 11
                                     color: dashboardWindow.mutedTextColor
                                 }
                                 Text {
                                     text: "BUILD: C++20 / QT 6.11"
                                     font.family: dashboardWindow.monoFont
-                                    font.pixelSize: 8
+                                    font.pixelSize: 11
                                     color: dashboardWindow.mutedTextColor
                                 }
                             }
@@ -576,7 +526,7 @@ Window {
                                             Text {
                                                 text: dashboardWindow.scorerMode === "jev" ? "[MODE: JEV CLOUD]" : "[MODE: LOCAL JULIA]"
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
+                                                font.pixelSize: 12
                                                 color: dashboardWindow.mutedTextColor
                                             }
                                         }
@@ -595,7 +545,7 @@ Window {
                                                     anchors.centerIn: parent
                                                     text: dashboardWindow.scorerMode === "julia" ? "[ ● LOCAL JULIA-1 (AUTO GPU / CPU) ]" : "[ ○ LOCAL JULIA-1 (AUTO GPU / CPU) ]"
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
+                                                    font.pixelSize: 12
                                                     font.bold: dashboardWindow.scorerMode === "julia"
                                                     color: dashboardWindow.scorerMode === "julia" ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                 }
@@ -622,7 +572,7 @@ Window {
                                                     anchors.centerIn: parent
                                                     text: dashboardWindow.scorerMode === "jev" ? "[ ● CLOUD JEV (BASELINE STUDY) ]" : "[ ○ CLOUD JEV (BASELINE STUDY) ]"
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
+                                                    font.pixelSize: 12
                                                     font.bold: dashboardWindow.scorerMode === "jev"
                                                     color: dashboardWindow.scorerMode === "jev" ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                 }
@@ -664,7 +614,7 @@ Window {
                                                             ? "[ ⏸ S1 READY ON DISK ]"
                                                             : "[ ○ S1 NOT DOWNLOADED ]"
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 8
+                                                    font.pixelSize: 11
                                                     font.bold: true
                                                     color: (typeof hostController !== "undefined" && hostController.hasJuliaModel)
                                                            ? "#7EE787"
@@ -690,7 +640,7 @@ Window {
                                                           ? "[ ⟳ LOAD JULIA-1 INTO GPU ]"
                                                           : "[ ⬇ DOWNLOAD JULIA-1 (600 MB) ]"
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 8
+                                                    font.pixelSize: 11
                                                     font.bold: true
                                                     color: dlJuliaCard1Mouse.containsMouse ? dashboardWindow.bgColor : ((typeof hostController !== "undefined" && hostController.isJuliaModelInstalled) ? "#38BDF8" : dashboardWindow.fgColor)
                                                 }
@@ -719,7 +669,7 @@ Window {
                                                 visible: typeof hostController !== "undefined" && ["LOADING", "DOWNLOADING"].indexOf(hostController.juliaState) >= 0
                                                 text: typeof hostController !== "undefined" ? hostController.juliaState : ""
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 8
+                                                font.pixelSize: 11
                                                 font.bold: true
                                                 color: "#FFB000"
                                             }
@@ -730,7 +680,7 @@ Window {
                                                 ? "Jev is not configured. The S1-first flow requires local Julia."
                                                 : "Julia classifies first: below 0.70 keeps the original; otherwise Granite supplies choices. Confirm intent explicitly."
                                             font.family: dashboardWindow.monoFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: 12
                                             color: dashboardWindow.commentColor
                                         }
                                     }
@@ -768,7 +718,7 @@ Window {
                                             Text {
                                                 text: "[ACTIVE: " + (typeof hostController !== "undefined" ? hostController.rewriteProfile.toUpperCase() : "GENERIC") + "]"
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
+                                                font.pixelSize: 12
                                                 color: "#7EE787"
                                             }
                                         }
@@ -799,7 +749,7 @@ Window {
                                                             anchors.centerIn: parent
                                                             text: (typeof hostController !== "undefined" && hostController.rewriteProfile.toLowerCase().indexOf(modelData.id) !== -1) ? "[ ● " + modelData.label + " ]" : "[ ○ " + modelData.label + " ]"
                                                             font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 8
+                                                            font.pixelSize: 11
                                                             font.bold: true
                                                             color: (typeof hostController !== "undefined" && hostController.rewriteProfile.toLowerCase().indexOf(modelData.id) !== -1) ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                         }
@@ -819,7 +769,7 @@ Window {
                                                     Text {
                                                         text: modelData.desc
                                                         font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 8
+                                                        font.pixelSize: 11
                                                         color: dashboardWindow.commentColor
                                                     }
                                                 }
@@ -863,7 +813,7 @@ Window {
                                                           ? "[STANDBY ON DISK · READY]"
                                                           : "[NOT DOWNLOADED]"
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
+                                                font.pixelSize: 12
                                                 font.bold: true
                                                 color: (typeof hostController !== "undefined" && hostController.useLiveWeights)
                                                        ? "#7EE787"
@@ -889,7 +839,7 @@ Window {
                                                     anchors.centerIn: parent
                                                     text: "[ ⟳ RESCAN RUNTIME ]"
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
+                                                    font.pixelSize: 12
                                                     font.bold: true
                                                     color: dashboardWindow.fgColor
                                                 }
@@ -923,7 +873,7 @@ Window {
                                                               ? "[ ⏸ WEIGHTS ON DISK (CLICK TO WARM) ]"
                                                               : "[ ○ NO WEIGHTS ON DISK (DOWNLOAD BELOW) ]"
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
+                                                    font.pixelSize: 12
                                                     font.bold: (typeof hostController !== "undefined" && (hostController.useLiveWeights || hostController.isNativeGraniteInstalled))
                                                     color: (typeof hostController !== "undefined" && hostController.useLiveWeights)
                                                            ? dashboardWindow.bgColor
@@ -974,7 +924,7 @@ Window {
                                                     Layout.minimumWidth: 0
                                                     text: typeof hostController !== "undefined" ? hostController.modelEngineStatus : "LOADING STATUS..."
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 8
+                                                    font.pixelSize: 11
                                                     font.bold: true
                                                     color: dashboardWindow.fgColor
                                                     elide: Text.ElideRight
@@ -984,7 +934,7 @@ Window {
                                                     visible: typeof hostController !== "undefined" && hostController.inferenceSpeed.length > 0
                                                     text: "SPEED: " + (typeof hostController !== "undefined" ? hostController.inferenceSpeed : "")
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 8
+                                                    font.pixelSize: 11
                                                     font.bold: true
                                                     color: "#38BDF8"
                                                 }
@@ -1002,7 +952,7 @@ Window {
                                                       ? "CONNECTED MODEL FOLDER (S2 GRANITE MODELS):"
                                                       : "CONNECTED MODEL FOLDER (NON-INVASIVE ACCESS):"
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 8
+                                                font.pixelSize: 11
                                                 font.bold: true
                                                 color: dashboardWindow.mutedTextColor
                                             }
@@ -1032,7 +982,7 @@ Window {
                                                                   ? hostController.effectiveModelDirectory
                                                                   : "No folder connected"
                                                             font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 9
+                                                            font.pixelSize: 12
                                                             color: dashboardWindow.fgColor
                                                             elide: Text.ElideMiddle
                                                         }
@@ -1051,7 +1001,7 @@ Window {
                                                         anchors.centerIn: parent
                                                         text: "[ 📂 CONNECT FOLDER... ]"
                                                         font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 8
+                                                        font.pixelSize: 11
                                                         font.bold: true
                                                         color: connectMouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                     }
@@ -1084,7 +1034,7 @@ Window {
                                                         anchors.centerIn: parent
                                                         text: "[ ⟳ RESCAN ]"
                                                         font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 8
+                                                        font.pixelSize: 11
                                                         font.bold: true
                                                         color: refreshMouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                     }
@@ -1111,7 +1061,7 @@ Window {
                                                          : "⚠️ No model weights found in this folder. Download Granite below or click '[ 📂 CONNECT FOLDER... ]' to point to your existing models.")
                                                       : "* Non-invasive isolation: Roclint only reads models inside this specific folder. Your hard drive and personal files are never searched."
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 8
+                                                font.pixelSize: 11
                                                 color: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
                                                        ? (hostController.isNativeGraniteInstalled ? "#7EE787" : "#FFB000")
                                                        : dashboardWindow.commentColor
@@ -1127,7 +1077,7 @@ Window {
                                             Text {
                                                 text: "DETECTED LOCAL MODELS IN FOLDER / RUNNER:"
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 8
+                                                font.pixelSize: 11
                                                 font.bold: true
                                                 color: dashboardWindow.mutedTextColor
                                             }
@@ -1158,7 +1108,7 @@ Window {
                                                                   ? (hostController.useLiveWeights ? "[ ● LOADED IN GPU ]" : "[ ★ SELECTED (STANDBY) ]")
                                                                   : (modelData.requiresImport ? "[ IMPORT ]" : "[ ○ SELECT ]")
                                                             font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 8
+                                                            font.pixelSize: 11
                                                             font.bold: true
                                                             color: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name)
                                                                    ? (hostController.useLiveWeights ? "#7EE787" : "#38BDF8")
@@ -1168,7 +1118,7 @@ Window {
                                                         Text {
                                                             text: modelData.name
                                                             font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 9
+                                                            font.pixelSize: 12
                                                             font.bold: true
                                                             color: dashboardWindow.fgColor
                                                         }
@@ -1176,7 +1126,7 @@ Window {
                                                         Text {
                                                             text: "(" + modelData.size + ", " + modelData.source + ", " + modelData.quantization + ") · [✓ Verified on disk]"
                                                             font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 8
+                                                            font.pixelSize: 11
                                                             color: dashboardWindow.commentColor
                                                         }
 
@@ -1215,7 +1165,7 @@ Window {
                                                     Text {
                                                         text: "NO MODELS FOUND. Connect your model directory or download a model below."
                                                         font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 8
+                                                        font.pixelSize: 11
                                                         color: dashboardWindow.mutedTextColor
                                                     }
                                                 }
@@ -1231,7 +1181,7 @@ Window {
                                             Text {
                                                 text: "MODEL DOWNLOAD & REPOSITORY ACTIONS:"
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 8
+                                                font.pixelSize: 11
                                                 font.bold: true
                                                 color: dashboardWindow.mutedTextColor
                                             }
@@ -1255,7 +1205,7 @@ Window {
                                                         Text {
                                                             text: "DOWNLOADING MODEL: " + (typeof hostController !== "undefined" ? hostController.downloadProgress : 0) + "%"
                                                             font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 8
+                                                            font.pixelSize: 11
                                                             font.bold: true
                                                             color: "#FFB000"
                                                         }
@@ -1263,7 +1213,7 @@ Window {
                                                         Text {
                                                             text: "[ CANCEL ]"
                                                             font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 8
+                                                            font.pixelSize: 11
                                                             font.bold: true
                                                             color: dashboardWindow.fgColor
                                                             HudMouseArea {
@@ -1281,7 +1231,7 @@ Window {
                                                     Text {
                                                         text: typeof hostController !== "undefined" ? hostController.downloadStatusMessage : ""
                                                         font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 8
+                                                        font.pixelSize: 11
                                                         color: dashboardWindow.commentColor
                                                         elide: Text.ElideRight
                                                     }
@@ -1311,7 +1261,7 @@ Window {
                                                                  : "[ ⬇ DOWNLOAD GRANITE 4.2 Q4_K_M (2.09 GiB) · FASTEST ]")
                                                               : "[ ⬇ PULL GRANITE 4.2 3B Q4 ]"
                                                         font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 8
+                                                        font.pixelSize: 11
                                                         font.bold: true
                                                         color: dl0Mouse.containsMouse ? dashboardWindow.bgColor : ((typeof hostController !== "undefined" && hostController.isNativeGraniteQ4Installed) ? "#7EE787" : dashboardWindow.fgColor)
                                                     }
@@ -1346,7 +1296,7 @@ Window {
                                                                  : "[ ⬇ DOWNLOAD GRANITE 4.2 Q8_0 (3.62 GiB) ]")
                                                               : "[ ⬇ PULL GRANITE 4.2 3B (3.9 GB) ]"
                                                         font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 8
+                                                        font.pixelSize: 11
                                                         font.bold: true
                                                         color: dl1Mouse.containsMouse ? dashboardWindow.bgColor : ((typeof hostController !== "undefined" && hostController.isNativeGraniteQ8Installed) ? "#7EE787" : dashboardWindow.fgColor)
                                                     }
@@ -1381,7 +1331,7 @@ Window {
                                                                  : "[ ⬇ DOWNLOAD GRANITE 4.2 Q5_K_M (2.43 GiB) ]")
                                                               : "[ ⬇ PULL GRANITE 3.1 2B (1.5 GB) ]"
                                                         font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 8
+                                                        font.pixelSize: 11
                                                         font.bold: true
                                                         color: dl2Mouse.containsMouse ? dashboardWindow.bgColor : ((typeof hostController !== "undefined" && hostController.isNativeGraniteQ5Installed) ? "#7EE787" : dashboardWindow.fgColor)
                                                     }
@@ -1416,7 +1366,7 @@ Window {
                                                                 ? "[ ● MODEL READY (GPU) ]"
                                                                 : "[ CHECK & WARM MODEL ]"
                                                         font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 8
+                                                        font.pixelSize: 11
                                                         font.bold: true
                                                         color: testInfMouse.containsMouse ? dashboardWindow.bgColor : "#7EE787"
                                                     }
@@ -1439,7 +1389,7 @@ Window {
                                             Text {
                                                 text: "Storage: Models are stored in your configured folder (S1 in /s1, S2 in /s2). Click '[ 📂 CONNECT FOLDER... ]' above to use existing models from any directory."
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 8
+                                                font.pixelSize: 11
                                                 color: dashboardWindow.commentColor
                                                 wrapMode: Text.WordWrap
                                             }
@@ -1491,7 +1441,7 @@ Window {
                                                 objectName: "ambientCaptureStatus"
                                                 text: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? "[STATUS: ENABLED]" : "[STATUS: DISABLED]"
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
+                                                font.pixelSize: 12
                                                 font.bold: true
                                                 color: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? "#7EE787" : dashboardWindow.mutedTextColor
                                             }
@@ -1511,7 +1461,7 @@ Window {
                                                     anchors.centerIn: parent
                                                     text: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? "[ ● ENABLED (Captured Field) ]" : "[ ○ ENABLED (Captured Field) ]"
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
+                                                    font.pixelSize: 12
                                                     font.bold: (typeof hostController !== "undefined" && hostController.ambientModeEnabled)
                                                     color: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                 }
@@ -1540,7 +1490,7 @@ Window {
                                                     anchors.centerIn: parent
                                                     text: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled) ? "[ ● DISABLED (Clipboard Fallback) ]" : "[ ○ DISABLED (Clipboard Fallback) ]"
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
+                                                    font.pixelSize: 12
                                                     font.bold: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled)
                                                     color: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled) ? dashboardWindow.bgColor : dashboardWindow.fgColor
                                                 }
@@ -1563,7 +1513,7 @@ Window {
                                                 ? "Live capture watches the focused editable field. Insert replaces that captured draft after approval."
                                                 : "Accessibility is unavailable. Copy the approved prompt, then paste it into your editor."
                                             font.family: dashboardWindow.monoFont
-                                            font.pixelSize: 9
+                                            font.pixelSize: 12
                                             color: dashboardWindow.commentColor
                                         }
                                     }
@@ -1612,7 +1562,7 @@ Window {
                                                         anchors.centerIn: parent
                                                         text: modelData.label
                                                         font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 9
+                                                        font.pixelSize: 12
                                                         font.bold: true
                                                         color: modelData.id === "light" ? "#050505" : "#C9D1D9"
                                                     }
@@ -1679,14 +1629,14 @@ Window {
                                             Text {
                                                 text: "LOCATION:"
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
+                                                font.pixelSize: 12
                                                 color: dashboardWindow.mutedTextColor
                                                 Layout.preferredWidth: 100
                                             }
                                             Text {
                                                 text: (typeof hostController !== "undefined" && hostController.databasePath.length > 0) ? hostController.databasePath : "Storage unavailable"
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
+                                                font.pixelSize: 12
                                                 color: dashboardWindow.fgColor
                                                 elide: Text.ElideMiddle
                                                 Layout.fillWidth: true
@@ -1698,14 +1648,14 @@ Window {
                                             Text {
                                                 text: "STORAGE STATS:"
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
+                                                font.pixelSize: 12
                                                 color: dashboardWindow.mutedTextColor
                                                 Layout.preferredWidth: 100
                                             }
                                             Text {
                                                 text: (typeof hostController !== "undefined" && hostController.databaseStats.length > 0) ? hostController.databaseStats : "Storage unavailable"
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 9
+                                                font.pixelSize: 12
                                                 font.bold: true
                                                 color: "#7EE787"
                                             }
@@ -1725,7 +1675,7 @@ Window {
                                                     anchors.centerIn: parent
                                                     text: "[ REFRESH STATS ]"
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
+                                                    font.pixelSize: 12
                                                     color: dashboardWindow.fgColor
                                                 }
                                                 HudMouseArea {
@@ -1754,7 +1704,7 @@ Window {
                                                     anchors.centerIn: parent
                                                     text: "[ PURGE HISTORY ]"
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
+                                                    font.pixelSize: 12
                                                     color: "#EF4444"
                                                 }
                                                 HudMouseArea {
@@ -1830,7 +1780,7 @@ Window {
                                                     Text {
                                                         text: "• " + modelData.formattedTime
                                                         font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 9
+                                                        font.pixelSize: 12
                                                         color: dashboardWindow.mutedTextColor
                                                     }
                                                 }
@@ -1838,7 +1788,7 @@ Window {
                                                 Text {
                                                     text: (typeof modelData.latestPrompt !== "undefined" && modelData.latestPrompt.length > 0) ? modelData.latestPrompt : "(empty prompt)"
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 9
+                                                    font.pixelSize: 12
                                                     color: dashboardWindow.fgColor
                                                     elide: Text.ElideRight
                                                     Layout.fillWidth: true
@@ -1858,7 +1808,7 @@ Window {
                                                     anchors.centerIn: parent
                                                     text: "[ RESTORE ]"
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 8
+                                                    font.pixelSize: 11
                                                     color: "#7EE787"
                                                 }
                                                 HudMouseArea {
@@ -1888,7 +1838,7 @@ Window {
                                                     anchors.centerIn: parent
                                                     text: "[ DELETE ]"
                                                     font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 8
+                                                    font.pixelSize: 11
                                                     color: "#EF4444"
                                                 }
                                                 HudMouseArea {
@@ -1934,7 +1884,7 @@ Window {
                             anchors.centerIn: parent
                             text: dashboardWindow.toastMessage.length ? dashboardWindow.toastMessage : (typeof hostController !== "undefined" ? hostController.lastError : "")
                             font.family: dashboardWindow.monoFont
-                            font.pixelSize: 9
+                            font.pixelSize: 12
                             font.bold: true
                             color: dashboardWindow.fgColor
                         }
@@ -1956,7 +1906,7 @@ Window {
                             text: "[ CLOSE ]"
                             font.family: dashboardWindow.monoFont
                             font.bold: true
-                            font.pixelSize: 9
+                            font.pixelSize: 12
                             color: dashboardWindow.fgColor
                         }
                         HudMouseArea {

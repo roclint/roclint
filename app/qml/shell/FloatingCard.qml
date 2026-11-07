@@ -1,26 +1,27 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtCore
 
 Window {
     id: rootWindow
-    title: qsTr("ROCLINT // RETROFUTURIST POSTER HUD")
+    title: qsTr("Roclint — prompt assistant")
     property bool isDetailedExpanded: false
     readonly property bool isAmbientMode: hc && (hostController.isAmbientAttached || hostController.isAmbientActive)
 
     width: !isAmbientMode ? 820 : (isDetailedExpanded ? 820 : 620)
-    height: !isAmbientMode ? 520 : (isDetailedExpanded ? 520 : 250)
+    height: !isAmbientMode ? 600 : 520
     minimumWidth: !isAmbientMode ? 520 : (isDetailedExpanded ? 520 : 420)
     minimumHeight: !isAmbientMode ? 360 : (isDetailedExpanded ? 360 : 200)
     visible: false
-    flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+    flags: (hc && hostController.isAmbientAttached ? Qt.Tool : Qt.Window) | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     color: "transparent"
 
     function toggleDetailedExpanded() {
         isDetailedExpanded = !isDetailedExpanded;
         if (isAmbientMode) {
             const targetW = isDetailedExpanded ? 820 : 620;
-            const targetH = isDetailedExpanded ? 520 : 250;
+            const targetH = 520;
             width = targetW;
             height = targetH;
             const pt = hostController.calculateAmbientAnchor(targetW, targetH);
@@ -31,7 +32,7 @@ Window {
 
     readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property string monoFont: isMac ? "Menlo" : "Consolas"
-    readonly property string sansFont: isMac ? "Helvetica Neue" : "Arial"
+    readonly property string sansFont: interFont.name.length ? interFont.name : (isMac ? "Helvetica Neue" : "Segoe UI")
     readonly property string serifFont: isMac ? "Times New Roman" : "Georgia"
 
     readonly property bool hc: typeof hostController !== "undefined" && hostController !== null
@@ -47,9 +48,7 @@ Window {
     property double pendingEditRequest: 0
     readonly property bool showPromptEditor: !rootWindow.isCompiledPreview && (
         !rootWindow.hc ||
-        !hostController.isAmbientAttached ||
         rootWindow.editingDraft ||
-        rootWindow.isDetailedExpanded ||
         (!hostController.isClarifying && !hostController.hasProposal)
     )
     readonly property bool isCompiledPreview: hc && hostController.hasProposal
@@ -124,74 +123,56 @@ Window {
     }
     function revealFocusedControl() {
         if (!visible || visibility === Window.Minimized) return;
-        const item = rootWindow.activeFocusItem;
+        let item = rootWindow.activeFocusItem;
         const view = contentScroll;
         if (!item || !view || typeof view.contentY !== "number") return;
         let ancestor = item;
-        while (ancestor && ancestor !== mainContent) ancestor = ancestor.parent;
+        while (ancestor && ancestor !== mainContent) {
+            // ListView delegates can own keyboard focus; reveal the bounded
+            // diff viewport rather than scrolling only its first text line.
+            if (ancestor.objectName === "diffView") item = ancestor;
+            ancestor = ancestor.parent;
+        }
         if (!ancestor) return;
-        const y = item.mapToItem(mainContent, 0, 0).y;
-        if (y < view.contentY) view.contentY = y;
-        else if (y + item.height > view.contentY + view.height) view.contentY = Math.max(0, y + item.height - view.height);
+        revealReviewItem(item);
     }
 
-    // Multi-Palette Theme System (Direct from user prototype)
-    property string currentTheme: "dark" // "dark", "light", "acid", "amber"
+    property string currentTheme: "dark"
+    RocTheme { id: rocPalette; mode: rootWindow.currentTheme }
+    FontLoader { id: interFont; source: "assets/InterVariable.ttf" }
+    Settings { id: appearance; category: "appearance"; property bool reducedMotion: false }
+    property alias reducedMotion: appearance.reducedMotion
+    component HudButton: RocButton { currentTheme: rootWindow.currentTheme; reduceMotion: rootWindow.reducedMotion }
+    property bool showWorkspaceOptions: false
+    property bool rewriteAfterReview: false
+    property string rewriteDraft: ""
+    readonly property color bgColor: rocPalette.background
+    readonly property color fgColor: rocPalette.foreground
+    readonly property color borderColor: rocPalette.border
+    readonly property color dimColor: rocPalette.hover
+    readonly property color mutedTextColor: rocPalette.muted
+    readonly property color commentColor: rocPalette.muted
+    readonly property color inputBgColor: rocPalette.inset
+    readonly property color shadowColor: "#030918"
 
-    readonly property color bgColor: {
-        if (currentTheme === "light") return "#F4F4F4";
-        if (currentTheme === "acid") return "#070D08";
-        if (currentTheme === "amber") return "#0F0902";
-        return "#050505";
+    function requestFullRewrite() {
+        if (!hc || !promptInput.text.trim().length || hostController.storageBusy || !hostController.isStorageAvailable) return;
+        if (!hostController.isDraftDirty && (hostController.hasConfirmedIntent || hostController.isClarifying)) {
+            hostController.rewriteWithoutQuestions(hostController.stateVersion);
+        } else {
+            rewriteAfterReview = true;
+            rewriteDraft = promptInput.text;
+            analyzeNow();
+        }
     }
-
-    readonly property color fgColor: {
-        if (currentTheme === "light") return "#050505";
-        if (currentTheme === "acid") return "#4ADE80";
-        if (currentTheme === "amber") return "#FBBF24";
-        return "#C9D1D9"; // Soft greyish white (calmer contrast, reduced eye strain)
-    }
-
-    readonly property color borderColor: {
-        if (currentTheme === "light") return "#050505";
-        if (currentTheme === "acid") return "#22C55E";
-        if (currentTheme === "amber") return "#F59E0B";
-        return "#6E7681"; // Muted slate gray border instead of harsh stark white
-    }
-
-    readonly property color dimColor: {
-        if (currentTheme === "light") return "#D1D5DB";
-        if (currentTheme === "acid") return "#14331B";
-        if (currentTheme === "amber") return "#3B2207";
-        return "#262626";
-    }
-
-    readonly property color mutedTextColor: {
-        if (currentTheme === "light") return "#4B5563";
-        if (currentTheme === "acid") return "#4ADE80";
-        if (currentTheme === "amber") return "#D97706";
-        return "#8B949E"; // Crisp, high-contrast readable zinc/slate gray
-    }
-
-    readonly property color commentColor: {
-        if (currentTheme === "light") return "#6B7280";
-        if (currentTheme === "acid") return "#22C55E";
-        if (currentTheme === "amber") return "#B45309";
-        return "#8B949E"; // Legible IDE comment gray
-    }
-
-    readonly property color inputBgColor: {
-        if (currentTheme === "light") return "#E5E7EB";
-        if (currentTheme === "acid") return "#0A140B";
-        if (currentTheme === "amber") return "#140D04";
-        return "#09090B";
-    }
-
-    readonly property color shadowColor: {
-        if (currentTheme === "light") return "#050505";
-        if (currentTheme === "acid") return "#22C55E";
-        if (currentTheme === "amber") return "#F59E0B";
-        return "#3B4252"; // Subtle tactile shadow instead of stark white block
+    function continueRequestedRewrite() {
+        if (!rewriteAfterReview || !hc || hostController.isAnalyzing || hostController.storageBusy) return;
+        if (promptInput.text !== rewriteDraft || hostController.currentRevisionText !== rewriteDraft) { rewriteAfterReview = false; return; }
+        if (hostController.analysisStatus === "FAILED") { rewriteAfterReview = false; return; }
+        if (hostController.analysisStatus !== "READY" || hostController.isDraftDirty) return;
+        rewriteAfterReview = false;
+        if (!hostController.isClarifying && hostController.hasConfirmedIntent)
+            hostController.rewriteWithoutQuestions(hostController.stateVersion);
     }
 
     property bool isClarificationActive: false
@@ -238,13 +219,16 @@ Window {
         }
         function onPromptInjected(text, appName) { rootWindow.cancelQueuedAnalysis(); rootWindow.showToast(qsTr("Inserted into %1").arg(appName)); }
         function onClarificationDeferred(message, autoSelected) { rootWindow.showToast(message); }
-        function onStorageBusyChanged() { rootWindow.tryAutoAnalysis(); }
+        function onStorageBusyChanged() { rootWindow.tryAutoAnalysis(); Qt.callLater(rootWindow.continueRequestedRewrite); }
         function onStorageChanged() {
             if (hostController.storageNeedsRecovery) rootWindow.cancelQueuedAnalysis();
             else rootWindow.tryAutoAnalysis();
         }
         function onScorerEngineChanged() { rootWindow.tryAutoAnalysis(); }
-        function onAnalysisStatusChanged() { rootWindow.tryAutoAnalysis(); }
+        function onAnalysisStatusChanged() { rootWindow.tryAutoAnalysis(); Qt.callLater(rootWindow.continueRequestedRewrite); }
+        function onInterventionChanged() {
+            if (hostController.isClarifying && !hostController.isDraftDirty) rootWindow.editingDraft = false;
+        }
         function onHostStateChanged() {
             if (hostController.hostStateString === "QUITTING") rootWindow.cancelQueuedAnalysis();
         }
@@ -291,6 +275,7 @@ Window {
         suppressEditSignal = false;
     }
     function dismissCard() {
+        rewriteAfterReview = false;
         cancelQueuedAnalysis();
         toastMessage = "";
         if (hc) hostController.hideCard(); else rootWindow.hide();
@@ -352,6 +337,7 @@ Window {
     }
 
     function openFileDropdown() {
+        showWorkspaceOptions = true;
         activeScope = "local";
         projectDropdown.visible = false;
         if (typeof fileDropdown !== "undefined") {
@@ -417,7 +403,7 @@ Window {
             }
         } else cancelQueuedAnalysis();
     }
-    onVisibilityChanged: if (visibility === Window.Minimized) cancelQueuedAnalysis()
+    onVisibilityChanged: function(visibility) { if (visibility === Window.Minimized) cancelQueuedAnalysis(); }
 
     Shortcut {
         sequence: "Esc"
@@ -472,1246 +458,424 @@ Window {
         onActivated: if (rootWindow.hc) hostController.showDashboard()
     }
 
-    // =========================================================================
-    // POSTER BOARD CONTAINER (Double Bounding Box Structure)
-    // =========================================================================
     Rectangle {
         id: posterBoard
         anchors.fill: parent
         color: rootWindow.bgColor
-        border.color: rootWindow.borderColor
-        border.width: 2
-        radius: 16
+        radius: 18
+        border.color: rootWindow.currentTheme === "light" ? rootWindow.borderColor : "#6279AA"
+        border.width: 1
 
         MouseArea {
-            id: windowDragArea
-            anchors.fill: parent
-            acceptedButtons: Qt.LeftButton
-            onPressed: rootWindow.startSystemMove()
-        }
-
-        // =====================================================================
-        // FRAMELESS WINDOW RESIZE HANDLES (Edge & Corner Dragging)
-        // =====================================================================
-        MouseArea {
-            id: resizeBottomRight
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            width: 14; height: 14
-            z: 100
+            anchors.right: parent.right; anchors.bottom: parent.bottom
+            width: 12; height: 12; z: 100
             cursorShape: Qt.SizeFDiagCursor
             onPressed: rootWindow.startSystemResize(Qt.RightEdge | Qt.BottomEdge)
         }
         MouseArea {
-            id: resizeRight
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            anchors.topMargin: 14; anchors.bottomMargin: 14
-            width: 7
-            z: 100
+            anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
+            anchors.margins: 14; width: 5; z: 100
             cursorShape: Qt.SizeHorCursor
             onPressed: rootWindow.startSystemResize(Qt.RightEdge)
         }
         MouseArea {
-            id: resizeBottom
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            anchors.leftMargin: 14; anchors.rightMargin: 14
-            height: 7
-            z: 100
+            anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+            anchors.margins: 14; height: 5; z: 100
             cursorShape: Qt.SizeVerCursor
             onPressed: rootWindow.startSystemResize(Qt.BottomEdge)
         }
-        MouseArea {
-            id: resizeBottomLeft
-            anchors.left: parent.left
-            anchors.bottom: parent.bottom
-            width: 14; height: 14
-            z: 100
-            cursorShape: Qt.SizeBDiagCursor
-            onPressed: rootWindow.startSystemResize(Qt.LeftEdge | Qt.BottomEdge)
-        }
-        MouseArea {
-            id: resizeLeft
-            anchors.left: parent.left
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            anchors.topMargin: 14; anchors.bottomMargin: 14
-            width: 7
-            z: 100
-            cursorShape: Qt.SizeHorCursor
-            onPressed: rootWindow.startSystemResize(Qt.LeftEdge)
-        }
-        MouseArea {
-            id: resizeTop
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.leftMargin: 14; anchors.rightMargin: 14
-            height: 7
-            z: 100
-            cursorShape: Qt.SizeVerCursor
-            onPressed: rootWindow.startSystemResize(Qt.TopEdge)
-        }
-        MouseArea {
-            id: resizeTopRight
-            anchors.right: parent.right
-            anchors.top: parent.top
-            width: 14; height: 14
-            z: 100
-            cursorShape: Qt.SizeBDiagCursor
-            onPressed: rootWindow.startSystemResize(Qt.RightEdge | Qt.TopEdge)
-        }
-        MouseArea {
-            id: resizeTopLeft
-            anchors.left: parent.left
-            anchors.top: parent.top
-            width: 14; height: 14
-            z: 100
-            cursorShape: Qt.SizeFDiagCursor
-            onPressed: rootWindow.startSystemResize(Qt.LeftEdge | Qt.TopEdge)
-        }
 
-        // SUB-BORDER INSET (Double Bounding Frame)
-        Rectangle {
+        Item {
             id: subBorderInset
             anchors.fill: parent
-            anchors.margins: 10
-            color: rootWindow.bgColor
-            border.color: rootWindow.borderColor
-            border.width: 1
-            radius: 10
+            anchors.margins: 1
             clip: true
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 12
-                spacing: rootWindow.height <= 260 ? 4 : 8
+                anchors.margins: rootWindow.height <= 260 ? 10 : 20
+                spacing: rootWindow.height <= 260 ? 5 : 12
 
-                // =============================================================
-                // 1. TOP HEADER: Status, Model Hot-Swap, Palette, Window Controls
-                // =============================================================
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    Layout.preferredHeight: 20
-                    spacing: 8
-
-                    // Pulsing status dot
-                    Rectangle {
-                        width: 8
-                        height: 8
-                        color: rootWindow.fgColor
-                        SequentialAnimation on opacity {
-                            loops: Animation.Infinite
-                            NumberAnimation { from: 1.0; to: 0.2; duration: 600; easing.type: Easing.InOutQuad }
-                            NumberAnimation { from: 0.2; to: 1.0; duration: 600; easing.type: Easing.InOutQuad }
-                        }
+                    Layout.preferredHeight: rootWindow.height <= 260 ? 32 : 42
+                    spacing: 10
+                    Image {
+                        source: "assets/roc-mark.png"
+                        sourceSize.width: 144; sourceSize.height: 128
+                        Layout.preferredWidth: rootWindow.height <= 260 ? 28 : 48
+                        Layout.preferredHeight: rootWindow.height <= 260 ? 28 : 42
+                        fillMode: Image.PreserveAspectFit
+                        smooth: false
+                        Accessible.ignored: true
                     }
-
                     Text {
-                        text: rootWindow.width >= 620 ? "ROCLINT" : "ROC"
-                        font.family: rootWindow.monoFont
-                        font.bold: true
-                        font.pixelSize: 10
-                        font.letterSpacing: 1
+                        text: "roclint"
+                        font.family: rootWindow.sansFont
+                        font.pixelSize: rootWindow.height <= 260 ? 21 : 26
+                        font.weight: Font.DemiBold
+                        font.letterSpacing: -0.7
                         color: rootWindow.fgColor
+                        MouseArea { anchors.fill: parent; onPressed: rootWindow.startSystemMove() }
                     }
-
-                    // Project Dropdown Selector Pill
-                    Rectangle {
-                        id: projectSelectorButton
-                            objectName: "projectSelectorButton"
-                        visible: rootWindow.width >= 530
-                        height: 20
+                    Item {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
-                        Layout.maximumWidth: 140
-                        Layout.preferredWidth: 140
-                        clip: true
-                        color: (projectDropdown.visible || projectMouse.containsMouse) ? rootWindow.dimColor : "transparent"
-                        border.color: projectDropdown.visible ? rootWindow.fgColor : rootWindow.borderColor
-                        border.width: 1
-
-                        RowLayout {
-                            id: projectRow
-                            anchors.fill: parent
-                            anchors.margins: 4
-                            spacing: 4
-
-                            Text {
-                                text: "PROJECT:"
-                                visible: rootWindow.width >= 720
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 8
-                                color: rootWindow.mutedTextColor
-                            }
-                            Text {
-                                text: rootWindow.activeProject.name + " " + (projectDropdown.visible ? "▴" : "▾")
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 8
-                                color: rootWindow.fgColor
-                                elide: Text.ElideRight
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                            }
+                        Layout.preferredHeight: 32
+                        Image {
+                            anchors.right: parent.right; anchors.bottom: parent.bottom
+                            width: Math.min(185, parent.width); height: 22
+                            visible: width > 75
+                            source: "assets/pixel-signal.png"
+                            sourceClipRect: Qt.rect(230, 250, 1900, 200)
+                            fillMode: Image.PreserveAspectFit
+                            smooth: false
+                            opacity: 0.75
+                            Accessible.ignored: true
                         }
-
-                        HudMouseArea {
-                            id: projectMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (!projectDropdown.visible) {
-                                    var pt = projectSelectorButton.mapToItem(subBorderInset, 0, projectSelectorButton.height + 4);
-                                    projectDropdown.x = pt.x;
-                                    projectDropdown.y = pt.y;
-                                    projectDropdown.visible = true;
-                                } else {
-                                    projectDropdown.visible = false;
-                                }
-                            }
-                        }
+                        MouseArea { anchors.fill: parent; onPressed: rootWindow.startSystemMove() }
                     }
-
-                    // Host Context Advisory Chip (B02H / C09)
-                    Rectangle {
-                        id: hostContextChip
-                        visible: (typeof hostController !== "undefined" && hostController.hasHostContext) && rootWindow.width >= 900
-                        height: 20
-                        width: Math.min(140, ctxRow.implicitWidth + 16)
-                        clip: true
-                        color: "transparent"
-                        border.color: rootWindow.borderColor
-                        border.width: 1
-
-                        Row {
-                            id: ctxRow
-                            anchors.centerIn: parent
-                            spacing: 6
-
-                            Text {
-                                text: (rootWindow.width >= 740 ? "FROM: " : "") + (typeof hostController !== "undefined" ? hostController.hostContextDisplayName.toUpperCase() : "")
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 8
-                                font.bold: true
-                                color: rootWindow.fgColor
-                                elide: Text.ElideMiddle
-                                width: Math.min(85, implicitWidth)
-                            }
-
-                            Rectangle {
-                                width: 14
-                                height: 14
-                                color: clearCtxMouse.containsMouse ? rootWindow.dimColor : "transparent"
-                                border.color: rootWindow.borderColor
-                                border.width: 1
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "×"
-                                    font.family: rootWindow.monoFont
-                                    font.pixelSize: 9
-                                    font.bold: true
-                                    color: rootWindow.mutedTextColor
-                                }
-
-                                HudMouseArea {
-                                    id: clearCtxMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        if (typeof hostController !== "undefined") {
-                                            hostController.clearHostContext();
-                                            rootWindow.showToast("CONTEXT CLEARED");
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-
-                    // Window Controls & Status Group (Anchored to Right)
                     RowLayout {
                         objectName: "hudWindowControls"
-                        Layout.alignment: Qt.AlignRight
-                        spacing: 6
-
-                        // Progressive Expansion Toggle [ ⤢ SHOW MORE ] / [ ⤡ SHOW LESS ]
-                        Rectangle {
+                        spacing: 1
+                        HudButton {
                             id: expandToggleButton
                             objectName: "expandToggleButton"
-                            visible: rootWindow.isAmbientMode
-                            implicitWidth: expandToggleText.implicitWidth + 12
-                            implicitHeight: 20
-                            Layout.preferredWidth: implicitWidth
-                            Layout.preferredHeight: 20
-                            height: 20
-                            width: implicitWidth
-                            color: expandToggleMouse.containsMouse ? rootWindow.dimColor : "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-                            radius: 3
-
-                            Text {
-                                id: expandToggleText
-                                anchors.centerIn: parent
-                                text: rootWindow.isDetailedExpanded ? "[ ⤡ SHOW LESS ]" : "[ ⤢ SHOW MORE ]"
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 8
-                                color: rootWindow.fgColor
-                            }
-
-                            HudMouseArea {
-                                id: expandToggleMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: rootWindow.toggleDetailedExpanded()
-                            }
+                            compact: true; quiet: true
+                            iconName: "arrows-out-simple"
+                            tip: rootWindow.isDetailedExpanded ? qsTr("Compact view") : qsTr("Expand review")
+                            onClicked: rootWindow.toggleDetailedExpanded()
                         }
-
-                        // Pin Toggle [PIN] / [PINNED] - Fixed width to prevent shifting/overlapping adjacent items
-                        Rectangle {
-                            id: pinButton
+                        HudButton {
                             objectName: "pinButton"
-                            implicitWidth: 50
-                            implicitHeight: 20
-                            Layout.preferredWidth: 50
-                            Layout.preferredHeight: 20
-                            width: 50
-                            height: 20
-                            color: rootWindow.pinToTop ? rootWindow.fgColor : (pinMouse.containsMouse ? rootWindow.dimColor : "transparent")
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-
-                            Text {
-                                id: pinText
-                                anchors.centerIn: parent
-                                text: rootWindow.pinToTop ? "PINNED" : "PIN"
-                                font.family: rootWindow.monoFont
-                                font.bold: rootWindow.pinToTop
-                                font.pixelSize: 8
-                                color: rootWindow.pinToTop ? rootWindow.bgColor : rootWindow.fgColor
-                            }
-                            HudMouseArea {
-                                id: pinMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    rootWindow.pinToTop = !rootWindow.pinToTop;
-                                    rootWindow.showToast(rootWindow.pinToTop ? "WINDOW PINNED (ALWAYS ON TOP)" : "WINDOW UNPINNED");
-                                }
+                            compact: true; quiet: !rootWindow.pinToTop
+                            iconName: "push-pin"
+                            tip: rootWindow.pinToTop ? qsTr("Unpin window") : qsTr("Keep on top")
+                            onClicked: {
+                                rootWindow.pinToTop = !rootWindow.pinToTop;
+                                rootWindow.setFlag(Qt.WindowStaysOnTopHint, rootWindow.pinToTop);
+                                rootWindow.show();
                             }
                         }
-
-                        // Settings Dashboard Button [SET]
-                        Rectangle {
-                            id: setButton
+                        Item {
                             objectName: "setButton"
-                            implicitWidth: 32
-                            implicitHeight: 20
-                            Layout.preferredWidth: 32
-                            Layout.preferredHeight: 20
-                            width: 32
-                            height: 20
-                            color: setMouse.containsMouse ? rootWindow.dimColor : "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-
-                            Text {
-                                id: setText
-                                anchors.centerIn: parent
-                                text: "SET"
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 8
-                                color: rootWindow.fgColor
-                            }
-                            HudMouseArea {
-                                id: setMouse
+                            implicitWidth: 30; implicitHeight: 30
+                            HudButton {
                                 objectName: "openSettingsControl"
-                                controlName: qsTr("Open settings")
                                 anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (typeof hostController !== "undefined" && hostController) {
-                                        hostController.showDashboard();
-                                    }
-                                }
+                                compact: true; quiet: true; iconName: "gear-six"; tip: qsTr("Settings")
+                                onClicked: if (rootWindow.hc) hostController.showDashboard()
                             }
                         }
-
-                        // Window Minimize [-]
-                        Rectangle {
-                            id: minButton
+                        HudButton {
                             objectName: "minButton"
-                            implicitWidth: 22
-                            implicitHeight: 20
-                            Layout.preferredWidth: 22
-                            Layout.preferredHeight: 20
-                            width: 22
-                            height: 20
-                            color: minMouse.containsMouse ? rootWindow.dimColor : "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "[-]"
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 9
-                                color: rootWindow.fgColor
-                            }
-                            HudMouseArea {
-                                id: minMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: rootWindow.isMac ? rootWindow.dismissCard() : rootWindow.showMinimized()
-                            }
+                            compact: true; quiet: true; iconName: "minus"; tip: qsTr("Minimize")
+                            onClicked: rootWindow.showMinimized()
                         }
-
-                        // Window Close [x]
-                        Rectangle {
-                            id: closeButton
+                        HudButton {
                             objectName: "closeButton"
-                            implicitWidth: 22
-                            implicitHeight: 20
-                            Layout.preferredWidth: 22
-                            Layout.preferredHeight: 20
-                            width: 22
-                            height: 20
-                            color: closeMouse.containsMouse ? "#8B1E1E" : "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "[x]"
-                                font.family: rootWindow.monoFont
-                                font.pixelSize: 9
-                                color: rootWindow.fgColor
-                            }
-                            HudMouseArea {
-                                id: closeMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: rootWindow.dismissCard()
-                            }
+                            compact: true; quiet: true; iconName: "x"; tip: qsTr("Close · Esc")
+                            onClicked: rootWindow.dismissCard()
                         }
                     }
                 }
 
-                // Status has its own row so changing model labels cannot displace window controls.
                 RowLayout {
                     objectName: "hudStatusRow"
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    Layout.preferredHeight: 20
-                    spacing: 6
-                        // Inference / Engine Badge
-                        Rectangle {
-                            id: engineBadge
-                            objectName: "engineBadge"
-                            visible: true
-                            Layout.minimumWidth: 0
-                            Layout.maximumWidth: 220
-                            implicitWidth: engineBadgeTxt.implicitWidth + 10
-                            implicitHeight: 20
-                            height: 20
-                            color: "transparent"
-                            border.color: (typeof hostController !== "undefined" && hostController.isInferring)
-                                          ? "#FFB000"
-                                          : (typeof hostController !== "undefined" && hostController.modelRuntimeState === "FAILED")
-                                            ? "#F85149"
-                                          : (typeof hostController !== "undefined" && hostController.useLiveWeights)
-                                            ? "#7EE787"
-                                          : (typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
-                                            ? "#38BDF8"
-                                          : rootWindow.borderColor
-                            border.width: 1
-
-                            Text {
-                                id: engineBadgeTxt
-                                objectName: "modelRuntimeLabel"
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.leftMargin: 5
-                                anchors.rightMargin: 5
-                                anchors.verticalCenter: parent.verticalCenter
-                                elide: Text.ElideRight
-                                Accessible.name: text
-                                text: {
-                                    if (!rootWindow.hc) return "[ MODEL UNAVAILABLE ]";
-                                    if (hostController.isInferring) return "[ 🧠 INFERRING (" + (hostController.acceleratorName ? hostController.acceleratorName : "GPU") + ") ]";
-                                    if (hostController.modelRuntimeState === "LOADING") return "[ LOADING MODEL ]";
-                                    if (hostController.useLiveWeights) return "[ LOCAL MODEL ]";
-                                    if (hostController.modelRuntimeState === "FAILED") return "[ MODEL ERROR ]";
-                                    if (hostController.isNativeGraniteInstalled) return "[ READY · STANDBY ]";
-                                    return "[ MODEL NOT LOADED ]";
-                                }
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 8
-                                color: (typeof hostController !== "undefined" && hostController.isInferring)
-                                       ? "#FFB000"
-                                       : (typeof hostController !== "undefined" && hostController.modelRuntimeState === "FAILED")
-                                         ? "#F85149"
-                                       : ((typeof hostController !== "undefined" && hostController.useLiveWeights)
-                                         ? "#7EE787"
-                                         : ((typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
-                                           ? "#38BDF8"
-                                           : rootWindow.mutedTextColor))
-                            }
-
-                            HudMouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (typeof hostController !== "undefined") {
-                                        hostController.showDashboard();
-                                    }
-                                }
-                            }
+                    spacing: 8
+                    HudButton {
+                        id: projectSelectorButton
+                        objectName: "projectSelectorButton"
+                        label: rootWindow.activeProject.name
+                        iconName: "caret-down"; compact: true; quiet: true
+                        Layout.preferredWidth: Math.min(160, implicitWidth)
+                        Layout.maximumWidth: 160
+                        clip: true
+                        tip: qsTr("Choose workspace and scope")
+                        onClicked: {
+                            const pt = mapToItem(subBorderInset, 0, height + 4);
+                            projectDropdown.x = Math.min(pt.x, subBorderInset.width - projectDropdown.width - 8);
+                            projectDropdown.y = pt.y;
+                            projectDropdown.visible = !projectDropdown.visible;
                         }
-
-                        // Status Badge
-                        Rectangle {
-                            id: statusBadge
-                            objectName: "hudStateBadge"
-                            implicitWidth: statusTextLabel.implicitWidth + 12
-                            implicitHeight: 20
-                            Layout.preferredWidth: implicitWidth
-                            Layout.preferredHeight: 20
-                            height: 20
-                            width: implicitWidth
-                            color: "transparent"
-                            border.color: rootWindow.presentation.tone
-                            border.width: 1
-
-                            Text {
-                                id: statusTextLabel
-                                objectName: "hudStateLabel"
-                                anchors.centerIn: parent
-                                text: "[ " + rootWindow.presentation.badge + " ]"
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 9
-                                color: rootWindow.presentation.tone
-                            }
-                        }
-
+                    }
                     Item { Layout.fillWidth: true; Layout.minimumWidth: 0 }
-                }
-
-                // Divider below top bar
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    height: 1
-                    color: rootWindow.borderColor
-                    opacity: 0.3
-                }
-
-                // =============================================================
-                // 1b. SCOPE GOVERNANCE STRIP (Global Codebase vs Local File)
-                // =============================================================
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    height: 24
-                    color: rootWindow.dimColor
-                    border.color: rootWindow.borderColor
-                    border.width: 1
-                    radius: 4
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        spacing: 8
-
+                    Rectangle {
+                        objectName: "engineBadge"
+                        Layout.preferredWidth: Math.min(160, runtimeLabel.implicitWidth + 16)
+                        Layout.maximumWidth: rootWindow.width < 500 ? 120 : 160
+                        implicitHeight: 23
+                        radius: 6; color: rocPalette.surface
                         Text {
-                            text: "SCOPE:"
-                            font.family: rootWindow.monoFont
-                            font.bold: true
-                            font.pixelSize: 8
-                            color: rootWindow.fgColor
+                            id: runtimeLabel; objectName: "modelRuntimeLabel"
+                            anchors.fill: parent; anchors.margins: 6
+                            text: {
+                                if (!rootWindow.hc) return qsTr("Model unavailable");
+                                if (hostController.isInferring) return qsTr("Writing locally");
+                                if (hostController.modelRuntimeState === "LOADING") return qsTr("Loading model");
+                                if (hostController.modelRuntimeState === "FAILED") return qsTr("Model error");
+                                if (hostController.useLiveWeights) return qsTr("Local model");
+                                return hostController.isNativeGraniteInstalled ? qsTr("Ready · standby") : qsTr("Model not loaded");
+                            }
+                            font.family: rootWindow.monoFont; font.pixelSize: 10
+                            color: rootWindow.mutedTextColor
+                            verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
                         }
-
-                        // GLOBAL CODEBASE Pill (Default)
-                        Rectangle {
-                            height: 18
-                            width: globalRow.width + 10
-                            color: rootWindow.activeScope === "global" ? rootWindow.fgColor : "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-                            radius: 3
-
-                            RowLayout {
-                                id: globalRow
-                                anchors.centerIn: parent
-                                spacing: 4
-                                Text {
-                                    text: rootWindow.activeScope === "global" ? "●" : "○"
-                                    font.family: rootWindow.monoFont
-                                    font.pixelSize: 8
-                                    color: rootWindow.activeScope === "global" ? rootWindow.bgColor : rootWindow.fgColor
-                                }
-                                Text {
-                                    text: rootWindow.width >= 680 ? "ENTIRE PROJECT" : "ALL FILES"
-                                    font.family: rootWindow.monoFont
-                                    font.bold: rootWindow.activeScope === "global"
-                                    font.pixelSize: 8
-                                    color: rootWindow.activeScope === "global" ? rootWindow.bgColor : rootWindow.fgColor
-                                }
-                            }
-                            HudMouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    rootWindow.activeScope = "global";
-                                    rootWindow.showToast("SCOPE: ENTIRE PROJECT (" + rootWindow.activeProject.name + ")");
-                                }
-                            }
-                        }
-
-                        // SINGLE FILE Pill
-                        Rectangle {
-                            height: 18
-                            width: localRow.width + 10
-                            color: rootWindow.activeScope === "local" ? rootWindow.fgColor : "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: 1
-                            radius: 3
-
-                            RowLayout {
-                                id: localRow
-                                anchors.centerIn: parent
-                                spacing: 4
-                                Text {
-                                    text: rootWindow.activeScope === "local" ? "●" : "○"
-                                    font.family: rootWindow.monoFont
-                                    font.pixelSize: 8
-                                    color: rootWindow.activeScope === "local" ? rootWindow.bgColor : rootWindow.fgColor
-                                }
-                                Text {
-                                    text: "SINGLE FILE"
-                                    font.family: rootWindow.monoFont
-                                    font.bold: rootWindow.activeScope === "local"
-                                    font.pixelSize: 8
-                                    color: rootWindow.activeScope === "local" ? rootWindow.bgColor : rootWindow.fgColor
-                                }
-                            }
-                            HudMouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    rootWindow.activeScope = "local";
-                                    rootWindow.showToast("SCOPE: SINGLE FILE ACTIVE");
-                                }
-                            }
-                        }
-
-                        // File Selector Dropdown Button (ONLY visible when activeScope === "local")
-                        Rectangle {
-                            id: fileSelectorButton
-                            visible: rootWindow.activeScope === "local"
-                            height: 18
-                            width: fileSelectorRow.width + 12
-                            color: (typeof fileDropdown !== "undefined" && fileDropdown.visible || fileSelectorMouse.containsMouse) ? rootWindow.dimColor : rootWindow.inputBgColor
-                            border.color: (typeof fileDropdown !== "undefined" && fileDropdown.visible) ? "#FFB000" : rootWindow.borderColor
-                            border.width: 1
-                            radius: 2
-
-                            RowLayout {
-                                id: fileSelectorRow
-                                anchors.centerIn: parent
-                                spacing: 4
-
-                                Text {
-                                    text: "FILE:"
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: "#FFB000"
-                                }
-
-                                Text {
-                                    readonly property string displayFileName: {
-                                        if (rootWindow.targetLocalFile && rootWindow.targetLocalFile.length > 0) {
-                                            var parts = rootWindow.targetLocalFile.split("/");
-                                            return parts[parts.length - 1];
-                                        }
-                                        if (hostController.recommendedOption.length > 0 && hostController.recommendedConfidence >= 0.70) {
-                                            var rparts = hostController.recommendedOption.split("/");
-                                            return "Auto: " + rparts[rparts.length - 1];
-                                        }
-                                        return "Select file...";
-                                    }
-                                    text: displayFileName + " " + (typeof fileDropdown !== "undefined" && fileDropdown.visible ? "▴" : "▾")
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: (rootWindow.targetLocalFile && rootWindow.targetLocalFile.length > 0) ? rootWindow.fgColor :
-                                           ((hostController.recommendedOption.length > 0 && hostController.recommendedConfidence >= 0.70) ? "#F59E0B" : rootWindow.mutedTextColor)
-                                    elide: Text.ElideMiddle
-                                    Layout.maximumWidth: Math.min(220, Math.max(90, rootWindow.width - 450))
-                                }
-                            }
-
-                            HudMouseArea {
-                                id: fileSelectorMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    projectDropdown.visible = false;
-                                    if (typeof fileDropdown !== "undefined") {
-                                        if (!fileDropdown.visible) {
-                                            fileDropdown.filterText = "";
-                                            if (typeof fileSearchInput !== "undefined") fileSearchInput.text = "";
-                                            var pt = fileSelectorButton.mapToItem(subBorderInset, 0, fileSelectorButton.height + 4);
-                                            fileDropdown.x = Math.max(10, Math.min(pt.x, subBorderInset.width - fileDropdown.width - 10));
-                                            fileDropdown.y = pt.y;
-                                            fileDropdown.visible = true;
-                                            if (typeof fileSearchInput !== "undefined") fileSearchInput.forceActiveFocus();
-                                        } else {
-                                            fileDropdown.visible = false;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-
-                        Rectangle {
-                            implicitWidth: applyScopeText.implicitWidth + 10; height: 18
-                            color: "transparent"; border.color: rootWindow.borderColor; radius: 3
-                            activeFocusOnTab: true
-                            Accessible.role: Accessible.Button
-                            Accessible.name: qsTr("Apply selected scope to draft")
-                            Accessible.onPressAction: rootWindow.applyScope()
-                            Keys.onReturnPressed: rootWindow.applyScope()
-                            Keys.onSpacePressed: rootWindow.applyScope()
-                            Text { id: applyScopeText; anchors.centerIn: parent; text: "[ APPLY SCOPE ]"; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor }
-                            HudMouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: rootWindow.applyScope() }
-                        }
-
-                        // Active Scope Target Tag
-                        RowLayout {
-                            visible: rootWindow.width >= 640
-                            spacing: 4
-
-                            Text {
-                                text: rootWindow.activeScope === "global" ?
-                                      "TARGET: ALL FILES" :
-                                      "TARGET: @" + (rootWindow.targetLocalFile.length > 0 ? rootWindow.targetLocalFile : "...")
-                                font.family: rootWindow.monoFont
-                                font.bold: true
-                                font.pixelSize: 8
-                                color: rootWindow.activeScope === "global" ? "#7EE787" : "#FFB000"
-                            }
-
-                            // If single file, show a small [×] to quickly clear back to global
-                            Rectangle {
-                                visible: rootWindow.activeScope === "local"
-                                height: 12
-                                width: 12
-                                color: "transparent"
-                                border.color: "#FFB000"
-                                border.width: 1
-                                radius: 2
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "×"
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: "#FFB000"
-                                }
-                                HudMouseArea {
-                                    anchors.fill: parent
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        rootWindow.activeScope = "global";
-                                        rootWindow.showToast("SCOPE: ALL FILES");
-                                    }
-                                }
-                            }
+                    }
+                    Rectangle {
+                        objectName: "hudStateBadge"
+                        implicitWidth: stateLabel.implicitWidth + 16
+                        Layout.maximumWidth: 120
+                        implicitHeight: 23; radius: 6
+                        color: rocPalette.surface
+                        Text {
+                            id: stateLabel; objectName: "hudStateLabel"
+                            anchors.fill: parent; anchors.margins: 6
+                            text: rootWindow.presentation.badge
+                            font.family: rootWindow.monoFont; font.pixelSize: 10
+                            color: rootWindow.presentation.tone
+                            verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
                         }
                     }
                 }
 
-                // =============================================================
-                // 2. CENTRAL PROMPT INGESTION & INTERACTION MATRIX
-                // =============================================================
+                Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: rootWindow.borderColor }
+
                 Flickable {
-                    ScrollBar.vertical: HudScrollBar {}
                     id: contentScroll
+                    objectName: "workflowViewport"
                     Layout.fillWidth: true
-                    Layout.minimumWidth: 0
                     Layout.fillHeight: true
                     Layout.minimumHeight: 0
-                    objectName: "workflowViewport"
-                    contentWidth: width
-                    contentHeight: mainContent.height
-                    flickableDirection: Flickable.VerticalFlick
-                    boundsBehavior: Flickable.StopAtBounds
+                    Layout.minimumWidth: 0
                     clip: true
-                    Keys.onPressed: function(event) {
-                        let next = contentY;
-                        if (event.key === Qt.Key_PageDown) next += height * 0.8;
-                        else if (event.key === Qt.Key_PageUp) next -= height * 0.8;
-                        else return;
-                        contentY = Math.max(0, Math.min(contentHeight - height, next));
-                        event.accepted = true;
-                    }
-                ColumnLayout {
-                    id: mainContent
-                    // Keep controls clear of the overlay scrollbar while scrolling.
-                    width: Math.max(0, contentScroll.contentWidth - 12)
-                    height: !rootWindow.showPromptEditor
-                        ? implicitHeight : Math.max(implicitHeight, contentScroll.height)
-                    spacing: 6
-
-
-
-                        // Prompt Terminal Canvas (Double Bounded Inset)
-                        Rectangle {
-                            id: promptTerminalCanvas
-                            visible: rootWindow.showPromptEditor
-                            Layout.minimumHeight: visible ? (rootWindow.isDetailedExpanded ? 180 : 120) : 0
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            Layout.fillHeight: visible
-                            MouseArea {
-                                anchors.fill: parent
-                                z: -1
-                                cursorShape: Qt.IBeamCursor
-                                onClicked: {
-                                    if (rootWindow.Window.window) rootWindow.Window.window.requestActivate();
-                                    if (rootWindow.hc) hostController.pauseAmbientFollowing();
-                                    rootWindow.editingDraft = true;
-                                    promptInput.forceActiveFocus();
-                                }
-                            }
-                            color: rootWindow.inputBgColor
-                            border.color: promptInput.activeFocus ? rootWindow.fgColor : rootWindow.borderColor
-                            border.width: 1
-                            radius: 6
-
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 8
-                                spacing: 6
-
-                                ScrollView {
-                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    property real availableWidth: width - 10
+                    contentWidth: availableWidth
+                    contentHeight: mainContent.implicitHeight
+                    onContentHeightChanged: focusRevealTimer.restart()
+                    boundsBehavior: Flickable.StopAtBounds
                     ScrollBar.vertical: HudScrollBar {}
-                                    Layout.fillWidth: true
-                                    Layout.minimumWidth: 0
-                                    Layout.fillHeight: true
-                                    clip: true
 
-                                    TextArea {
-                                        id: promptInput
-                                        background: null
-                                        readOnly: false
-                                        objectName: "promptInput"
-                                        Accessible.name: qsTr("Prompt draft")
-                                        activeFocusOnTab: true
-                                        cursorVisible: activeFocus
-                                        TapHandler {
-                                            onTapped: {
-                                                if (rootWindow.Window.window) rootWindow.Window.window.requestActivate();
-                                                if (rootWindow.hc) hostController.pauseAmbientFollowing();
-                                                rootWindow.editingDraft = true;
-                                                promptInput.forceActiveFocus();
-                                            }
-                                        }
-                                        onActiveFocusChanged: {
-                                            if (activeFocus) {
-                                                if (rootWindow.Window.window) rootWindow.Window.window.requestActivate();
-                                                if (rootWindow.hc) hostController.pauseAmbientFollowing();
-                                                rootWindow.editingDraft = true;
-                                            }
-                                        }
-                                        placeholderText: qsTr("// Type your prompt here...\n// Example: 'Update SessionManager timeout handling and run tests'")
-                                        placeholderTextColor: rootWindow.commentColor
-                                        color: rootWindow.fgColor
-                                        font.family: rootWindow.monoFont
-                                        font.pixelSize: 12
-                                        wrapMode: TextEdit.Wrap
-                                        selectByMouse: true
-                                        focus: true
-                                        leftPadding: 6
-                                        rightPadding: 6
-                                        topPadding: 6
-                                        bottomPadding: 6
-                                        onTextChanged: {
-                                            if (rootWindow.hc && !rootWindow.suppressEditSignal) {
-                                                hostController.noteDraftEdited(hostController.stateVersion);
-                                                rootWindow.queueAutoAnalysis();
-                                            }
-                                        }
-                                        Keys.onPressed: function(event) {
-                                            if ((event.modifiers & (Qt.ControlModifier | Qt.MetaModifier)) && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter)) {
-                                                rootWindow.handleEnter(); event.accepted = true;
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Canvas Sub-bar
-                                Rectangle {
-                                    Layout.fillWidth: true
-                                    Layout.minimumWidth: 0
-                                    height: 1
-                                    color: rootWindow.borderColor
-                                    opacity: 0.3
-                                }
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    Layout.minimumWidth: 0
-                                    spacing: 8
-
-                                    RowLayout {
-                                        spacing: 4
-                                        Text {
-                                            text: "STATUS:"
-                                            font.family: rootWindow.monoFont
-                                            font.bold: true
-                                            font.pixelSize: 8
-                                            color: rootWindow.fgColor
-                                        }
-                                        Text {
-                                            text: rootWindow.presentation.badge
-                                            font.family: rootWindow.monoFont
-                                            font.bold: true
-                                            font.pixelSize: 8
-                                            color: rootWindow.presentation.tone
-                                        }
-                                        Text {
-                                            text: "█"
-                                            font.family: rootWindow.monoFont
-                                            font.pixelSize: 8
-                                            color: rootWindow.isCompiledPreview ? "#7EE787" : rootWindow.fgColor
-                                            SequentialAnimation on opacity {
-                                                loops: Animation.Infinite
-                                                NumberAnimation { from: 1; to: 0; duration: 420 }
-                                                NumberAnimation { from: 0; to: 1; duration: 420 }
-                                            }
-                                        }
-
-                                        // Revert to draft pill when previewing compiled prompt
-                                        Rectangle {
-                                            visible: rootWindow.isCompiledPreview
-                                            height: 16
-                                            implicitWidth: revertDraftText.contentWidth + 10
-                                            color: "transparent"
-                                            border.color: "#FFB000"
-                                            border.width: 1
-                                            radius: 3
-                                            Text {
-                                                id: revertDraftText
-                                                anchors.centerIn: parent
-                                                text: "[ ↺ EDIT DRAFT ]"
-                                                font.family: rootWindow.monoFont
-                                                font.bold: true
-                                                font.pixelSize: 7
-                                                color: "#FFB000"
-                                            }
-                                            HudMouseArea {
-                                                anchors.fill: parent
-                                                hoverEnabled: true
-                                                cursorShape: Qt.PointingHandCursor
-                                                onClicked: rootWindow.revertToDraft()
-                                            }
-                                        }
-                                    }
-
-                                    Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
-
-                                    Text {
-                                        visible: reviewFlow.showDiagnostics && rootWindow.width >= 620
-                                        text: rootWindow.isCompiledPreview ? "MODE: PREVIEW & VERIFY" : "INPUT: VALID"
-                                        font.family: rootWindow.monoFont
-                                        font.pixelSize: 8
-                                        color: rootWindow.isCompiledPreview ? "#7EE787" : rootWindow.fgColor
-                                    }
-                                    Text {
-                                        visible: reviewFlow.showDiagnostics
-                                        text: rootWindow.isCompiledPreview ? "REVIEW" : (rootWindow.hasAmbiguity ? "RESOLVE INTENT" : (rootWindow.hc ? hostController.analysisStatus : "IDLE"))
-                                        font.family: rootWindow.monoFont
-                                        font.pixelSize: 8
-                                        color: rootWindow.isCompiledPreview ? "#7EE787" : (rootWindow.hasAmbiguity ? "#FFB000" : rootWindow.fgColor)
-                                    }
-                                    Text {
-                                        visible: reviewFlow.showDiagnostics
-                                        text: rootWindow.hc && hostController.isAmbiguityScored ? "AMBIGUITY: " + (rootWindow.ambiguityScore * 100).toFixed(0) + "%" : "UNRANKED"
-                                        font.family: rootWindow.monoFont
-                                        font.pixelSize: 8
-                                        color: rootWindow.isCompiledPreview ? "#7EE787" : rootWindow.fgColor
-                                    }
-                                }
-                            }
-                        }
-
-                        // =============================================================
-                Text {
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    visible: text.length > 0
-                    text: rootWindow.autoAnalysisText.length ? qsTr("Checking after you pause typing…") : (rootWindow.hc ? [hostController.shortcutWarning, hostController.lastError === hostController.analysisMessage ? "" : hostController.lastError, hostController.analysisMessage].filter(function(x) { return x.length > 0; }).join("\n") : "")
-                    wrapMode: Text.WordWrap
-                    color: rootWindow.mutedTextColor
-                    font.family: rootWindow.monoFont
-                    font.pixelSize: 10
-                }
-                Button {
-                    visible: rootWindow.hc && hostController.storageNeedsRecovery
-                    text: qsTr("Retry history")
-                    enabled: rootWindow.hc && !hostController.storageBusy
-                    onClicked: rootWindow.retryHistory()
-                }
-                IntentReviewPanel {
-                    id: reviewFlow
-                    onReviewRequested: rootWindow.analyzeNow()
-                    onRevealReviewItem: function(item) { rootWindow.revealReviewItem(item); }
-                    onEditDraftRequested: {
-                        if (rootWindow.isAmbientMode && !rootWindow.isDetailedExpanded) {
-                            rootWindow.toggleDetailedExpanded();
-                        }
-                        if (rootWindow.isCompiledPreview) {
-                            // Preview hides the editor until the old proposal
-                            // is discarded. Focus it after that command completes.
-                            rootWindow.revertToDraft();
-                        } else {
-                            rootWindow.editingDraft = true;
-                            promptInput.forceActiveFocus();
-                        }
-                    }
-                    visible: true
-                    Layout.fillHeight: false
-                    Layout.alignment: Qt.AlignTop
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    currentTheme: rootWindow.currentTheme
-                    viewportHeight: contentScroll.height
-                    diagnosticMetrics: qsTr("Characters: %1 · Words: %2 · Estimated tokens: %3\nRevision: %4 · Sessions: %5\nSpeed: %6")
-                        .arg(promptInput.text.length).arg(rootWindow.getWordCount(promptInput.text)).arg(Math.ceil(promptInput.text.length / 4))
-                        .arg(rootWindow.hc ? hostController.stateVersion : 0).arg(rootWindow.hc ? hostController.sessionCount : 0)
-                        .arg(rootWindow.hc ? hostController.inferenceSpeed : "")
-                }
-            }
-                }
-
-                // =============================================================
-                // 4. FOOTER BAR: Metrics, Hard-Shadow Tactile Action Buttons
-                // =============================================================
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    Layout.preferredHeight: rootWindow.width < 600 ? 62 : 36
-                    Layout.minimumHeight: rootWindow.width < 600 ? 62 : 36
-                    color: "transparent"
-                    border.color: rootWindow.borderColor
-                    border.width: 1
-
-                    GridLayout {
-                        columns: rootWindow.width < 600 ? 1 : 2
-                        rowSpacing: 4
-                        columnSpacing: 8
-                        anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        anchors.topMargin: 5
-                        anchors.bottomMargin: 5
+                    ColumnLayout {
+                        id: mainContent
+                        width: contentScroll.availableWidth
+                        spacing: 14
 
                         RowLayout {
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        spacing: 8
-                        Text {
-                            objectName: "deliveryDestinationLabel"
+                            Layout.fillWidth: true
+                            visible: !rootWindow.hasAmbiguity && !rootWindow.isCompiledPreview
+                            Text {
+                                Layout.fillWidth: true; Layout.minimumWidth: 0
+                                text: rootWindow.hc && hostController.isAnalyzing ? qsTr("Finding the right words…") : qsTr("What are you working on?")
+                                font.family: rootWindow.sansFont; font.pixelSize: 23; font.weight: Font.DemiBold
+                                color: rootWindow.fgColor; wrapMode: Text.WordWrap
+                            }
+                        }
+                        Rectangle {
+                            visible: rootWindow.showPromptEditor
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            Layout.maximumWidth: 300
+                            implicitHeight: Math.min(240, Math.max(125, promptInput.contentHeight + 30))
+                            color: rocPalette.inset; radius: 11
+                            border.color: promptInput.activeFocus ? rocPalette.focus : rootWindow.borderColor
+                            ScrollView {
+                                anchors.fill: parent; anchors.margins: 12
+                                clip: true
+                                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                ScrollBar.vertical: HudScrollBar {}
+                                TextArea {
+                                    id: promptInput
+                                    objectName: "promptInput"
+                                    Accessible.name: qsTr("Prompt draft")
+                                    background: null
+                                    activeFocusOnTab: true
+                                    selectByMouse: true
+                                    wrapMode: TextEdit.Wrap
+                                    font.family: rootWindow.sansFont; font.pixelSize: 15
+                                    color: rootWindow.fgColor
+                                    placeholderText: qsTr("Describe the change you want to make.\nKeep the details that matter to you.")
+                                    placeholderTextColor: rootWindow.mutedTextColor
+                                    padding: 0
+                                    onActiveFocusChanged: if (activeFocus) {
+                                        rootWindow.requestActivate();
+                                        if (rootWindow.hc) hostController.pauseAmbientFollowing();
+                                        rootWindow.editingDraft = true;
+                                    }
+                                    TapHandler { onTapped: { rootWindow.requestActivate(); promptInput.forceActiveFocus(); } }
+                                    onTextChanged: if (rootWindow.hc && !rootWindow.suppressEditSignal) {
+                                        rootWindow.rewriteAfterReview = false;
+                                        hostController.noteDraftEdited(hostController.stateVersion);
+                                        rootWindow.queueAutoAnalysis();
+                                    }
+                                }
+                            }
+                        }
+                        Rectangle {
+                            visible: !rootWindow.showPromptEditor && !rootWindow.isCompiledPreview
+                            Layout.fillWidth: true; Layout.minimumWidth: 0
+                            implicitHeight: sourceColumn.implicitHeight + 22
+                            radius: 10; color: rocPalette.inset
+                            ColumnLayout {
+                                id: sourceColumn
+                                x: 12; y: 11; width: parent.width - 24
+                                spacing: 7
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Text { text: qsTr("YOUR DRAFT"); font.family: rootWindow.monoFont; font.pixelSize: 10; color: rootWindow.mutedTextColor }
+                                    Item { Layout.fillWidth: true }
+                                    HudButton {
+                                        label: qsTr("Edit"); iconName: "pencil-simple"; compact: true; quiet: true
+                                        onClicked: { rootWindow.editingDraft = true; if (rootWindow.hc) hostController.pauseAmbientFollowing(); promptInput.forceActiveFocus(); }
+                                    }
+                                }
+                                Text {
+                                    Layout.fillWidth: true; Layout.minimumWidth: 0
+                                    text: promptInput.text; textFormat: Text.PlainText
+                                    font.family: rootWindow.sansFont; font.pixelSize: 13
+                                    color: rootWindow.mutedTextColor
+                                    wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                                }
+                            }
+                        }
+                        Text {
+                            Layout.fillWidth: true; Layout.minimumWidth: 0
+                            visible: text.length > 0 && (!rootWindow.hc || !hostController.isClarifying)
+                            text: rootWindow.autoAnalysisText.length ? qsTr("Checking after you pause typing…") : rootWindow.hc ? [hostController.shortcutWarning, hostController.lastError === hostController.analysisMessage ? "" : hostController.lastError, hostController.analysisMessage].filter(function(x) { return x.length > 0; }).join("\n") : ""
+                            wrapMode: Text.WordWrap
+                            font.family: rootWindow.sansFont; font.pixelSize: 12
+                            color: rootWindow.mutedTextColor
+                        }
+                        HudButton {
+                            visible: rootWindow.hc && hostController.storageNeedsRecovery
+                            label: qsTr("Retry history")
+                            onClicked: rootWindow.retryHistory()
+                        }
+                        IntentReviewPanel {
+                            id: reviewFlow
+                            Layout.fillWidth: true; Layout.minimumWidth: 0
+                            currentTheme: rootWindow.currentTheme
+                            viewportHeight: contentScroll.height
+                            reducedMotion: rootWindow.reducedMotion
+                            draftAvailable: promptInput.text.trim().length > 0
+                            onReviewRequested: rootWindow.analyzeNow()
+                            onRewriteRequested: rootWindow.requestFullRewrite()
+                            onRevealReviewItem: function(item) { rootWindow.revealReviewItem(item); }
+                            onEditDraftRequested: {
+                                if (rootWindow.isAmbientMode && !rootWindow.isDetailedExpanded) rootWindow.toggleDetailedExpanded();
+                                if (rootWindow.isCompiledPreview) rootWindow.revertToDraft();
+                                else { rootWindow.editingDraft = true; promptInput.forceActiveFocus(); }
+                            }
+                            diagnosticMetrics: qsTr("%1 characters · %2 words\nRevision %3").arg(promptInput.text.length).arg(rootWindow.getWordCount(promptInput.text)).arg(rootWindow.hc ? hostController.stateVersion : 0)
+                        }
+                        HudButton {
+                            label: rootWindow.showWorkspaceOptions ? qsTr("Hide workspace options") : qsTr("Workspace options")
+                            compact: true; quiet: true
+                            onClicked: rootWindow.showWorkspaceOptions = !rootWindow.showWorkspaceOptions
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            visible: rootWindow.showWorkspaceOptions
+                            spacing: 10
+                            RowLayout {
+                                Layout.fillWidth: true
+                                HudButton { label: qsTr("Entire project"); compact: true; primary: rootWindow.activeScope === "global"; onClicked: rootWindow.activeScope = "global" }
+                                HudButton { label: qsTr("Single file"); compact: true; primary: rootWindow.activeScope === "local"; onClicked: rootWindow.openFileDropdown() }
+                                Item { Layout.fillWidth: true }
+                            }
+                            HudButton {
+                                id: fileSelectorButton
+                                label: rootWindow.targetLocalFile.length ? rootWindow.targetLocalFile : qsTr("Choose a file")
+                                visible: rootWindow.activeScope === "local"
+                                onClicked: rootWindow.openFileDropdown()
+                            }
+                            HudButton { label: qsTr("Add scope to draft"); compact: true; onClicked: rootWindow.applyScope() }
+                            CheckBox {
+                                text: qsTr("Reduce motion")
+                                checked: rootWindow.reducedMotion
+                                onToggled: rootWindow.reducedMotion = checked
+                                font.family: rootWindow.sansFont; font.pixelSize: 13
+                                palette.windowText: rootWindow.fgColor
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: rootWindow.borderColor }
+                GridLayout {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    columns: rootWindow.width < 600 ? 1 : 2
+                    rowSpacing: 3; columnSpacing: 12
+                    RowLayout {
+                        Layout.fillWidth: true; Layout.minimumWidth: 0; spacing: 6
+                        Text {
+                            objectName: "deliveryDestinationLabel"
+                            Layout.fillWidth: true; Layout.minimumWidth: 0
                             text: rootWindow.hc ? hostController.deliveryLabel : qsTr("Copies to clipboard")
-                            textFormat: Text.PlainText
-                            elide: Text.ElideRight
-                            font.family: rootWindow.sansFont
-                            font.pixelSize: 11
+                            textFormat: Text.PlainText; elide: Text.ElideRight
+                            font.family: rootWindow.sansFont; font.pixelSize: 11
                             color: rootWindow.mutedTextColor
                         }
                         Text {
                             objectName: "pendingReviewLabel"
-                            Layout.minimumWidth: 0
-                            visible: rootWindow.hc && hostController.hasProposal && hostController.pendingReviewCount > 0
-                            text: rootWindow.hc ? (hostController.pendingReviewCount === 1 ? qsTr("1 check left") : qsTr("%1 checks left").arg(hostController.pendingReviewCount)) : ""
-                            font.family: rootWindow.sansFont
-                            font.pixelSize: 11
-                            color: "#FFB000"
-                            elide: Text.ElideRight
+                            visible: rootWindow.hc && hostController.pendingReviewCount > 0
+                            text: rootWindow.hc ? qsTr("%1 checks left").arg(hostController.pendingReviewCount) : ""
+                            font.family: rootWindow.sansFont; font.pixelSize: 11
+                            color: rocPalette.warning
                         }
-
-                        // System Toast Banner
-                        Text {
-                            visible: rootWindow.toastMessage.length > 0
-                            text: "✦ " + rootWindow.toastMessage
-                            font.family: rootWindow.monoFont
-                            font.bold: true
-                            font.pixelSize: 9
-                            color: rootWindow.fgColor
-                            elide: Text.ElideRight
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            Layout.maximumWidth: 140
+                    }
+                    RowLayout {
+                        Layout.alignment: Qt.AlignRight
+                        spacing: 6
+                        HudButton {
+                            objectName: "bypassBtn"
+                            label: qsTr("Keep original")
+                            compact: rootWindow.height <= 260
+                            quiet: true
+                            tip: qsTr("Use your original wording")
+                            active: promptInput.text.trim().length > 0 && rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy
+                            onClicked: rootWindow.executeHardBypass()
                         }
-
+                        HudButton {
+                            objectName: "approveRewriteControl"
+                            label: rootWindow.presentation.label
+                            primary: true
+                            compact: rootWindow.height <= 260
+                            active: rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy && rootWindow.presentation.action !== "NONE" && (promptInput.text.trim().length > 0 || hostController.hasProposal || hostController.isAnalyzing)
+                            onClicked: rootWindow.handleEnter()
+                            Text {
+                                objectName: "analysisActionLabel"
+                                text: rootWindow.presentation.label
+                                visible: false
+                            }
                         }
-
-                        // Clear Action Buttons (Right-aligned container)
-                        RowLayout {
-                            Layout.alignment: Qt.AlignRight
-                            spacing: 6
-
-                            // Button 1: AS-IS or EDIT DRAFT
-                            Rectangle {
-                                id: bypassBtn
-                                objectName: "bypassBtn"
-                                height: 22
-                                implicitWidth: b1Text.contentWidth + 14
-                                color: bypassMouse.pressed ? rootWindow.dimColor : (bypassMouse.containsMouse ? rootWindow.dimColor : "transparent")
-                                border.color: rootWindow.isCompiledPreview ? "#FFB000" : rootWindow.borderColor
-                                border.width: 1
-                                radius: 3
-
-                                Text {
-                                    id: b1Text
-                                    anchors.centerIn: parent
-                                    text: {
-                                        if (rootWindow.isCompiledPreview) return "[ EDIT PROMPT ]";
-                                        if (rootWindow.hc && hostController.isAmbientAttached) return "[ INSERT AS-IS ]";
-                                        const insert = rootWindow.hc && hostController.isAmbientCapture;
-                                        return rootWindow.width >= 720 ? (insert ? "[ INSERT AS-IS ]" : "[ COPY AS-IS ]")
-                                                                      : (insert ? "[ INSERT AS-IS ]" : "[ COPY ]");
-                                    }
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: rootWindow.isCompiledPreview ? "#FFB000" : rootWindow.fgColor
-                                }
-                                HudMouseArea {
-                                    id: bypassMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        if (rootWindow.isCompiledPreview) {
-                                            rootWindow.revertToDraft();
-                                        } else if (rootWindow.hc && hostController.isAmbientAttached) {
-                                            rootWindow.executeHardBypass();
-                                        } else {
-                                            rootWindow.executeHardBypass();
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Button 2: ENHANCE or COPY AGAIN (Primary Action)
-                            Rectangle {
-                                id: triageBtn
-                                objectName: "approveRewriteControl"
-                                property string label: rootWindow.presentation.label
-                                enabled: rootWindow.hc && rootWindow.presentation.action !== "NONE" &&
-                                    (rootWindow.presentation.action === "CANCEL" || (hostController.isStorageAvailable && !hostController.storageBusy))
-                                activeFocusOnTab: enabled
-                                Accessible.role: Accessible.Button
-                                Accessible.name: label
-                                Accessible.onPressAction: if (enabled) rootWindow.handleEnter()
-                                Keys.onReturnPressed: if (enabled) rootWindow.handleEnter()
-                                Keys.onSpacePressed: if (enabled) rootWindow.handleEnter()
-                                opacity: enabled ? 1 : 0.5
-                                height: 22
-                                implicitWidth: b2Text.contentWidth + 16
-                                color: {
-                                    if (triageMouse.pressed) return rootWindow.dimColor;
-                                    if (triageMouse.containsMouse) return "#E2E8F0";
-                                    if (rootWindow.isCompiledPreview && rootWindow.hc && hostController.canApprove) return "#7EE787";
-                                    return rootWindow.fgColor;
-                                }
-                                border.color: rootWindow.borderColor
-                                border.width: 1
-                                radius: 3
-
-                                Text {
-                                    id: b2Text
-                                    objectName: "analysisActionLabel"
-                                    anchors.centerIn: parent
-                                    text: "[ " + rootWindow.presentation.label.toUpperCase() + " ]"
-                                    font.family: rootWindow.monoFont
-                                    font.bold: true
-                                    font.pixelSize: 8
-                                    color: triageMouse.pressed ? rootWindow.fgColor : (rootWindow.isCompiledPreview ? "#050505" : rootWindow.bgColor)
-                                }
-                                HudMouseArea {
-                                    id: triageMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: rootWindow.handleEnter()
-                                }
-                            }
-
-                            // Button 3: HIDE
-                            Rectangle {
-                                id: hideBtn
-                                objectName: "hideBtn"
-                                height: 22
-                                implicitWidth: hideTextLabel.contentWidth + 14
-                                color: hideMouse.pressed ? rootWindow.dimColor : (hideMouse.containsMouse ? rootWindow.dimColor : "transparent")
-                                border.color: rootWindow.borderColor
-                                border.width: 1
-                                radius: 3
-
-                                Text {
-                                    id: hideTextLabel
-                                    anchors.centerIn: parent
-                                    text: "[ HIDE ]"
-                                    font.family: rootWindow.monoFont
-                                    font.pixelSize: 8
-                                    color: rootWindow.fgColor
-                                }
-                                HudMouseArea {
-                                    id: hideMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: rootWindow.dismissCard()
-                                }
-                            }
+                        HudButton {
+                            objectName: "hideBtn"
+                            iconName: "x"; tip: qsTr("Hide Roclint · Esc")
+                            compact: rootWindow.height <= 260; quiet: true
+                            onClicked: rootWindow.dismissCard()
                         }
                     }
                 }
             }
-
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom; anchors.bottomMargin: 76
+                width: Math.min(parent.width - 40, toastLabel.implicitWidth + 28)
+                height: toastLabel.implicitHeight + 22
+                radius: 10; color: rocPalette.hover; border.color: rocPalette.border
+                visible: rootWindow.toastMessage.length > 0
+                z: 1001
+                Text {
+                    id: toastLabel; anchors.centerIn: parent
+                    width: Math.min(implicitWidth, parent.width - 28)
+                    text: rootWindow.toastMessage; wrapMode: Text.WordWrap
+                    font.family: rootWindow.sansFont; font.pixelSize: 12; color: rootWindow.fgColor
+                }
+            }
             // Dropdown Backdrop: Click outside dropdowns to close
             MouseArea {
                 id: dropdownBackdrop
@@ -1769,14 +933,14 @@ Window {
                                     text: "SELECT WORKSPACE FOLDER"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
-                                    font.pixelSize: 8
+                                    font.pixelSize: 12
                                     color: rootWindow.fgColor
                                 }
                                 Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
                                 Text {
                                     text: "PROJECTS"
                                     font.family: rootWindow.monoFont
-                                    font.pixelSize: 7
+                                    font.pixelSize: 11
                                     color: rootWindow.fgColor
                                     opacity: 0.7
                                 }
@@ -1801,7 +965,7 @@ Window {
                                     Text {
                                         text: rootWindow.currentProjectIndex === index ? "●" : "○"
                                         font.family: rootWindow.monoFont
-                                        font.pixelSize: 9
+                                        font.pixelSize: 12
                                         color: rootWindow.currentProjectIndex === index ? rootWindow.fgColor : rootWindow.dimColor
                                     }
 
@@ -1811,13 +975,13 @@ Window {
                                             text: modelData.name
                                             font.family: rootWindow.monoFont
                                             font.bold: rootWindow.currentProjectIndex === index
-                                            font.pixelSize: 9
+                                            font.pixelSize: 12
                                             color: rootWindow.fgColor
                                         }
                                         Text {
                                             text: modelData.path
                                             font.family: rootWindow.monoFont
-                                            font.pixelSize: 7
+                                            font.pixelSize: 11
                                             color: rootWindow.mutedTextColor
                                             elide: Text.ElideMiddle
                                             Layout.maximumWidth: 220
@@ -1853,8 +1017,8 @@ Window {
                                 anchors.rightMargin: 8
                                 spacing: 6
 
-                                Text { text: "[ + ]"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 8; color: rootWindow.fgColor }
-                                Text { text: "OPEN PROJECT FOLDER..."; font.family: rootWindow.monoFont; font.pixelSize: 8; color: rootWindow.fgColor; opacity: 0.8 }
+                                Text { text: "[ + ]"; font.family: rootWindow.monoFont; font.bold: true; font.pixelSize: 12; color: rootWindow.fgColor }
+                                Text { text: "OPEN PROJECT FOLDER..."; font.family: rootWindow.monoFont; font.pixelSize: 12; color: rootWindow.fgColor; opacity: 0.8 }
                             }
 
                             HudMouseArea {
@@ -1954,14 +1118,14 @@ Window {
                                     text: "SELECT TARGET FILE (" + fileDropdown.filteredFiles.length + ")"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
-                                    font.pixelSize: 8
+                                    font.pixelSize: 12
                                     color: "#FFB000"
                                 }
                                 Rectangle { Layout.fillWidth: true; height: 1; color: "transparent" }
                                 Text {
                                     text: "SINGLE-FILE SCOPE"
                                     font.family: rootWindow.monoFont
-                                    font.pixelSize: 7
+                                    font.pixelSize: 11
                                     color: rootWindow.fgColor
                                     opacity: 0.7
                                 }
@@ -1987,7 +1151,7 @@ Window {
                                     text: "FILTER:"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
-                                    font.pixelSize: 8
+                                    font.pixelSize: 12
                                     color: rootWindow.mutedTextColor
                                 }
 
@@ -1996,7 +1160,7 @@ Window {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
                                     font.family: rootWindow.monoFont
-                                    font.pixelSize: 8
+                                    font.pixelSize: 12
                                     color: rootWindow.fgColor
                                     selectByMouse: true
                                     text: fileDropdown.filterText
@@ -2009,7 +1173,7 @@ Window {
                                     text: "×"
                                     font.family: rootWindow.monoFont
                                     font.bold: true
-                                    font.pixelSize: 9
+                                    font.pixelSize: 12
                                     color: rootWindow.mutedTextColor
                                     HudMouseArea {
                                         anchors.fill: parent
@@ -2064,7 +1228,7 @@ Window {
                                     Text {
                                         text: isSelected ? "●" : (isRecommended ? "★" : "○")
                                         font.family: rootWindow.monoFont
-                                        font.pixelSize: 8
+                                        font.pixelSize: 12
                                         color: isSelected ? "#FFB000" : (isRecommended ? "#F59E0B" : rootWindow.dimColor)
                                     }
 
@@ -2079,7 +1243,7 @@ Window {
                                                 text: fileName
                                                 font.family: rootWindow.monoFont
                                                 font.bold: isSelected || isRecommended
-                                                font.pixelSize: 9
+                                                font.pixelSize: 12
                                                 color: isSelected ? "#FFB000" : (isRecommended ? "#F59E0B" : rootWindow.fgColor)
                                                 elide: Text.ElideRight
                                             }
@@ -2095,7 +1259,7 @@ Window {
                                                     anchors.centerIn: parent
                                                     text: "[ RECOMMENDED " + Math.round(hostController.recommendedConfidence * 100) + "% ]"
                                                     font.family: rootWindow.monoFont
-                                                    font.pixelSize: 7
+                                                    font.pixelSize: 11
                                                     font.bold: true
                                                     color: "#F59E0B"
                                                 }
@@ -2104,7 +1268,7 @@ Window {
                                         Text {
                                             text: modelData
                                             font.family: rootWindow.monoFont
-                                            font.pixelSize: 7
+                                            font.pixelSize: 11
                                             color: rootWindow.mutedTextColor
                                             elide: Text.ElideMiddle
                                             Layout.fillWidth: true
@@ -2138,7 +1302,7 @@ Window {
                                 anchors.centerIn: parent
                                 text: "No files match '" + fileDropdown.filterText + "'"
                                 font.family: rootWindow.monoFont
-                                font.pixelSize: 8
+                                font.pixelSize: 12
                                 color: rootWindow.mutedTextColor
                             }
                         }

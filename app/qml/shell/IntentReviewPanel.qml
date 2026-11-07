@@ -9,6 +9,10 @@ FocusScope {
     property real viewportHeight: 520
     property bool showDiagnostics: false
     signal reviewRequested()
+    signal rewriteRequested()
+    property bool reducedMotion: false
+    property bool showChanges: false
+    property bool draftAvailable: hc && hostController.currentRevisionText.trim().length > 0
     signal revealReviewItem(var item)
     signal editDraftRequested()
     property string diagnosticMetrics: ""
@@ -36,8 +40,11 @@ FocusScope {
                 return;
             }
         }
-        diffView.forceActiveFocus(Qt.TabFocusReason);
-        revealReviewItem(diffView);
+        rootWindow.showChanges = true;
+        Qt.callLater(function() {
+            diffView.forceActiveFocus(Qt.TabFocusReason);
+            rootWindow.revealReviewItem(diffView);
+        });
     }
     property bool reviewPresented: false
     Component.onCompleted: reviewPresented = hc && hostController.proposalStatus === "READY_FOR_REVIEW"
@@ -63,6 +70,7 @@ FocusScope {
             if (hostController.proposalStatus !== "READY_FOR_REVIEW") { rootWindow.reviewPresented = false; return; }
             if (rootWindow.reviewPresented) return;
             rootWindow.reviewPresented = true;
+            rootWindow.showChanges = false;
             // Arrival never opens, resizes or activates the HUD. Review is an explicit gesture.
             if (rootWindow.Window.window && rootWindow.Window.window.active)
                 Qt.callLater(function() { if (reviewPanel.visible) rootWindow.revealReviewItem(reviewHeading); });
@@ -70,23 +78,23 @@ FocusScope {
     }
     readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property string monoFont: isMac ? "Menlo" : "Consolas"
-    readonly property string sansFont: isMac ? "Helvetica Neue" : "Segoe UI"
+    readonly property string sansFont: "Inter Variable"
     readonly property bool hc: typeof hostController !== "undefined" && hostController !== null
 
-    // Theme palette
     property string currentTheme: "dark"
     readonly property var themes: ["dark", "light", "acid", "amber"]
-    readonly property color bgColor: currentTheme === "light" ? "#F4F4F4" : currentTheme === "acid" ? "#070D08" : currentTheme === "amber" ? "#0F0902" : "#050505"
-    readonly property color fgColor: currentTheme === "light" ? "#050505" : currentTheme === "acid" ? "#4ADE80" : currentTheme === "amber" ? "#FBBF24" : "#C9D1D9"
-    readonly property color borderColor: currentTheme === "light" ? "#050505" : currentTheme === "acid" ? "#22C55E" : currentTheme === "amber" ? "#F59E0B" : "#6E7681"
-    readonly property color dimColor: currentTheme === "light" ? "#D1D5DB" : currentTheme === "acid" ? "#14331B" : currentTheme === "amber" ? "#3B2207" : "#262626"
-    readonly property color mutedTextColor: currentTheme === "light" ? "#4B5563" : currentTheme === "acid" ? "#4ADE80" : currentTheme === "amber" ? "#D97706" : "#8B949E"
-    readonly property color inputBgColor: currentTheme === "light" ? "#E5E7EB" : currentTheme === "acid" ? "#0A140B" : currentTheme === "amber" ? "#140D04" : "#09090B"
-    readonly property color addedColor: currentTheme === "light" ? "#166534" : "#7EE787"
-    readonly property color removedColor: currentTheme === "light" ? "#991B1B" : "#FF7B72"
-    readonly property color changedColor: currentTheme === "light" ? "#92400E" : "#F59E0B"
-    readonly property color warnColor: "#F59E0B"
-    readonly property color errorColor: "#FF7B72"
+    RocTheme { id: rocPalette; mode: rootWindow.currentTheme }
+    readonly property color bgColor: rocPalette.background
+    readonly property color fgColor: rocPalette.foreground
+    readonly property color borderColor: rocPalette.border
+    readonly property color dimColor: rocPalette.hover
+    readonly property color mutedTextColor: rocPalette.muted
+    readonly property color inputBgColor: rocPalette.inset
+    readonly property color addedColor: rocPalette.success
+    readonly property color removedColor: "#EEA4AF"
+    readonly property color changedColor: rocPalette.warning
+    readonly property color warnColor: rocPalette.warning
+    readonly property color errorColor: "#EEA4AF"
 
     function chooseAlternative(index) {
         if (!hc || !hostController.isClarifying || hostController.activeItemKind !== "CHOICE_GROUP") {
@@ -181,48 +189,9 @@ FocusScope {
         }
     }
 
-    component ActionButton: Rectangle {
-        id: btn
-        property string label: ""
-        property bool primary: false
-        property bool active: true
-        signal clicked()
-        enabled: active
-        activeFocusOnTab: true
-        Accessible.role: Accessible.Button
-        Accessible.name: label
-        Accessible.onPressAction: if (active) clicked()
-        Keys.onPressed: function(event) {
-            if (active && (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space)) {
-                clicked();
-                event.accepted = true;
-            }
-        }
-        implicitHeight: 28
-        implicitWidth: btnText.implicitWidth + 22
-        radius: 4
-        opacity: active ? 1.0 : 0.4
-        color: primary ? (btnMouse.containsMouse && active ? Qt.darker(rootWindow.fgColor, 1.15) : rootWindow.fgColor)
-                       : (btnMouse.containsMouse && active ? rootWindow.dimColor : "transparent")
-        border.color: rootWindow.fgColor
-        border.width: activeFocus ? 3 : 1
-        Text {
-            id: btnText
-            anchors.centerIn: parent
-            text: btn.label
-            font.family: rootWindow.sansFont
-            font.pixelSize: 12
-            font.bold: btn.primary
-            color: btn.primary ? rootWindow.bgColor : rootWindow.fgColor
-        }
-        MouseArea {
-            id: btnMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            enabled: btn.active
-            cursorShape: btn.active ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onClicked: { btn.forceActiveFocus(); btn.clicked(); }
-        }
+    component ActionButton: RocButton {
+        currentTheme: rootWindow.currentTheme
+        reduceMotion: rootWindow.reducedMotion
     }
 
     component Banner: Rectangle {
@@ -250,7 +219,7 @@ FocusScope {
                 text: banner.message
                 wrapMode: Text.WordWrap
                 font.family: rootWindow.sansFont
-                font.pixelSize: 12
+                font.pixelSize: 14
                 color: banner.tone
             }
             Pill {
@@ -272,22 +241,28 @@ FocusScope {
             Layout.fillWidth: true
             spacing: 8
             ActionButton {
+                quiet: true
+                iconName: "sparkle"
                 objectName: "reviewPromptButton"
                 label: qsTr("Clarify")
-                active: rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy && !hostController.isAnalyzing && hostController.proposalStatus !== "GENERATING"
+                active: rootWindow.draftAvailable && rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy && !hostController.isAnalyzing && hostController.proposalStatus !== "GENERATING"
                 onClicked: rootWindow.reviewRequested()
             }
             ActionButton {
                 objectName: "rewriteWithoutQuestionsButton"
-                label: qsTr("Rewrite without questions")
-                visible: rootWindow.hc && !rootWindow.previewActive && (hostController.hasConfirmedIntent || hostController.isClarifying)
-                active: rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy && !hostController.isAnalyzing && !hostController.isDraftDirty
-                onClicked: hostController.rewriteWithoutQuestions(hostController.stateVersion)
+                label: rootWindow.hc && hostController.isClarifying ? qsTr("Skip questions & rewrite") : qsTr("Rewrite prompt")
+                primary: !(rootWindow.hc && hostController.isClarifying)
+                iconName: "pencil-simple"
+                visible: rootWindow.hc && !rootWindow.previewActive
+                active: rootWindow.draftAvailable && rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy && !hostController.isAnalyzing
+                onClicked: rootWindow.rewriteRequested()
             }
             ActionButton {
                 objectName: "editDraftInHudButton"
                 visible: rootWindow.hc && (hostController.isAmbientAttached || rootWindow.previewActive)
-                label: qsTr("Edit prompt in HUD")
+                label: qsTr("Edit draft")
+                quiet: true
+                iconName: "pencil-simple"
                 onClicked: {
                     rootWindow.editDraftRequested();
                     if (rootWindow.hc) hostController.pauseAmbientFollowing();
@@ -297,7 +272,7 @@ FocusScope {
                 objectName: "reviewDiagnosticsButton"
                 text: rootWindow.showDiagnostics ? qsTr("Hide details") : qsTr("Technical details")
                 color: rootWindow.mutedTextColor
-                font.pixelSize: 11
+                font.pixelSize: 12
                 font.underline: true
                 activeFocusOnTab: true
                 Accessible.role: Accessible.Button
@@ -315,7 +290,7 @@ FocusScope {
             wrapMode: Text.Wrap
             text: rootWindow.hc ? hostController.reviewDiagnostics + "\n" + hostController.interventionReason + "\n" + hostController.rankingStatus + "\n" + rootWindow.diagnosticMetrics : ""
             color: rootWindow.mutedTextColor
-            font.pixelSize: 11
+            font.pixelSize: 12
         }
         ColumnLayout {
             objectName: "groundedEvidenceList"
@@ -328,7 +303,7 @@ FocusScope {
                 Layout.fillWidth: true
                 text: qsTr("Code evidence: %1").arg(rootWindow.hc ? hostController.groundingStatus : "")
                 color: rootWindow.mutedTextColor
-                font.pixelSize: 11
+                font.pixelSize: 12
             }
             Repeater {
                 model: rootWindow.hc ? hostController.groundedEvidence : []
@@ -340,7 +315,7 @@ FocusScope {
                     wrapMode: Text.WrapAnywhere
                     color: modelData.status === "VERIFIED" ? rootWindow.fgColor : rootWindow.mutedTextColor
                     font.family: rootWindow.monoFont
-                    font.pixelSize: 11
+                    font.pixelSize: 12
                     text: "[" + modelData.status + "] " + modelData.qualifiedTarget
                           + (modelData.signature.length ? "  " + modelData.signature : "")
                           + (modelData.filePath.length ? "\n" + modelData.filePath + ":" + modelData.line : "")
@@ -362,17 +337,17 @@ FocusScope {
                 visible: rootWindow.hc && (hostController.isClarifying || rootWindow.manualResolution)
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                implicitHeight: clarifyColumn.implicitHeight + 20
+                implicitHeight: clarifyColumn.implicitHeight + 24
                 color: "transparent"
-                border.color: rootWindow.questionTone
-                border.width: activeFocus ? 3 : 1
-                radius: 6
+                border.color: activeFocus ? rocPalette.focus : rootWindow.borderColor
+                border.width: activeFocus ? 2 : 1
+                radius: 12
 
                 ColumnLayout {
                     id: clarifyColumn
                     anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 6
+                    anchors.margins: 12
+                    spacing: 10
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -412,7 +387,8 @@ FocusScope {
                         text: rootWindow.hc ? hostController.activeQuestion : ""
                         wrapMode: Text.WordWrap
                         font.family: rootWindow.sansFont
-                        font.pixelSize: 13
+                        font.weight: Font.DemiBold
+                        font.pixelSize: 26
                         color: rootWindow.fgColor
                     }
 
@@ -436,23 +412,23 @@ FocusScope {
                             }
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
-                            implicitHeight: altColumn.implicitHeight + 12
+                            implicitHeight: altColumn.implicitHeight + 20
                             radius: 4
-                            color: altMouse.containsMouse ? rootWindow.dimColor : "transparent"
-                            border.color: rootWindow.borderColor
-                            border.width: activeFocus ? 3 : 1
+                            color: activeFocus ? rocPalette.accent : altMouse.containsMouse ? rocPalette.hover : rocPalette.inset
+                            border.color: altMouse.containsMouse || activeFocus ? rocPalette.focus : rootWindow.borderColor
+                            border.width: activeFocus ? 2 : 1
                             ColumnLayout {
                                 id: altColumn
                                 anchors.fill: parent
-                                anchors.margins: 6
-                                spacing: 2
+                                anchors.margins: 10
+                                spacing: 5
                                 Text {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    text: qsTr("[%1]  %2").arg(index + 1).arg(modelData.label)
+                                    text: modelData.label
                                     wrapMode: Text.WordWrap
                                     font.family: rootWindow.sansFont
-                                    font.pixelSize: 12
+                                    font.pixelSize: 14
                                     font.bold: true
                                     color: rootWindow.fgColor
                                 }
@@ -463,7 +439,7 @@ FocusScope {
                                     text: modelData.permitted === false ? modelData.constraintViolation : modelData.whyMaterial
                                     wrapMode: Text.WordWrap
                                     font.family: rootWindow.sansFont
-                                    font.pixelSize: 11
+                                    font.pixelSize: 12
                                     color: rootWindow.mutedTextColor
                                 }
                             }
@@ -497,6 +473,7 @@ FocusScope {
                         visible: rootWindow.hc && (rootWindow.manualResolution || hostController.activeItemKind !== "ASSUMPTION")
                         TextField {
                             id: customAnswer
+                            implicitHeight: 42
                             objectName: "customAnswer"
                             Accessible.name: qsTr("Your clarification")
                             Layout.fillWidth: true
@@ -505,10 +482,10 @@ FocusScope {
                                              ? qsTr("Or say what you meant in your own words")
                                              : qsTr("Type your answer")
                             font.family: rootWindow.sansFont
-                            font.pixelSize: 12
+                            font.pixelSize: 14
                             color: rootWindow.fgColor
                             placeholderTextColor: rootWindow.mutedTextColor
-                            background: Rectangle { color: rootWindow.inputBgColor; border.color: rootWindow.borderColor; radius: 4 }
+                            background: Rectangle { color: rootWindow.inputBgColor; border.color: customAnswer.activeFocus ? rocPalette.focus : rootWindow.borderColor; radius: 8 }
                             onActiveFocusChanged: {
                                 if (activeFocus) {
                                     if (rootWindow.Window.window) rootWindow.Window.window.requestActivate();
@@ -544,12 +521,12 @@ FocusScope {
                         visible: !rootWindow.manualResolution
                         ActionButton {
                             visible: rootWindow.hc && hostController.activeItemKind === "CHOICE_GROUP"
-                            label: qsTr("Keep my original wording")
+                            label: qsTr("Keep original"); compact: true; quiet: true
                             onClicked: hostController.keepOriginalPrompt(hostController.stateVersion)
                         }
-                        ActionButton { label: qsTr("Skip"); onClicked: hostController.skipCurrentItem(hostController.stateVersion) }
+                        ActionButton { label: qsTr("Skip & rewrite"); tip: qsTr("Skip all remaining questions and rewrite"); compact: true; quiet: true; onClicked: rootWindow.rewriteRequested() }
                         Item { Layout.fillWidth: true }
-                        ActionButton { label: qsTr("I'll edit it myself"); onClicked: hostController.switchToManual(hostController.stateVersion) }
+                        ActionButton { label: qsTr("Edit myself"); compact: true; quiet: true; onClicked: hostController.switchToManual(hostController.stateVersion) }
                     }
                 }
             }
@@ -574,7 +551,7 @@ FocusScope {
                     text: qsTr("Material assumptions — confirm them in your draft")
                     color: rootWindow.warnColor
                     wrapMode: Text.WordWrap
-                    font.pixelSize: 12
+                    font.pixelSize: 14
                 }
                 Repeater {
                     model: rootWindow.hc ? hostController.assumptionReviews : []
@@ -586,7 +563,7 @@ FocusScope {
                         text: modelData.statement + "\n" + modelData.state + (rootWindow.showDiagnostics ? " · " + modelData.scoring : "")
                         color: rootWindow.mutedTextColor
                         wrapMode: Text.WordWrap
-                        font.pixelSize: 11
+                        font.pixelSize: 12
                         Accessible.name: text
                     }
                 }
@@ -603,7 +580,7 @@ FocusScope {
                     text: rootWindow.hc ? hostController.confirmedIntentSummary : ""
                     wrapMode: Text.WordWrap
                     font.family: rootWindow.sansFont
-                    font.pixelSize: 12
+                    font.pixelSize: 14
                     color: rootWindow.hc && hostController.isIntentStale ? rootWindow.warnColor : rootWindow.addedColor
                 }
                 RowLayout {
@@ -619,7 +596,7 @@ FocusScope {
                     model: rootWindow.hc ? hostController.availableRewriteProfiles : []
                     textRole: "displayName"
                     valueRole: "id"
-                    font.pixelSize: 11
+                    font.pixelSize: 12
                     indicator: Text {
                         x: profileBox.width - width - 8
                         y: (profileBox.height - height) / 2
@@ -633,7 +610,7 @@ FocusScope {
                         elide: Text.ElideRight
                         leftPadding: 8
                         rightPadding: 24
-                        font.pixelSize: 11
+                        font.pixelSize: 12
                     }
                     background: Rectangle {
                         color: rootWindow.inputBgColor
@@ -671,7 +648,7 @@ FocusScope {
                 border.color: status === "READY_FOR_REVIEW" ? rootWindow.borderColor
                             : status === "GENERATING" ? rootWindow.mutedTextColor : rootWindow.warnColor
                 border.width: 1
-                radius: 6
+                radius: 12
 
                 ColumnLayout {
                     id: reviewBody
@@ -688,11 +665,11 @@ FocusScope {
                         text: reviewPanel.status === "READY_FOR_REVIEW"
                             ? (rootWindow.hc && hostController.proposalText === hostController.currentRevisionText
                                ? qsTr("No wording changes suggested. This is your original prompt.")
-                               : qsTr("Review the changes and confirm your choice."))
+                               : qsTr("Review your rewritten prompt"))
                             : rootWindow.hc ? hostController.proposalMessage : ""
                         wrapMode: Text.Wrap
                         font.family: rootWindow.sansFont
-                        font.pixelSize: 12
+                        font.pixelSize: 23
                         font.bold: reviewPanel.status === "READY_FOR_REVIEW"
                         color: rootWindow.fgColor
                     }
@@ -703,7 +680,7 @@ FocusScope {
                         textFormat: Text.PlainText
                         wrapMode: Text.WrapAnywhere
                         font.family: rootWindow.monoFont
-                        font.pixelSize: 12
+                        font.pixelSize: 14
                         color: rootWindow.mutedTextColor
                     }
                     Repeater {
@@ -752,7 +729,7 @@ FocusScope {
                                     + (modelData.needsReview && modelData.evidence.length ? "\nYour answer: “" + modelData.evidence + "”" : "")
                                 wrapMode: Text.Wrap
                                 font.family: rootWindow.sansFont
-                                font.pixelSize: 12
+                                font.pixelSize: 14
                                 color: modelData.status === "FAILED" ? rootWindow.errorColor : rootWindow.fgColor
                             }
                         }
@@ -766,7 +743,7 @@ FocusScope {
                             text: rootWindow.hc ? hostController.deliveryLabel : ""
                             textFormat: Text.PlainText
                             wrapMode: Text.Wrap
-                            font.pixelSize: 11
+                            font.pixelSize: 12
                             color: rootWindow.mutedTextColor
                         }
                         ActionButton {
@@ -776,10 +753,25 @@ FocusScope {
                             onClicked: hostController.beginInsertionTargetSelection(hostController.stateVersion)
                         }
                     }
+                    Text {
+                        visible: reviewPanel.status === "READY_FOR_REVIEW" && !rootWindow.showChanges
+                        Layout.fillWidth: true; Layout.minimumWidth: 0
+                        text: rootWindow.hc ? hostController.proposalText : ""
+                        textFormat: Text.PlainText; wrapMode: Text.WordWrap
+                        font.family: rootWindow.sansFont; font.pixelSize: 15; lineHeight: 1.3
+                        color: rootWindow.fgColor
+                    }
+                    ActionButton {
+                        visible: reviewPanel.status === "READY_FOR_REVIEW"
+                        label: rootWindow.showChanges ? qsTr("Read full prompt") : qsTr("Show changes")
+                        compact: true; quiet: true
+                        onClicked: rootWindow.showChanges = !rootWindow.showChanges
+                    }
                     ListView {
                         id: diffView
                         objectName: "diffView"
-                        visible: reviewPanel.status === "READY_FOR_REVIEW"
+                        onHeightChanged: if (activeFocus) Qt.callLater(function() { rootWindow.revealReviewItem(diffView); })
+                        visible: reviewPanel.status === "READY_FOR_REVIEW" && rootWindow.showChanges
                         activeFocusOnTab: true
                         Accessible.name: qsTr("Changes in the suggested rewrite")
                         Layout.fillWidth: true
@@ -809,7 +801,7 @@ FocusScope {
                             textFormat: Text.PlainText
                             wrapMode: Text.WrapAnywhere
                             font.family: rootWindow.monoFont
-                            font.pixelSize: 12
+                            font.pixelSize: 14
                             color: modelData.startsWith("+ ") ? rootWindow.addedColor
                                  : modelData.startsWith("- ") ? rootWindow.removedColor
                                  : modelData.startsWith("~ ") ? rootWindow.changedColor : rootWindow.mutedTextColor
