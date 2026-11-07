@@ -27,14 +27,20 @@ The original upstream HUD/dashboard design and workspace/scope controls are reta
 
 ## Normal workflow
 
-November 6 hands-on follow-up: editing from a rewrite preview now discards the
-old proposal before revealing/focusing the draft. Rewrite contract v7 corrects
-rough prose, removes inferred requirements from fallback canonical context,
-and reports identical output explicitly. Windows checks passed 52/52 CTests,
-77 Python tests (one platform skip), and 200/200 frozen automatic evaluation
-checks. Actual native-host replay reworded the rough Queue draft correctly.
-Agent review still flags seven semantic concerns; human acceptance and native
-macOS validation remain open. See [the current audit](audit/rewrite_usefulness_2026-11-06.md).
+November 6 hands-on follow-up: editing from a rewrite preview restores the draft,
+and identical rewrites are reported explicitly. Julia template v3 adds a focused
+goal check to the automatic route, with broad-head corroboration; the normal
+extended checklist has seven internal questions. Clarify remains available after
+quiet checks and previews. Rewrite without questions defers nonblocking choices
+without selecting them; confirmed answers stay bound. Discovery v8 requests goal
+choices, and rewrite v9 scopes deferral guidance to actual unanswered questions.
+Windows verification passed 52/52 CTests, 78 Python tests (one platform skip),
+and 13/13 development rewrite checks. The frozen regression replay passed
+199/200 automatic checks; one confirmed throughput goal was still omitted.
+Actual automatic Julia → Granite replay offered three Reader goal choices, but
+some generated options remain too specific. Human fidelity/option-quality review
+and native macOS validation remain open. See [the clarification audit](audit/clarification_routing_2026-11-06.md)
+and [the earlier rewrite-usefulness audit](audit/rewrite_usefulness_2026-11-06.md).
 
 1. Focus the prompt field in a supported application and invoke Roclint using the configured global shortcut. Alternatively, open the HUD and type or paste a draft explicitly. Opening Roclint never imports the clipboard automatically.
 2. Review or edit the captured draft, optionally clearing the one-shot coarse app-category hint.
