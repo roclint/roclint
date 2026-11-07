@@ -1,5 +1,6 @@
 #include "HostContext.hpp"
 #include "OutsideClickPolicy.hpp"
+#include "GuiCapturePolicy.hpp"
 #include "support/check.hpp"
 
 #include <QGuiApplication>
@@ -12,6 +13,33 @@ using roclint::host::HostContextDetector;
 using roclint::host::HostContextObservation;
 
 namespace {
+
+void testPageDocumentIsNotPromptComposer() {
+    using roclint::host::GuiCaptureRole;
+    using roclint::host::isGuiCaptureEligible;
+    // Native Antigravity reproduction: the page is focused and has a mixed
+    // read-only text range. Even a wrongly writable root is never a composer.
+    ROCLINT_CHECK(!isGuiCaptureEligible(GuiCaptureRole::Document, false, true));
+    ROCLINT_CHECK(!isGuiCaptureEligible(GuiCaptureRole::Document, true, true));
+    ROCLINT_CHECK(!isGuiCaptureEligible(GuiCaptureRole::Document, false));
+    ROCLINT_CHECK(isGuiCaptureEligible(GuiCaptureRole::Document, true));
+    // Antigravity exposes its actual contenteditable as a combobox.
+    ROCLINT_CHECK(isGuiCaptureEligible(GuiCaptureRole::ComboBox, true));
+    ROCLINT_CHECK(!isGuiCaptureEligible(GuiCaptureRole::ComboBox, false));
+    ROCLINT_CHECK(isGuiCaptureEligible(GuiCaptureRole::Edit, false));
+    ROCLINT_CHECK(!isGuiCaptureEligible(GuiCaptureRole::Other, true));
+    using roclint::host::isGuiCaptureTextReliable;
+    // A falsely empty ValuePattern must not authorize overwriting a visible
+    // nonempty composer. Real empty text ranges and normal edit fields still work.
+    ROCLINT_CHECK(!isGuiCaptureTextReliable(GuiCaptureRole::ComboBox, true, true, false));
+    ROCLINT_CHECK(isGuiCaptureTextReliable(GuiCaptureRole::ComboBox, true, true, true));
+    ROCLINT_CHECK(isGuiCaptureTextReliable(GuiCaptureRole::ComboBox, true, false, false));
+    ROCLINT_CHECK(isGuiCaptureTextReliable(GuiCaptureRole::Edit, true, true, false));
+    ROCLINT_CHECK(!isGuiCaptureTextReliable(GuiCaptureRole::Edit, false, true, false));
+    ROCLINT_CHECK(!isGuiCaptureTextReliable(GuiCaptureRole::Edit, true, true, false, true));
+    ROCLINT_CHECK(!isGuiCaptureTextReliable(GuiCaptureRole::Document, true, true, true, true));
+    ROCLINT_CHECK(isGuiCaptureTextReliable(GuiCaptureRole::Edit, true, false, false, true));
+}
 
 HostContextCategory map(const char* id) {
     return HostContextDetector::mapIdentityToCategory(QString::fromUtf8(id));
@@ -104,6 +132,7 @@ int main(int argc, char** argv) {
     QGuiApplication app(argc, argv);
     std::cout << "[Test HostContext] Starting...\n";
     testWindowsExecutables();
+    testPageDocumentIsNotPromptComposer();
     testMacBundleIds();
     testUnknownAppsMapToUnknown();
     testObservationStrings();

@@ -106,6 +106,7 @@ const QHash<QString, HostContextCategory>& identityTable() {
         {QStringLiteral("chatgpt.exe"), C::CodeEditor}, // Codex desktop executable
         {QStringLiteral("codex.exe"), C::CodeEditor},
         {QStringLiteral("antigravity.exe"), C::CodeEditor},
+        {QStringLiteral("antigravity ide.exe"), C::CodeEditor},
         {QStringLiteral("windsurf.exe"), C::CodeEditor},
         {QStringLiteral("studio64.exe"), C::CodeEditor},
         {QStringLiteral("devenv.exe"), C::CodeEditor},
@@ -233,6 +234,7 @@ bool HostContextDetector::isAmbientEligibleApp(const QString& identifier) {
     static const QSet<QString> identities = {
         QStringLiteral("chatgpt.exe"), QStringLiteral("codex.exe"),
         QStringLiteral("cursor.exe"), QStringLiteral("antigravity.exe"), QStringLiteral("claude.exe"),
+        QStringLiteral("antigravity ide.exe"),
         QStringLiteral("windsurf.exe"), QStringLiteral("code.exe"),
         QStringLiteral("code - insiders.exe"), QStringLiteral("devenv.exe"),
         QStringLiteral("idea64.exe"), QStringLiteral("clion64.exe"),

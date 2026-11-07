@@ -1,6 +1,7 @@
 #include "IAccessibilityBridge.hpp"
 #include "HostContext.hpp"
 #include "TerminalAdapter.hpp"
+#include "GuiCapturePolicy.hpp"
 
 #if defined(Q_OS_WIN)
 
@@ -63,6 +64,25 @@ bool hasWritablePattern(IUIAutomationElement* element) {
     const bool writable = SUCCEEDED(hr) && readOnly.vt == VT_BOOL && readOnly.boolVal == VARIANT_FALSE;
     VariantClear(&readOnly);
     return writable;
+}
+
+bool isGuiEditor(IUIAutomationElement* element) {
+    CONTROLTYPEID type = 0;
+    if (!element || FAILED(element->get_CurrentControlType(&type))) return false;
+    GuiCaptureRole role = GuiCaptureRole::Other;
+    switch (type) {
+        case UIA_EditControlTypeId: role = GuiCaptureRole::Edit; break;
+        case UIA_DocumentControlTypeId: role = GuiCaptureRole::Document; break;
+        case UIA_ComboBoxControlTypeId: role = GuiCaptureRole::ComboBox; break;
+        case UIA_GroupControlTypeId: role = GuiCaptureRole::Group; break;
+        case UIA_CustomControlTypeId: role = GuiCaptureRole::Custom; break;
+        default: break;
+    }
+    BSTR id = nullptr;
+    element->get_CurrentAutomationId(&id);
+    const bool webRoot = role == GuiCaptureRole::Document && fromBstr(id) == QLatin1String("RootWebArea");
+    SysFreeString(id);
+    return isGuiCaptureEligible(role, hasWritablePattern(element), webRoot);
 }
 
 // Canonical LF text; caret offsets are shifted for every CR removed before them.
@@ -141,7 +161,8 @@ bool elevationMismatch(DWORD pid) {
 bool isElectronHost(const QString& exe) {
     const QString e = exe.toLower();
     return e == QLatin1String("cursor.exe") || e == QLatin1String("code.exe") ||
-           e == QLatin1String("antigravity.exe") || e == QLatin1String("code - insiders.exe") ||
+           e == QLatin1String("antigravity.exe") || e == QLatin1String("antigravity ide.exe") ||
+           e == QLatin1String("code - insiders.exe") ||
            e == QLatin1String("chatgpt.exe") || e == QLatin1String("codex.exe") ||
            e == QLatin1String("windsurf.exe");
 }
@@ -541,13 +562,24 @@ private:
             ComPtr<IUIAutomationTreeWalker> walker;
             m_uia->get_ControlViewWalker(walker.GetAddressOf());
             ComPtr<IUIAutomationElement> candidate = element;
+            // Some Chromium providers return the web document for UIA focus.
+            // Only an active caret can identify a more specific editing surface;
+            // never choose an arbitrary descendant by its label or location.
+            if (!isGuiEditor(candidate.Get())) {
+                ComPtr<IUIAutomationTextPattern2> text;
+                ComPtr<IUIAutomationTextRange> caret;
+                BOOL active = FALSE;
+                if (SUCCEEDED(element->GetCurrentPatternAs(UIA_TextPattern2Id, IID_PPV_ARGS(text.GetAddressOf()))) && text &&
+                    SUCCEEDED(text->GetCaretRange(&active, caret.GetAddressOf())) && active && caret) {
+                    ComPtr<IUIAutomationElement> enclosing;
+                    int enclosingPid = 0;
+                    if (SUCCEEDED(caret->GetEnclosingElement(enclosing.GetAddressOf())) && enclosing &&
+                        SUCCEEDED(enclosing->get_CurrentProcessId(&enclosingPid)) && enclosingPid == pidValue)
+                        candidate = enclosing;
+                }
+            }
             for (int depth = 0; walker && candidate && depth < 6; ++depth) {
-                CONTROLTYPEID type = 0;
-                BOOL focusable = FALSE;
-                candidate->get_CurrentControlType(&type);
-                candidate->get_CurrentIsKeyboardFocusable(&focusable);
-                if ((focusable && (type == UIA_EditControlTypeId || type == UIA_DocumentControlTypeId)) ||
-                    ((type == UIA_GroupControlTypeId || type == UIA_CustomControlTypeId) && hasWritablePattern(candidate.Get()))) {
+                if (isGuiEditor(candidate.Get())) {
                     element = candidate;
                     break;
                 }
@@ -560,10 +592,7 @@ private:
             BOOL same = FALSE;
             if (SUCCEEDED(m_uia->CompareElements(m_focused.element.Get(), element.Get(), &same)) && same) {
                 if (m_focused.eligible) return;
-                CONTROLTYPEID currentType = 0;
-                element->get_CurrentControlType(&currentType);
-                if (currentType != UIA_EditControlTypeId && currentType != UIA_DocumentControlTypeId &&
-                    !hasWritablePattern(element.Get())) return;
+                if (!isGuiEditor(element.Get())) return;
             }
         }
         detachFieldHandlers();
@@ -606,9 +635,7 @@ private:
         const bool terminalHost = next.exe.compare(QLatin1String("WindowsTerminal.exe"), Qt::CaseInsensitive) == 0 ||
                                   className == QLatin1String("TermControl");
         next.kind = (terminalHost || next.xterm) ? FieldKind::Terminal : FieldKind::GuiEditor;
-        next.eligible = next.xterm || terminalHost || type == UIA_EditControlTypeId ||
-                        type == UIA_DocumentControlTypeId ||
-                        ((type == UIA_GroupControlTypeId || type == UIA_CustomControlTypeId) && hasWritablePattern(element.Get()));
+        next.eligible = next.xterm || terminalHost || isGuiEditor(element.Get());
         if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
             qInfo().noquote() << QStringLiteral("[Roclint capture] app=%1 token=%2 control=%3 eligible=%4")
                                     .arg(next.exe).arg(next.token).arg(type).arg(next.eligible);
@@ -706,6 +733,9 @@ private:
             return std::nullopt;
         }
         IUIAutomationElement* el = target.element.Get();
+        // Recheck before every read and insertion readback: provider capabilities
+        // can change while a captured element remains alive.
+        if (target.kind == FieldKind::GuiEditor && !isGuiEditor(el)) return std::nullopt;
         int currentPid = 0;
         if (FAILED(el->get_CurrentProcessId(&currentPid)) || currentPid != static_cast<int>(target.pid) ||
             executableName(target.pid).compare(target.exe, Qt::CaseInsensitive) != 0 ||
@@ -738,6 +768,7 @@ private:
             f.text = readXtermBuffer(el);
         } else {
             bool valueRead = false;
+            bool textRangeRead = false;
             ComPtr<IUIAutomationValuePattern> valuePattern;
             if (SUCCEEDED(el->GetCurrentPatternAs(UIA_ValuePatternId, IID_PPV_ARGS(valuePattern.GetAddressOf()))) && valuePattern) {
                 BOOL readOnly = TRUE;
@@ -762,11 +793,15 @@ private:
                     if (immutable && f.kind != FieldKind::Terminal) return std::nullopt;
                     // ValuePattern exposes editor text without TextPattern's synthetic paragraph
                     // terminator. Still use TextPattern for caret position and bounds.
-                    if (!valueRead) {
+                    // Chromium combobox composers can expose an empty ValuePattern
+                    // while their writable text range contains the current draft.
+                    // This range belongs to the validated editor, never a page root.
+                    if (!valueRead || f.text.isEmpty()) {
                         BSTR value = nullptr;
                         if (SUCCEEDED(document->GetText(kMaxReadChars + 1, &value))) {
                             f.text = fromBstr(value);
                             valueRead = true;
+                            textRangeRead = true;
                         }
                         SysFreeString(value);
                     }
@@ -774,7 +809,28 @@ private:
                     readCaret(el, document.Get(), f, caret);
                 }
             }
-            if (!valueRead || f.text.size() > kMaxReadChars) return std::nullopt;
+            CONTROLTYPEID type = 0;
+            el->get_CurrentControlType(&type);
+            if (type == UIA_ComboBoxControlTypeId && f.text.isEmpty()) {
+                ComPtr<IUIAutomationLegacyIAccessiblePattern> legacy;
+                if (SUCCEEDED(el->GetCurrentPatternAs(UIA_LegacyIAccessiblePatternId,
+                                                     IID_PPV_ARGS(legacy.GetAddressOf()))) && legacy) {
+                    BSTR value = nullptr;
+                    if (SUCCEEDED(legacy->get_CurrentValue(&value))) {
+                        const auto legacyText = fromBstr(value);
+                        if (!legacyText.isEmpty()) { f.text = legacyText; valueRead = true; }
+                    }
+                    SysFreeString(value);
+                }
+                // Some composite providers expose Value="" even for a nonempty
+                // visible draft. Without a readable text range this cannot prove
+                // that the destination is empty. Refuse capture/insertion rather
+                // than authorizing replacement against a falsely empty value.
+            }
+            const auto role = type == UIA_ComboBoxControlTypeId ? GuiCaptureRole::ComboBox : GuiCaptureRole::Edit;
+            if (!isGuiCaptureTextReliable(role, valueRead, f.text.isEmpty(), textRangeRead,
+                                          isElectronHost(target.exe)) ||
+                f.text.size() > kMaxReadChars) return std::nullopt;
         }
         normalizeText(f.text, caret);
         f.caretOffset = caret >= 0 ? std::min(caret, static_cast<int>(f.text.size())) : -1;
