@@ -40,6 +40,7 @@ set(ROCLINT_CORE_SOURCES
     src/core/scoped_constraint.cpp
     src/core/validation_result.cpp
     src/core/citation_evaluator.cpp
+    src/core/constraint_reconciler.cpp
     src/analysis/SourceSpan.cpp
     src/analysis/NormalizedAnalysis.cpp
     src/analysis/AnalysisSnapshot.cpp
@@ -609,6 +610,7 @@ if(BUILD_TESTING)
     roclint_add_test(roclint_core_primitives       tests/core/testCorePrimitives.cpp                 roclint_core_testing)
     roclint_add_test(roclint_scoped_constraint    tests/core/test_scoped_constraint.cpp             roclint_core_testing)
     roclint_add_test(roclint_citation_evaluator   tests/core/test_citation_evaluator.cpp            roclint_core_testing)
+    roclint_add_test(roclint_constraint_reconciler tests/core/test_constraint_reconciler.cpp         roclint_core_testing)
     roclint_add_test(roclint_prompt_revision       tests/core/prompt_state/testPromptRevision.cpp    roclint_core_testing)
     roclint_add_test(roclint_revision_state        tests/core/prompt_state/testRevisionState.cpp     roclint_core_testing)
     roclint_add_test(roclint_storage               tests/storage/test_database.cpp                   roclint_storage_testing)
