@@ -1276,80 +1276,101 @@ void testGenerationMeterUsesMeasuredProgress() {
     auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());
     auto* meter=window->findChild<QQuickItem*>("generationMeter");
     ROCLINT_CHECK(meter && !window->findChild<QObject*>("reviewDiagnosticsButton"));
-    // Keep this animation fixture on one rate; the HUD also supports colored
-    // generation/decode labels. Assert visible copy independently of its markup.
-    meter->setProperty("tokenSpeedMode",QStringLiteral("GENERATION"));
+    meter->setProperty("tokenSpeedMode",QStringLiteral("BOTH"));
     const auto plainRate=[&]() {
-        QTextDocument label;
-        label.setHtml(meter->property("rateText").toString());
+        QTextDocument label; label.setHtml(meter->property("rateText").toString());
         return label.toPlainText();
     };
-    auto* wave=window->findChild<QObject*>("referencePixelWave");
-    ROCLINT_CHECK(wave && wave->property("source").toUrl().toString().endsWith("assets/pixel-signal.png"));
+    const auto invoke=[&](const char* name, double now) {
+        ROCLINT_CHECK(QMetaObject::invokeMethod(meter,name,Q_ARG(QVariant,QVariant(now))));
+    };
+    const auto publish=[&](double count, double genMs, double decMs) {
+        meter->setProperty("generationElapsedMs",genMs);
+        meter->setProperty("decodeElapsedMs",decMs);
+        meter->setProperty("generationTokensPerSecond",genMs>0 ? count*1000/genMs : 0);
+        meter->setProperty("decodeTokensPerSecond",decMs>0 ? count*1000/decMs : 0);
+        meter->setProperty("tokenCount",count);
+        QTest::qWait(5); // Coalesced controller snapshot.
+    };
     window->show(); ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
-    window->update(); QTest::qWait(120);
+    window->update(); QTest::qWait(400);
     const auto region=meter->mapRectToItem(window->contentItem(),meter->boundingRect()).toAlignedRect();
     const auto idleFirst=window->grabWindow().copy(region);
-    QTest::qWait(300);
-    const auto idleSecond=window->grabWindow().copy(region);
-    ROCLINT_CHECK(!idleFirst.isNull() && idleFirst!=idleSecond); // Actual rendered motion, not only a changing counter.
-    ROCLINT_CHECK(meter->property("rateText").toString()=="— tok/s" && !meter->property("recentActivity").toBool());
-    meter->setProperty("processing",true);
-    ROCLINT_CHECK(meter->property("rateText").toString()=="Preparing…" && meter->property("recentActivity").toBool());
-    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(meter->property("lastFrameAt").toDouble()+5000))));
-    ROCLINT_CHECK(meter->property("activityLevel").toDouble()==1); // Julia/warmup: zero tokens must still animate.
-    savePreview(window,QStringLiteral("pixel-wave-working-no-tokens.png"));
-    meter->setProperty("tokensPerSecond",200.0);
-    meter->setProperty("tokenCount",12.0); // A burst shorter than one display tick.
-    const double started=meter->property("rateUpdatedAt").toDouble();
-    ROCLINT_CHECK(started>0 && meter->property("recentActivity").toBool());
-    meter->setProperty("tokensPerSecond",210.0);
-    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"refreshRate",Q_ARG(QVariant,QVariant(started+100)),Q_ARG(QVariant,QVariant(false))));
-    ROCLINT_CHECK(meter->property("displayedRate").toDouble()==200.0); // Readable, throttled number.
-    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"refreshRate",Q_ARG(QVariant,QVariant(started+600)),Q_ARG(QVariant,QVariant(false))));
-    ROCLINT_CHECK(meter->property("displayedRate").toDouble()==210.0);
-    meter->setProperty("tokenCount",0.0); // A native audit/subrequest can restart its counter.
-    ROCLINT_CHECK(meter->property("activityLevel").toDouble()==1 && meter->property("displayedRate").toDouble()==0);
-    meter->setProperty("tokenCount",12.0);
-    meter->setProperty("preparing",true); // Warmup hides the cached rate without erasing recent activity.
-    ROCLINT_CHECK(meter->property("rateText").toString()=="Preparing…" && meter->property("recentActivity").toBool());
-    meter->setProperty("preparing",false);
-    meter->setProperty("processing",false);
-    ROCLINT_CHECK(plainRate()=="Last · 210.0 tok/s" && meter->property("recentActivity").toBool());
-    const double heldUntil=meter->property("holdUntil").toDouble();
-    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(heldUntil-100))));
-    ROCLINT_CHECK(meter->property("activityLevel").toDouble()==1.0); // Completion never cuts the burst short.
-    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(heldUntil+350))));
-    ROCLINT_CHECK(meter->property("activityLevel").toDouble()>0 && meter->property("activityLevel").toDouble()<1);
-    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(heldUntil+800))));
+    QTest::qWait(350);
+    ROCLINT_CHECK(!idleFirst.isNull() && idleFirst==window->grabWindow().copy(region));
     ROCLINT_CHECK(!meter->property("recentActivity").toBool());
-    meter->setProperty("tokenCount",1.0); // New request/cancellation counter reset clears history.
-    ROCLINT_CHECK(!meter->property("recentActivity").toBool() && meter->property("displayedRate").toDouble()==0);
-    meter->setProperty("reducedMotion",true);
-    meter->setProperty("tokensPerSecond",123.4);
-    meter->setProperty("tokenCount",20.0);
-    ROCLINT_CHECK(!meter->property("recentActivity").toBool() && meter->property("displayedRate").toDouble()==123.4);
-    QTest::qWait(150);
-    const auto stillFirst=window->grabWindow().copy(region);
+    savePreview(window,QStringLiteral("measured-wave-idle.png"));
+    meter->setProperty("processing",true);
+    ROCLINT_CHECK(plainRate()=="Preparing…" && !meter->property("recentActivity").toBool());
+    QTest::qWait(400);
+    const auto preparingFirst=window->grabWindow().copy(region);
+    QTest::qWait(350);
+    ROCLINT_CHECK(preparingFirst==window->grabWindow().copy(region)); // No fake zero-token progress.
+    publish(12,300,240);
+    ROCLINT_CHECK(plainRate()=="40.0 gen · 50.0 dec tok/s" && meter->property("recentActivity").toBool());
+    auto* genWave=findVisual(window->contentItem(),"referencePixelWave");
+    auto* decWave=findVisual(window->contentItem(),"decodePixelWave");
+    ROCLINT_CHECK(genWave && decWave && genWave->property("source").toUrl().toString().endsWith("assets/pixel-signal.png"));
+    const double started=meter->property("rateUpdatedAt").toDouble();
+    publish(24,900,400);
+    ROCLINT_CHECK(meter->property("displayedGenRate").toDouble()==40); // 500 ms readable-rate throttle.
+    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"refreshRate",Q_ARG(QVariant,QVariant(started+600)),Q_ARG(QVariant,QVariant(false))));
+    ROCLINT_CHECK(plainRate()=="26.7 gen · 60.0 dec tok/s");
+    ROCLINT_CHECK(meter->property("generationLevel").toDouble()!=meter->property("decodeLevel").toDouble());
+    const auto movingFirst=window->grabWindow().copy(region);
+    QTest::qWait(100);
+    ROCLINT_CHECK(movingFirst!=window->grabWindow().copy(region)); // Actual pixels move on new telemetry.
+    invoke("advance",meter->property("fadeUntil").toDouble()+1);
     QTest::qWait(300);
-    ROCLINT_CHECK(stillFirst==window->grabWindow().copy(region));
-    savePreview(window,QStringLiteral("pixel-wave-reduced-motion.png"));
-    meter->setProperty("tokenCount",0.0);
+    const auto stalled=window->grabWindow().copy(region);
+    QTest::qWait(350);
+    ROCLINT_CHECK(!meter->property("recentActivity").toBool() && stalled==window->grabWindow().copy(region));
+    publish(36,1200,600);
+    ROCLINT_CHECK(meter->property("recentActivity").toBool());
+    meter->setProperty("processing",false);
+    ROCLINT_CHECK(plainRate()=="Last · 30.0 gen · 60.0 dec tok/s");
+    const double heldUntil=meter->property("holdUntil").toDouble();
+    invoke("advance",heldUntil+175);
+    ROCLINT_CHECK(meter->property("activityLevel").toDouble()>0 && meter->property("activityLevel").toDouble()<1);
+    invoke("advance",heldUntil+351);
+    ROCLINT_CHECK(!meter->property("recentActivity").toBool());
+    meter->setProperty("generationTokensPerSecond",0.0);
+    meter->setProperty("tokenSpeedMode",QStringLiteral("GENERATION"));
+    ROCLINT_CHECK(plainRate()=="Last · — tok/s"); // Decode is never passed off as generation.
+    meter->setProperty("generationTokensPerSecond",30.0);
+    meter->setProperty("decodeTokensPerSecond",0.0);
+    meter->setProperty("tokenSpeedMode",QStringLiteral("DECODE"));
+    ROCLINT_CHECK(plainRate()=="Last · — tok/s (dec)");
+    meter->setProperty("tokenSpeedMode",QStringLiteral("BOTH"));
+    publish(0,0,0);
+    ROCLINT_CHECK(!meter->property("recentActivity").toBool() && meter->property("seenTokens").toDouble()==0);
+    meter->setProperty("processing",true);
+    publish(8,200,150); // New native subrequest, independent counters and clocks.
+    ROCLINT_CHECK(plainRate()=="40.0 gen · 53.3 dec tok/s");
+    meter->setProperty("reducedMotion",true);
+    QTest::qWait(300);
+    const QRect waveRegion(region.x(),region.y()+14,region.width(),region.height()-14);
+    const auto stillFirst=window->grabWindow().copy(waveRegion);
+    publish(12,300,240);
+    QTest::qWait(350);
+    ROCLINT_CHECK(!meter->property("recentActivity").toBool() && stillFirst==window->grabWindow().copy(waveRegion));
+    meter->setProperty("processing",false);
+    ROCLINT_CHECK(plainRate()=="Last · 40.0 gen · 50.0 dec tok/s");
+    savePreview(window,QStringLiteral("measured-wave-reduced-motion.png"));
+    publish(0,0,0);
     meter->setProperty("reducedMotion",false);
     meter->setProperty("processing",true);
-    meter->setProperty("tokensPerSecond",123.4);
-    meter->setProperty("tokenCount",24.0);
-    meter->setProperty("processing",false); // No simulated ongoing inference in the preview.
-    QElapsedTimer burst; burst.start();
-    const int offsets[]={0,300,600,1200,1800,2500};
-    for (int i=0;i<6;++i) {
-        const int wait=offsets[i]-static_cast<int>(burst.elapsed());
-        if (wait>0) QTest::qWait(wait);
-        savePreview(window,QStringLiteral("pixel-wave-burst-%1.png").arg(i));
+    for(int i=1;i<=6;++i) {
+        publish(i*8.0,i*180.0+(i%2)*90.0,i*130.0);
+        savePreview(window,QStringLiteral("measured-wave-stream-%1.png").arg(i));
     }
-    while (meter->property("recentActivity").toBool() && burst.elapsed() < 3200) QTest::qWait(50);
-    ROCLINT_CHECK(!meter->property("recentActivity").toBool());
-    std::cout << "  [PASS] Pixel wave visibly moves at idle and during zero-token work, preserves completion feedback, and freezes in reduced motion.\n";
+    meter->setProperty("processing",false);
+    QTest::qWait(1100);
+    const auto completed=window->grabWindow().copy(region);
+    QTest::qWait(350);
+    ROCLINT_CHECK(!meter->property("recentActivity").toBool() && completed==window->grabWindow().copy(region));
+    savePreview(window,QStringLiteral("measured-wave-complete.png"));
+    std::cout << "  [PASS] Measured generation/decode traces animate on token arrivals, stay still during idle/preparation/stalls, never substitute rates, and respect reduced motion.\n";
 }
 
 void testUserRequestedRewriteFromNewDraft() {

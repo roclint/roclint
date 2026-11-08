@@ -164,6 +164,9 @@ public:
             }
             llama_batch_ext_set_output_logits(batch.get(), static_cast<std::int32_t>(count - 1), true);
             const auto result = llama_process(context_.get(), LLAMA_PROCESS_TYPE_DECODE, batch.get());
+            // GPU backends enqueue asynchronously. Charge the completion wait to
+            // this forward pass, rather than the next sampling/logits read.
+            llama_synchronize(context_.get());
             control.check();
             if (result != 0) throw GraniteFailure(QStringLiteral("RUNTIME"), "Native Granite could not evaluate the supplied tokens.");
         }
@@ -415,6 +418,7 @@ public:
                     static_cast<std::size_t>(output.size() - streamedBytes)), emitted,
                     static_cast<double>(decodeNanoseconds) / 1e6,
                     static_cast<double>(genTimer.isValid() ? genTimer.nsecsElapsed() : timer.nsecsElapsed()) / 1e6});
+            const auto generationMs = static_cast<double>(genTimer.nsecsElapsed()) / 1e6;
             const auto latency = static_cast<double>(timer.nsecsElapsed()) / 1e6;
             llama_set_abort_callback(context_.get(), nullptr, nullptr);
             // Keep only the prompt tokens in the cache; generated tokens are removed
@@ -440,7 +444,7 @@ public:
                 {QStringLiteral("kv_cache_prefix_enabled"), true},
                 {QStringLiteral("sampler_ms"), static_cast<double>(samplerNanoseconds) / 1e6},
                 {QStringLiteral("sampling_temperature"), effectiveTemperature()},
-                {QStringLiteral("generation_ms"), static_cast<double>(genTimer.isValid() ? genTimer.nsecsElapsed() : timer.nsecsElapsed()) / 1e6}, {QStringLiteral("latency_ms"), latency}, {QStringLiteral("template_sha256"), QString::fromLatin1(templateHash_)}};
+                {QStringLiteral("generation_ms"), generationMs}, {QStringLiteral("latency_ms"), latency}, {QStringLiteral("template_sha256"), QString::fromLatin1(templateHash_)}};
         } catch (GraniteFailure& error) {
             llama_set_abort_callback(context_.get(), nullptr, nullptr);
             llama_memory_clear(memory, false);
@@ -453,7 +457,7 @@ public:
                 {QStringLiteral("kv_cache_reused_tokens"), static_cast<qint64>(reusedTokens)},
                 {QStringLiteral("sampler_ms"), static_cast<double>(samplerNanoseconds) / 1e6},
                 {QStringLiteral("prefill_completed"), prefillCompleted},
-                {QStringLiteral("generation_ms"), static_cast<double>(timer.nsecsElapsed()) / 1e6}};
+                {QStringLiteral("generation_ms"), genTimer.isValid() ? static_cast<double>(genTimer.nsecsElapsed()) / 1e6 : 0.0}};
             throw;
         }
     }

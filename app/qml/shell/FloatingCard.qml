@@ -501,7 +501,7 @@ Window {
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    Layout.preferredHeight: rootWindow.height <= 260 ? 32 : 42
+                    Layout.preferredHeight: rootWindow.height <= 260 ? 32 : 54
                     spacing: 10
                     Image {
                         source: "assets/roc-mark.png"
@@ -524,16 +524,18 @@ Window {
                     Item {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
-                        Layout.preferredHeight: rootWindow.height <= 260 ? 30 : 40
+                        Layout.preferredHeight: rootWindow.height <= 260 ? 30 : 52
                         GenerationMeter {
                             anchors.right: parent.right
                             width: Math.min(250, parent.width)
-                            height: rootWindow.height <= 260 ? 30 : 40
+                            height: rootWindow.height <= 260 ? 30 : 52
                             tokensPerSecond: rootWindow.hc ? hostController.tokensPerSecond : 0
                             generationTokensPerSecond: rootWindow.hc ? hostController.generationTokensPerSecond : 0
                             decodeTokensPerSecond: rootWindow.hc ? hostController.decodeTokensPerSecond : 0
                             tokenSpeedMode: rootWindow.hc ? hostController.tokenSpeedMode : "BOTH"
                             tokenCount: rootWindow.hc ? hostController.generationTokens : 0
+                            generationElapsedMs: rootWindow.hc ? hostController.generationElapsedMs : 0
+                            decodeElapsedMs: rootWindow.hc ? hostController.decodeElapsedMs : 0
                             processing: rootWindow.visible && rootWindow.hc && (rootWindow.generationPending || hostController.isInferring)
                             preparing: rootWindow.generationPending && !hostController.isInferring
                             metricsAvailable: rootWindow.hc && hostController.nativeGraniteSelected

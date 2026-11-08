@@ -3842,6 +3842,14 @@ qint64 HostController::generationTokens() const {
     return nativeGraniteSelected() && m_native ? m_native->lastOutputTokens() : 0;
 }
 
+double HostController::generationElapsedMs() const {
+    return nativeGraniteSelected() && m_native ? m_native->lastGenerationMs() : 0;
+}
+
+double HostController::decodeElapsedMs() const {
+    return nativeGraniteSelected() && m_native ? m_native->lastDecodeMs() : 0;
+}
+
 void HostController::setTokenSpeedMode(const QString& mode) {
     if (m_tokenSpeedMode == mode) return;
     m_tokenSpeedMode = mode;
@@ -3871,8 +3879,7 @@ double HostController::tokensPerSecond() const {
     if (m_tokenSpeedMode == QLatin1String("DECODE")) {
         return decodeTokensPerSecond();
     }
-    const double gen = generationTokensPerSecond();
-    return gen > 0.0 ? gen : decodeTokensPerSecond();
+    return generationTokensPerSecond();
 }
 
 QString HostController::generationSpeedLabel() const {
@@ -3906,7 +3913,6 @@ QString HostController::inferenceSpeed() const {
         if (dec > 0.0) return QStringLiteral("%1 tok/s (dec)").arg(dec, 0, 'f', 1);
     } else {
         if (gen > 0.0) return QStringLiteral("%1 tok/s (gen)").arg(gen, 0, 'f', 1);
-        if (dec > 0.0) return QStringLiteral("%1 tok/s").arg(dec, 0, 'f', 1);
     }
     return {};
 }

@@ -285,6 +285,8 @@ public:
     Q_PROPERTY(QString generationSpeedLabel READ generationSpeedLabel NOTIFY inferenceSpeedChanged)
     Q_PROPERTY(QString decodeSpeedLabel READ decodeSpeedLabel NOTIFY inferenceSpeedChanged)
     Q_PROPERTY(qint64 generationTokens READ generationTokens NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(double generationElapsedMs READ generationElapsedMs NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(double decodeElapsedMs READ decodeElapsedMs NOTIFY inferenceSpeedChanged)
     Q_PROPERTY(QString acceleratorName READ acceleratorName CONSTANT)
     Q_PROPERTY(QString nativeGraniteDiskStatus READ nativeGraniteDiskStatus NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(QString nativeGraniteMemoryStatus READ nativeGraniteMemoryStatus NOTIFY modelEngineStatusChanged)
@@ -494,6 +496,8 @@ public:
     [[nodiscard]] QString generationSpeedLabel() const;
     [[nodiscard]] QString decodeSpeedLabel() const;
     [[nodiscard]] qint64 generationTokens() const;
+    [[nodiscard]] double generationElapsedMs() const;
+    [[nodiscard]] double decodeElapsedMs() const;
     [[nodiscard]] QString acceleratorName() const {
         // ROCLINT_ACCELERATOR_NAME is injected by CMakeLists.txt (PUBLIC) from the resolved
         // _roclint_backend variable so it always matches the actual compiled backend

@@ -44,7 +44,7 @@ Rendered evidence: `docs/research/roclint-ui-2026-11-08-pixel-wave-implemented.p
 
 See `docs/audit/pixel_wave_visibility_2026-11-08.md` for exact scope and results. Final result for the reference-wave correction: passed.
 
-## Runtime motion correction — 2026-11-08
+## Runtime motion correction — 2026-11-08 (historical; superseded below)
 
 The user reported that the animation still did not work after additional product changes. The prior sweep assessment above did not establish visible motion during actual preparation. This section supersedes its animation verdict.
 
@@ -58,6 +58,18 @@ The user reported that the animation still did not work after additional product
 
 Exact commands, results and installed binary identity: `docs/audit/wave_motion_runtime_fix_2026-11-08.md`. Final result for the runtime motion correction: passed.
 
+## Measured generation/decode traces — 2026-11-08
+
+The user rejected passive motion and identified inflated token readings. This supersedes the ambient motion requirement and verdict above.
+
+- **P1 repaired — inflated decode throughput:** asynchronous GPU completion had been charged to sampling instead of decode. Forward-pass timing now includes `llama_synchronize`. One real Vulkan fixture produced the same 42-token output and hash before/after; decode changed from 168.7 to 26.5 tok/s, while corrected generation measured 25.7 tok/s. This is timing attribution evidence, not a speedup claim.
+- **P2 repaired — passive/unrelated animation:** idle, zero-token preparation and stalled streams remain still. Separate G/D traces update from real token/duration snapshots, with bounded interpolation and a 700 ms arrival tail. Both reuse the original pixel-wave art. No free-running phase or fabricated token count remains.
+- **P2 repaired — misleading metric substitution:** missing generation is never filled with decode throughput; unavailable measurements show a dash. The same count of native model-output tokens underlies both rates. Settings/tooltip explain that JSON/model output is included, and model loading/prefill/full-operation latency are excluded.
+- **Visual comparison:** the selected source motif is retained in both traces. Normal header height increases by 12 px to keep the two silhouettes readable; compact header sizing remains unchanged. `docs/research/roclint-ui-2026-11-08-measured-token-traces.png` and the companion idle PNG/GIF are actual Qt renderer fixtures with synthetic rates. Their values are not native benchmark results.
+- **Validation:** pixel comparisons establish still idle/preparation/stalled states, actual changes on arrivals and static reduced-motion traces with numeric updates. Full current product-alignment, native-runtime and host-controller targets pass; installed startup uses synchronized new host/helper binaries. No new full-repository or macOS run is claimed.
+
+Exact telemetry definitions, live measurements, test scope and deployment hashes: `docs/audit/measured_token_activity_2026-11-08.md`. Final result for measured traces: passed.
+
 ## Required fidelity surfaces
 
 | Surface | Assessment |
@@ -65,7 +77,7 @@ Exact commands, results and installed binary identity: `docs/audit/wave_motion_r
 | Typography | Embedded Inter Variable for reading, 26 px question hierarchy, 14–15 px prose, Consolas/Menlo for compact utility labels. Corrected the initial `Inter` family mismatch that fell back to monospaced text. |
 | Spacing/layout | Rounded 18 px outer panel, 20 px normal gutters, bounded draft and diff, persistent footer; question padding/row gaps reduced so all three alternatives, custom answer and skip action fit the 820 × 600 fixture. Extremely small windows scroll content while preserving window controls and delivery actions. |
 | Colors/tokens | Ink-blue background, cobalt primary/keyboard choice, warm-white prose, pale-blue perimeter and focus, muted periwinkle utility text. Semantic warning remains in the clarity label; focus uses a pale-blue boundary. |
-| Images/icons | Actual generated transparent Roc and official Phosphor SVG controls with licenses/provenance. The header reuses the original layered pixel-wave PNG with visible ambient/working motion and a completion tail, per the runtime correction. The meter intentionally changes the wave height during motion. No text/emoji substitutes for logo or window icons. |
+| Images/icons | Actual generated transparent Roc and official Phosphor SVG controls with licenses/provenance. Separate G/D traces reuse the original layered pixel-wave PNG and respond only to measured token arrivals, per the latest correction. No text/emoji substitutes for logo or window icons. |
 | Copy/content | User-facing actions include Clarify, Rewrite prompt, Skip & rewrite, Keep original, Show changes and explicit Approve & Copy/Insert. No question is selected automatically; identical output says it is the original prompt. Empty drafts disable inapplicable actions. |
 
 ## Comparison and repair history

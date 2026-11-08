@@ -95,6 +95,7 @@ private:
                 const QString& schema, const std::shared_ptr<Call>& call);
     void cancelCall(const std::shared_ptr<Call>& call);
     void resetSpeedMetrics(quint64 requestId = 0);
+    bool updateSpeedMetrics(quint64 requestId, const QJsonObject& metrics, Call& call);
 
     QProcess* process_{nullptr};
     std::unique_ptr<OwnedProcessJob> job_;

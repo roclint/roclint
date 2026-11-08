@@ -242,10 +242,10 @@ ColumnLayout {
                             Body {
                                 visible: dashboardWindow.hc && hostController.nativeGraniteSelected
                                 text: !dashboardWindow.hc ? "" : hostController.tokenSpeedMode === "BOTH"
-                                    ? qsTr("Show both speeds simultaneously in HUD & Dashboard. Generation speed (green) tracks end-to-end token generation; decode speed tracks GPU forward passes.")
+                                    ? qsTr("Show both views of the same model output tokens. Generation (green) includes sampling, streaming and completed forward passes; decode measures completed forward passes only. Neither includes prompt preparation or model loading.")
                                     : hostController.tokenSpeedMode === "GENERATION"
-                                    ? qsTr("Show end-to-end token generation speed (sampling, detokenization, and forward passes).")
-                                    : qsTr("Show raw neural forward-pass decode speed.")
+                                    ? qsTr("Output tokens divided by generation-loop time, including sampling, detokenization, streaming and completed forward passes. Excludes model loading and prompt preparation.")
+                                    : qsTr("The same output tokens divided by completed neural forward-pass time, including the GPU completion wait. This is compute throughput, not a second token count.")
                             }
                         }
                         SectionCard {
