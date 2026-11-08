@@ -1377,13 +1377,62 @@ void testGenerationMeterUsesMeasuredProgress() {
         }
         savePreview(window,QStringLiteral("measured-wave-stream-%1.png").arg(i));
     }
+    const auto speedFrame=[&](double genRate, double decRate, double tokens, const QString& name) {
+        publish(0,0,0);
+        for (int batch=1;batch<=6;++batch)
+            publish(tokens*batch,tokens*batch*1000/genRate,tokens*batch*1000/decRate);
+        // Hold identical visual age for the size comparison; test actual speed,
+        // excluding fade timing, label changes and interpolation in progress.
+        const double hold=meter->property("holdUntil").toDouble()+2000;
+        meter->setProperty("holdUntil",hold);
+        meter->setProperty("fadeUntil",hold+350);
+        QTest::qWait(250);
+        window->update();
+        const auto frame=window->grabWindow();
+        const auto artifacts=qEnvironmentVariable("ROCLINT_TEST_ARTIFACT_DIR");
+        if (!artifacts.isEmpty()) ROCLINT_CHECK(frame.save(artifacts+"/"+name+".png"));
+        return frame.copy(waveformRegion);
+    };
+    const auto peakRow=[](const QImage& image) {
+        for (int y=0;y<image.height();++y)
+            for (int x=0;x<image.width();++x) {
+                const auto pixel=image.pixelColor(x,y);
+                if (pixel.blue()>120 && pixel.blue()>pixel.red()+20) return y;
+            }
+        return image.height();
+    };
+    const auto cobaltPixels=[](const QImage& image) {
+        int count=0;
+        for (int y=0;y<image.height();++y)
+            for (int x=0;x<image.width();++x) {
+                const auto pixel=image.pixelColor(x,y);
+                if (pixel.blue()>140 && pixel.blue()-pixel.green()>100) ++count;
+            }
+        return count;
+    };
+    const auto slow=speedFrame(10,20,16,"wave-speed-slow");
+    const auto medium=speedFrame(30,50,16,"wave-speed-medium");
+    const auto fast=speedFrame(60,90,16,"wave-speed-fast");
+    ROCLINT_CHECK(peakRow(fast)<peakRow(medium) && peakRow(medium)<peakRow(slow));
+    const auto decodeFaster=speedFrame(30,90,16,"wave-speed-decode-faster");
+    ROCLINT_CHECK(peakRow(decodeFaster)<peakRow(medium)); // Only decode changes the outer edge.
+    const auto generationFaster=speedFrame(60,90,16,"wave-speed-generation-faster");
+    ROCLINT_CHECK(peakRow(generationFaster)==peakRow(decodeFaster) && cobaltPixels(generationFaster)>cobaltPixels(decodeFaster));
+    const auto largerBatch=speedFrame(30,50,160,"wave-speed-same-rate-larger-batch");
+    ROCLINT_CHECK(largerBatch==medium); // Same speeds, ten times the tokens: identical wave size.
+    const auto ceiling=speedFrame(150,200,16,"wave-speed-ceiling");
+    ROCLINT_CHECK(meter->property("generationLevel").toDouble()==1 && meter->property("decodeLevel").toDouble()==1);
+    ROCLINT_CHECK(!ceiling.isNull());
+    // Restore the normal arrival tail for the existing completion check.
+    publish(0,0,0);
+    publish(16,400,320);
     meter->setProperty("processing",false);
     QTest::qWait(1100);
     const auto completed=window->grabWindow().copy(region);
     QTest::qWait(350);
     ROCLINT_CHECK(!meter->property("recentActivity").toBool() && completed==window->grabWindow().copy(region));
     savePreview(window,QStringLiteral("measured-wave-complete.png"));
-    std::cout << "  [PASS] Pixel waveforms reshape from generation/decode history without a static image, remain still at idle/preparation/stalls, never substitute rates, and respect reduced motion.\n";
+    std::cout << "  [PASS] One pixel wave scales its generation body and decode edge with measured speed, independently of token/batch size; idle, stalls, rate integrity and reduced motion remain correct.\n";
 }
 
 void testUserRequestedRewriteFromNewDraft() {

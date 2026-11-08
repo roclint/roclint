@@ -70,7 +70,7 @@ The user rejected passive motion and identified inflated token readings. This su
 
 Exact telemetry definitions, live measurements, test scope and deployment hashes: `docs/audit/measured_token_activity_2026-11-08.md`. Final result for measured traces: passed.
 
-## Evolving pixel waveform — 2026-11-08
+## Evolving pixel waveform — 2026-11-08 (amplitude refined below)
 
 The user requested a waveform in the selected style, rather than the static design. This supersedes the image-based rendering above; the measured generation/decode definitions and GPU timing fix remain current.
 
@@ -81,6 +81,14 @@ The user requested a waveform in the selected style, rather than the static desi
 - **Validation:** focused regression, full current UI target, structure and installed startup pass. The unchanged native timing backend retains its preceding verification; no new repository-wide or macOS pass is claimed.
 
 Exact scope and installed identity: `docs/audit/live_pixel_waveform_2026-11-08.md`. Final result for the evolving waveform: passed.
+
+## Shared waveform speed scale — 2026-11-08
+
+The user specified that the size of the same wave must reflect generation and decode speed. One filled contour now combines the cobalt generation body and periwinkle decode edge. Both use the same fixed linear scale, matching the numeric request-average measurements. Higher speed produces greater height; token totals and IPC batch size do not set wave size. A visual ceiling keeps it within the header; numbers above the scale remain exact.
+
+Rendered-pixel comparisons verify slow < medium < fast height, independent generation-body/decode-edge growth, and an identical wave at identical speeds despite tenfold batch size. The source palette and pixel grid remain; idle/reduced-motion and rate-integrity checks still pass. `docs/research/roclint-ui-2026-11-08-wave-speed-scale.gif` is the synthetic Qt comparison preview.
+
+Evidence and exact scale/limitations: `docs/audit/wave_speed_scale_2026-11-08.md`. Final result for the shared speed scale: passed.
 
 ## Required fidelity surfaces
 

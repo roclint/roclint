@@ -32,6 +32,7 @@ Item {
     property real activityLevel: 0
     property real generationLevel: 0
     property real decodeLevel: 0
+    readonly property real waveScaleTokensPerSecond: 100
     readonly property int historySize: 48
     property var generationHistory: emptyHistory()
     property var decodeHistory: emptyHistory()
@@ -71,6 +72,9 @@ Item {
     RocTheme { id: theme; mode: meter.currentTheme }
 
     function emptyHistory() { return Array(historySize).fill(0); }
+    function levelForRate(value) {
+        return isFinite(value) && value > 0 ? Math.min(1, value / waveScaleTokensPerSecond) : 0;
+    }
     function blendedHistory(previous, current) {
         return current.map(function(value, index) { return previous[index] + (value - previous[index]) * historyBlend; });
     }
@@ -85,10 +89,10 @@ Item {
         }
         return next.slice(-historySize);
     }
-    function updateWaveforms(delta) {
-        // A readable crest for each batch; larger coalesced batches produce a
-        // wider crest. Both layers describe the same count of native tokens.
-        const slots = Math.min(historySize, Math.max(6, Math.ceil(delta / 2)));
+    function updateWaveforms() {
+        // Both measurements share one crest and the same fixed speed scale.
+        // IPC batch size must not make an equally fast stream look larger.
+        const slots = 8;
         const visibleGen = blendedHistory(previousGenerationHistory, generationHistory);
         const visibleDec = blendedHistory(previousDecodeHistory, decodeHistory);
         waveformTransition.stop();
@@ -132,16 +136,15 @@ Item {
         if (tokenCount < seenTokens || generationElapsedMs < seenGenerationMs || decodeElapsedMs < seenDecodeMs)
             resetPresentation();
         if (tokenCount > seenTokens && generationElapsedMs > 0 && decodeElapsedMs > 0 && decodeElapsedMs <= generationElapsedMs) {
-            const delta = tokenCount - seenTokens;
             const genMs = generationElapsedMs - seenGenerationMs;
             const decMs = decodeElapsedMs - seenDecodeMs;
             if (genMs <= 0 || decMs <= 0) return;
-            // The waveform shape comes from recent batch rates. No static image,
-            // artificial oscillator or idle timer supplies its peaks.
-            const genRate = delta * 1000 / genMs, decRate = delta * 1000 / decMs;
-            generationLevel = genRate / (genRate + 60);
-            decodeLevel = decRate / (decRate + 60);
-            updateWaveforms(delta);
+            // Match the request-average speeds reported by the numeric meter.
+            // A fixed linear scale makes twice the speed twice the amplitude
+            // below the visual ceiling, without adding the two rates together.
+            generationLevel = levelForRate(tokenCount * 1000 / generationElapsedMs);
+            decodeLevel = levelForRate(tokenCount * 1000 / decodeElapsedMs);
+            updateWaveforms();
             seenTokens = tokenCount;
             seenGenerationMs = generationElapsedMs;
             seenDecodeMs = decodeElapsedMs;
@@ -254,22 +257,21 @@ Item {
                 }
                 return weight > 0 ? total / weight : 0;
             }
-            function draw(history, decode, outlineOnly) {
-                for (let x = 0; x < columns; ++x) {
-                    const level = envelope(history, x);
-                    const rows = Math.round(level * intensity * Math.max(1, Math.floor(baseline / row)));
-                    for (let y = 0; y < rows; ++y) {
-                        if (outlineOnly && y !== rows - 1) continue;
-                        if (decode) ctx.fillStyle = y === rows - 1 ? "#9EAEFF" : y >= rows * 0.55 ? "#657FE8" : "#354B9C";
-                        else ctx.fillStyle = y === rows - 1 ? "#5F81FF" : y >= rows * 0.55 ? "#3E62F0" : "#2445C8";
-                        ctx.globalAlpha = decode ? 0.70 : 0.97;
-                        ctx.fillRect(x * cell, baseline - (y + 1) * row, cell, row);
-                    }
+            const maxRows = Math.max(1, Math.floor(baseline / row));
+            for (let x = 0; x < columns; ++x) {
+                const genRows = meter.tokenSpeedMode === "DECODE" ? 0 : Math.round(envelope(gen, x) * intensity * maxRows);
+                const decRows = meter.tokenSpeedMode === "GENERATION" ? 0 : Math.round(envelope(dec, x) * intensity * maxRows);
+                const rows = Math.max(genRows, decRows);
+                // One filled waveform: generation is the cobalt body; decode
+                // extends its periwinkle edge on the identical baseline/scale.
+                for (let y = 0; y < rows; ++y) {
+                    const decodeEdge = y >= genRows || (meter.tokenSpeedMode === "BOTH" && y === decRows - 1);
+                    if (decodeEdge) ctx.fillStyle = y === decRows - 1 ? "#9EAEFF" : "#657FE8";
+                    else ctx.fillStyle = y === genRows - 1 ? "#5F81FF" : y >= genRows * 0.55 ? "#3E62F0" : "#2445C8";
+                    ctx.globalAlpha = decodeEdge ? 0.80 : 0.97;
+                    ctx.fillRect(x * cell, baseline - (y + 1) * row, cell, row);
                 }
             }
-            if (meter.tokenSpeedMode !== "GENERATION") draw(dec, true, false);
-            if (meter.tokenSpeedMode !== "DECODE") draw(gen, false, false);
-            if (meter.tokenSpeedMode === "BOTH") draw(dec, true, true);
             ctx.globalAlpha = 1;
         }
     }
@@ -277,6 +279,6 @@ Item {
     ToolTip.visible: hover.hovered
     ToolTip.delay: 500
     ToolTip.text: meter.metricsAvailable
-        ? qsTr("G: output tokens / generation-loop time. D: the same tokens / completed forward-pass time. Includes structured model output for this native request, not only visible rewrite words. Cobalt: generation. Periwinkle: decode. Crests mark arriving token batches; height follows each measured batch rate. Last is the completed request.")
+        ? qsTr("One wave: cobalt body = generation speed; periwinkle edge = decode speed. Both heights use the same fixed 0–100 tok/s scale; faster rates stay at the visual ceiling while numbers remain exact. Includes structured model output for this native request. Crests arrive with token updates. Last is the completed request.")
         : qsTr("Live token metrics are available with the native local model.")
 }
