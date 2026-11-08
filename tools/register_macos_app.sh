@@ -77,16 +77,22 @@ mkdir -p "${INSTALL_DIR}"
 rm -rf "${TARGET_APP}"
 cp -R "${STAGED_BUNDLE}" "${TARGET_APP}"
 
-# Stage Python runtime for Julia if available
-if [[ ! -d "${TARGET_APP}/Contents/MacOS/runtime/julia-python" ]]; then
-    if [[ -d "${STAGED_BUNDLE}/Contents/MacOS/runtime/julia-python" ]]; then
-        cp -R -c "${STAGED_BUNDLE}/Contents/MacOS/runtime/julia-python" "${TARGET_APP}/Contents/MacOS/runtime/julia-python" 2>/dev/null || \
-        cp -R "${STAGED_BUNDLE}/Contents/MacOS/runtime/julia-python" "${TARGET_APP}/Contents/MacOS/runtime/julia-python"
+# Stage Python runtime for Julia if available in Contents/runtime/julia-python
+# Keeping virtualenv outside Contents/MacOS maintains Apple bundle format compliance for codesign/TCC
+if [[ ! -d "${TARGET_APP}/Contents/runtime/julia-python" ]]; then
+    mkdir -p "${TARGET_APP}/Contents/runtime"
+    if [[ -d "${TARGET_APP}/Contents/MacOS/runtime/julia-python" ]]; then
+        mv "${TARGET_APP}/Contents/MacOS/runtime/julia-python" "${TARGET_APP}/Contents/runtime/julia-python"
+    elif [[ -d "${STAGED_BUNDLE}/Contents/runtime/julia-python" ]]; then
+        cp -R "${STAGED_BUNDLE}/Contents/runtime/julia-python" "${TARGET_APP}/Contents/runtime/julia-python"
+    elif [[ -d "${STAGED_BUNDLE}/Contents/MacOS/runtime/julia-python" ]]; then
+        cp -R "${STAGED_BUNDLE}/Contents/MacOS/runtime/julia-python" "${TARGET_APP}/Contents/runtime/julia-python"
     elif [[ -d "${SCRIPT_DIR}/../build/runtime/julia-python" ]]; then
-        cp -R -c "${SCRIPT_DIR}/../build/runtime/julia-python" "${TARGET_APP}/Contents/MacOS/runtime/julia-python" 2>/dev/null || \
-        cp -R "${SCRIPT_DIR}/../build/runtime/julia-python" "${TARGET_APP}/Contents/MacOS/runtime/julia-python"
+        cp -R "${SCRIPT_DIR}/../build/runtime/julia-python" "${TARGET_APP}/Contents/runtime/julia-python"
     fi
 fi
+# Remove build-only text/json artifacts from Contents/MacOS/runtime to preserve Mach-O bundle compliance
+rm -f "${TARGET_APP}/Contents/MacOS/runtime"/julia-requirements*.txt "${TARGET_APP}/Contents/MacOS/runtime"/granite-*.json 2>/dev/null || true
 
 # Stage license files in Contents/Resources/licenses
 LICENSES_DIR="${TARGET_APP}/Contents/Resources/licenses"
@@ -98,8 +104,14 @@ if [[ -f "${SCRIPT_DIR}/../app/qml/shell/assets/icons/LICENSE" ]]; then
     cp -f "${SCRIPT_DIR}/../app/qml/shell/assets/icons/LICENSE" "${LICENSES_DIR}/Phosphor-MIT.txt"
 fi
 
-# Apply ad-hoc code signature
-codesign --force --deep --sign - "${TARGET_APP}" >/dev/null 2>&1 || true
+# Apply valid ad-hoc code signatures
+for helper in "${TARGET_APP}/Contents/MacOS/runtime"/*; do
+    if [[ -f "${helper}" && -x "${helper}" ]]; then
+        codesign --force --sign - "${helper}" >/dev/null 2>&1 || true
+    fi
+done
+codesign --force --sign - "${EXECUTABLE}" >/dev/null 2>&1 || true
+codesign --force --deep --sign - -i com.roclint.desktop -r='designated => identifier "com.roclint.desktop"' "${TARGET_APP}" >/dev/null 2>&1 || true
 
 # Register with LaunchServices and Spotlight
 LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"

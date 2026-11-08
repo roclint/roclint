@@ -124,6 +124,9 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
     else if (profile.formatMarkdownSections)
         out += R"EXAMPLE(Format example only: {"status":"rewritten","rewritten_prompt":"# Goal\nSummarize the supplied notes."}
 )EXAMPLE";
+    else
+        out += R"EXAMPLE(Return plain task text inside the string. Format example only: {"status":"rewritten","rewritten_prompt":"Summarize the supplied notes."}. Do not encode the task as a JSON object or a list of AST fields.
+)EXAMPLE";
     out += "Reply with exactly one JSON object: {\"status\": \"rewritten\", \"rewritten_prompt\": string} "
            "or {\"status\": \"needs_clarification\", \"question\": string}.\n";
     out += "</instructions>\n";
@@ -171,9 +174,8 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
         out += "The user deferred only the questions listed in open_questions. Leave those choices unanswered; "
                "do not select a new improvement goal or feature to fill them. Goals already supplied in "
                "original_prompt or decisions remain binding and must be incorporated.\n";
-    if (!profile.formatXmlTags && !profile.formatMarkdownSections)
-        out += R"EXAMPLE(Return plain task text inside the string. Editing example: input "pls summarize these notes dont add facts" becomes {"status":"rewritten","rewritten_prompt":"Summarize these notes. Do not add facts."}. Do not encode the task as a JSON object or a list of AST fields.
-)EXAMPLE";
+    else if (intent.items.empty())
+        out += "No questions were asked. Polish, clarify and improve original_prompt directly.\n";
     return out;
 }
 
