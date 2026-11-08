@@ -345,6 +345,8 @@ void NativeGraniteRuntimeWorker::readOutput() {
 void NativeGraniteRuntimeWorker::resetSpeedMetrics(quint64 requestId) {
     metricsRequestId_ = requestId;
     lastTokensPerSecond_ = 0.0;
+    lastDecodeTokensPerSecond_ = 0.0;
+    lastGenerationTokensPerSecond_ = 0.0;
     lastOutputTokens_ = 0;
     lastDecodeMs_ = 0.0;
     lastGenerationMs_ = 0.0;
@@ -384,6 +386,10 @@ void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
                 lastOutputTokens_ = static_cast<qint64>(count);
                 lastDecodeMs_ = decode;
                 lastGenerationMs_ = elapsed;
+                const double decSpeed = decode > 0.0 ? count * 1000.0 / decode : 0.0;
+                const double genSpeed = elapsed > 0.0 ? count * 1000.0 / elapsed : 0.0;
+                lastDecodeTokensPerSecond_ = std::isfinite(decSpeed) ? decSpeed : 0.0;
+                lastGenerationTokensPerSecond_ = std::isfinite(genSpeed) ? genSpeed : 0.0;
                 const double duration = decode > 0.0 ? decode : elapsed;
                 const double speed = duration > 0.0 ? count * 1000.0 / duration : 0.0;
                 lastTokensPerSecond_ = std::isfinite(speed) ? speed : 0.0;
@@ -469,6 +475,10 @@ void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
             lastOutputTokens_ = std::max<qint64>(0, outputTokens);
             lastDecodeMs_ = std::isfinite(decodeMs) && decodeMs >= 0 ? decodeMs : 0;
             lastGenerationMs_ = std::isfinite(genMs) && genMs >= 0 ? genMs : 0;
+            const double decSpeed = lastDecodeMs_ > 0.0 ? static_cast<double>(lastOutputTokens_) * 1000.0 / lastDecodeMs_ : 0.0;
+            const double genSpeed = lastGenerationMs_ > 0.0 ? static_cast<double>(lastOutputTokens_) * 1000.0 / lastGenerationMs_ : 0.0;
+            lastDecodeTokensPerSecond_ = std::isfinite(decSpeed) ? decSpeed : 0.0;
+            lastGenerationTokensPerSecond_ = std::isfinite(genSpeed) ? genSpeed : 0.0;
             const double duration = lastDecodeMs_ > 0 ? lastDecodeMs_ : lastGenerationMs_;
             const double speed = duration > 0 ? static_cast<double>(lastOutputTokens_) * 1000.0 / duration : 0;
             lastTokensPerSecond_ = std::isfinite(speed) ? speed : 0;

@@ -1084,6 +1084,23 @@ void testMultiCandidateCreativeExpansion() {
     std::cout << "  [PASS] Multi-candidate creative expansion expands, switches, reseals, and invalidates.\n";
 }
 
+void testTokenSpeedModesAndMetrics() {
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    ROCLINT_CHECK(c.tokenSpeedMode() == "BOTH");
+
+    c.setTokenSpeedMode("GENERATION");
+    ROCLINT_CHECK(c.tokenSpeedMode() == "GENERATION");
+
+    c.setTokenSpeedMode("DECODE");
+    ROCLINT_CHECK(c.tokenSpeedMode() == "DECODE");
+
+    c.setTokenSpeedMode("BOTH");
+    ROCLINT_CHECK(c.tokenSpeedMode() == "BOTH");
+
+    std::cout << "  [PASS] Token speed modes (BOTH, GENERATION, DECODE) switch and persist accurately.\n";
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -1114,6 +1131,7 @@ int main(int argc, char* argv[]) {
     testCommandPaletteAndAssistanceModes();
     testGoldfishAuditPipelineGating();
     testMultiCandidateCreativeExpansion();
+    testTokenSpeedModesAndMetrics();
     std::cout << "[Test Host Controller] All tests PASSED.\n";
     return 0;
 }

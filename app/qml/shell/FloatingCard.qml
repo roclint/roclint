@@ -530,6 +530,9 @@ Window {
                             width: Math.min(250, parent.width)
                             height: rootWindow.height <= 260 ? 30 : 40
                             tokensPerSecond: rootWindow.hc ? hostController.tokensPerSecond : 0
+                            generationTokensPerSecond: rootWindow.hc ? hostController.generationTokensPerSecond : 0
+                            decodeTokensPerSecond: rootWindow.hc ? hostController.decodeTokensPerSecond : 0
+                            tokenSpeedMode: rootWindow.hc ? hostController.tokenSpeedMode : "BOTH"
                             tokenCount: rootWindow.hc ? hostController.generationTokens : 0
                             processing: rootWindow.visible && rootWindow.hc && (rootWindow.generationPending || hostController.isInferring)
                             preparing: rootWindow.generationPending && !hostController.isInferring

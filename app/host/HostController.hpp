@@ -277,8 +277,13 @@ public:
     Q_PROPERTY(bool isNativeGraniteQ8Installed READ isNativeGraniteQ8Installed NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(bool isNativeGraniteQ5Installed READ isNativeGraniteQ5Installed NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(bool isNativeGraniteQ4Installed READ isNativeGraniteQ4Installed NOTIFY modelEngineStatusChanged)
+    Q_PROPERTY(QString tokenSpeedMode READ tokenSpeedMode WRITE setTokenSpeedMode NOTIFY tokenSpeedModeChanged)
     Q_PROPERTY(QString inferenceSpeed READ inferenceSpeed NOTIFY inferenceSpeedChanged)
     Q_PROPERTY(double tokensPerSecond READ tokensPerSecond NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(double generationTokensPerSecond READ generationTokensPerSecond NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(double decodeTokensPerSecond READ decodeTokensPerSecond NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(QString generationSpeedLabel READ generationSpeedLabel NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(QString decodeSpeedLabel READ decodeSpeedLabel NOTIFY inferenceSpeedChanged)
     Q_PROPERTY(qint64 generationTokens READ generationTokens NOTIFY inferenceSpeedChanged)
     Q_PROPERTY(QString acceleratorName READ acceleratorName CONSTANT)
     Q_PROPERTY(QString nativeGraniteDiskStatus READ nativeGraniteDiskStatus NOTIFY modelEngineStatusChanged)
@@ -480,8 +485,14 @@ public:
     [[nodiscard]] bool isNativeGraniteQ8Installed() const;
     [[nodiscard]] bool isNativeGraniteQ5Installed() const;
     [[nodiscard]] bool isNativeGraniteQ4Installed() const;
+    [[nodiscard]] QString tokenSpeedMode() const { return m_tokenSpeedMode; }
+    Q_INVOKABLE void setTokenSpeedMode(const QString& mode);
     [[nodiscard]] QString inferenceSpeed() const;
     [[nodiscard]] double tokensPerSecond() const;
+    [[nodiscard]] double generationTokensPerSecond() const;
+    [[nodiscard]] double decodeTokensPerSecond() const;
+    [[nodiscard]] QString generationSpeedLabel() const;
+    [[nodiscard]] QString decodeSpeedLabel() const;
     [[nodiscard]] qint64 generationTokens() const;
     [[nodiscard]] QString acceleratorName() const {
         // ROCLINT_ACCELERATOR_NAME is injected by CMakeLists.txt (PUBLIC) from the resolved
@@ -701,6 +712,7 @@ signals:
     void rewriteProposalChanged();
     void creativeAlternativesChanged();
     void selectedAlternativeChanged();
+    void tokenSpeedModeChanged();
     void inferenceSpeedChanged();
     void approvalChanged();
     void groundingChanged();
@@ -1164,6 +1176,7 @@ private:
     bool m_healthRecheckRequested{false};
     QString m_modelStatusDetail;
     QVariantList m_availableModels;
+    QString m_tokenSpeedMode{QStringLiteral("BOTH")};
     QString m_activeModel{NativeGraniteRuntime::modelTag(QStringLiteral("Q8_0"))};
     bool m_isDownloadingModel{false};
     int m_downloadProgress{0};

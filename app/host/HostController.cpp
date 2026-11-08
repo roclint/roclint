@@ -234,6 +234,7 @@ HostController::HostController(const QString& dbPathOverride,
         m_juliaModelDirectory = settings.value(QStringLiteral("scoring/juliaDirectory"), m_modelsBaseDirectory + QStringLiteral("/s1")).toString();
         m_juliaPython = settings.value(QStringLiteral("scoring/juliaPython"), m_juliaPython).toString();
         m_juliaDevice = settings.value(QStringLiteral("scoring/juliaDevice"), QString{}).toString();
+        m_tokenSpeedMode = settings.value(QStringLiteral("models/tokenSpeedMode"), QStringLiteral("BOTH")).toString();
         m_activeModel = settings.value(QStringLiteral("models/active"), m_activeModel).toString();
         m_modelDirectory = settings.value(QStringLiteral("models/directory")).toString();
         m_nativeDirectory = settings.value(QStringLiteral("models/nativeDirectory"), m_modelsBaseDirectory + QStringLiteral("/s2")).toString();
@@ -3841,17 +3842,71 @@ qint64 HostController::generationTokens() const {
     return nativeGraniteSelected() && m_native ? m_native->lastOutputTokens() : 0;
 }
 
-double HostController::tokensPerSecond() const {
+void HostController::setTokenSpeedMode(const QString& mode) {
+    if (m_tokenSpeedMode == mode) return;
+    m_tokenSpeedMode = mode;
+    if (!QCoreApplication::organizationName().isEmpty()) {
+        QSettings settings;
+        settings.setValue(QStringLiteral("models/tokenSpeedMode"), mode);
+    }
+    emit tokenSpeedModeChanged();
+    emit inferenceSpeedChanged();
+}
+
+double HostController::generationTokensPerSecond() const {
     if (nativeGraniteSelected() && m_native) {
-        return m_native->lastTokensPerSecond();
+        return m_native->lastGenerationTokensPerSecond();
     }
     return 0.0;
 }
 
+double HostController::decodeTokensPerSecond() const {
+    if (nativeGraniteSelected() && m_native) {
+        return m_native->lastDecodeTokensPerSecond();
+    }
+    return 0.0;
+}
+
+double HostController::tokensPerSecond() const {
+    if (m_tokenSpeedMode == QLatin1String("DECODE")) {
+        return decodeTokensPerSecond();
+    }
+    const double gen = generationTokensPerSecond();
+    return gen > 0.0 ? gen : decodeTokensPerSecond();
+}
+
+QString HostController::generationSpeedLabel() const {
+    const double s = generationTokensPerSecond();
+    if (s > 0.0) {
+        return QStringLiteral("%1 tok/s").arg(s, 0, 'f', 1);
+    }
+    return {};
+}
+
+QString HostController::decodeSpeedLabel() const {
+    const double s = decodeTokensPerSecond();
+    if (s > 0.0) {
+        return QStringLiteral("%1 tok/s").arg(s, 0, 'f', 1);
+    }
+    return {};
+}
+
 QString HostController::inferenceSpeed() const {
-    const double tps = tokensPerSecond();
-    if (tps > 0.0) {
-        return QStringLiteral("%1 tok/s").arg(tps, 0, 'f', 1);
+    const double gen = generationTokensPerSecond();
+    const double dec = decodeTokensPerSecond();
+    if (m_tokenSpeedMode == QLatin1String("BOTH")) {
+        if (gen > 0.0 && dec > 0.0) {
+            return QStringLiteral("%1 tok/s (gen) · %2 tok/s (dec)")
+                .arg(gen, 0, 'f', 1)
+                .arg(dec, 0, 'f', 1);
+        }
+        if (gen > 0.0) return QStringLiteral("%1 tok/s (gen)").arg(gen, 0, 'f', 1);
+        if (dec > 0.0) return QStringLiteral("%1 tok/s (dec)").arg(dec, 0, 'f', 1);
+    } else if (m_tokenSpeedMode == QLatin1String("DECODE")) {
+        if (dec > 0.0) return QStringLiteral("%1 tok/s (dec)").arg(dec, 0, 'f', 1);
+    } else {
+        if (gen > 0.0) return QStringLiteral("%1 tok/s (gen)").arg(gen, 0, 'f', 1);
+        if (dec > 0.0) return QStringLiteral("%1 tok/s").arg(dec, 0, 'f', 1);
     }
     return {};
 }

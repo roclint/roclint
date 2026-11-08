@@ -212,6 +212,41 @@ ColumnLayout {
                                 visible: dashboardWindow.hc && hostController.nativeGraniteSelected
                                 text: dashboardWindow.hc ? hostController.graniteResidencyStatus : ""
                             }
+                            Text {
+                                visible: dashboardWindow.hc && hostController.nativeGraniteSelected
+                                text: qsTr("Inference speed metric:")
+                                font.family: dashboardWindow.sansFont
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
+                                color: dashboardWindow.fgColor
+                            }
+                            Flow {
+                                visible: dashboardWindow.hc && hostController.nativeGraniteSelected
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                spacing: 8
+                                Repeater {
+                                    model: [{label: qsTr("Both (Gen & Dec)"), value: "BOTH"},
+                                            {label: qsTr("Generation speed"), value: "GENERATION"},
+                                            {label: qsTr("Decode speed"), value: "DECODE"}]
+                                    ActionButton {
+                                        required property var modelData
+                                        objectName: "tokenSpeedMode_" + modelData.value
+                                        label: modelData.label
+                                        selected: dashboardWindow.hc && hostController.tokenSpeedMode === modelData.value
+                                        active: dashboardWindow.hc
+                                        onClicked: hostController.setTokenSpeedMode(modelData.value)
+                                    }
+                                }
+                            }
+                            Body {
+                                visible: dashboardWindow.hc && hostController.nativeGraniteSelected
+                                text: !dashboardWindow.hc ? "" : hostController.tokenSpeedMode === "BOTH"
+                                    ? qsTr("Show both speeds simultaneously in HUD & Dashboard. Generation speed (green) tracks end-to-end token generation; decode speed tracks GPU forward passes.")
+                                    : hostController.tokenSpeedMode === "GENERATION"
+                                    ? qsTr("Show end-to-end token generation speed (sampling, detokenization, and forward passes).")
+                                    : qsTr("Show raw neural forward-pass decode speed.")
+                            }
                         }
                         SectionCard {
                             visible: dashboardWindow.currentTab === 0

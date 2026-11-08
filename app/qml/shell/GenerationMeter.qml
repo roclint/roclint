@@ -9,6 +9,9 @@ Item {
     implicitWidth: 250
     implicitHeight: 40
     property double tokensPerSecond: 0
+    property double generationTokensPerSecond: 0
+    property double decodeTokensPerSecond: 0
+    property string tokenSpeedMode: "BOTH"
     property double tokenCount: 0
     property bool processing: false
     property bool preparing: false
@@ -17,7 +20,11 @@ Item {
     property string currentTheme: "dark"
     property double seenTokens: 0
     property double displayedRate: 0
+    property double displayedGenRate: 0
+    property double displayedDecRate: 0
     property double rateUpdatedAt: 0
+    readonly property color genColor: theme.mode === "light" ? "#047857" : "#34D399"
+    readonly property color decColor: theme.mode === "light" ? "#475569" : "#94A3B8"
     property double activityStartedAt: 0
     property double holdUntil: 0
     property double fadeUntil: 0
@@ -25,19 +32,51 @@ Item {
     property real activityLevel: 0
     readonly property bool recentActivity: activityLevel > 0
     readonly property real sweepX: Math.floor((((paintedAt - activityStartedAt) % 900) / 900 * (width + 64)) / 6) * 6 - 64
-    readonly property string rateText: preparing ? (metricsAvailable ? qsTr("Preparing…") : qsTr("Working…")) : displayedRate > 0 && seenTokens > 0
-        ? (processing ? "" : qsTr("Last · ")) + qsTr("%1 tok/s").arg(displayedRate.toFixed(1))
-        : processing ? (metricsAvailable ? qsTr("Preparing…") : qsTr("Working…")) : qsTr("— tok/s")
+    readonly property string rateText: {
+        if (preparing) return metricsAvailable ? qsTr("Preparing…") : qsTr("Working…");
+        if (processing && (!seenTokens || (displayedRate <= 0 && displayedGenRate <= 0 && displayedDecRate <= 0)))
+            return metricsAvailable ? qsTr("Preparing…") : qsTr("Working…");
+        if (!seenTokens || (displayedRate <= 0 && displayedGenRate <= 0 && displayedDecRate <= 0))
+            return qsTr("— tok/s");
+
+        const prefix = processing ? "" : qsTr("Last · ");
+        if (tokenSpeedMode === "BOTH" && (displayedGenRate > 0 || displayedDecRate > 0)) {
+            const g = displayedGenRate > 0 ? displayedGenRate.toFixed(1) : (displayedRate > 0 ? displayedRate.toFixed(1) : "—");
+            const d = displayedDecRate > 0 ? displayedDecRate.toFixed(1) : (displayedRate > 0 ? displayedRate.toFixed(1) : "—");
+            if (meter.width < 165) {
+                return prefix + "<font color='" + genColor + "'>" + g + "g</font> · <font color='" + decColor + "'>" + d + "d</font>";
+            }
+            return prefix + "<font color='" + genColor + "'>" + g + " gen</font> · <font color='" + decColor + "'>" + d + " dec</font>";
+        } else if (tokenSpeedMode === "DECODE") {
+            const rate = displayedDecRate > 0 ? displayedDecRate : displayedRate;
+            return prefix + "<font color='" + decColor + "'>" + rate.toFixed(1) + " tok/s (dec)</font>";
+        } else {
+            const rate = displayedGenRate > 0 ? displayedGenRate : displayedRate;
+            return prefix + "<font color='" + genColor + "'>" + rate.toFixed(1) + " tok/s</font>";
+        }
+    }
     Accessible.role: Accessible.StaticText
     Accessible.focusable: false
     Accessible.focused: false
-    Accessible.name: rateText
+    Accessible.name: {
+        if (tokenSpeedMode === "BOTH" && (displayedGenRate > 0 || displayedDecRate > 0)) {
+            return (processing ? "" : "Last: ") + displayedGenRate.toFixed(1) + " tok/s generation, " + displayedDecRate.toFixed(1) + " tok/s decode";
+        } else if (tokenSpeedMode === "DECODE") {
+            const rate = displayedDecRate > 0 ? displayedDecRate : displayedRate;
+            return (processing ? "" : "Last: ") + rate.toFixed(1) + " tok/s decode";
+        } else {
+            const rate = displayedGenRate > 0 ? displayedGenRate : displayedRate;
+            return (processing ? "" : "Last: ") + rate.toFixed(1) + " tok/s generation";
+        }
+    }
     Accessible.description: qsTr("Measured generation speed with a brief recent-activity afterglow")
     RocTheme { id: theme; mode: meter.currentTheme }
 
     function resetPresentation() {
         seenTokens = tokenCount;
         displayedRate = 0;
+        displayedGenRate = 0;
+        displayedDecRate = 0;
         rateUpdatedAt = 0;
         activityStartedAt = 0;
         holdUntil = 0;
@@ -45,9 +84,11 @@ Item {
         activityLevel = 0;
     }
     function refreshRate(now, force) {
-        if (seenTokens > 0 && tokensPerSecond > 0 && isFinite(tokensPerSecond) &&
+        if (seenTokens > 0 && (tokensPerSecond > 0 || generationTokensPerSecond > 0 || decodeTokensPerSecond > 0) &&
             (force || rateUpdatedAt === 0 || now < rateUpdatedAt || now - rateUpdatedAt >= 500)) {
-            displayedRate = tokensPerSecond;
+            displayedRate = tokensPerSecond > 0 ? tokensPerSecond : (generationTokensPerSecond > 0 ? generationTokensPerSecond : decodeTokensPerSecond);
+            displayedGenRate = generationTokensPerSecond > 0 ? generationTokensPerSecond : displayedRate;
+            displayedDecRate = decodeTokensPerSecond > 0 ? decodeTokensPerSecond : displayedRate;
             rateUpdatedAt = now;
         }
     }
@@ -73,6 +114,9 @@ Item {
     }
     onTokenCountChanged: recordProgress(Date.now())
     onTokensPerSecondChanged: refreshRate(Date.now(), !processing)
+    onGenerationTokensPerSecondChanged: refreshRate(Date.now(), !processing)
+    onDecodeTokensPerSecondChanged: refreshRate(Date.now(), !processing)
+    onTokenSpeedModeChanged: refreshRate(Date.now(), true)
     onProcessingChanged: {
         if (processing) resetPresentation();
         else recordProgress(Date.now()); // Completing a fast burst must not erase it.
@@ -92,6 +136,7 @@ Item {
         width: Math.min(implicitWidth, meter.width)
         elide: Text.ElideRight
         visible: meter.width >= 65
+        textFormat: Text.StyledText
         text: meter.rateText
         color: meter.processing ? theme.foreground : theme.muted
         font.family: theme.monoFont
