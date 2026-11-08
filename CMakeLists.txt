@@ -37,6 +37,8 @@ set(ROCLINT_CORE_SOURCES
     src/core/prompt_state/PromptRevision.cpp
     src/core/prompt_state/RevisionState.cpp
     src/core/prompt_state/TextNormalization.cpp
+    src/core/scoped_constraint.cpp
+    src/core/validation_result.cpp
     src/analysis/SourceSpan.cpp
     src/analysis/NormalizedAnalysis.cpp
     src/analysis/AnalysisSnapshot.cpp
@@ -604,6 +606,7 @@ if(BUILD_TESTING)
     # Retain the original upstream build target alongside the clearer test executable name.
     add_custom_target(roclint_core_tests DEPENDS roclint_core_smoke_tests)
     roclint_add_test(roclint_core_primitives       tests/core/testCorePrimitives.cpp                 roclint_core_testing)
+    roclint_add_test(roclint_scoped_constraint    tests/core/test_scoped_constraint.cpp             roclint_core_testing)
     roclint_add_test(roclint_prompt_revision       tests/core/prompt_state/testPromptRevision.cpp    roclint_core_testing)
     roclint_add_test(roclint_revision_state        tests/core/prompt_state/testRevisionState.cpp     roclint_core_testing)
     roclint_add_test(roclint_storage               tests/storage/test_database.cpp                   roclint_storage_testing)
