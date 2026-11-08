@@ -50,7 +50,7 @@ Window {
     readonly property bool showPromptEditor: !rootWindow.isCompiledPreview && (
         !rootWindow.hc ||
         rootWindow.editingDraft ||
-        (!hostController.isClarifying && !hostController.hasProposal)
+        (!hostController.isAmbientAttached && !hostController.isAmbientCapture && !hostController.isClarifying && !hostController.hasProposal)
     )
     readonly property bool isCompiledPreview: hc && hostController.hasProposal
     readonly property bool hasAmbiguity: hc && hostController.isClarifying
@@ -214,9 +214,15 @@ Window {
         }
         function onRevisionRestored(text) { rootWindow.setEditorText(text); rootWindow.scopePreamble = ""; }
         function onAmbientDraftUpdated(text) {
+            rootWindow.editingDraft = false;
             rootWindow.setEditorText(text);
             rootWindow.scopePreamble = "";
             rootWindow.queueAutoAnalysis();
+        }
+        function onCaptureSourceChanged() {
+            if (hostController.isAmbientAttached || hostController.isAmbientCapture) {
+                rootWindow.editingDraft = false;
+            }
         }
         function onPromptInjected(text, appName) {
             rootWindow.cancelQueuedAnalysis();
@@ -692,7 +698,7 @@ Window {
 
                         RowLayout {
                             Layout.fillWidth: true
-                            visible: !rootWindow.hasAmbiguity && !rootWindow.isCompiledPreview
+                            visible: !rootWindow.hasAmbiguity && !rootWindow.isCompiledPreview && (rootWindow.showPromptEditor || (rootWindow.hc && hostController.isAnalyzing))
                             Text {
                                 Layout.fillWidth: true; Layout.minimumWidth: 0
                                 text: rootWindow.hc && hostController.isAnalyzing ? qsTr("Finding the right words…") : qsTr("What are you working on?")
