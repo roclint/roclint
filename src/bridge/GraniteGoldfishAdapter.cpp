@@ -79,6 +79,11 @@ std::string buildGoldfishAuditPrompt(const GoldfishAuditRequest& request) {
     return out;
 }
 
+const std::string& goldfishAuditResponseSchema() {
+    static const std::string kSchema = R"JSON({"type":"object","properties":{"outcome":{"type":"string","enum":["Pass","Fail","Unresolved"]},"violations":{"type":"array","items":{"type":"object","properties":{"constraint_id":{"type":"string"},"explanation":{"type":"string"}},"required":["constraint_id","explanation"],"additionalProperties":false}},"unresolved":{"type":"array","items":{"type":"object","properties":{"constraint_id":{"type":"string"},"explanation":{"type":"string"}},"required":["constraint_id","explanation"],"additionalProperties":false}}},"required":["outcome","violations","unresolved"],"additionalProperties":false})JSON";
+    return kSchema;
+}
+
 core::Result<core::ValidationResult> parseGoldfishAuditResponse(std::string_view modelOutput) {
     if (modelOutput.size() > kMaxAuditResponseBytes) {
         return core::makeError(core::ErrorCode::InvalidInput, "Audit response exceeds the 64 KB limit");

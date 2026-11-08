@@ -25,6 +25,9 @@ struct GoldfishAuditRequest {
 // Builds the cold, zero-memory adversarial audit prompt for Granite (contract: granite.goldfish_audit.v1).
 [[nodiscard]] std::string buildGoldfishAuditPrompt(const GoldfishAuditRequest& request);
 
+// Returns the JSON schema for granite.goldfish_audit.v1 responses.
+[[nodiscard]] const std::string& goldfishAuditResponseSchema();
+
 // Parses the model's JSON response envelope into a ValidationResult.
 [[nodiscard]] core::Result<core::ValidationResult> parseGoldfishAuditResponse(std::string_view modelOutput);
 

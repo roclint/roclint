@@ -1641,6 +1641,13 @@ void testInspectModeVisualInspector() {
     QTest::qWait(50);
     ROCLINT_CHECK(!controller.isInspectMode());
     ROCLINT_CHECK(!card->isVisible());
+
+    // Verify that failure recovery action buttons exist in the hierarchy
+    auto* clarifyBtn = window->findChild<QQuickItem*>(QStringLiteral("auditClarifyBoundaryButton"));
+    auto* strictBtn = window->findChild<QQuickItem*>(QStringLiteral("auditStrictRewriteButton"));
+    auto* revertBtn = window->findChild<QQuickItem*>(QStringLiteral("auditRevertDraftButton"));
+    ROCLINT_CHECK(clarifyBtn && strictBtn && revertBtn);
+
     std::cout << "  [PASS] Inspect mode visual inspector and HUD badge react accurately.\n";
 }
 

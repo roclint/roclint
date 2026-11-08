@@ -2377,7 +2377,15 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
         setProposalStatus(ProposalUiStatus::Generating, QStringLiteral("Writing a suggested rewrite."));
         emit modelEngineStatusChanged();
 
-        using RewriteResult = core::Result<rewrite::RewriteProposal>;
+        const auto auditTransport = currentTransport(bridge::goldfishAuditResponseSchema(), &ticket, QStringLiteral("granite_rewrite"),
+            qs(request.originalText), qs(request.confirmedIntent.id), m_rewriteProfile);
+
+        struct RewriteExecutionResult {
+            core::Result<rewrite::RewriteProposal> proposal;
+            core::ValidationResult auditVerdict;
+        };
+        using RewriteResult = RewriteExecutionResult;
+
         auto adapter = m_graniteAdapter;
         auto grounding = std::make_shared<GroundedPromptContext>();
         auto evidenceCurrent = std::make_shared<bool>(true);
@@ -2390,29 +2398,40 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
             [this, watcher, ticket, nativeWork, grounding, evidenceCurrent]() {
                 --m_inFlight;
                 if (nativeWork) --m_nativeSemanticInFlight;
-                const RewriteResult result = watcher->result();
+                RewriteResult execResult = watcher->result();
                 watcher->deleteLater();
                 if (isTicketCurrent(ticket, true)) applyGroundingContext(*grounding);
-                onRewriteFinished(ticket, result, *grounding, *evidenceCurrent);
+                onRewriteFinished(ticket, std::move(execResult.proposal), *grounding, *evidenceCurrent, std::move(execResult.auditVerdict));
                 finishQuitWhenRuntimesStopped();
             });
         const std::int64_t startedAt = nowMs();
         watcher->setFuture(QtConcurrent::run(
-            [adapter, request, transport, startedAt, groundingInput, grounding, evidenceCurrent]() mutable -> RewriteResult {
+            [adapter, request, transport, auditTransport, startedAt, groundingInput, grounding, evidenceCurrent, ticketSessionId = ticket.sessionId]() mutable -> RewriteResult {
                 try {
                     *grounding = computeGroundedPromptContext(groundingInput);
                     request.groundedCanonicalIntentXml = grounding->xml;
                     request.astSnapshotHash = grounding->astSnapshotHash;
-                    auto result = bridge::GraniteRewriteAdapter::synthesizeRewrite(
+                    auto proposalRes = bridge::GraniteRewriteAdapter::synthesizeRewrite(
                         request, *adapter, transport, startedAt);
+                    core::ValidationResult auditVerdict;
+                    if (proposalRes.ok() && proposalRes.value().status == rewrite::ProposalStatus::ProposalReady) {
+                        bridge::GraniteGoldfishAdapter goldfishAdapter;
+                        const auto constraints = HostController::extractSessionConstraints(proposalRes.value().originalText, request.confirmedIntent);
+                        bridge::GoldfishAuditRequest auditReq;
+                        auditReq.sessionId = ticketSessionId;
+                        auditReq.originalPrompt = proposalRes.value().originalText;
+                        auditReq.candidateRewrite = proposalRes.value().rewrittenText;
+                        auditReq.constraints = constraints;
+                        auditVerdict = goldfishAdapter.audit(auditReq, auditTransport);
+                    }
                     if (grounding->available && grounding->validated) {
                         const auto post = computeGroundedPromptContext(groundingInput);
                         *evidenceCurrent = post.available && post.validated &&
                             post.astSnapshotHash == grounding->astSnapshotHash;
                     }
-                    return result;
+                    return RewriteExecutionResult{std::move(proposalRes), std::move(auditVerdict)};
                 } catch (const std::exception& ex) {
-                    return makeError(ErrorCode::Internal, std::string("Rewrite crashed: ") + ex.what());
+                    return RewriteExecutionResult{makeError(ErrorCode::Internal, std::string("Rewrite crashed: ") + ex.what()), core::ValidationResult{}};
                 }
             }));
         co_return Status::success();
@@ -2420,18 +2439,20 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
 }
 
 void HostController::onRewriteFinished(PipelineTicket ticket, core::Result<rewrite::RewriteProposal> result,
-                                       GroundedPromptContext grounding, bool evidenceCurrent) {
+                                       GroundedPromptContext grounding, bool evidenceCurrent,
+                                       core::ValidationResult auditVerdict) {
     queueModelCompletion("finishRewrite",
         [this, ticket = std::move(ticket), result = std::move(result),
-         grounding = std::move(grounding), evidenceCurrent]() mutable {
+         grounding = std::move(grounding), evidenceCurrent, auditVerdict = std::move(auditVerdict)]() mutable {
             return onRewriteFinishedAsync(std::move(ticket), std::move(result), std::move(grounding),
-                                          evidenceCurrent);
+                                          evidenceCurrent, std::move(auditVerdict));
         });
 }
 
 AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
                                        core::Result<rewrite::RewriteProposal> result,
-                                       GroundedPromptContext grounding, bool evidenceCurrent) {
+                                       GroundedPromptContext grounding, bool evidenceCurrent,
+                                       core::ValidationResult auditVerdict) {
     if (m_healthRecheckRequested && !m_healthCheckInFlight) refreshAvailableModels();
     emit modelEngineStatusChanged();
     if (m_ambientCheckPending) {
@@ -2544,21 +2565,23 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
     }
 
     // Independent Goldfish Audit Pass (Zero-Memory Adversarial Audit)
-    const auto constraints = extractSessionConstraints(proposal.originalText, *m_confirmedIntent);
-    bridge::GoldfishAuditRequest auditReq;
-    auditReq.sessionId = ticket.sessionId;
-    auditReq.originalPrompt = proposal.originalText;
-    auditReq.candidateRewrite = proposal.rewrittenText;
-    auditReq.constraints = constraints;
+    if (auditVerdict.outcome == core::ValidationOutcome::Unresolved && auditVerdict.violations.empty() && auditVerdict.unresolved.empty()) {
+        const auto constraints = extractSessionConstraints(proposal.originalText, *m_confirmedIntent);
+        bridge::GoldfishAuditRequest auditReq;
+        auditReq.sessionId = ticket.sessionId;
+        auditReq.originalPrompt = proposal.originalText;
+        auditReq.candidateRewrite = proposal.rewrittenText;
+        auditReq.constraints = constraints;
 
-    bridge::GraniteGoldfishAdapter goldfishAdapter;
-    bridge::GraniteTransport auditTransport = nullptr;
+        bridge::GraniteGoldfishAdapter goldfishAdapter;
+        bridge::GraniteTransport auditTransport = nullptr;
 #ifdef ROCLINT_ENABLE_TEST_MOCKS
-    if (usesTransportOverride()) {
-        auditTransport = m_transportOverride;
-    }
+        if (usesTransportOverride()) {
+            auditTransport = m_transportOverride;
+        }
 #endif
-    const auto auditVerdict = goldfishAdapter.audit(auditReq, auditTransport);
+        auditVerdict = goldfishAdapter.audit(auditReq, auditTransport);
+    }
     m_lastAuditResult = auditVerdict;
 
     if (auditVerdict.outcome == core::ValidationOutcome::Fail) {

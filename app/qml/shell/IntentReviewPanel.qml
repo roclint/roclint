@@ -995,6 +995,42 @@ FocusScope {
                             color: rootWindow.mutedTextColor
                             wrapMode: Text.WordWrap
                         }
+
+                        // Recovery actions on audit breach
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: rootWindow.hc && hostController.auditOutcome === "Fail"
+                            spacing: 8
+
+                            ActionButton {
+                                objectName: "auditClarifyBoundaryButton"
+                                label: qsTr("Clarify Boundary")
+                                quiet: true
+                                iconName: "sparkle"
+                                onClicked: rootWindow.reviewRequested()
+                            }
+
+                            ActionButton {
+                                objectName: "auditStrictRewriteButton"
+                                label: qsTr("Strict Rewrite")
+                                primary: true
+                                iconName: "pencil-simple"
+                                onClicked: {
+                                    if (rootWindow.hc) {
+                                        hostController.setAssistanceMode("strict");
+                                    }
+                                    rootWindow.rewriteRequested();
+                                }
+                            }
+
+                            ActionButton {
+                                objectName: "auditRevertDraftButton"
+                                label: qsTr("Revert to Draft")
+                                quiet: true
+                                iconName: "pencil-simple"
+                                onClicked: rootWindow.editDraftRequested()
+                            }
+                        }
                     }
                 }
             }

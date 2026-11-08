@@ -864,10 +864,12 @@ private:
     AsyncTask<void> onDiscoveryFinishedAsync(PipelineTicket ticket,
                              core::Result<bridge::GraniteOptionDiscoveryResponse> result);
     void onRewriteFinished(PipelineTicket ticket, core::Result<core::rewrite::RewriteProposal> result,
-                           GroundedPromptContext grounding, bool evidenceCurrent);
+                           GroundedPromptContext grounding, bool evidenceCurrent,
+                           core::ValidationResult auditVerdict = core::ValidationResult{});
     AsyncTask<void> onRewriteFinishedAsync(PipelineTicket ticket,
                            core::Result<core::rewrite::RewriteProposal> result,
-                           GroundedPromptContext grounding, bool evidenceCurrent);
+                           GroundedPromptContext grounding, bool evidenceCurrent,
+                           core::ValidationResult auditVerdict = core::ValidationResult{});
     AsyncTask<void> onHealthFinished(HealthResult result);
     AsyncTask<void> rebuildFromRestore(storage::RestoredSession restored);
 
