@@ -23,6 +23,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QTextDocument>
 #include "roclint/storage/Database.hpp"
 #include <QtTest/QTest>
 
@@ -1275,6 +1276,14 @@ void testGenerationMeterUsesMeasuredProgress() {
     auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());
     auto* meter=window->findChild<QQuickItem*>("generationMeter");
     ROCLINT_CHECK(meter && !window->findChild<QObject*>("reviewDiagnosticsButton"));
+    // Keep this animation fixture on one rate; the HUD also supports colored
+    // generation/decode labels. Assert visible copy independently of its markup.
+    meter->setProperty("tokenSpeedMode",QStringLiteral("GENERATION"));
+    const auto plainRate=[&]() {
+        QTextDocument label;
+        label.setHtml(meter->property("rateText").toString());
+        return label.toPlainText();
+    };
     auto* wave=window->findChild<QObject*>("referencePixelWave");
     ROCLINT_CHECK(wave && wave->property("source").toUrl().toString().endsWith("assets/pixel-signal.png"));
     window->show(); ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
@@ -1294,7 +1303,7 @@ void testGenerationMeterUsesMeasuredProgress() {
     ROCLINT_CHECK(meter->property("rateText").toString()=="Preparing…" && meter->property("recentActivity").toBool());
     meter->setProperty("preparing",false);
     meter->setProperty("processing",false);
-    ROCLINT_CHECK(meter->property("rateText").toString()=="Last · 210.0 tok/s" && meter->property("recentActivity").toBool());
+    ROCLINT_CHECK(plainRate()=="Last · 210.0 tok/s" && meter->property("recentActivity").toBool());
     ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(started+1700))));
     ROCLINT_CHECK(meter->property("activityLevel").toDouble()==1.0); // Completion never cuts the burst short.
     ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(started+2150))));

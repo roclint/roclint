@@ -13,7 +13,7 @@ Date: 2026-11-07. Scope: first native HUD refresh and ordinary Windows launch. T
 - Full-view evidence: source and implementation were presented together in the same comparison tool call. Focused inspection covered their header/logo, large question, option rows, custom answer and bottom actions at readable resolution. The implementation's extra workspace/model controls and three-option explanation text are intentional product requirements, not omitted source elements.
 - Installed native observation: computer-use returned `Roclint — prompt assistant` as a normal targetable window from `%LOCALAPPDATA%/Programs/Roclint/Roclint.exe`; its screenshot and accessibility tree exposed the prompt editor, Clarify, Rewrite prompt, settings and close controls. No terminal appeared.
 
-## Live meter follow-up — 2026-11-07
+## Live meter follow-up — 2026-11-07 (historical; superseded below)
 
 The user's new reference is `docs/research/roclint-ui-2026-11-07-streaming-meter-reference.png` (502 × 144). It supersedes the decorative header waveform: remove Technical details and show tokens per second / streaming activity.
 
@@ -28,6 +28,22 @@ Implementation evidence: `docs/research/roclint-ui-2026-11-07-streaming-meter-im
 
 Verification: full CTest 52/52, then the final UI workflow rerun passed. The focused meter fixture also passes token deltas, stalls, request rollback and reduced motion. A first screenshot fixture lost its synthetic processing flag when its window became visible; the fixture now sets that state after showing the window and asserts non-flat history before capture. Native installed observation confirmed ordinary launch, no Technical details action and actual completed decode rates of 220.5 and 181.8 tok/s on one synthetic local session. Those are observations, not release performance gates. Native before-completion telemetry is covered by the bound runtime fixture; the live desktop observations captured completed rates. No generated prompt was approved, copied or inserted.
 
+## Reference-wave correction — verified 2026-11-08
+
+The user rejected the histogram-like implementation as visually unlike the reference and too brief to perceive. This supersedes the November 7 chart assessment above.
+
+Source truth: `docs/research/roclint-ui-2026-11-07-streaming-meter-reference.png` (502 × 144). The same original `assets/pixel-signal.png` now supplies the layered silhouette and cobalt/periwinkle pixels. A clipped image highlight travels across it. No replacement icon/art is drawn with bars.
+
+Rendered evidence: `docs/research/roclint-ui-2026-11-08-pixel-wave-implemented.png` (820 × 600 Qt window, DPR 1) and `docs/research/roclint-ui-2026-11-08-pixel-wave-short-burst.gif`. The GIF is a 275 × 50 header crop, enlarged to 550 × 100 with nearest-neighbor sampling. Source and implementation were inspected in the same comparison input; multiple sweep positions were inspected at header scale. Source canvas padding is not part of the native meter. Its 123.4 tok/s value is synthetic fixture input, not measured performance.
+
+- **P2 repaired — silhouette drift:** reused the actual layered pixel artwork instead of the uniform bars. The new meter remains bounded within the header (up to 250 × 40, shorter when compact).
+- **P2 repaired — imperceptible short bursts:** activity is latched on token arrival, held for 1.8 seconds and faded for 0.7 seconds. It survives completion even if generation finishes before the first display tick. This adds no inference or review delay.
+- **Typography/content:** mono rate updates at most twice a second; completed rates say Last. Newer generation/decode display options and colors are preserved. The animation fixture checks visible copy independently of that markup.
+- **Colors/assets:** original pixel layers and transparency retained. Quiet reference art remains visible while idle; the sweep identifies recent activity rather than claiming continued generation.
+- **Interaction/accessibility:** reduced motion suppresses the sweep, not the numeric rate. No Technical details action returns. The focused timing test and the full current product-alignment UI target pass. Installed startup and ordinary native launch are verified.
+
+See `docs/audit/pixel_wave_visibility_2026-11-08.md` for exact scope and results. Final result for the reference-wave correction: passed.
+
 ## Required fidelity surfaces
 
 | Surface | Assessment |
@@ -35,7 +51,7 @@ Verification: full CTest 52/52, then the final UI workflow rerun passed. The foc
 | Typography | Embedded Inter Variable for reading, 26 px question hierarchy, 14–15 px prose, Consolas/Menlo for compact utility labels. Corrected the initial `Inter` family mismatch that fell back to monospaced text. |
 | Spacing/layout | Rounded 18 px outer panel, 20 px normal gutters, bounded draft and diff, persistent footer; question padding/row gaps reduced so all three alternatives, custom answer and skip action fit the 820 × 600 fixture. Extremely small windows scroll content while preserving window controls and delivery actions. |
 | Colors/tokens | Ink-blue background, cobalt primary/keyboard choice, warm-white prose, pale-blue perimeter and focus, muted periwinkle utility text. Semantic warning remains in the clarity label; focus uses a pale-blue boundary. |
-| Images/icons | Actual generated transparent Roc and official Phosphor SVG controls with licenses/provenance. The header signal is now a data chart, as requested; its earlier decorative PNG is archived. PNG assets retain aspect ratio and transparent surroundings. No text/emoji substitutes for logo or window icons. |
+| Images/icons | Actual generated transparent Roc and official Phosphor SVG controls with licenses/provenance. The header reuses the original layered pixel-wave PNG with an activity sweep and timed afterglow, per the latest correction. PNG assets retain aspect ratio and transparent surroundings. No text/emoji substitutes for logo or window icons. |
 | Copy/content | User-facing actions include Clarify, Rewrite prompt, Skip & rewrite, Keep original, Show changes and explicit Approve & Copy/Insert. No question is selected automatically; identical output says it is the original prompt. Empty drafts disable inapplicable actions. |
 
 ## Comparison and repair history
