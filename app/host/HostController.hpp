@@ -193,6 +193,7 @@ class HostController : public QObject {
     Q_PROPERTY(double recommendedConfidence READ recommendedConfidence NOTIFY recommendedOptionChanged)
 
     Q_PROPERTY(bool hasConfirmedIntent READ hasConfirmedIntent NOTIFY intentChanged)
+    Q_PROPERTY(bool hasActiveWork READ hasActiveWork NOTIFY stateVersionChanged)
     Q_PROPERTY(bool isIntentStale READ isIntentStale NOTIFY intentChanged)
     Q_PROPERTY(QString confirmedIntentSummary READ confirmedIntentSummary NOTIFY intentChanged)
     Q_PROPERTY(QVariantList confirmedItems READ confirmedItems NOTIFY intentChanged)
@@ -360,6 +361,8 @@ public:
     [[nodiscard]] QString diagnosticMessage() const;
 
     [[nodiscard]] bool hasConfirmedIntent() const noexcept { return m_confirmedIntent.has_value(); }
+    [[nodiscard]] bool hasActiveWork() const noexcept;
+    [[nodiscard]] bool deliveryMatchesDraft() const;
     [[nodiscard]] bool isIntentStale() const;
     [[nodiscard]] QString confirmedIntentSummary() const;
     [[nodiscard]] QVariantList confirmedItems() const;
@@ -592,6 +595,7 @@ public slots:
     Q_INVOKABLE quint64 restoreSessionForReview(QString sessionId, quint64 expectedVersion);
     Q_INVOKABLE quint64 deleteSession(QString sessionId);
     Q_INVOKABLE quint64 purgeHistory();
+    Q_INVOKABLE void resetActiveDraft();
     Q_INVOKABLE void refreshStorageStats();
 
     // Scorer and model runtime.

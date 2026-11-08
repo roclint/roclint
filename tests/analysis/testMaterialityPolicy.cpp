@@ -339,6 +339,61 @@ void testLocalIsolation() {
     ROCLINT_CHECK(overall.overallVerdict == PolicyVerdict::EligibleForChoice);
 }
 
+void testOrthogonalDimensionsOnSameSpan() {
+    const std::string prompt = "make my website more faster";
+
+    NormalizedAnalysis analysis;
+    analysis.sessionId = "sess_ortho";
+    analysis.baseRevisionId = "rev_ortho";
+
+    ChoiceGroup g1;
+    g1.id = "group_speed_strategy";
+    g1.dimension = "speed_strategy";
+    g1.question = "Which optimization strategy should be prioritized?";
+    g1.alternatives.push_back(ChoiceAlternative{
+        .id = "alt_1a",
+        .interpretation = "Optimize images and static assets",
+        .whyMaterial = "Reduces asset payload",
+        .evidence = {SourceSpan{0, 27}}
+    });
+    g1.alternatives.push_back(ChoiceAlternative{
+        .id = "alt_1b",
+        .interpretation = "Implement aggressive caching",
+        .whyMaterial = "Avoids redundant server round-trips",
+        .evidence = {SourceSpan{0, 27}}
+    });
+
+    ChoiceGroup g2;
+    g2.id = "group_frontend_arch";
+    g2.dimension = "frontend_architecture";
+    g2.question = "What architectural approach best supports faster loading?";
+    g2.alternatives.push_back(ChoiceAlternative{
+        .id = "alt_2a",
+        .interpretation = "Modular component design",
+        .whyMaterial = "Improves code reuse and loading granularity",
+        .evidence = {SourceSpan{0, 27}}
+    });
+    g2.alternatives.push_back(ChoiceAlternative{
+        .id = "alt_2b",
+        .interpretation = "Let agent follow workspace conventions",
+        .whyMaterial = "Adapts to existing UI structure",
+        .evidence = {SourceSpan{0, 27}}
+    });
+
+    analysis.choiceGroups = {g1, g2};
+
+    auto overall = MaterialityPolicyV1::evaluatePrompt(analysis, prompt);
+    ROCLINT_CHECK(!overall.hasCrossGroupOverlap);
+    ROCLINT_CHECK(overall.overallVerdict == PolicyVerdict::EligibleForChoice);
+    ROCLINT_CHECK(overall.primaryReasonCode == ReasonCode::Ok);
+
+    ROCLINT_CHECK(overall.groupResults.size() == 2);
+    ROCLINT_CHECK(overall.groupResults[0].verdict == PolicyVerdict::EligibleForChoice);
+    ROCLINT_CHECK(overall.groupResults[0].isEligible());
+    ROCLINT_CHECK(overall.groupResults[1].verdict == PolicyVerdict::EligibleForChoice);
+    ROCLINT_CHECK(overall.groupResults[1].isEligible());
+}
+
 int main() {
     std::cout << "[TEST] Running MaterialityPolicyV1 Unit Tests..." << std::endl;
 
@@ -347,6 +402,7 @@ int main() {
     testMaterialityGrounding();
     testUtf8SpanBoundaryValidation();
     testCrossGroupSpanOverlap();
+    testOrthogonalDimensionsOnSameSpan();
     testDirectConflictPresence();
     testAssumptionBudgetCap();
     testLocalIsolation();

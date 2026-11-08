@@ -218,7 +218,21 @@ Window {
             rootWindow.scopePreamble = "";
             rootWindow.queueAutoAnalysis();
         }
-        function onPromptInjected(text, appName) { rootWindow.cancelQueuedAnalysis(); rootWindow.showToast(qsTr("Inserted into %1").arg(appName)); }
+        function onPromptInjected(text, appName) {
+            rootWindow.cancelQueuedAnalysis();
+            rootWindow.showToast(qsTr("Inserted into %1").arg(appName));
+            if (!rootWindow.isDetailedExpanded) {
+                rootWindow.dismissCard();
+            }
+        }
+        function onPromptCopied(text) {
+            rootWindow.cancelQueuedAnalysis();
+            rootWindow.showToast(qsTr("Copied to clipboard. Press %1 to paste.").arg(rootWindow.isMac ? "Cmd+V" : "Ctrl+V"));
+        }
+        function onDeliveryFellBack(message) {
+            rootWindow.cancelQueuedAnalysis();
+            rootWindow.showToast(message);
+        }
         function onClarificationDeferred(message, autoSelected) { rootWindow.showToast(message); }
         function onStorageBusyChanged() { rootWindow.tryAutoAnalysis(); Qt.callLater(rootWindow.continueRequestedRewrite); }
         function onStorageChanged() {

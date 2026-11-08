@@ -43,6 +43,8 @@ struct InjectionRequest {
     QString text;                // Replaces the whole field (GUI) or the unsubmitted draft (terminal)
     QString expectedCurrentText; // Stale guard: the field (or terminal draft) must still hold this
     bool terminalVimMode{false};
+    qint64 processId{0};
+    QString appIdentifier;
 };
 
 enum class InjectionOutcome {

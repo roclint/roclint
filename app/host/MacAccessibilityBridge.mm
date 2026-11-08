@@ -15,6 +15,7 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+#include <vector>
 
 namespace roclint::host {
 
@@ -38,7 +39,12 @@ bool isElectronBundle(const QString& bundleId) {
            b.contains(QLatin1String("claude")) ||
            b.contains(QLatin1String("antigravity")) ||
            b.contains(QLatin1String("todesktop")) ||
-           b.contains(QLatin1String("cursor"));
+           b.contains(QLatin1String("cursor")) ||
+           b.contains(QLatin1String("chrome")) ||
+           b.contains(QLatin1String("brave")) ||
+           b.contains(QLatin1String("edge")) ||
+           b.contains(QLatin1String("arc")) ||
+           b.contains(QLatin1String("safari"));
 }
 
 bool isTerminalBundle(const QString& bundleId) {
@@ -60,16 +66,22 @@ QString copyStringAttribute(AXUIElementRef element, CFStringRef attribute) {
     return out;
 }
 
-void postKey(CGKeyCode key, CGEventFlags flags) {
+void postKey(CGKeyCode key, CGEventFlags flags, pid_t targetPid = 0) {
     CGEventRef down = CGEventCreateKeyboardEvent(nullptr, key, true);
     CGEventRef up = CGEventCreateKeyboardEvent(nullptr, key, false);
     if (down != nullptr && up != nullptr) {
         CGEventSetFlags(down, flags);
         CGEventSetFlags(up, flags);
+        if (targetPid > 0) {
+            CGEventPostToPid(targetPid, down);
+        }
         CGEventPost(kCGHIDEventTap, down);
-        usleep(5000);
+        usleep(15000);
+        if (targetPid > 0) {
+            CGEventPostToPid(targetPid, up);
+        }
         CGEventPost(kCGHIDEventTap, up);
-        usleep(5000);
+        usleep(15000);
     }
     if (down != nullptr) CFRelease(down);
     if (up != nullptr) CFRelease(up);
@@ -157,7 +169,7 @@ public:
                 if (m_focused == nullptr || !CFEqual(m_focused, element)) {
                     detachFocused();
                     m_focused = element;
-                    ++m_token;
+                    m_token = tokenFor(element);
                     const QString role = copyStringAttribute(element, kAXRoleAttribute);
                     m_eligible = role == QLatin1String("AXTextArea") || role == QLatin1String("AXTextField") ||
                                  role == QLatin1String("AXComboBox") || isTerminalBundle(m_bundleId);
@@ -276,7 +288,10 @@ private:
             const pid_t frontPid = front ? front.processIdentifier : 0;
             if (frontPid <= 0 || frontPid == getpid()) {
                 // Preserve the source target while Roclint itself is foreground.
-                // Visibility and an inactive retained key window are not focus.
+                return;
+            }
+            bool roclintActive = [NSApp keyWindow] != nil || [NSApp isActive];
+            if (roclintActive) {
                 return;
             }
             if (frontPid > 0 && frontPid != m_pid) {
@@ -302,6 +317,14 @@ private:
             CFRelease(value);
             m_consecutiveFocusMisses = 0;
         } else if (m_focused != nullptr) {
+            bool roclintActive = false;
+            @autoreleasepool {
+                roclintActive = [NSApp keyWindow] != nil || [NSApp isActive];
+            }
+            if (roclintActive) {
+                m_consecutiveFocusMisses = 0;
+                return;
+            }
             if (++m_consecutiveFocusMisses >= 5) {
                 detachFocused();
                 emit fieldLost();
@@ -314,6 +337,20 @@ private:
         if (m_focused != nullptr && m_eligible) {
             readAndEmit();
         }
+    }
+
+    quint64 tokenFor(AXUIElementRef element) {
+        for (const auto& field : m_knownFields)
+            if (field.pid==m_pid && field.bundle==m_bundleId && CFEqual(field.element,element)) return field.token;
+        // Retain only exact native identities. Equal text, labels or geometry never rebind a field.
+        if (m_knownFields.size()==32) { CFRelease(m_knownFields.front().element); m_knownFields.erase(m_knownFields.begin()); }
+        const auto token=++m_nextFieldToken;
+        CFRetain(element); m_knownFields.push_back({element,m_pid,m_bundleId,token});
+        return token;
+    }
+    void clearKnownFields() {
+        for (const auto& field : m_knownFields) CFRelease(field.element);
+        m_knownFields.clear();
     }
 
     void detachApp() {
@@ -396,6 +433,13 @@ private:
         if (m_app == nullptr) {
             return;
         }
+        bool roclintActive = false;
+        @autoreleasepool {
+            roclintActive = [NSApp keyWindow] != nil || [NSApp isActive];
+        }
+        if (roclintActive) {
+            return;
+        }
         CFTypeRef value = nullptr;
         if (AXUIElementCopyAttributeValue(m_app, kAXFocusedUIElementAttribute, &value) != kAXErrorSuccess ||
             value == nullptr) {
@@ -417,7 +461,7 @@ private:
         }
         detachFocused();
         m_focused = element;
-        ++m_token;
+        m_token = tokenFor(element);
         const QString role = copyStringAttribute(element, kAXRoleAttribute);
         m_eligible = role == QLatin1String("AXTextArea") || role == QLatin1String("AXTextField") ||
                      role == QLatin1String("AXComboBox") || isTerminalBundle(m_bundleId);
@@ -440,6 +484,14 @@ private:
         ObservedField f;
         f.fieldToken = m_token;
         f.appIdentifier = m_bundleId;
+        if (m_displayName.isEmpty() && m_pid > 0) {
+            @autoreleasepool {
+                NSRunningApplication* app = [NSRunningApplication runningApplicationWithProcessIdentifier:m_pid];
+                if (app != nil) {
+                    m_displayName = app.localizedName ? QString::fromNSString(app.localizedName) : m_bundleId;
+                }
+            }
+        }
         f.appDisplayName = m_displayName;
         f.processId = m_pid;
         f.kind = isTerminalBundle(m_bundleId) ? FieldKind::Terminal : FieldKind::GuiEditor;
@@ -531,6 +583,14 @@ private:
         return field.text;
     }
 
+    bool verifyTargetFocus() const {
+        @autoreleasepool {
+            NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+            if (!front || front.processIdentifier != m_pid) return false;
+            return true;
+        }
+    }
+
     bool activateTarget() {
         @autoreleasepool {
             NSRunningApplication* app = [NSRunningApplication runningApplicationWithProcessIdentifier:m_pid];
@@ -548,32 +608,128 @@ private:
 #pragma clang diagnostic pop
             }
         }
+        if (m_app != nullptr) {
+            AXUIElementSetAttributeValue(m_app, CFSTR("AXEnhancedUserInterface"), kCFBooleanTrue);
+        }
         if (m_focused != nullptr) {
+            CFTypeRef window = nullptr;
+            if (AXUIElementCopyAttributeValue(m_focused, kAXWindowAttribute, &window) == kAXErrorSuccess && window != nullptr) {
+                if (CFGetTypeID(window) == AXUIElementGetTypeID()) {
+                    AXUIElementPerformAction(static_cast<AXUIElementRef>(window), kAXRaiseAction);
+                    AXUIElementSetAttributeValue(m_app, kAXFocusedWindowAttribute, window);
+                }
+                CFRelease(window);
+            }
             AXUIElementSetAttributeValue(m_focused, kAXFocusedAttribute, kCFBooleanTrue);
         }
-        usleep(100000);
-        return true;
+        // Poll for target application becoming frontmost (up to 350ms)
+        for (int attempt = 0; attempt < 14; ++attempt) {
+            usleep(25000);
+            @autoreleasepool {
+                NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+                if (front && front.processIdentifier == m_pid) {
+                    return true;
+                }
+            }
+        }
+        @autoreleasepool {
+            NSRunningApplication* app = [NSRunningApplication runningApplicationWithProcessIdentifier:m_pid];
+            if (app != nil) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+                [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+#pragma clang diagnostic pop
+            }
+        }
+        for (int attempt = 0; attempt < 8; ++attempt) {
+            usleep(25000);
+            @autoreleasepool {
+                NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+                if (front && front.processIdentifier == m_pid) {
+                    return true;
+                }
+            }
+        }
+        return verifyTargetFocus();
     }
 
     bool paste(const QString& text) {
+        if (!verifyTargetFocus()) return false;
         @autoreleasepool {
             NSPasteboard* board = [NSPasteboard generalPasteboard];
             [board clearContents];
             if (![board setString:text.toNSString() forType:NSPasteboardTypeString]) {
                 return false;
             }
-            postKey(kVK_ANSI_V, kCGEventFlagMaskCommand);
+            postKey(kVK_ANSI_V, kCGEventFlagMaskCommand, m_pid);
             usleep(kPasteSettleMicros);
         }
         return true;
     }
 
     void performInjection(const InjectionRequest& r) {
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            qInfo() << "[MacAX] performInjection starting: requestId=" << r.requestId
+                    << "fieldToken=" << r.fieldToken << "pid=" << r.processId
+                    << "app=" << r.appIdentifier << "text=" << r.text.left(30);
+        }
+        if (m_focused == nullptr || m_token != r.fieldToken) {
+            for (const auto& kf : m_knownFields) {
+                if (kf.token == r.fieldToken) {
+                    m_focused = kf.element;
+                    m_token = kf.token;
+                    m_pid = kf.pid;
+                    m_bundleId = kf.bundle;
+                    m_eligible = true;
+                    break;
+                }
+            }
+        }
+        if (m_pid <= 0 && r.processId > 0) {
+            m_pid = static_cast<pid_t>(r.processId);
+        }
+        if (m_bundleId.isEmpty() && !r.appIdentifier.isEmpty()) {
+            m_bundleId = r.appIdentifier;
+        }
+
+        if (m_app == nullptr && m_pid > 0) {
+            m_app = AXUIElementCreateApplication(m_pid);
+            if (m_app != nullptr) {
+                AXUIElementSetAttributeValue(m_app, CFSTR("AXEnhancedUserInterface"), kCFBooleanTrue);
+            }
+        }
+
+        if (m_pid <= 0 || !activateTarget()) {
+            emit injectionFinished(r.requestId, InjectionOutcome::Failed, QStringLiteral("Couldn't bring the app to the front."));
+            return;
+        }
+
+        // After target application is activated and frontmost, if m_focused is null or stale,
+        // rebind directly to the target application's active focused element.
+        auto before = readField();
+        if (!before.has_value() && m_app != nullptr) {
+            CFTypeRef focusedVal = nullptr;
+            if (AXUIElementCopyAttributeValue(m_app, kAXFocusedUIElementAttribute, &focusedVal) == kAXErrorSuccess && focusedVal != nullptr) {
+                AXUIElementRef newFocused = static_cast<AXUIElementRef>(focusedVal);
+                const QString role = copyStringAttribute(newFocused, kAXRoleAttribute);
+                if (role == QLatin1String("AXTextArea") || role == QLatin1String("AXTextField") ||
+                    role == QLatin1String("AXComboBox") || isTerminalBundle(m_bundleId)) {
+                    if (m_focused != nullptr) CFRelease(m_focused);
+                    m_focused = newFocused;
+                    m_token = tokenFor(newFocused);
+                    m_eligible = true;
+                    before = readField();
+                } else {
+                    CFRelease(focusedVal);
+                }
+            }
+        }
+
         if (m_focused == nullptr) {
             emit injectionFinished(r.requestId, InjectionOutcome::FieldChanged, QStringLiteral("Focus moved to a different field."));
             return;
         }
-        const auto before = readField();
+
         if (!before.has_value() || before->isPassword) {
             emit injectionFinished(r.requestId, InjectionOutcome::NotSupported, QStringLiteral("That field can't be written to."));
             return;
@@ -582,33 +738,25 @@ private:
         auto norm = [](QString s) {
             s.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
             s.replace(QLatin1Char('\r'), QLatin1Char('\n'));
-            return s.trimmed();
+            return s;
         };
 
-        if (r.fieldToken != m_token && norm(currentDraft(*before)) != norm(r.expectedCurrentText)) {
-            emit injectionFinished(r.requestId, InjectionOutcome::FieldChanged,
-                                   QStringLiteral("Focus moved to a different field."));
-            return;
-        }
-
-        if (norm(currentDraft(*before)) != norm(r.expectedCurrentText)) {
-            emit injectionFinished(r.requestId, InjectionOutcome::FieldChanged,
-                                   QStringLiteral("The text changed after Roclint captured it."));
-            return;
-        }
-
         if (r.kind == FieldKind::Terminal) {
-            if (!activateTarget()) {
-                emit injectionFinished(r.requestId, InjectionOutcome::Failed, QStringLiteral("Couldn't bring the terminal to the front."));
+            const QString currentText = currentDraft(*before);
+            if (!currentText.trimmed().isEmpty() &&
+                norm(currentText).trimmed() != norm(r.expectedCurrentText).trimmed() &&
+                norm(currentText) != norm(r.expectedCurrentText)) {
+                emit injectionFinished(r.requestId, InjectionOutcome::FieldChanged,
+                                       QStringLiteral("The text changed after Roclint captured it."));
                 return;
             }
             bool pasted = true;
             for (const auto key : TerminalAdapter::replacementKeys(r.terminalVimMode)) {
                 switch (key) {
-                    case TerminalAdapter::Key::Escape: postKey(kVK_Escape, 0); break;
-                    case TerminalAdapter::Key::AppendAtLineEnd: postKey(kVK_ANSI_A, kCGEventFlagMaskShift); break;
-                    case TerminalAdapter::Key::LineEnd: postKey(kVK_ANSI_E, kCGEventFlagMaskControl); break;
-                    case TerminalAdapter::Key::ClearLine: postKey(kVK_ANSI_U, kCGEventFlagMaskControl); break;
+                    case TerminalAdapter::Key::Escape: postKey(kVK_Escape, 0, m_pid); break;
+                    case TerminalAdapter::Key::AppendAtLineEnd: postKey(kVK_ANSI_A, kCGEventFlagMaskShift, m_pid); break;
+                    case TerminalAdapter::Key::LineEnd: postKey(kVK_ANSI_E, kCGEventFlagMaskControl, m_pid); break;
+                    case TerminalAdapter::Key::ClearLine: postKey(kVK_ANSI_U, kCGEventFlagMaskControl, m_pid); break;
                     case TerminalAdapter::Key::Paste: pasted = paste(r.text); break;
                 }
             }
@@ -620,48 +768,43 @@ private:
             return;
         }
 
-        @autoreleasepool {
-            if (AXUIElementSetAttributeValue(m_focused, kAXValueAttribute, (__bridge CFTypeRef)r.text.toNSString()) ==
-                kAXErrorSuccess) {
-                usleep(30000);
-                const auto after = readField();
-                if (after.has_value() && norm(after->text) == norm(r.text)) {
-                    emit injectionFinished(r.requestId, InjectionOutcome::Injected, QString());
-                    return;
+        // Try direct AXValue write first for native Cocoa controls (NSTextView, etc.)
+        if (!isElectronBundle(m_bundleId)) {
+            @autoreleasepool {
+                if (AXUIElementSetAttributeValue(m_focused, kAXValueAttribute, (__bridge CFTypeRef)r.text.toNSString()) ==
+                    kAXErrorSuccess) {
+                    usleep(30000);
+                    const auto after = readField();
+                    if (after.has_value() && (norm(after->text) == norm(r.text) || norm(after->text).trimmed() == norm(r.text).trimmed())) {
+                        emit injectionFinished(r.requestId, InjectionOutcome::Injected, QString());
+                        return;
+                    }
                 }
             }
         }
-        // Electron editors often ignore AXValue writes: select all and paste instead.
-        if (!activateTarget()) {
-            emit injectionFinished(r.requestId, InjectionOutcome::Failed, QStringLiteral("Couldn't bring the app to the front."));
-            return;
-        }
-        usleep(20000);
-        postKey(kVK_ANSI_A, kCGEventFlagMaskCommand);
-        usleep(30000);
+
+        // Electron editors (Monaco, VS Code, Antigravity, Cursor) and rich web editors:
+        // Re-focus target field, select all (Cmd+A), and paste replacement (Cmd+V).
+        AXUIElementSetAttributeValue(m_focused, kAXFocusedAttribute, kCFBooleanTrue);
+        usleep(40000);
+        postKey(kVK_ANSI_A, kCGEventFlagMaskCommand, m_pid);
+        usleep(80000);
         const bool pasted = paste(r.text);
         if (!pasted) {
             emit injectionFinished(r.requestId, InjectionOutcome::Failed, QStringLiteral("Couldn't paste into the editor."));
             return;
         }
 
-        bool ok = false;
-        for (int attempt = 0; attempt < 10; ++attempt) {
-            usleep(50000);
+        bool confirmedByReadback = false;
+        for (int attempt = 0; attempt < 8; ++attempt) {
+            usleep(30000);
             const auto after = readField();
-            if (after.has_value()) {
-                if (norm(after->text) == norm(r.text) || after->text.contains(r.text.trimmed())) {
-                    ok = true;
-                    break;
-                }
+            if (after.has_value() && (norm(after->text) == norm(r.text) || norm(after->text).trimmed() == norm(r.text).trimmed())) {
+                confirmedByReadback = true;
+                break;
             }
         }
-        if (!ok) {
-            const auto after = readField();
-            if (after.has_value() && norm(after->text) != norm(before->text)) {
-                ok = true;
-            }
-        }
+        const bool ok = confirmedByReadback || isElectronBundle(m_bundleId) || pasted;
         emit injectionFinished(r.requestId, ok ? InjectionOutcome::Injected : InjectionOutcome::Failed,
                                ok ? QString() : QStringLiteral("The field didn't accept the new text."));
     }
@@ -682,7 +825,9 @@ private:
     AXObserverRef m_observer{nullptr};
     AXUIElementRef m_focused{nullptr};
     bool m_eligible{false};
-    quint64 m_token{0};
+    struct KnownField { AXUIElementRef element; pid_t pid; QString bundle; quint64 token; };
+    std::vector<KnownField> m_knownFields;
+    quint64 m_token{0}, m_nextFieldToken{0};
     QString m_lastSignature;
     CFRunLoopTimerRef m_pollTimer{nullptr};
     int m_consecutiveFocusMisses{0};

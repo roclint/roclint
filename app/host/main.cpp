@@ -159,6 +159,18 @@ int main(int argc, char* argv[]) {
                      [trayPtr = tray.get()](const QString& message) { trayPtr->notify(message); });
     QObject::connect(controller.get(), &roclint::host::HostController::insertionTargetSelectionRequested, tray.get(),
                      [trayPtr = tray.get()](const QString& message) { trayPtr->notify(message); });
+    QObject::connect(controller.get(), &roclint::host::HostController::promptInjected, tray.get(),
+                     [trayPtr = tray.get()](const QString&, const QString& appName) {
+                         trayPtr->notify(QStringLiteral("Inserted into %1").arg(appName));
+                     });
+    QObject::connect(controller.get(), &roclint::host::HostController::promptCopied, tray.get(),
+                     [trayPtr = tray.get()](const QString&) {
+#if defined(Q_OS_MAC)
+                         trayPtr->notify(QStringLiteral("Copied to clipboard. Press Cmd+V to paste."));
+#else
+                         trayPtr->notify(QStringLiteral("Copied to clipboard. Press Ctrl+V to paste."));
+#endif
+                     });
 
     auto shortcutManager = std::make_unique<roclint::host::GlobalShortcutManager>(controller.get());
     if (!dryRun && !shortcutManager->registerShortcut()) {

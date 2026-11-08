@@ -27,6 +27,32 @@ namespace {
 }
 
 [[nodiscard]] bool groupsCollide(const ChoiceGroup& a, const ChoiceGroup& b) noexcept {
+    // If the two groups represent distinct, orthogonal dimensions (e.g. speed_strategy vs frontend_architecture),
+    // they represent complementary facets of an open request rather than conflicting textual edits.
+    if (!a.dimension.empty() && !b.dimension.empty() && a.dimension != b.dimension) {
+        for (const auto& altA : a.alternatives) {
+            for (const auto& spanA : altA.evidence) {
+                for (const auto& altB : b.alternatives) {
+                    for (const auto& spanB : altB.evidence) {
+                        if (spanA == spanB) {
+                            continue; // Identical spans across orthogonal dimensions are complementary, not colliding.
+                        }
+                        if (MaterialityPolicyV1::spansOverlap(spanA, spanB)) {
+                            // If one span completely subsumes the other (e.g. whole prompt vs sub-clause),
+                            // orthogonal dimensions are still complementary.
+                            const bool aContainsB = (spanA.startByte <= spanB.startByte && spanA.endByte >= spanB.endByte);
+                            const bool bContainsA = (spanB.startByte <= spanA.startByte && spanB.endByte >= spanA.endByte);
+                            if (!aContainsB && !bContainsA) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
     for (const auto& altA : a.alternatives) {
         for (const auto& spanA : altA.evidence) {
             for (const auto& altB : b.alternatives) {

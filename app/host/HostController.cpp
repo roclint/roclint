@@ -427,6 +427,10 @@ void HostController::showCard() {
         showCardInternal(false);
         return;
     }
+    if (!m_selectingInsertionTarget && hasActiveWork()) {
+        showCardInternal(false);
+        return;
+    }
     if (isAmbientActive() && m_ambientObservation.has_value() &&
         (m_ambientObservation->field.appIdentifier.compare(frontmost.bundleOrExecutableId, Qt::CaseInsensitive) == 0 ||
          frontmost.bundleOrExecutableId.isEmpty())) {
@@ -538,7 +542,29 @@ void HostController::toggleCard() {
         showCardInternal(false);
         return;
     }
-    if (isCardVisible() && isAmbientAttached() && !m_selectingInsertionTarget) {
+    if (!isCardVisible()) {
+        if (!m_selectingInsertionTarget && hasActiveWork()) {
+            showCardInternal(false);
+            return;
+        }
+        if (isAmbientActive() && isAmbientEligibleApp(frontmost.bundleOrExecutableId)) {
+            beginCaptureInvocation(frontmost);
+            return;
+        }
+        if (isAmbientActive() && m_ambientObservation.has_value() &&
+            (m_ambientObservation->field.appIdentifier.compare(frontmost.bundleOrExecutableId, Qt::CaseInsensitive) == 0 ||
+             frontmost.bundleOrExecutableId.isEmpty())) {
+            openFromAmbient();
+            return;
+        }
+        showCard();
+        return;
+    }
+    if (isAmbientAttached() && !m_selectingInsertionTarget) {
+        hideCard();
+        return;
+    }
+    if (!m_selectingInsertionTarget && hasActiveWork()) {
         hideCard();
         return;
     }
@@ -552,11 +578,7 @@ void HostController::toggleCard() {
         openFromAmbient();
         return;
     }
-    if (isCardVisible()) {
-        hideCard();
-        return;
-    }
-    showCard();
+    hideCard();
 }
 
 void HostController::showDashboard() {
@@ -2084,6 +2106,48 @@ bool HostController::isManual() const noexcept {
     return m_currentAnalysis.has_value() && m_currentDecision.verdict == intent::InterventionVerdict::Manual;
 }
 
+bool HostController::deliveryMatchesDraft() const {
+    if (m_lastCopiedText.isEmpty()) return false;
+    if (m_lastCopiedText == currentRevisionText()) return true;
+    return !isDraftDirty() && m_currentApproval &&
+        m_lastCopiedText == qs(m_currentApproval->approvedText);
+}
+
+bool HostController::hasActiveWork() const noexcept {
+    if (isClarifying() || hasConfirmedIntent() || hasProposal() || isAnalyzing()) {
+        return true;
+    }
+    if (m_currentDecision.activeItemKind != intent::ActiveItemKind::None) {
+        return true;
+    }
+    if (m_widgetDraftEdited) {
+        return true;
+    }
+    if (!m_capturedDraftText.trimmed().isEmpty()) {
+        return true;
+    }
+    if (!m_revisionState) {
+        return false;
+    }
+    const auto& text = m_revisionState->currentRevision().text();
+    if (text.empty()) {
+        return false;
+    }
+    if (deliveryMatchesDraft()) {
+        return false;
+    }
+    return true;
+}
+
+void HostController::resetActiveDraft() {
+    resetSessionState();
+    m_capturedDraftText.clear();
+    emit capturedDraftTextChanged();
+    emit draftCaptured(QString{});
+    emit stateVersionChanged();
+    setAnalysisStatus(AnalysisStatus::Idle, QStringLiteral("Draft reset. Type or capture a new prompt."));
+}
+
 QString HostController::activeItemId() const {
     return m_currentDecision.activeItemId.has_value() ? qs(*m_currentDecision.activeItemId) : QString();
 }
@@ -2737,6 +2801,8 @@ Status HostController::deliver(const QString& text) {
     InjectionRequest request;
     request.requestId = ++m_nextDeliveryId;
     request.fieldToken = target.field.fieldToken;
+    request.processId = target.field.processId;
+    request.appIdentifier = target.field.appIdentifier;
     request.kind = target.field.kind;
     request.text = text;
     request.expectedCurrentText = target.field.kind == FieldKind::Terminal
@@ -4137,6 +4203,7 @@ void HostController::setAmbientModeEnabled(bool enabled) {
     if (!QCoreApplication::organizationName().isEmpty()) {
         QSettings settings;
         settings.setValue(QStringLiteral("ambient/enabled"), enabled);
+        settings.sync();
     }
     emit ambientModeEnabledChanged();
     applyAmbientObserving();
@@ -4237,7 +4304,8 @@ void HostController::followAmbientDraft() {
     }
     if (!isCardVisible() || !m_ambientObservation || m_pendingDelivery) return;
     const auto observed = *m_ambientObservation;
-    const bool preserveHud = m_widgetDraftEdited || m_selectingInsertionTarget || m_currentProposal.has_value();
+    const bool inReview = isClarifying() || hasConfirmedIntent() || m_currentProposal.has_value();
+    const bool preserveHud = m_widgetDraftEdited || m_selectingInsertionTarget || inReview;
     // Chromium can expose the editor after the initial bounded invocation. Bind it without
     // another hotkey; a draft already typed into the HUD remains the user's authoritative text.
     if (!isAmbientCapture() && !m_captureOpenPending && !m_captureRequestedApp.isEmpty() &&
@@ -4269,7 +4337,7 @@ void HostController::followAmbientDraft() {
         previous.field.appIdentifier.compare(observed.field.appIdentifier, Qt::CaseInsensitive) == 0;
     // Answering a question freezes that review, but a real edit in its bound
     // composer invalidates it. An unrelated field must not replace that review.
-    if ((!m_followAmbientDraft || (m_currentProposal && !m_currentApproval)) && !sameField) return;
+    if ((!m_followAmbientDraft || (inReview && !m_currentApproval)) && !sameField) return;
     if (sameField && previous.textHash == observed.textHash) {
         m_captureTarget->field = observed.field;
         return;
@@ -4573,6 +4641,14 @@ AsyncTask<core::Status> HostController::openFromAmbientOperation(std::optional<A
         }
 
         if (isBlank(text) && observation.field.kind == FieldKind::GuiEditor) {
+            const bool sameField = m_captureTarget &&
+                m_captureTarget->field.fieldToken == observation.field.fieldToken &&
+                m_captureTarget->field.processId == observation.field.processId &&
+                m_captureTarget->field.appIdentifier.compare(observation.field.appIdentifier, Qt::CaseInsensitive) == 0;
+            if (!sameField && hasActiveWork()) {
+                showCardInternal(false);
+                co_return Status::success();
+            }
             resetSessionState();
             m_captureSource = CaptureSource::Ambient;
             m_captureTarget = observation;
@@ -4585,17 +4661,30 @@ AsyncTask<core::Status> HostController::openFromAmbientOperation(std::optional<A
         }
 
         // Each ambient capture is its own session unless it is the prompt already open.
-        if (!m_revisionState || m_revisionState->isDraftDirty() || m_revisionState->currentRevision().text() != text) {
+        const bool sameDraft = m_revisionState && (
+            m_revisionState->currentRevision().text() == text ||
+            m_revisionState->currentRevision().text().ends_with(text)
+        );
+
+        if (!sameDraft && hasActiveWork()) {
+            showCardInternal(false);
+            co_return Status::success();
+        }
+
+        if (!m_revisionState || m_revisionState->isDraftDirty() || !sameDraft) {
             resetSessionState();
             if (auto st = (co_await ensureSession(text, nowMs())); !st.ok()) {
                 co_return st;
             }
             invalidateDownstreamPipeline();
         }
+        const bool activeWork = hasActiveWork();
         m_captureSource = CaptureSource::Ambient;
         m_captureTarget = observation;
-        m_followAmbientDraft = true;
-        m_widgetDraftEdited = false;
+        m_followAmbientDraft = !activeWork;
+        if (!activeWork) {
+            m_widgetDraftEdited = false;
+        }
         emit captureSourceChanged();
         emit ambientDraftUpdated(qs(text));
 

@@ -194,6 +194,61 @@ int main(int argc, char* argv[]) {
         std::cout << "  [PASS] Storage failure is explicit; commands refuse to run.\n";
     }
 
+    // 12. Active work survives minimize/hide and toggleCard restores without capturing unrelated windows.
+    {
+        HostController c(QStringLiteral(":memory:"));
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+        c.setAmbientModeEnabled(true);
+        ROCLINT_CHECK(!c.hasActiveWork());
+
+        // Start working on a prompt
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(QStringLiteral("make my website more faster"), 0)));
+        ROCLINT_CHECK(c.hasActiveWork());
+
+        // Minimize / hide the card
+        c.showCard();
+        ROCLINT_CHECK(c.isCardVisible());
+        c.hideCard();
+        ROCLINT_CHECK(!c.isCardVisible());
+        ROCLINT_CHECK(c.hasActiveWork());
+
+        // Toggle card must restore active work
+        c.toggleCard();
+        ROCLINT_CHECK(c.isCardVisible());
+        ROCLINT_CHECK(c.hasActiveWork());
+
+        // Reset draft clears active work
+        c.resetActiveDraft();
+        ROCLINT_CHECK(!c.hasActiveWork());
+        std::cout << "  [PASS] Active draft survives minimize/hide; toggleCard restores without losing progress.\n";
+    }
+
+    // 13. Active work survives minimize/hide and toggleCard without session reset.
+    {
+        HostController c(QStringLiteral(":memory:"));
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(false);
+        c.setAmbientModeEnabled(true);
+
+        const QString prompt = QStringLiteral("make my website more faster");
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(prompt, 0)));
+        ROCLINT_CHECK(c.hasActiveWork());
+
+        // Minimize / hide
+        c.hideCard();
+        ROCLINT_CHECK(!c.isCardVisible());
+        ROCLINT_CHECK(c.hasActiveWork());
+
+        // Toggle card must restore without resetting session
+        const auto sessionIdBefore = c.currentSessionIdString();
+        c.toggleCard();
+        ROCLINT_CHECK(c.isCardVisible());
+        ROCLINT_CHECK(c.hasActiveWork());
+        ROCLINT_CHECK(c.currentSessionIdString() == sessionIdBefore);
+        std::cout << "  [PASS] Active work survives minimize/hide and toggleCard without session reset.\n";
+    }
+
     std::cout << "[Roclint Host Lifecycle Test] ALL CHECKS PASSED.\n";
     return 0;
 }
