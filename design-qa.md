@@ -58,7 +58,7 @@ The user reported that the animation still did not work after additional product
 
 Exact commands, results and installed binary identity: `docs/audit/wave_motion_runtime_fix_2026-11-08.md`. Final result for the runtime motion correction: passed.
 
-## Measured generation/decode traces — 2026-11-08
+## Measured generation/decode traces — 2026-11-08 (renderer superseded below)
 
 The user rejected passive motion and identified inflated token readings. This supersedes the ambient motion requirement and verdict above.
 
@@ -70,6 +70,18 @@ The user rejected passive motion and identified inflated token readings. This su
 
 Exact telemetry definitions, live measurements, test scope and deployment hashes: `docs/audit/measured_token_activity_2026-11-08.md`. Final result for measured traces: passed.
 
+## Evolving pixel waveform — 2026-11-08
+
+The user requested a waveform in the selected style, rather than the static design. This supersedes the image-based rendering above; the measured generation/decode definitions and GPU timing fix remain current.
+
+- **P2 repaired — fixed silhouette:** replaced both stretched PNG traces with one live Canvas plot. Actual token arrivals append crests to bounded generation/decode histories. Their amplitudes follow measured batch rates; interpolation reshapes the individual pixel columns. The waveform can now change its contour instead of moving the same image.
+- **Reference fidelity:** layered cobalt fills, periwinkle decode contour, hard pixel edges and stepped crests preserve the selected style. Source and Qt implementation were inspected together. A first rate-only envelope looked like a plateau; the final batch-arrival crests restore the reference's hills and valleys. The renderer intentionally evolves instead of reproducing the fixed source silhouette.
+- **Motion/meaning:** crests mark incoming batches, not per-token timestamps. No idle/preparation loop; stalls settle to a baseline. Reduced motion stays still. Rate values and their existing colors/modes remain measured and unchanged.
+- **Evidence:** `docs/research/roclint-ui-2026-11-08-live-pixel-waveform.png` and its idle PNG/GIF companion use the actual Qt renderer with synthetic telemetry. The regression compares the plot's pixels separately from the numeric labels and checks distinct histories, still states, reduced motion and completion.
+- **Validation:** focused regression, full current UI target, structure and installed startup pass. The unchanged native timing backend retains its preceding verification; no new repository-wide or macOS pass is claimed.
+
+Exact scope and installed identity: `docs/audit/live_pixel_waveform_2026-11-08.md`. Final result for the evolving waveform: passed.
+
 ## Required fidelity surfaces
 
 | Surface | Assessment |
@@ -77,7 +89,7 @@ Exact telemetry definitions, live measurements, test scope and deployment hashes
 | Typography | Embedded Inter Variable for reading, 26 px question hierarchy, 14–15 px prose, Consolas/Menlo for compact utility labels. Corrected the initial `Inter` family mismatch that fell back to monospaced text. |
 | Spacing/layout | Rounded 18 px outer panel, 20 px normal gutters, bounded draft and diff, persistent footer; question padding/row gaps reduced so all three alternatives, custom answer and skip action fit the 820 × 600 fixture. Extremely small windows scroll content while preserving window controls and delivery actions. |
 | Colors/tokens | Ink-blue background, cobalt primary/keyboard choice, warm-white prose, pale-blue perimeter and focus, muted periwinkle utility text. Semantic warning remains in the clarity label; focus uses a pale-blue boundary. |
-| Images/icons | Actual generated transparent Roc and official Phosphor SVG controls with licenses/provenance. Separate G/D traces reuse the original layered pixel-wave PNG and respond only to measured token arrivals, per the latest correction. No text/emoji substitutes for logo or window icons. |
+| Images/icons | Actual generated transparent Roc and official Phosphor SVG controls with licenses/provenance. The meter paints an evolving stepped waveform in the original cobalt/periwinkle pixel style, with generation/decode layers responding to token arrivals. No text/emoji substitutes for logo or window icons. |
 | Copy/content | User-facing actions include Clarify, Rewrite prompt, Skip & rewrite, Keep original, Show changes and explicit Approve & Copy/Insert. No question is selected automatically; identical output says it is the original prompt. Empty drafts disable inapplicable actions. |
 
 ## Comparison and repair history

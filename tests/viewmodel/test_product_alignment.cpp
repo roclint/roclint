@@ -1308,18 +1308,23 @@ void testGenerationMeterUsesMeasuredProgress() {
     ROCLINT_CHECK(preparingFirst==window->grabWindow().copy(region)); // No fake zero-token progress.
     publish(12,300,240);
     ROCLINT_CHECK(plainRate()=="40.0 gen · 50.0 dec tok/s" && meter->property("recentActivity").toBool());
-    auto* genWave=findVisual(window->contentItem(),"referencePixelWave");
-    auto* decWave=findVisual(window->contentItem(),"decodePixelWave");
-    ROCLINT_CHECK(genWave && decWave && genWave->property("source").toUrl().toString().endsWith("assets/pixel-signal.png"));
+    auto* waveform=findVisual(window->contentItem(),"tokenPixelWaveform");
+    ROCLINT_CHECK(waveform && !findVisual(window->contentItem(),"referencePixelWave"));
+    const auto waveformRegion=waveform->mapRectToItem(window->contentItem(),waveform->boundingRect()).toAlignedRect();
     const double started=meter->property("rateUpdatedAt").toDouble();
     publish(24,900,400);
     ROCLINT_CHECK(meter->property("displayedGenRate").toDouble()==40); // 500 ms readable-rate throttle.
     ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"refreshRate",Q_ARG(QVariant,QVariant(started+600)),Q_ARG(QVariant,QVariant(false))));
     ROCLINT_CHECK(plainRate()=="26.7 gen · 60.0 dec tok/s");
     ROCLINT_CHECK(meter->property("generationLevel").toDouble()!=meter->property("decodeLevel").toDouble());
-    const auto movingFirst=window->grabWindow().copy(region);
+    const auto movingFirst=window->grabWindow().copy(waveformRegion);
     QTest::qWait(100);
-    ROCLINT_CHECK(movingFirst!=window->grabWindow().copy(region)); // Actual pixels move on new telemetry.
+    ROCLINT_CHECK(movingFirst!=window->grabWindow().copy(waveformRegion)); // Wave shape changes; exclude numeric labels.
+    const auto genHistory=meter->property("generationHistory").value<QJSValue>().toVariant().toList();
+    const auto decHistory=meter->property("decodeHistory").value<QJSValue>().toVariant().toList();
+    ROCLINT_CHECK(genHistory.size()==48 && decHistory.size()==48 && genHistory!=decHistory);
+    ROCLINT_CHECK(genHistory.first().toDouble()==0 && genHistory.last().toDouble()<0.000001);
+    ROCLINT_CHECK(std::any_of(genHistory.begin(),genHistory.end(),[](const QVariant& value) { return value.toDouble()>0.1; }));
     invoke("advance",meter->property("fadeUntil").toDouble()+1);
     QTest::qWait(300);
     const auto stalled=window->grabWindow().copy(region);
@@ -1361,7 +1366,15 @@ void testGenerationMeterUsesMeasuredProgress() {
     meter->setProperty("reducedMotion",false);
     meter->setProperty("processing",true);
     for(int i=1;i<=6;++i) {
-        publish(i*8.0,i*180.0+(i%2)*90.0,i*130.0);
+        publish(i*16.0,i*240.0+(i%2)*80.0,i*180.0+(i%2)*50.0);
+        const auto artifacts=qEnvironmentVariable("ROCLINT_TEST_ARTIFACT_DIR");
+        if (!artifacts.isEmpty()) {
+            for (int frame=0;frame<3;++frame) {
+                QTest::qWait(70);
+                window->update();
+                ROCLINT_CHECK(window->grabWindow().save(artifacts+QString("/pixel-waveform-motion-%1.png").arg((i-1)*3+frame)));
+            }
+        }
         savePreview(window,QStringLiteral("measured-wave-stream-%1.png").arg(i));
     }
     meter->setProperty("processing",false);
@@ -1370,7 +1383,7 @@ void testGenerationMeterUsesMeasuredProgress() {
     QTest::qWait(350);
     ROCLINT_CHECK(!meter->property("recentActivity").toBool() && completed==window->grabWindow().copy(region));
     savePreview(window,QStringLiteral("measured-wave-complete.png"));
-    std::cout << "  [PASS] Measured generation/decode traces animate on token arrivals, stay still during idle/preparation/stalls, never substitute rates, and respect reduced motion.\n";
+    std::cout << "  [PASS] Pixel waveforms reshape from generation/decode history without a static image, remain still at idle/preparation/stalls, never substitute rates, and respect reduced motion.\n";
 }
 
 void testUserRequestedRewriteFromNewDraft() {
