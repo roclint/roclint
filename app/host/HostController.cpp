@@ -927,6 +927,10 @@ void HostController::invalidateDownstreamPipeline() {
     m_activeScore.reset();
     m_confirmedIntent.reset();
     m_currentProposal.reset();
+    m_creativeAlternatives.clear();
+    m_selectedAlternativeIndex = 0;
+    emit creativeAlternativesChanged();
+    emit selectedAlternativeChanged();
     m_proposalWorkspaceEpoch = 0;
     m_acknowledgedConstraints.clear();
     m_currentApproval.reset();
@@ -989,6 +993,10 @@ AsyncTask<core::Status> HostController::invalidateProposalArtifacts() {
     m_lastAuditResult.reset();
     m_pendingNativeRewrite.reset();
     m_currentProposal.reset();
+    m_creativeAlternatives.clear();
+    m_selectedAlternativeIndex = 0;
+    emit creativeAlternativesChanged();
+    emit selectedAlternativeChanged();
     m_proposalWorkspaceEpoch = 0;
     m_acknowledgedConstraints.clear();
     m_currentApproval.reset();
@@ -2605,6 +2613,14 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
     m_currentProposal = proposal;
     m_proposalWorkspaceEpoch = ticket.workspaceEpoch;
     m_acknowledgedConstraints.clear();
+    {
+        const auto constraints = extractSessionConstraints(proposal.originalText, *m_confirmedIntent);
+        m_creativeAlternatives = core::rewrite::CreativeExpansionEngine::expand(
+            proposal.originalText, proposal.rewrittenText, constraints);
+        m_selectedAlternativeIndex = 0;
+        emit creativeAlternativesChanged();
+        emit selectedAlternativeChanged();
+    }
     if (grounding.available && grounding.validated) {
         m_activeGroundedEvidence = grounding.evidence;
     } else {
@@ -2895,6 +2911,43 @@ QString HostController::proposalText() const {
 
 QString HostController::lastDiffText() const {
     return hasProposal() ? qs(m_currentProposal->diffText) : QString();
+}
+
+QVariantList HostController::creativeAlternatives() const {
+    QVariantList list;
+    list.reserve(static_cast<qsizetype>(m_creativeAlternatives.size()));
+    for (const auto& alt : m_creativeAlternatives) {
+        QVariantMap map;
+        map.insert(QStringLiteral("id"), qs(alt.id));
+        map.insert(QStringLiteral("title"), qs(alt.title));
+        map.insert(QStringLiteral("styleDescriptor"), qs(alt.styleDescriptor));
+        map.insert(QStringLiteral("rewrittenText"), qs(alt.rewrittenText));
+        map.insert(QStringLiteral("diffText"), qs(alt.diffText));
+        map.insert(QStringLiteral("auditOutcome"), QString::fromUtf8(toString(alt.auditOutcome)));
+        list.append(map);
+    }
+    return list;
+}
+
+void HostController::selectAlternative(int index) {
+    if (index < 0 || index >= static_cast<int>(m_creativeAlternatives.size()) || !m_currentProposal) {
+        return;
+    }
+    if (m_selectedAlternativeIndex == index) {
+        return;
+    }
+    m_selectedAlternativeIndex = index;
+    const auto& alt = m_creativeAlternatives[static_cast<size_t>(index)];
+    m_currentProposal->rewrittenText = alt.rewrittenText;
+    m_currentProposal->diffText = alt.diffText;
+    core::rewrite::ProposalHasher::seal(*m_currentProposal);
+    if (!m_activeGroundingProposalId.empty()) {
+        m_activeGroundingProposalId = m_currentProposal->id;
+    }
+    m_currentApproval.reset();
+    emit selectedAlternativeChanged();
+    emit rewriteProposalChanged();
+    emit approvalChanged();
 }
 
 QVariantList HostController::proposalConstraints() const {
@@ -3309,6 +3362,14 @@ AsyncTask<void> HostController::rebuildFromRestore(storage::RestoredSession r) {
         co_return;
     }
     m_currentProposal = proposal;
+    if (m_confirmedIntent) {
+        const auto constraints = extractSessionConstraints(proposal.originalText, *m_confirmedIntent);
+        m_creativeAlternatives = core::rewrite::CreativeExpansionEngine::expand(
+            proposal.originalText, proposal.rewrittenText, constraints);
+        m_selectedAlternativeIndex = 0;
+        emit creativeAlternativesChanged();
+        emit selectedAlternativeChanged();
+    }
     // A restored proposal is admitted only into the restore path's current
     // workspace epoch. AST-bound proposals are still revalidated below before
     // approval can remain enabled.

@@ -57,6 +57,7 @@ set(ROCLINT_CORE_SOURCES
     src/rewrite/RewriteValidator.cpp
     src/rewrite/CanonicalIntentExtractor.cpp
     src/rewrite/StructuredEntityExtractor.cpp
+    src/rewrite/CreativeExpansion.cpp
     src/review/ApprovalRecord.cpp
 )
 
@@ -664,6 +665,7 @@ if(BUILD_TESTING)
     roclint_add_test(roclint_rewrite_profiles      tests/rewrite/testRewriteProfiles.cpp             roclint_core_testing)
     roclint_add_test(roclint_rewrite_checkpoint    tests/rewrite/test_rewrite_checkpoint.cpp         roclint_core_testing)
     roclint_add_test(roclint_structured_entity_extractor tests/rewrite/testStructuredEntityExtractor.cpp roclint_core_testing)
+    roclint_add_test(roclint_creative_expansion    tests/rewrite/testCreativeExpansion.cpp           roclint_core_testing)
     roclint_add_test(roclint_approval_record       tests/review/testApprovalRecord.cpp               roclint_storage_testing)
     roclint_add_test(roclint_approval_checkpoint   tests/review/test_approval_checkpoint.cpp         roclint_storage_testing)
 

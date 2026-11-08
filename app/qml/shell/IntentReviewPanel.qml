@@ -732,6 +732,47 @@ FocusScope {
                             onClicked: hostController.beginInsertionTargetSelection(hostController.stateVersion)
                         }
                     }
+                    // Creative Alternatives selector
+                    ColumnLayout {
+                        id: creativeAlternativesRow
+                        objectName: "creativeAlternativesRow"
+                        visible: rootWindow.hc && hostController.hasCreativeAlternatives && reviewPanel.status === "READY_FOR_REVIEW"
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        spacing: 6
+
+                        Text {
+                            text: qsTr("Creative Branches / Aesthetic Styles:")
+                            font.family: rootWindow.sansFont
+                            font.pixelSize: 11
+                            font.weight: Font.DemiBold
+                            color: rootWindow.mutedTextColor
+                        }
+
+                        RowLayout {
+                            spacing: 8
+                            Layout.fillWidth: true
+
+                            Repeater {
+                                model: rootWindow.hc ? hostController.creativeAlternatives : []
+                                delegate: ActionButton {
+                                    id: altPill
+                                    objectName: "creativeAlternativePill_" + index
+                                    label: modelData.title
+                                    tip: modelData.styleDescriptor
+                                    compact: true
+                                    primary: rootWindow.hc && hostController.selectedAlternativeIndex === index
+                                    quiet: !rootWindow.hc || hostController.selectedAlternativeIndex !== index
+                                    onClicked: {
+                                        if (rootWindow.hc) {
+                                            hostController.selectAlternative(index)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     Text {
                         visible: reviewPanel.status === "READY_FOR_REVIEW" && !rootWindow.showChanges
                         Layout.fillWidth: true; Layout.minimumWidth: 0

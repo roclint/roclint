@@ -46,6 +46,7 @@
 #include "roclint/review/ApprovalRecord.hpp"
 #include "roclint/rewrite/RewriteProposal.hpp"
 #include "roclint/rewrite/RewriteValidator.hpp"
+#include "roclint/rewrite/CreativeExpansion.hpp"
 #include "roclint/storage/Database.hpp"
 #include "roclint/storage/PromptRepository.hpp"
 
@@ -234,6 +235,9 @@ public:
     Q_PROPERTY(QVariantList proposalConstraints READ proposalConstraints NOTIFY rewriteProposalChanged)
     Q_PROPERTY(int pendingReviewCount READ pendingReviewCount NOTIFY rewriteProposalChanged)
     Q_PROPERTY(bool canApprove READ canApprove NOTIFY rewriteProposalChanged)
+    Q_PROPERTY(QVariantList creativeAlternatives READ creativeAlternatives NOTIFY creativeAlternativesChanged)
+    Q_PROPERTY(int selectedAlternativeIndex READ selectedAlternativeIndex WRITE selectAlternative NOTIFY selectedAlternativeChanged)
+    Q_PROPERTY(bool hasCreativeAlternatives READ hasCreativeAlternatives NOTIFY creativeAlternativesChanged)
     Q_PROPERTY(bool hasApproval READ hasApproval NOTIFY approvalChanged)
     Q_PROPERTY(QString approvalLabel READ approvalLabel NOTIFY approvalChanged)
     Q_PROPERTY(QVariantList groundedEvidence READ groundedEvidence NOTIFY groundingChanged)
@@ -414,6 +418,9 @@ public:
     [[nodiscard]] QVariantList proposalConstraints() const;
     [[nodiscard]] int pendingReviewCount() const;
     [[nodiscard]] bool canApprove() const;
+    [[nodiscard]] QVariantList creativeAlternatives() const;
+    [[nodiscard]] int selectedAlternativeIndex() const noexcept { return m_selectedAlternativeIndex; }
+    [[nodiscard]] bool hasCreativeAlternatives() const noexcept { return !m_creativeAlternatives.empty(); }
     [[nodiscard]] bool hasApproval() const noexcept { return m_currentApproval.has_value(); }
     [[nodiscard]] QString approvalLabel() const;
     [[nodiscard]] QVariantList groundedEvidence() const;
@@ -548,6 +555,9 @@ public:
     [[nodiscard]] const std::optional<core::intent::ConfirmedIntent>& confirmedIntentForTesting() const noexcept {
         return m_confirmedIntent;
     }
+    [[nodiscard]] const std::vector<core::rewrite::CreativeAlternative>& creativeAlternativesForTesting() const noexcept {
+        return m_creativeAlternatives;
+    }
     [[nodiscard]] const std::optional<core::rewrite::RewriteProposal>& proposalForTesting() const noexcept {
         return m_currentProposal;
     }
@@ -614,6 +624,7 @@ public slots:
     Q_INVOKABLE quint64 approveAndCopyRewrite(quint64 expectedVersion);
     Q_INVOKABLE bool beginInsertionTargetSelection(quint64 expectedVersion);
     Q_INVOKABLE quint64 discardProposal(quint64 expectedVersion);
+    Q_INVOKABLE void selectAlternative(int index);
 
     // Ambient mode.
     Q_INVOKABLE bool requestAccessibilityPermission();
@@ -688,6 +699,8 @@ signals:
     void intentChanged();
     void rewriteProfileChanged(const QString& profile);
     void rewriteProposalChanged();
+    void creativeAlternativesChanged();
+    void selectedAlternativeChanged();
     void inferenceSpeedChanged();
     void approvalChanged();
     void groundingChanged();
@@ -1108,6 +1121,8 @@ private:
     QString m_streamingPreview;
     std::optional<core::ValidationResult> m_lastAuditResult;
     std::optional<core::rewrite::RewriteProposal> m_currentProposal;
+    std::vector<core::rewrite::CreativeAlternative> m_creativeAlternatives{};
+    int m_selectedAlternativeIndex{0};
     std::set<std::string> m_acknowledgedConstraints;
     std::optional<core::review::ApprovalRecord> m_currentApproval;
     std::vector<GroundedEvidenceView> m_activeGroundedEvidence;

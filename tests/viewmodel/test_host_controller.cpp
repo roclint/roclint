@@ -1040,6 +1040,50 @@ void testGoldfishAuditPipelineGating() {
     std::cout << "  [PASS] Goldfish audit proposal gating and constraint extraction verified.\n";
 }
 
+void testMultiCandidateCreativeExpansion() {
+    ScriptedRuntime runtime;
+    runtime.rewriteText = "Create an accurate Layer 3 networking animation depicting IP packet forwarding decisions.";
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    connectRuntime(c, runtime);
+    analyzeAndAnswer(c);
+
+    synthesize(c);
+    ROCLINT_CHECK(c.hasProposal());
+    ROCLINT_CHECK(c.hasCreativeAlternatives());
+    const auto alts = c.creativeAlternatives();
+    ROCLINT_CHECK(alts.size() >= 3);
+    ROCLINT_CHECK(c.selectedAlternativeIndex() == 0);
+
+    const auto initialProposalHash = c.proposalForTesting()->proposalHash;
+    const auto initialRewrittenText = c.proposalText();
+
+    // Select alternative 1
+    c.selectAlternative(1);
+    ROCLINT_CHECK(c.selectedAlternativeIndex() == 1);
+    ROCLINT_CHECK(c.proposalText() != initialRewrittenText);
+    ROCLINT_CHECK(c.proposalForTesting()->proposalHash != initialProposalHash);
+    ROCLINT_CHECK(c.proposalText() == alts[1].toMap().value("rewrittenText").toString());
+
+    // Select alternative 2
+    c.selectAlternative(2);
+    ROCLINT_CHECK(c.selectedAlternativeIndex() == 2);
+    ROCLINT_CHECK(c.proposalText() == alts[2].toMap().value("rewrittenText").toString());
+
+    // Selecting out-of-bounds does not alter selection
+    c.selectAlternative(99);
+    ROCLINT_CHECK(c.selectedAlternativeIndex() == 2);
+
+    // Editing the draft invalidates creative alternatives
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.noteDraftEdited(c.stateVersion())));
+    ROCLINT_CHECK(!c.hasCreativeAlternatives());
+    ROCLINT_CHECK(c.creativeAlternatives().isEmpty());
+    ROCLINT_CHECK(c.selectedAlternativeIndex() == 0);
+
+    std::cout << "  [PASS] Multi-candidate creative expansion expands, switches, reseals, and invalidates.\n";
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -1069,6 +1113,7 @@ int main(int argc, char* argv[]) {
     testStrictNegativeGuardrailsPassThrough();
     testCommandPaletteAndAssistanceModes();
     testGoldfishAuditPipelineGating();
+    testMultiCandidateCreativeExpansion();
     std::cout << "[Test Host Controller] All tests PASSED.\n";
     return 0;
 }
