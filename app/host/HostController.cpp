@@ -892,6 +892,7 @@ AsyncTask<core::Status> HostController::hardBypassOperation(QString text, quint6
 void HostController::invalidateDownstreamPipeline() {
     m_selectingInsertionTarget = false;
     ++m_pipelineSerial;
+    m_lastAuditResult.reset();
     m_promptTriageLoad.reset();
     if (m_cancelWorkspaceContext) m_cancelWorkspaceContext();
     m_promptTriage.reset();
@@ -985,6 +986,7 @@ AsyncTask<core::Status> HostController::advanceProposalGeneration() {
 
 AsyncTask<core::Status> HostController::invalidateProposalArtifacts() {
     if (auto status = (co_await advanceProposalGeneration()); !status.ok()) co_return status;
+    m_lastAuditResult.reset();
     m_pendingNativeRewrite.reset();
     m_currentProposal.reset();
     m_proposalWorkspaceEpoch = 0;
@@ -2538,6 +2540,28 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
         completeAttempt(ticket, storage::AttemptStatus::Failed, "Validation failed: " + validation.rejectionReason, &model);
         setProposalStatus(ProposalUiStatus::ValidationFailed,
                           QStringLiteral("That rewrite couldn't be verified. Retry explicitly or keep the original prompt."));
+        co_return;
+    }
+
+    // Independent Goldfish Audit Pass (Zero-Memory Adversarial Audit)
+    const auto constraints = extractSessionConstraints(proposal.originalText, *m_confirmedIntent);
+    bridge::GoldfishAuditRequest auditReq;
+    auditReq.sessionId = ticket.sessionId;
+    auditReq.originalPrompt = proposal.originalText;
+    auditReq.candidateRewrite = proposal.rewrittenText;
+    auditReq.constraints = constraints;
+
+    bridge::GraniteGoldfishAdapter goldfishAdapter;
+    const auto auditVerdict = goldfishAdapter.audit(auditReq, usesTransportOverride() ? m_transportOverride : nullptr);
+    m_lastAuditResult = auditVerdict;
+
+    if (auditVerdict.outcome == core::ValidationOutcome::Fail) {
+        const std::string explanation = auditVerdict.violations.empty()
+            ? "Proposal violated invariant constraints"
+            : auditVerdict.violations.front().explanation;
+        completeAttempt(ticket, storage::AttemptStatus::Failed, "Goldfish audit failed: " + explanation, &model);
+        setProposalStatus(ProposalUiStatus::ValidationFailed,
+                          qs("Audit rejected rewrite: " + explanation));
         co_return;
     }
     if (auto st = (co_await persistProposal()); !st.ok()) {
@@ -4847,6 +4871,174 @@ void HostController::setAssistanceMode(const QString& mode) {
     } else if (lower == QStringLiteral("quiet") || lower == QStringLiteral("/quiet")) {
         applyAssistanceMode(AssistanceMode::Quiet);
     }
+}
+
+QString HostController::auditOutcome() const {
+    if (!m_lastAuditResult.has_value()) return QString{};
+    switch (m_lastAuditResult->outcome) {
+        case core::ValidationOutcome::Pass: return QStringLiteral("Pass");
+        case core::ValidationOutcome::Fail: return QStringLiteral("Fail");
+        case core::ValidationOutcome::Unresolved: return QStringLiteral("Unresolved");
+    }
+    return QString{};
+}
+
+QVariantList HostController::auditViolations() const {
+    QVariantList list;
+    if (!m_lastAuditResult.has_value()) return list;
+    for (const auto& v : m_lastAuditResult->violations) {
+        QVariantMap map;
+        map.insert(QStringLiteral("constraintId"), qs(v.constraintId));
+        map.insert(QStringLiteral("explanation"), qs(v.explanation));
+        list.append(map);
+    }
+    return list;
+}
+
+QVariantList HostController::auditUnresolved() const {
+    QVariantList list;
+    if (!m_lastAuditResult.has_value()) return list;
+    for (const auto& u : m_lastAuditResult->unresolved) {
+        QVariantMap map;
+        map.insert(QStringLiteral("constraintId"), qs(u.constraintId));
+        map.insert(QStringLiteral("explanation"), qs(u.explanation));
+        list.append(map);
+    }
+    return list;
+}
+
+std::vector<core::ScopedConstraint> HostController::extractSessionConstraints(
+    std::string_view originalPrompt,
+    const core::intent::ConfirmedIntent& intent) {
+
+    std::vector<core::ScopedConstraint> constraints;
+
+    for (const auto& item : intent.items) {
+        core::ScopedConstraint c;
+        c.id = "intent_" + item.itemId;
+        c.origin = core::Origin::User;
+        c.enforcement = core::Enforcement::Hard;
+
+        switch (item.kind) {
+            case core::intent::IntentResolutionKind::SelectedAlternative:
+            case core::intent::IntentResolutionKind::CustomText: {
+                c.derivation = core::Derivation::Direct;
+                c.polarity = core::Polarity::Require;
+                c.aspect = "user_choice";
+                c.rule = (item.kind == core::intent::IntentResolutionKind::CustomText)
+                             ? item.customText : item.chosenValue;
+                constraints.push_back(std::move(c));
+                break;
+            }
+            case core::intent::IntentResolutionKind::AcceptedAssumption: {
+                c.derivation = core::Derivation::Entailed;
+                c.polarity = core::Polarity::Require;
+                c.aspect = "assumption";
+                c.rule = "Accepted assumption: " + item.itemId;
+                constraints.push_back(std::move(c));
+                break;
+            }
+            case core::intent::IntentResolutionKind::DeclinedAssumption: {
+                c.derivation = core::Derivation::Direct;
+                c.polarity = core::Polarity::Prohibit;
+                c.aspect = "assumption";
+                c.rule = "Do not assume: " + item.itemId;
+                constraints.push_back(std::move(c));
+                break;
+            }
+            case core::intent::IntentResolutionKind::UseOriginal: {
+                c.derivation = core::Derivation::Direct;
+                c.polarity = core::Polarity::Require;
+                c.aspect = "original_wording";
+                c.rule = "Keep original wording";
+                constraints.push_back(std::move(c));
+                break;
+            }
+        }
+    }
+
+    const std::string promptStr(originalPrompt);
+    std::vector<std::string> clauses;
+    std::string current;
+    for (std::size_t i = 0; i < promptStr.size(); ++i) {
+        const char ch = promptStr[i];
+        if (ch == '.' || ch == ';' || ch == '\n' || ch == '\r') {
+            if (!current.empty()) {
+                clauses.push_back(std::move(current));
+                current.clear();
+            }
+        } else if (ch == ',' && i + 4 < promptStr.size() &&
+                   promptStr.substr(i + 1, 4) == " but") {
+            if (!current.empty()) {
+                clauses.push_back(std::move(current));
+                current.clear();
+            }
+            i += 4;
+        } else {
+            current.push_back(ch);
+        }
+    }
+    if (!current.empty()) {
+        clauses.push_back(std::move(current));
+    }
+
+    int prohibitIdx = 0;
+    for (auto& clause : clauses) {
+        const auto start = clause.find_first_not_of(" \t");
+        if (start == std::string::npos) continue;
+        const auto end = clause.find_last_not_of(" \t");
+        std::string trimmed = clause.substr(start, end - start + 1);
+
+        if (trimmed.starts_with("but ")) trimmed = trimmed.substr(4);
+        else if (trimmed.starts_with("and ")) trimmed = trimmed.substr(4);
+
+        std::string lower;
+        lower.reserve(trimmed.size());
+        for (char c : trimmed) lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+
+        static const std::string_view kNegPrefixes[] = {
+            "do not ", "don't ", "dont ", "without ", "never ", "leave untouched", "leaving unchanged", "keep intact"
+        };
+        bool isNegative = false;
+        for (const auto& marker : kNegPrefixes) {
+            if (lower.find(marker) != std::string::npos) {
+                isNegative = true;
+                break;
+            }
+        }
+
+        if (isNegative) {
+            core::ScopedConstraint sc;
+            sc.id = "prohibit_boundary_" + std::to_string(++prohibitIdx);
+            sc.rule = trimmed;
+            sc.origin = core::Origin::User;
+            sc.derivation = core::Derivation::Direct;
+            sc.enforcement = core::Enforcement::Hard;
+            sc.polarity = core::Polarity::Prohibit;
+            sc.aspect = "boundary";
+            constraints.push_back(std::move(sc));
+        }
+    }
+
+    std::string lowerPrompt;
+    lowerPrompt.reserve(promptStr.size());
+    for (char c : promptStr) lowerPrompt.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+
+    if (lowerPrompt.find("layer 3") != std::string::npos || lowerPrompt.find("packet forwarding") != std::string::npos) {
+        core::ScopedConstraint sc;
+        sc.id = "domain_l3_forwarding";
+        sc.rule = "Destination forwarding follows longest prefix match";
+        sc.origin = core::Origin::Domain;
+        sc.derivation = core::Derivation::Entailed;
+        sc.enforcement = core::Enforcement::Conditional;
+        sc.polarity = core::Polarity::Require;
+        sc.aspect = "networking";
+        sc.appliesWhen = "depicts_ipv4_forwarding";
+        sc.authorityRef = "RFC 1812";
+        constraints.push_back(std::move(sc));
+    }
+
+    return constraints;
 }
 
 quint64 HostController::analyzePrompt(QString text, quint64 expectedVersion) {

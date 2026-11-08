@@ -54,6 +54,9 @@ struct ScriptedRuntime {
                 std::lock_guard<std::mutex> lock(*m);
                 log->emplace_back(instruction);
             }
+            if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+                return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+            }
             if (instruction.find("<instructions>") != std::string_view::npos) {
                 return rewrite;
             }
@@ -398,7 +401,7 @@ void testOutboundPromptsCarryNoLocalContext() {
     synthesize(c);
 
     const auto requests = runtime.requests();
-    ROCLINT_CHECK(requests.size() == 2);
+    ROCLINT_CHECK(requests.size() == 3);
     const std::string tempRoot = QDir::toNativeSeparators(dir.path()).toStdString();
     const std::string tempRootSlash = dir.path().toStdString();
     for (const auto& r : requests) {
@@ -935,6 +938,108 @@ void testCommandPaletteAndAssistanceModes() {
     std::cout << "  [PASS] Command palette prefix detection and assistance modes work accurately.\n";
 }
 
+void testGoldfishAuditPipelineGating() {
+    // 1. Test extractSessionConstraints
+    {
+        intent::ConfirmedIntent intent;
+        intent.id = "intent_1";
+        intent::ConfirmedItem item1;
+        item1.itemId = "grp_perf";
+        item1.kind = intent::IntentResolutionKind::SelectedAlternative;
+        item1.chosenValue = "Lower latency per call";
+        intent.items.push_back(item1);
+
+        const std::string prompt = "Refactor query builder, but do not touch the token validation logic. Ensure Layer 3 packet forwarding is preserved.";
+        const auto constraints = HostController::extractSessionConstraints(prompt, intent);
+
+        ROCLINT_CHECK(constraints.size() >= 3);
+        // User choice constraint
+        ROCLINT_CHECK(constraints[0].id == "intent_grp_perf");
+        ROCLINT_CHECK(constraints[0].rule == "Lower latency per call");
+        ROCLINT_CHECK(constraints[0].enforcement == Enforcement::Hard);
+        ROCLINT_CHECK(constraints[0].polarity == Polarity::Require);
+
+        // Prohibit boundary constraint
+        bool foundProhibit = false;
+        for (const auto& c : constraints) {
+            if (c.polarity == Polarity::Prohibit) {
+                foundProhibit = true;
+                ROCLINT_CHECK(c.rule.find("token validation") != std::string::npos);
+                ROCLINT_CHECK(c.enforcement == Enforcement::Hard);
+            }
+        }
+        ROCLINT_CHECK(foundProhibit);
+
+        // Domain invariant
+        bool foundDomain = false;
+        for (const auto& c : constraints) {
+            if (c.origin == Origin::Domain) {
+                foundDomain = true;
+                ROCLINT_CHECK(c.appliesWhen == "depicts_ipv4_forwarding");
+                ROCLINT_CHECK(c.authorityRef == "RFC 1812");
+            }
+        }
+        ROCLINT_CHECK(foundDomain);
+    }
+
+    // 2. Test live proposal gating under Goldfish audit
+    {
+        ScriptedRuntime runtime;
+        HostController c(QStringLiteral(":memory:"));
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+        connectRuntime(c, runtime);
+
+        const QString prompt = QStringLiteral("Refactor the query builder so it runs faster, but do not touch the token validation logic.");
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(prompt, 0)));
+
+        // Setup confirmed intent
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(prompt, c.stateVersion())));
+        ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.confirmChoice(QStringLiteral("alt_0_0"), c.stateVersion())));
+        ROCLINT_CHECK(c.hasConfirmedIntent());
+
+        // Now mock a rewrite that breaches the negative prohibition!
+        const std::string breachingRewrite = "Refactor the query builder for lower latency per call and modify the token validation logic for efficiency.";
+        c.setTransportOverrideForTesting([&](std::string_view instruction) -> Result<std::string> {
+            if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+                return std::string(R"({"outcome": "Fail", "violations": [{"constraint_id": "prohibit_boundary_1", "explanation": "Candidate rewrite modifies token validation logic"}]})");
+            }
+            return fx::rewriteReply(breachingRewrite);
+        });
+
+        // Trigger rewrite synthesis
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
+        ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+
+        // Verify that Goldfish audit rejected the rewrite!
+        ROCLINT_CHECK(c.proposalStatus() == QStringLiteral("VALIDATION_FAILED"));
+        ROCLINT_CHECK(c.auditOutcome() == QStringLiteral("Fail"));
+        ROCLINT_CHECK(!c.auditViolations().isEmpty());
+        ROCLINT_CHECK(c.proposalMessage().contains(QStringLiteral("Audit rejected rewrite")));
+
+        // Now mock a compliant rewrite that preserves the negative boundary!
+        const std::string compliantRewrite = "Refactor the query builder for lower latency per call, without touching the token validation logic.";
+        c.setTransportOverrideForTesting([&](std::string_view instruction) -> Result<std::string> {
+            if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+                return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+            }
+            return fx::rewriteReply(compliantRewrite);
+        });
+
+        // Retry rewrite
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
+        ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+
+        // Compliant rewrite passes audit and is ReadyForReview!
+        ROCLINT_CHECK(c.proposalStatus() == QStringLiteral("READY_FOR_REVIEW"));
+        ROCLINT_CHECK(c.auditOutcome() == QStringLiteral("Pass"));
+        ROCLINT_CHECK(c.auditViolations().isEmpty());
+        ROCLINT_CHECK(c.hasProposal());
+    }
+    std::cout << "  [PASS] Goldfish audit proposal gating and constraint extraction verified.\n";
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -963,6 +1068,7 @@ int main(int argc, char* argv[]) {
     testChoicePolarityUnderRuleConflict();
     testStrictNegativeGuardrailsPassThrough();
     testCommandPaletteAndAssistanceModes();
+    testGoldfishAuditPipelineGating();
     std::cout << "[Test Host Controller] All tests PASSED.\n";
     return 0;
 }

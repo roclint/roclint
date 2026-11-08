@@ -217,9 +217,9 @@ ValidationResult ConstraintReconciler::reconcile(
                         }
                     }
                     if (!anyFound) {
-                        result.violations.push_back(ValidationFinding{
+                        result.unresolved.push_back(ValidationFinding{
                             constraint.id,
-                            "Candidate rewrite omitted mandatory user requirement: '" + constraint.rule + "'."
+                            "Candidate rewrite may paraphrase or omit user requirement: '" + constraint.rule + "'. Semantic review required."
                         });
                     }
                 }

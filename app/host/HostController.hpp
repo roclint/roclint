@@ -37,6 +37,7 @@
 #include "roclint/analysis/NormalizedAnalysis.hpp"
 #include "roclint/bridge/GraniteAdapter.hpp"
 #include "roclint/bridge/GraniteRewriteAdapter.hpp"
+#include "roclint/bridge/GraniteGoldfishAdapter.hpp"
 #include "roclint/bridge/S1TriageAdapter.hpp"
 #include "roclint/core/Result.hpp"
 #include "roclint/core/prompt_state/RevisionState.hpp"
@@ -217,6 +218,9 @@ public:
     Q_PROPERTY(QString confirmedIntentSummary READ confirmedIntentSummary NOTIFY intentChanged)
     Q_PROPERTY(QVariantList confirmedItems READ confirmedItems NOTIFY intentChanged)
     Q_PROPERTY(QStringList unresolvedItems READ unresolvedItems NOTIFY intentChanged)
+    Q_PROPERTY(QString auditOutcome READ auditOutcome NOTIFY rewriteProposalChanged)
+    Q_PROPERTY(QVariantList auditViolations READ auditViolations NOTIFY rewriteProposalChanged)
+    Q_PROPERTY(QVariantList auditUnresolved READ auditUnresolved NOTIFY rewriteProposalChanged)
     Q_PROPERTY(QString rewriteProfile READ rewriteProfile NOTIFY rewriteProfileChanged)
     Q_PROPERTY(QVariantList availableRewriteProfiles READ availableRewriteProfiles CONSTANT)
     Q_PROPERTY(bool isRewriteEnabled READ isRewriteEnabled NOTIFY intentChanged)
@@ -389,6 +393,13 @@ public:
     Q_INVOKABLE void setAssistanceMode(const QString& mode);
     void applyAssistanceMode(AssistanceMode mode);
     [[nodiscard]] static ParsedCommand parseCommandPrefix(QString text);
+
+    [[nodiscard]] QString auditOutcome() const;
+    [[nodiscard]] QVariantList auditViolations() const;
+    [[nodiscard]] QVariantList auditUnresolved() const;
+    [[nodiscard]] const std::optional<core::ValidationResult>& lastAuditResult() const noexcept { return m_lastAuditResult; }
+    [[nodiscard]] static std::vector<core::ScopedConstraint> extractSessionConstraints(
+        std::string_view originalPrompt, const core::intent::ConfirmedIntent& intent);
 
     [[nodiscard]] QString rewriteProfile() const { return m_rewriteProfile; }
     [[nodiscard]] QVariantList availableRewriteProfiles() const;
@@ -1093,6 +1104,7 @@ private:
     ProposalUiStatus m_proposalStatus{ProposalUiStatus::None};
     QString m_proposalMessage;
     QString m_streamingPreview;
+    std::optional<core::ValidationResult> m_lastAuditResult;
     std::optional<core::rewrite::RewriteProposal> m_currentProposal;
     std::set<std::string> m_acknowledgedConstraints;
     std::optional<core::review::ApprovalRecord> m_currentApproval;
