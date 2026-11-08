@@ -1,8 +1,9 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Window
 
-// Measured speed plus a deliberately readable activity afterglow. The artwork
-// stays faithful to the reference; the sweep is feedback, not a throughput chart.
+// Reference artwork with ambient pixel motion, stronger working motion and a
+// readable completion tail. Movement is feedback; the numbers remain measured.
 Item {
     id: meter
     objectName: "generationMeter"
@@ -29,9 +30,13 @@ Item {
     property double holdUntil: 0
     property double fadeUntil: 0
     property double paintedAt: 0
+    property double lastFrameAt: 0
+    property real wavePhase: 0
+    readonly property bool surfaceVisible: visible && Window.window !== null && Window.window.visible && Window.window.visibility !== Window.Minimized
+    readonly property bool workingMotion: processing || recentActivity
+    readonly property real wavePulse: (Math.sin(wavePhase * Math.PI * 2) + 1) / 2
     property real activityLevel: 0
     readonly property bool recentActivity: activityLevel > 0
-    readonly property real sweepX: Math.floor((((paintedAt - activityStartedAt) % 900) / 900 * (width + 64)) / 6) * 6 - 64
     readonly property string rateText: {
         if (preparing) return metricsAvailable ? qsTr("Preparing…") : qsTr("Working…");
         if (processing && (!seenTokens || (displayedRate <= 0 && displayedGenRate <= 0 && displayedDecRate <= 0)))
@@ -59,6 +64,8 @@ Item {
     Accessible.focusable: false
     Accessible.focused: false
     Accessible.name: {
+        if (preparing || (processing && !seenTokens)) return metricsAvailable ? qsTr("Preparing…") : qsTr("Working…");
+        if (!seenTokens || (displayedRate <= 0 && displayedGenRate <= 0 && displayedDecRate <= 0)) return qsTr("No generation speed measured yet");
         if (tokenSpeedMode === "BOTH" && (displayedGenRate > 0 || displayedDecRate > 0)) {
             return (processing ? "" : "Last: ") + displayedGenRate.toFixed(1) + " tok/s generation, " + displayedDecRate.toFixed(1) + " tok/s decode";
         } else if (tokenSpeedMode === "DECODE") {
@@ -69,7 +76,7 @@ Item {
             return (processing ? "" : "Last: ") + rate.toFixed(1) + " tok/s generation";
         }
     }
-    Accessible.description: qsTr("Measured generation speed with a brief recent-activity afterglow")
+    Accessible.description: qsTr("Measured generation speed with an animated pixel-wave activity indicator")
     RocTheme { id: theme; mode: meter.currentTheme }
 
     function resetPresentation() {
@@ -78,10 +85,6 @@ Item {
         displayedGenRate = 0;
         displayedDecRate = 0;
         rateUpdatedAt = 0;
-        activityStartedAt = 0;
-        holdUntil = 0;
-        fadeUntil = 0;
-        activityLevel = 0;
     }
     function refreshRate(now, force) {
         if (seenTokens > 0 && (tokensPerSecond > 0 || generationTokensPerSecond > 0 || decodeTokensPerSecond > 0) &&
@@ -92,23 +95,34 @@ Item {
             rateUpdatedAt = now;
         }
     }
+    function keepActivity(now) {
+        if (reducedMotion) return;
+        if (!recentActivity) activityStartedAt = now;
+        holdUntil = now + 1800;
+        fadeUntil = holdUntil + 700;
+        activityLevel = 1;
+    }
     function recordProgress(now) {
-        if (tokenCount < seenTokens) { resetPresentation(); return; }
+        if (tokenCount < seenTokens) {
+            // Native subrequests reset their counters while the pipeline keeps
+            // working. Clear measurements without cutting off the visual feedback.
+            resetPresentation();
+            return;
+        }
         if (tokenCount > seenTokens) {
             seenTokens = tokenCount;
-            if (!reducedMotion) {
-                if (!recentActivity) activityStartedAt = now;
-                holdUntil = now + 1800;
-                fadeUntil = holdUntil + 700;
-                paintedAt = now;
-                activityLevel = 1;
-            }
+            keepActivity(now);
         }
         refreshRate(now, !processing);
     }
     function advance(now) {
+        const elapsed = lastFrameAt > 0 ? Math.max(0, Math.min(100, now - lastFrameAt)) : 0;
+        lastFrameAt = now;
         paintedAt = now;
-        activityLevel = reducedMotion ? 0 : now <= holdUntil && holdUntil > 0 ? 1
+        if (!reducedMotion && surfaceVisible)
+            wavePhase = (wavePhase + elapsed / (3200 - 2100 * activityLevel)) % 1;
+        activityLevel = reducedMotion ? 0 : processing ? 1
+            : now <= holdUntil && holdUntil > 0 ? 1
             : Math.max(0, Math.min(1, (fadeUntil - now) / 700));
         refreshRate(now, !processing);
     }
@@ -119,13 +133,15 @@ Item {
     onTokenSpeedModeChanged: refreshRate(Date.now(), true)
     onProcessingChanged: {
         if (processing) resetPresentation();
-        else recordProgress(Date.now()); // Completing a fast burst must not erase it.
+        else recordProgress(Date.now());
+        keepActivity(Date.now()); // Includes Julia checks and warmup with zero tokens.
     }
+    onSurfaceVisibleChanged: lastFrameAt = Date.now()
     onReducedMotionChanged: if (reducedMotion) activityLevel = 0
-    Component.onCompleted: recordProgress(Date.now())
+    Component.onCompleted: { lastFrameAt = Date.now(); recordProgress(Date.now()); }
     Timer {
         interval: 50
-        running: meter.visible && !meter.reducedMotion && meter.recentActivity
+        running: meter.surfaceVisible && !meter.reducedMotion
         repeat: true
         onTriggered: meter.advance(Date.now())
     }
@@ -151,38 +167,35 @@ Item {
         clip: true
         visible: meter.width >= 28
         Image {
-            objectName: "referencePixelWave"
             anchors.fill: parent
             source: "assets/pixel-signal.png"
             sourceClipRect: Qt.rect(230, 250, 1900, 200)
-            fillMode: Image.PreserveAspectFit
+            fillMode: Image.Stretch
             smooth: false
-            opacity: 0.65 + 0.15 * meter.activityLevel
+            opacity: meter.reducedMotion ? 0 : 0.25
             Accessible.ignored: true
         }
-        Item {
-            x: meter.sweepX
-            width: 64
-            height: parent.height
-            clip: true
-            opacity: meter.activityLevel
-            Image {
-                x: -parent.x
-                width: wave.width
-                height: wave.height
-                source: "assets/pixel-signal.png"
-                sourceClipRect: Qt.rect(230, 250, 1900, 200)
-                fillMode: Image.PreserveAspectFit
-                smooth: false
-                Accessible.ignored: true
-            }
+        Image {
+            objectName: "referencePixelWave"
+            anchors.bottom: parent.bottom
+            x: meter.reducedMotion ? 0 : Math.round(2 * Math.sin(meter.wavePhase * Math.PI * 2 + 1.2))
+            width: parent.width
+            height: meter.reducedMotion ? parent.height : Math.round(parent.height *
+                (0.79 + 0.21 * meter.wavePulse - 0.17 * meter.activityLevel * (1 - meter.wavePulse)))
+            source: "assets/pixel-signal.png"
+            sourceClipRect: Qt.rect(230, 250, 1900, 200)
+            fillMode: Image.Stretch
+            smooth: false
+            opacity: meter.reducedMotion ? 0.65 : 0.75 + 0.20 * meter.activityLevel
+            Accessible.ignored: true
         }
     }
     HoverHandler { id: hover }
     ToolTip.visible: hover.hovered
     ToolTip.delay: 500
     ToolTip.text: meter.metricsAvailable
-        ? (meter.processing ? qsTr("%1 tokens · live decode speed. The pixel sweep follows token activity.")
-                            : qsTr("%1 tokens · last decode speed. A brief afterglow shows recent activity; generation has finished.")).arg(meter.tokenCount)
+        ? (meter.processing ? qsTr("Working locally · %1 tokens generated").arg(meter.tokenCount)
+                            : meter.seenTokens > 0 ? qsTr("Last measured speed. The pixel wave settles after each response.")
+                                                   : qsTr("Ready for a prompt. The pixel wave moves gently while idle."))
         : qsTr("Live token metrics are available with the native local model.")
 }

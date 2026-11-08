@@ -1287,28 +1287,41 @@ void testGenerationMeterUsesMeasuredProgress() {
     auto* wave=window->findChild<QObject*>("referencePixelWave");
     ROCLINT_CHECK(wave && wave->property("source").toUrl().toString().endsWith("assets/pixel-signal.png"));
     window->show(); ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
+    window->update(); QTest::qWait(120);
+    const auto region=meter->mapRectToItem(window->contentItem(),meter->boundingRect()).toAlignedRect();
+    const auto idleFirst=window->grabWindow().copy(region);
+    QTest::qWait(300);
+    const auto idleSecond=window->grabWindow().copy(region);
+    ROCLINT_CHECK(!idleFirst.isNull() && idleFirst!=idleSecond); // Actual rendered motion, not only a changing counter.
     ROCLINT_CHECK(meter->property("rateText").toString()=="— tok/s" && !meter->property("recentActivity").toBool());
     meter->setProperty("processing",true);
-    ROCLINT_CHECK(meter->property("rateText").toString()=="Preparing…");
+    ROCLINT_CHECK(meter->property("rateText").toString()=="Preparing…" && meter->property("recentActivity").toBool());
+    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(meter->property("lastFrameAt").toDouble()+5000))));
+    ROCLINT_CHECK(meter->property("activityLevel").toDouble()==1); // Julia/warmup: zero tokens must still animate.
+    savePreview(window,QStringLiteral("pixel-wave-working-no-tokens.png"));
     meter->setProperty("tokensPerSecond",200.0);
     meter->setProperty("tokenCount",12.0); // A burst shorter than one display tick.
-    const double started=meter->property("activityStartedAt").toDouble();
+    const double started=meter->property("rateUpdatedAt").toDouble();
     ROCLINT_CHECK(started>0 && meter->property("recentActivity").toBool());
     meter->setProperty("tokensPerSecond",210.0);
     ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"refreshRate",Q_ARG(QVariant,QVariant(started+100)),Q_ARG(QVariant,QVariant(false))));
     ROCLINT_CHECK(meter->property("displayedRate").toDouble()==200.0); // Readable, throttled number.
     ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"refreshRate",Q_ARG(QVariant,QVariant(started+600)),Q_ARG(QVariant,QVariant(false))));
     ROCLINT_CHECK(meter->property("displayedRate").toDouble()==210.0);
+    meter->setProperty("tokenCount",0.0); // A native audit/subrequest can restart its counter.
+    ROCLINT_CHECK(meter->property("activityLevel").toDouble()==1 && meter->property("displayedRate").toDouble()==0);
+    meter->setProperty("tokenCount",12.0);
     meter->setProperty("preparing",true); // Warmup hides the cached rate without erasing recent activity.
     ROCLINT_CHECK(meter->property("rateText").toString()=="Preparing…" && meter->property("recentActivity").toBool());
     meter->setProperty("preparing",false);
     meter->setProperty("processing",false);
     ROCLINT_CHECK(plainRate()=="Last · 210.0 tok/s" && meter->property("recentActivity").toBool());
-    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(started+1700))));
+    const double heldUntil=meter->property("holdUntil").toDouble();
+    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(heldUntil-100))));
     ROCLINT_CHECK(meter->property("activityLevel").toDouble()==1.0); // Completion never cuts the burst short.
-    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(started+2150))));
+    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(heldUntil+350))));
     ROCLINT_CHECK(meter->property("activityLevel").toDouble()>0 && meter->property("activityLevel").toDouble()<1);
-    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(started+2600))));
+    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(heldUntil+800))));
     ROCLINT_CHECK(!meter->property("recentActivity").toBool());
     meter->setProperty("tokenCount",1.0); // New request/cancellation counter reset clears history.
     ROCLINT_CHECK(!meter->property("recentActivity").toBool() && meter->property("displayedRate").toDouble()==0);
@@ -1316,6 +1329,10 @@ void testGenerationMeterUsesMeasuredProgress() {
     meter->setProperty("tokensPerSecond",123.4);
     meter->setProperty("tokenCount",20.0);
     ROCLINT_CHECK(!meter->property("recentActivity").toBool() && meter->property("displayedRate").toDouble()==123.4);
+    QTest::qWait(150);
+    const auto stillFirst=window->grabWindow().copy(region);
+    QTest::qWait(300);
+    ROCLINT_CHECK(stillFirst==window->grabWindow().copy(region));
     savePreview(window,QStringLiteral("pixel-wave-reduced-motion.png"));
     meter->setProperty("tokenCount",0.0);
     meter->setProperty("reducedMotion",false);
@@ -1332,7 +1349,7 @@ void testGenerationMeterUsesMeasuredProgress() {
     }
     while (meter->property("recentActivity").toBool() && burst.elapsed() < 3200) QTest::qWait(50);
     ROCLINT_CHECK(!meter->property("recentActivity").toBool());
-    std::cout << "  [PASS] Reference pixel wave preserves sub-frame bursts for 1.8s + 0.7s fade, throttles rates, labels completion, and respects reduced motion.\n";
+    std::cout << "  [PASS] Pixel wave visibly moves at idle and during zero-token work, preserves completion feedback, and freezes in reduced motion.\n";
 }
 
 void testUserRequestedRewriteFromNewDraft() {

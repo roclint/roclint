@@ -28,7 +28,7 @@ Implementation evidence: `docs/research/roclint-ui-2026-11-07-streaming-meter-im
 
 Verification: full CTest 52/52, then the final UI workflow rerun passed. The focused meter fixture also passes token deltas, stalls, request rollback and reduced motion. A first screenshot fixture lost its synthetic processing flag when its window became visible; the fixture now sets that state after showing the window and asserts non-flat history before capture. Native installed observation confirmed ordinary launch, no Technical details action and actual completed decode rates of 220.5 and 181.8 tok/s on one synthetic local session. Those are observations, not release performance gates. Native before-completion telemetry is covered by the bound runtime fixture; the live desktop observations captured completed rates. No generated prompt was approved, copied or inserted.
 
-## Reference-wave correction — verified 2026-11-08
+## Reference-wave correction — 2026-11-08 (historical; superseded below)
 
 The user rejected the histogram-like implementation as visually unlike the reference and too brief to perceive. This supersedes the November 7 chart assessment above.
 
@@ -44,6 +44,20 @@ Rendered evidence: `docs/research/roclint-ui-2026-11-08-pixel-wave-implemented.p
 
 See `docs/audit/pixel_wave_visibility_2026-11-08.md` for exact scope and results. Final result for the reference-wave correction: passed.
 
+## Runtime motion correction — 2026-11-08
+
+The user reported that the animation still did not work after additional product changes. The prior sweep assessment above did not establish visible motion during actual preparation. This section supersedes its animation verdict.
+
+- **P2 repaired — token-only activation:** Julia checks and model warmup can run before any Granite tokens arrive. The meter now moves gently while visible at idle and more strongly throughout `processing`, including zero-token work. Resetting a native subrequest's counters clears measurements without cutting off activity.
+- **P2 repaired — imperceptible movement:** replaced the faint highlight with quantized height and horizontal movement of the original reference PNG. The visible timer ticks every 50 ms; idle and working cycles are approximately 3.2 and 1.1 seconds. Completion holds working intensity for 1.8 seconds, then eases to idle over 0.7 seconds. Hidden/minimized windows and reduced motion stop the timer.
+- **Reference comparison:** the original 502 × 144 reference and current Qt header crop were inspected together. The cobalt/periwinkle silhouette comes from the same PNG; motion transforms that artwork rather than substituting uniform bars. Native header size differs from the reference canvas padding.
+- **Evidence:** `docs/research/roclint-ui-2026-11-08-visible-wave-motion.gif` is a nearest-neighbor enlarged Qt-rendered header crop; 123.4 tok/s is synthetic fixture input. `docs/research/roclint-ui-2026-11-08-wave-working-no-tokens.png` shows the zero-token preparation fixture. The installed Windows window was separately observed changing shape between native screenshots at idle and during Preparing / Loading model / Checking, before tokens arrived.
+- **Preserved product work:** generation/decode modes, their distinct colors and Settings selector, rewrite candidates and background audit remain present. Numeric speed still comes from measured telemetry, updates at most twice per second during work, and retains Last on completion. The wave is activity feedback, not a throughput graph; inference is not delayed.
+- **Interaction:** the synthetic native check completed with optional clarification choices. Nothing was approved, copied or inserted; the synthetic draft was cleared afterward. Reduced-motion frames remain identical while rate updates continue.
+- **Validation scope:** Release host and UI test target build; focused rendered-motion regression; full current `roclint_product_alignment` target; structure check; installed startup without developer Qt PATH. This correction does not claim a new full-repository CTest run or macOS validation.
+
+Exact commands, results and installed binary identity: `docs/audit/wave_motion_runtime_fix_2026-11-08.md`. Final result for the runtime motion correction: passed.
+
 ## Required fidelity surfaces
 
 | Surface | Assessment |
@@ -51,7 +65,7 @@ See `docs/audit/pixel_wave_visibility_2026-11-08.md` for exact scope and results
 | Typography | Embedded Inter Variable for reading, 26 px question hierarchy, 14–15 px prose, Consolas/Menlo for compact utility labels. Corrected the initial `Inter` family mismatch that fell back to monospaced text. |
 | Spacing/layout | Rounded 18 px outer panel, 20 px normal gutters, bounded draft and diff, persistent footer; question padding/row gaps reduced so all three alternatives, custom answer and skip action fit the 820 × 600 fixture. Extremely small windows scroll content while preserving window controls and delivery actions. |
 | Colors/tokens | Ink-blue background, cobalt primary/keyboard choice, warm-white prose, pale-blue perimeter and focus, muted periwinkle utility text. Semantic warning remains in the clarity label; focus uses a pale-blue boundary. |
-| Images/icons | Actual generated transparent Roc and official Phosphor SVG controls with licenses/provenance. The header reuses the original layered pixel-wave PNG with an activity sweep and timed afterglow, per the latest correction. PNG assets retain aspect ratio and transparent surroundings. No text/emoji substitutes for logo or window icons. |
+| Images/icons | Actual generated transparent Roc and official Phosphor SVG controls with licenses/provenance. The header reuses the original layered pixel-wave PNG with visible ambient/working motion and a completion tail, per the runtime correction. The meter intentionally changes the wave height during motion. No text/emoji substitutes for logo or window icons. |
 | Copy/content | User-facing actions include Clarify, Rewrite prompt, Skip & rewrite, Keep original, Show changes and explicit Approve & Copy/Insert. No question is selected automatically; identical output says it is the original prompt. Empty drafts disable inapplicable actions. |
 
 ## Comparison and repair history
