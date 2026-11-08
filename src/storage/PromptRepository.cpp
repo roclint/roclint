@@ -1,5 +1,6 @@
 #include "roclint/storage/PromptRepository.hpp"
 #include "roclint/core/crypto/Sha256.hpp"
+#include "roclint/core/Json.hpp"
 
 #include "roclint/core/prompt_state/RevisionState.hpp"
 #include "roclint/storage/PayloadCodec.hpp"
@@ -390,6 +391,27 @@ UPDATE approvals SET is_current = 0 WHERE snapshot_id IN
     (SELECT snapshot_id FROM analysis_snapshots WHERE format_version = 1);
 )SQL";
 
+constexpr const char* kSchemaV6 =
+    "CREATE INDEX IF NOT EXISTS idx_sessions_updated_order ON sessions(updated_at DESC, session_id ASC);";
+
+constexpr const char* kSchemaV7 = R"SQL(
+CREATE TABLE delivery_events (
+    event_id TEXT PRIMARY KEY NOT NULL,
+    session_id TEXT NOT NULL,
+    revision_id TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK(outcome IN ('INSERTED', 'COPIED')),
+    text_hash TEXT NOT NULL CHECK(length(text_hash) = 64),
+    app_identifier TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    scope_summary TEXT NOT NULL,
+    field_token TEXT NOT NULL,
+    process_id INTEGER NOT NULL,
+    completed_at INTEGER NOT NULL CHECK(completed_at > 0),
+    FOREIGN KEY(session_id, revision_id) REFERENCES revisions(session_id, revision_id) ON DELETE CASCADE
+);
+CREATE INDEX idx_delivery_events_session ON delivery_events(session_id, completed_at DESC, event_id DESC);
+)SQL";
+
 // Called within the same write transaction as an artifact insert where applicable.
 void advanceStoredState(Database& db, const std::string& sessionId, const std::string& revisionId,
                         std::uint64_t expectedVersion, std::int64_t nowMs,
@@ -577,7 +599,7 @@ Status PromptRepository::migrateTo(int targetVersion) {
         if (targetVersion < 0 || targetVersion > CURRENT_SCHEMA_VERSION) {
             fail(ErrorCode::InvalidInput, "Unknown schema version " + std::to_string(targetVersion));
         }
-        const char* steps[] = {kSchemaV1, kSchemaV2, kSchemaV3, kSchemaV4, kSchemaV5};
+        const char* steps[] = {kSchemaV1, kSchemaV2, kSchemaV3, kSchemaV4, kSchemaV5, kSchemaV6, kSchemaV7};
         for (;;) {
             // Serialize the version read with the migration. Another connection may
             // have completed any number of steps while BEGIN IMMEDIATE waited.
@@ -664,6 +686,68 @@ Result<std::vector<SessionRecord>> PromptRepository::listSessions() const {
             out.push_back(readSession(s));
         }
         return out;
+    });
+}
+
+Result<SessionSummaryPage> PromptRepository::listSessionSummariesPaged(
+    const std::optional<std::int64_t>& afterUpdatedAt,
+    const std::optional<std::string>& afterSessionId,
+    int limit) const {
+    return guarded([&]() -> Result<SessionSummaryPage> {
+        if (limit <= 0 || limit > 50) limit = 50;
+        std::string sql =
+            "SELECT s.session_id, s.created_at, s.updated_at, s.highest_revision_seq, "
+            "       r.revision_id, SUBSTR(r.content, 1, 512) "
+            "FROM sessions s "
+            "LEFT JOIN revisions r ON r.session_id = s.session_id AND r.revision_seq = s.highest_revision_seq ";
+        const bool hasCursor = afterUpdatedAt.has_value() && afterSessionId.has_value();
+        if (hasCursor) {
+            sql += "WHERE (s.updated_at < ?1) OR (s.updated_at = ?1 AND s.session_id > ?2) ";
+        }
+        sql += "ORDER BY s.updated_at DESC, s.session_id ASC LIMIT ?" + std::to_string(hasCursor ? 3 : 1) + ";";
+
+        Statement s(db_.rawHandle(), sql.c_str());
+        if (hasCursor) {
+            s.integer(1, *afterUpdatedAt).text(2, *afterSessionId).integer(3, limit + 1);
+        } else {
+            s.integer(1, limit + 1);
+        }
+
+        SessionSummaryPage page;
+        while (s.step()) {
+            if (static_cast<int>(page.items.size()) == limit) {
+                page.hasMore = true;
+                break;
+            }
+            SessionSummary summary{core::SessionId(s.columnText(0))};
+            summary.createdAtMs = s.columnInt(1);
+            summary.updatedAtMs = s.columnInt(2);
+            summary.revisionCount = static_cast<std::size_t>(s.columnUInt(3));
+            if (!s.columnIsNull(4)) {
+                summary.latestRevisionId = s.columnText(4);
+            }
+            if (!s.columnIsNull(5)) {
+                summary.promptPreview = s.columnText(5);
+            }
+            page.items.push_back(std::move(summary));
+        }
+        return page;
+    });
+}
+
+Result<std::size_t> PromptRepository::getSessionCount() const {
+    return guarded([&]() -> Result<std::size_t> {
+        Statement s(db_.rawHandle(), "SELECT COUNT(*) FROM sessions;");
+        if (!s.step()) return 0;
+        return static_cast<std::size_t>(s.columnUInt(0));
+    });
+}
+
+Result<std::size_t> PromptRepository::getTotalRevisionCount() const {
+    return guarded([&]() -> Result<std::size_t> {
+        Statement s(db_.rawHandle(), "SELECT COUNT(*) FROM revisions;");
+        if (!s.step()) return 0;
+        return static_cast<std::size_t>(s.columnUInt(0));
     });
 }
 
@@ -847,6 +931,44 @@ Result<std::vector<RevisionRecord>> PromptRepository::getHistory(const core::Ses
                                 " FROM revisions WHERE session_id = ?1 ORDER BY revision_seq ASC;";
         Statement s(db_.rawHandle(), sql.c_str());
         s.text(1, sessionId.value());
+        std::vector<RevisionRecord> out;
+        while (s.step()) {
+            out.push_back(readRevision(s));
+        }
+        return out;
+    });
+}
+
+Result<RevisionSummaryPage> PromptRepository::listRevisionSummariesPaged(
+    const core::SessionId& sessionId, std::uint64_t afterSequence) const {
+    return guarded([&]() -> Result<RevisionSummaryPage> {
+        Statement s(db_.rawHandle(),
+            "SELECT revision_id, parent_revision_id, SUBSTR(content,1,512), origin, revision_seq, created_at "
+            "FROM revisions WHERE session_id=?1 AND revision_seq>?2 ORDER BY revision_seq ASC LIMIT 51;");
+        s.text(1, sessionId.value()).unsignedInt(2, afterSequence);
+        RevisionSummaryPage page;
+        while (s.step()) {
+            if (page.items.size() == 50) { page.hasMore = true; break; }
+            page.items.push_back({s.columnText(0), s.columnIsNull(1) ? "" : s.columnText(1),
+                s.columnText(2), s.columnText(3), s.columnUInt(4), s.columnInt(5)});
+        }
+        Statement count(db_.rawHandle(), "SELECT COUNT(*) FROM revisions WHERE session_id=?1;");
+        count.text(1, sessionId.value());
+        if (count.step()) page.total = static_cast<std::size_t>(count.columnUInt(0));
+        return page;
+    });
+}
+
+Result<std::vector<RevisionRecord>> PromptRepository::getHistoryPaged(
+    const core::SessionId& sessionId,
+    std::uint64_t fromSeq,
+    int limit) const {
+    return guarded([&]() -> Result<std::vector<RevisionRecord>> {
+        if (limit <= 0 || limit > 50) limit = 50;
+        const std::string sql = std::string("SELECT ") + kRevisionColumns +
+                                " FROM revisions WHERE session_id = ?1 AND revision_seq >= ?2 ORDER BY revision_seq ASC LIMIT ?3;";
+        Statement s(db_.rawHandle(), sql.c_str());
+        s.text(1, sessionId.value()).unsignedInt(2, fromSeq).integer(3, limit);
         std::vector<RevisionRecord> out;
         while (s.step()) {
             out.push_back(readRevision(s));
@@ -1045,6 +1167,42 @@ Result<std::vector<core::review::ApprovalRecord>> PromptRepository::getApprovalH
     });
 }
 
+Status PromptRepository::recordDeliveryEvent(const DeliveryEventRecord& e) {
+    return guarded([&]() -> Status {
+        if (e.eventId.empty() || e.sessionId.empty() || e.revisionId.empty() ||
+            (e.outcome != "INSERTED" && e.outcome != "COPIED") || e.completedAtMs <= 0 ||
+            e.textHash.size() != 64 || e.textHash.find_first_not_of("0123456789abcdef") != std::string::npos)
+            fail(ErrorCode::InvalidInput, "Invalid completed delivery event");
+        Transaction tx(db_);
+        Statement s(db_.rawHandle(), "INSERT INTO delivery_events (event_id,session_id,revision_id,outcome,text_hash,app_identifier,destination,scope_summary,field_token,process_id,completed_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(event_id) DO NOTHING;");
+        s.text(1,e.eventId).text(2,e.sessionId).text(3,e.revisionId).text(4,e.outcome).text(5,e.textHash)
+            .text(6,e.appIdentifier).text(7,e.destination).text(8,e.scopeSummary).text(9,std::to_string(e.fieldToken))
+            .integer(10,e.processId).integer(11,e.completedAtMs); s.run();
+        Statement check(db_.rawHandle(), "SELECT session_id,revision_id,outcome,text_hash,app_identifier,destination,scope_summary,field_token,process_id,completed_at FROM delivery_events WHERE event_id=?1;");
+        check.text(1,e.eventId);
+        if (!check.step() || check.columnText(0)!=e.sessionId || check.columnText(1)!=e.revisionId ||
+            check.columnText(2)!=e.outcome || check.columnText(3)!=e.textHash || check.columnText(4)!=e.appIdentifier ||
+            check.columnText(5)!=e.destination || check.columnText(6)!=e.scopeSummary ||
+            check.columnText(7)!=std::to_string(e.fieldToken) || check.columnInt(8)!=e.processId || check.columnInt(9)!=e.completedAtMs)
+            fail(ErrorCode::Conflict, "A delivery event ID cannot be reused for a different completion");
+        tx.commit(); return Status::success();
+    });
+}
+
+Result<std::vector<DeliveryEventRecord>> PromptRepository::getDeliveryEvents(const core::SessionId& session) const {
+    return guarded([&]() -> Result<std::vector<DeliveryEventRecord>> {
+        Statement s(db_.rawHandle(), "SELECT event_id,session_id,revision_id,outcome,text_hash,app_identifier,destination,scope_summary,field_token,process_id,completed_at FROM delivery_events WHERE session_id=?1 ORDER BY completed_at DESC,rowid DESC LIMIT 100;");
+        s.text(1,session.value()); std::vector<DeliveryEventRecord> events;
+        while(s.step()) {
+            DeliveryEventRecord e; e.eventId=s.columnText(0);e.sessionId=s.columnText(1);e.revisionId=s.columnText(2);
+            e.outcome=s.columnText(3);e.textHash=s.columnText(4);e.appIdentifier=s.columnText(5);e.destination=s.columnText(6);
+            e.scopeSummary=s.columnText(7);e.fieldToken=std::stoull(s.columnText(8));e.processId=s.columnInt(9);e.completedAtMs=s.columnInt(10);
+            events.push_back(std::move(e));
+        }
+        return events;
+    });
+}
+
 Status PromptRepository::beginModelAttempt(const ModelAttemptRecord& a) {
     return guarded([&]() -> Status {
         if (a.status != AttemptStatus::InProgress) {
@@ -1161,6 +1319,9 @@ Result<RestoredSession> PromptRepository::restoreSession(const core::SessionId& 
 
     return guarded([&]() -> Result<RestoredSession> {
         RestoredSession restored{session.value(), *latest.value()};
+        auto deliveries = getDeliveryEvents(sessionId);
+        if (!deliveries.ok()) return deliveries.error();
+        if (!deliveries.value().empty()) restored.lastDelivery = deliveries.value().front();
         const std::string revisionId = restored.latestRevision.revision.revisionId().value();
 
         {

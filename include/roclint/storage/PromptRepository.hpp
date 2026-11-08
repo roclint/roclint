@@ -82,11 +82,19 @@ struct ModelAttemptRecord {
     std::optional<std::int64_t> completedAtMs{std::nullopt};
 };
 
+struct DeliveryEventRecord {
+    std::string eventId, sessionId, revisionId, outcome, textHash, appIdentifier, destination, scopeSummary;
+    std::uint64_t fieldToken{0};
+    std::int64_t processId{0}, completedAtMs{0};
+    bool operator==(const DeliveryEventRecord&) const = default;
+};
+
 // Everything needed to rebuild in-memory state after reopen. Downstream artifacts are loaded only
 // when they are bound to the latest revision and to each other.
 struct RestoredSession {
     SessionRecord session;
     RevisionRecord latestRevision;
+    std::optional<DeliveryEventRecord> lastDelivery{};
     std::optional<core::analysis::AnalysisSnapshot> analysis{};
     bool legacyAnalysisRequiresReview{false};
     std::optional<core::intent::ConfirmedIntent> intent{};
@@ -94,9 +102,39 @@ struct RestoredSession {
     std::optional<core::review::ApprovalRecord> approval{};
 };
 
+struct SessionSummary {
+    core::SessionId sessionId{""};
+    std::int64_t createdAtMs{0};
+    std::int64_t updatedAtMs{0};
+    std::size_t revisionCount{0};
+    std::string promptPreview{};
+    std::string latestRevisionId{};
+
+    SessionSummary() = default;
+    explicit SessionSummary(core::SessionId id) : sessionId(std::move(id)) {}
+
+    bool operator==(const SessionSummary&) const = default;
+};
+
+struct SessionSummaryPage {
+    std::vector<SessionSummary> items;
+    bool hasMore{false};
+};
+
+struct RevisionSummary {
+    std::string revisionId, parentRevisionId, promptPreview, origin;
+    std::uint64_t sequence{0};
+    std::int64_t createdAtMs{0};
+};
+struct RevisionSummaryPage {
+    std::vector<RevisionSummary> items;
+    bool hasMore{false};
+    std::size_t total{0};
+};
+
 class PromptRepository {
 public:
-    static constexpr int CURRENT_SCHEMA_VERSION = 5;
+    static constexpr int CURRENT_SCHEMA_VERSION = 7;
 
     // Requires an open Database; throws std::invalid_argument otherwise.
     explicit PromptRepository(Database& db);
@@ -113,6 +151,12 @@ public:
     [[nodiscard]] core::Result<bool> sessionExists(const core::SessionId& sessionId) const;
     [[nodiscard]] core::Result<SessionRecord> getSession(const core::SessionId& sessionId) const;
     [[nodiscard]] core::Result<std::vector<SessionRecord>> listSessions() const;
+    [[nodiscard]] core::Result<SessionSummaryPage> listSessionSummariesPaged(
+        const std::optional<std::int64_t>& afterUpdatedAt = std::nullopt,
+        const std::optional<std::string>& afterSessionId = std::nullopt,
+        int limit = 50) const;
+    [[nodiscard]] core::Result<std::size_t> getSessionCount() const;
+    [[nodiscard]] core::Result<std::size_t> getTotalRevisionCount() const;
     [[nodiscard]] core::Status deleteSession(const core::SessionId& sessionId);
     [[nodiscard]] core::Status purgeHistory();
     // Compare-and-swap one accepted current-session mutation; text revision remains immutable.
@@ -132,6 +176,12 @@ public:
     [[nodiscard]] core::Result<std::optional<RevisionRecord>> getRevision(const core::SessionId& sessionId,
                                                                           const core::RevisionId& revisionId) const;
     [[nodiscard]] core::Result<std::vector<RevisionRecord>> getHistory(const core::SessionId& sessionId) const;
+    [[nodiscard]] core::Result<RevisionSummaryPage> listRevisionSummariesPaged(
+        const core::SessionId& sessionId, std::uint64_t afterSequence = 0) const;
+    [[nodiscard]] core::Result<std::vector<RevisionRecord>> getHistoryPaged(
+        const core::SessionId& sessionId,
+        std::uint64_t fromSeq = 1,
+        int limit = 50) const;
     [[nodiscard]] core::Result<std::optional<RevisionRecord>> getLatestRevision(const core::SessionId& sessionId) const;
 
     // Downstream artifacts
@@ -149,6 +199,10 @@ public:
         const core::SessionId& sessionId) const;
     [[nodiscard]] core::Result<std::vector<core::review::ApprovalRecord>> getApprovalHistory(
         const core::SessionId& sessionId) const;
+
+    // Historical completion facts. Never authorize delivery or alter current-session versions.
+    [[nodiscard]] core::Status recordDeliveryEvent(const DeliveryEventRecord& event);
+    [[nodiscard]] core::Result<std::vector<DeliveryEventRecord>> getDeliveryEvents(const core::SessionId& sessionId) const;
 
     // Model attempts
     [[nodiscard]] core::Status beginModelAttempt(const ModelAttemptRecord& attempt);

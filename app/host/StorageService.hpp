@@ -111,8 +111,10 @@ public:
                 }
                 worker.ownership = std::make_unique<QLockFile>(identity + QStringLiteral(".owner.lock"));
                 worker.ownership->setStaleLockTime(0);
-                if (!worker.ownership->tryLock(1000))
-                    return core::Status(core::makeError(core::ErrorCode::DbError, "Exclusive history ownership could not be established"));
+                if (!worker.ownership->tryLock(1000)) {
+                    if (!worker.ownership->removeStaleLockFile() || !worker.ownership->tryLock(1000))
+                        return core::Status(core::makeError(core::ErrorCode::DbError, "Exclusive history ownership could not be established"));
+                }
             }
             worker.database = std::make_unique<storage::Database>();
             worker.database->setCancellationFlag(stopping);
