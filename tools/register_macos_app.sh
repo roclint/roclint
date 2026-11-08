@@ -77,6 +77,17 @@ mkdir -p "${INSTALL_DIR}"
 rm -rf "${TARGET_APP}"
 cp -R "${STAGED_BUNDLE}" "${TARGET_APP}"
 
+# Stage Python runtime for Julia if available
+if [[ ! -d "${TARGET_APP}/Contents/MacOS/runtime/julia-python" ]]; then
+    if [[ -d "${STAGED_BUNDLE}/Contents/MacOS/runtime/julia-python" ]]; then
+        cp -R -c "${STAGED_BUNDLE}/Contents/MacOS/runtime/julia-python" "${TARGET_APP}/Contents/MacOS/runtime/julia-python" 2>/dev/null || \
+        cp -R "${STAGED_BUNDLE}/Contents/MacOS/runtime/julia-python" "${TARGET_APP}/Contents/MacOS/runtime/julia-python"
+    elif [[ -d "${SCRIPT_DIR}/../build/runtime/julia-python" ]]; then
+        cp -R -c "${SCRIPT_DIR}/../build/runtime/julia-python" "${TARGET_APP}/Contents/MacOS/runtime/julia-python" 2>/dev/null || \
+        cp -R "${SCRIPT_DIR}/../build/runtime/julia-python" "${TARGET_APP}/Contents/MacOS/runtime/julia-python"
+    fi
+fi
+
 # Stage license files in Contents/Resources/licenses
 LICENSES_DIR="${TARGET_APP}/Contents/Resources/licenses"
 mkdir -p "${LICENSES_DIR}"

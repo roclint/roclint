@@ -30,6 +30,10 @@ def main():
                         "https://download.pytorch.org/whl/cpu"], check=True)
     subprocess.run([str(python), "-m", "pip", "install", "-r",
                     str(root / "app/runtime/julia-requirements.txt")], check=True)
+    if sys.platform == "darwin":
+        bundle_env = build / "Roclint.app" / "Contents" / "MacOS" / "runtime" / "julia-python"
+        if bundle_env.parent.exists() and not bundle_env.exists():
+            subprocess.run(["cp", "-R", "-c", str(environment), str(bundle_env)], check=False)
     print(f"Julia Python environment: {python}")
     print("Build the host, then select this Python executable in Julia settings if it is not detected automatically.")
     return 0

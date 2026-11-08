@@ -69,6 +69,7 @@ QString JuliaRuntimeWorker::defaultPython() {
     const QStringList candidates = {app.filePath(QStringLiteral("python/bin/python3")),
         app.filePath(QStringLiteral("runtime/julia-python/bin/python3")),
         app.filePath(QStringLiteral("../runtime/julia-python/bin/python3")),
+        app.filePath(QStringLiteral("../../../runtime/julia-python/bin/python3")),
         QStringLiteral("/opt/homebrew/bin/python3.13"),
         QStringLiteral("/opt/homebrew/bin/python3.12"),
         QStringLiteral("/opt/homebrew/bin/python3.11"),
@@ -76,7 +77,26 @@ QString JuliaRuntimeWorker::defaultPython() {
         QStringLiteral("/usr/local/bin/python3.12")};
 #endif
     for (const auto& candidate : candidates) {
-        if (QFileInfo(candidate).isExecutable()) return QFileInfo(candidate).absoluteFilePath();
+        if (!QFileInfo(candidate).isExecutable()) continue;
+#ifndef Q_OS_WIN
+        // System Python candidates (outside dedicated julia-python or python directories)
+        // must contain torch before being accepted as the default interpreter.
+        if (!candidate.contains(QLatin1String("julia-python")) && !candidate.contains(QLatin1String("/python/"))) {
+            const QDir binDir = QFileInfo(candidate).dir();
+            const QStringList sitePackages = {
+                binDir.filePath(QStringLiteral("../lib/python3.13/site-packages/torch")),
+                binDir.filePath(QStringLiteral("../lib/python3.12/site-packages/torch")),
+                binDir.filePath(QStringLiteral("../lib/python3.11/site-packages/torch")),
+                binDir.filePath(QStringLiteral("../lib/python3.10/site-packages/torch"))
+            };
+            bool hasTorch = false;
+            for (const auto& sp : sitePackages) {
+                if (QFileInfo(sp).isDir()) { hasTorch = true; break; }
+            }
+            if (!hasTorch) continue;
+        }
+#endif
+        return QFileInfo(candidate).absoluteFilePath();
     }
     const QString python3 = QStandardPaths::findExecutable(QStringLiteral("python3"));
     return python3.isEmpty() ? QStandardPaths::findExecutable(QStringLiteral("python")) : python3;
