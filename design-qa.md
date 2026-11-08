@@ -82,13 +82,21 @@ The user requested a waveform in the selected style, rather than the static desi
 
 Exact scope and installed identity: `docs/audit/live_pixel_waveform_2026-11-08.md`. Final result for the evolving waveform: passed.
 
-## Shared waveform speed scale — 2026-11-08
+## Shared waveform speed scale — 2026-11-08 (dynamics superseded below)
 
 The user specified that the size of the same wave must reflect generation and decode speed. One filled contour now combines the cobalt generation body and periwinkle decode edge. Both use the same fixed linear scale, matching the numeric request-average measurements. Higher speed produces greater height; token totals and IPC batch size do not set wave size. A visual ceiling keeps it within the header; numbers above the scale remain exact.
 
 Rendered-pixel comparisons verify slow < medium < fast height, independent generation-body/decode-edge growth, and an identical wave at identical speeds despite tenfold batch size. The source palette and pixel grid remain; idle/reduced-motion and rate-integrity checks still pass. `docs/research/roclint-ui-2026-11-08-wave-speed-scale.gif` is the synthetic Qt comparison preview.
 
 Evidence and exact scale/limitations: `docs/audit/wave_speed_scale_2026-11-08.md`. Final result for the shared speed scale: passed.
+
+## Dynamic contour correction — 2026-11-08
+
+The user rejected the repeated, similarly sized waves. Removed the per-packet eight-cell crest template and switched visual amplitude from cumulative averages to recent token/timing deltas. Both channels now affect outer height, so a steady faster decode rate cannot hide generation changes. Unequal traveling ripples advance only on incoming progress, giving visible flow even at temporarily steady throughput; their height remains driven by measured recent rates. This is an activity visualization, not a literal GPU waveform. Exact numeric rates retain their request-average meaning.
+
+The 2-pixel grid preserves the selected cobalt/periwinkle style while exposing smaller changes. Regression covers steady-rate motion, alternating-rate response, independent channel contributions and quiet idle/stall/reduced-motion states. The preview includes actual Vulkan Q8_0 telemetry replayed in Qt, plus a separate synthetic varying-speed stress stream. Neither is presented as a native desktop recording. Prior fixed-crest/average-based renderer verdicts are superseded.
+
+Evidence: `docs/audit/dynamic_wave_2026-11-08.md` and `docs/research/roclint-ui-2026-11-08-dynamic-wave-live.gif`. Final result for the dynamic contour: passed.
 
 ## Required fidelity surfaces
 

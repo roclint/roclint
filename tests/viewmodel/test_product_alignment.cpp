@@ -14,6 +14,10 @@
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QJSValue>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlExpression>
@@ -1323,7 +1327,7 @@ void testGenerationMeterUsesMeasuredProgress() {
     const auto genHistory=meter->property("generationHistory").value<QJSValue>().toVariant().toList();
     const auto decHistory=meter->property("decodeHistory").value<QJSValue>().toVariant().toList();
     ROCLINT_CHECK(genHistory.size()==48 && decHistory.size()==48 && genHistory!=decHistory);
-    ROCLINT_CHECK(genHistory.first().toDouble()==0 && genHistory.last().toDouble()<0.000001);
+    ROCLINT_CHECK(genHistory.first().toDouble()==0 && genHistory.last().toDouble()>0);
     ROCLINT_CHECK(std::any_of(genHistory.begin(),genHistory.end(),[](const QVariant& value) { return value.toDouble()>0.1; }));
     invoke("advance",meter->property("fadeUntil").toDouble()+1);
     QTest::qWait(300);
@@ -1417,12 +1421,50 @@ void testGenerationMeterUsesMeasuredProgress() {
     const auto decodeFaster=speedFrame(30,90,16,"wave-speed-decode-faster");
     ROCLINT_CHECK(peakRow(decodeFaster)<peakRow(medium)); // Only decode changes the outer edge.
     const auto generationFaster=speedFrame(60,90,16,"wave-speed-generation-faster");
-    ROCLINT_CHECK(peakRow(generationFaster)==peakRow(decodeFaster) && cobaltPixels(generationFaster)>cobaltPixels(decodeFaster));
+    ROCLINT_CHECK(peakRow(generationFaster)<peakRow(decodeFaster) && cobaltPixels(generationFaster)>cobaltPixels(decodeFaster));
     const auto largerBatch=speedFrame(30,50,160,"wave-speed-same-rate-larger-batch");
     ROCLINT_CHECK(largerBatch==medium); // Same speeds, ten times the tokens: identical wave size.
+    publish(1120,1120*1000/30.0,1120*1000/50.0);
+    QTest::qWait(160);
+    ROCLINT_CHECK(window->grabWindow().copy(waveformRegion)!=largerBatch); // Even steady-rate incoming tokens move the contour.
     const auto ceiling=speedFrame(150,200,16,"wave-speed-ceiling");
     ROCLINT_CHECK(meter->property("generationLevel").toDouble()==1 && meter->property("decodeLevel").toDouble()==1);
     ROCLINT_CHECK(!ceiling.isNull());
+    // Averages barely move during a stream; the waveform must still react to
+    // real speed changes, without reproducing an identical crest per packet.
+    publish(0,0,0);
+    double genClock=0, decClock=0;
+    const double genRates[]={20,70,15,60,25,80,18,55,30,75,22,65};
+    const double decRates[]={30,90,25,85,45,100,35,75,50,95,40,90};
+    for(int i=0;i<12;++i) {
+        genClock+=8000/genRates[i]; decClock+=8000/decRates[i];
+        publish((i+1)*8,genClock,decClock);
+        ROCLINT_CHECK(std::abs(meter->property("generationLevel").toDouble()-genRates[i]/100)<0.00001);
+        QTest::qWait(160);
+        const auto artifacts=qEnvironmentVariable("ROCLINT_TEST_ARTIFACT_DIR");
+        if (!artifacts.isEmpty()) ROCLINT_CHECK(window->grabWindow().save(artifacts+QString("/dynamic-variable-%1.png").arg(i)));
+    }
+    const auto dynamicHistory=meter->property("generationHistory").value<QJSValue>().toVariant().toList();
+    ROCLINT_CHECK(std::abs(dynamicHistory.last().toDouble()-0.65)<0.00001);
+    ROCLINT_CHECK(std::abs(dynamicHistory[dynamicHistory.size()-2].toDouble()-0.22)<0.00001);
+    // Optional replay of a real synthetic-model run: captures only counts and
+    // elapsed times, never application history or a transport override in the app.
+    const auto replay=qEnvironmentVariable("ROCLINT_WAVE_REPLAY_FILE");
+    if (!replay.isEmpty()) {
+        QFile trace(replay); ROCLINT_CHECK(trace.open(QIODevice::ReadOnly));
+        const auto samples=QJsonDocument::fromJson(trace.readAll()).object().value("samples").toArray();
+        ROCLINT_CHECK(!samples.isEmpty());
+        publish(0,0,0);
+        int index=0;
+        for (const auto& sample:samples) {
+            const auto point=sample.toObject();
+            publish(point.value("output_tokens").toDouble(),point.value("generation_ms").toDouble(),point.value("decode_ms").toDouble());
+            QTest::qWait(160);
+            const auto artifacts=qEnvironmentVariable("ROCLINT_TEST_ARTIFACT_DIR");
+            if (!artifacts.isEmpty()) ROCLINT_CHECK(window->grabWindow().save(artifacts+QString("/dynamic-live-%1.png").arg(index)));
+            ++index;
+        }
+    }
     // Restore the normal arrival tail for the existing completion check.
     publish(0,0,0);
     publish(16,400,320);
@@ -1432,7 +1474,7 @@ void testGenerationMeterUsesMeasuredProgress() {
     QTest::qWait(350);
     ROCLINT_CHECK(!meter->property("recentActivity").toBool() && completed==window->grabWindow().copy(region));
     savePreview(window,QStringLiteral("measured-wave-complete.png"));
-    std::cout << "  [PASS] One pixel wave scales its generation body and decode edge with measured speed, independently of token/batch size; idle, stalls, rate integrity and reduced motion remain correct.\n";
+    std::cout << "  [PASS] One rolling wave responds to recent measured speed changes without repeating crests; shared scale, idle, stalls, rate integrity and reduced motion remain correct.\n";
 }
 
 void testUserRequestedRewriteFromNewDraft() {

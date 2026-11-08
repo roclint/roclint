@@ -1,0 +1,63 @@
+{
+  "scope": "Synthetic production rewrite fixture, actual Vulkan Q8_0 partial token/timing telemetry. No user history.",
+  "fixture": "literal_constraints_GENERIC@1",
+  "ok": true,
+  "samples": [
+    {
+      "output_tokens": 4,
+      "generation_ms": 136.021,
+      "decode_ms": 81.6056
+    },
+    {
+      "output_tokens": 8,
+      "generation_ms": 259.1572,
+      "decode_ms": 153.2498
+    },
+    {
+      "output_tokens": 12,
+      "generation_ms": 381.6446,
+      "decode_ms": 224.821
+    },
+    {
+      "output_tokens": 16,
+      "generation_ms": 462.3322,
+      "decode_ms": 297.265
+    },
+    {
+      "output_tokens": 20,
+      "generation_ms": 541.8095,
+      "decode_ms": 369.1376
+    },
+    {
+      "output_tokens": 24,
+      "generation_ms": 623.376,
+      "decode_ms": 441.4266
+    },
+    {
+      "output_tokens": 28,
+      "generation_ms": 704.2074,
+      "decode_ms": 514.0151
+    },
+    {
+      "output_tokens": 32,
+      "generation_ms": 784.5253,
+      "decode_ms": 586.2609
+    },
+    {
+      "output_tokens": 36,
+      "generation_ms": 866.866,
+      "decode_ms": 658.7974
+    },
+    {
+      "output_tokens": 37,
+      "generation_ms": 888.0347,
+      "decode_ms": 676.5192
+    }
+  ],
+  "output_tokens": 37,
+  "generation_ms": 888.1618,
+  "decode_ms": 676.5192,
+  "worker_sha256": "070b0c7c227bc9f9daee2cf41272b07a5ebc0e6e9dd578432fb7b841d87dfeda",
+  "backend": "vulkan",
+  "quantization": "Q8_0"
+}

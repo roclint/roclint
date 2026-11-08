@@ -39,6 +39,9 @@ Item {
     property var previousGenerationHistory: emptyHistory()
     property var previousDecodeHistory: emptyHistory()
     property real historyBlend: 1
+    property int waveSampleCount: 0
+    property double progressTick: 0
+    property double previousProgressTick: 0
     readonly property bool surfaceVisible: visible && Window.window !== null && Window.window.visible && Window.window.visibility !== Window.Minimized
     readonly property bool recentActivity: activityLevel > 0
     readonly property color genColor: theme.mode === "light" ? "#047857" : "#34D399"
@@ -78,28 +81,24 @@ Item {
     function blendedHistory(previous, current) {
         return current.map(function(value, index) { return previous[index] + (value - previous[index]) * historyBlend; });
     }
-    function appendHistory(history, value, slots) {
-        const next = history.slice();
-        for (let i = 0; i < slots; ++i) {
-            // Each received batch contributes one crest, with measured rate
-            // controlling its height. This is arrival feedback, not fabricated
-            // per-token timestamps or a free-running decorative waveform.
-            const crest = Math.sin(Math.PI * i / Math.max(1, slots - 1));
-            next.push(value * crest * crest);
-        }
-        return next.slice(-historySize);
+    function appendHistory(history, value) {
+        // Store actual recent-rate samples. No repeated pulse/crest template.
+        const next = history.slice(1);
+        next.push(value);
+        return next;
     }
     function updateWaveforms() {
-        // Both measurements share one crest and the same fixed speed scale.
-        // IPC batch size must not make an equally fast stream look larger.
-        const slots = 8;
+        // One shared rolling waveform, updated from each real progress sample.
         const visibleGen = blendedHistory(previousGenerationHistory, generationHistory);
         const visibleDec = blendedHistory(previousDecodeHistory, decodeHistory);
         waveformTransition.stop();
         previousGenerationHistory = visibleGen;
         previousDecodeHistory = visibleDec;
-        generationHistory = appendHistory(generationHistory, generationLevel, slots);
-        decodeHistory = appendHistory(decodeHistory, decodeLevel, slots);
+        previousProgressTick = previousProgressTick + (progressTick - previousProgressTick) * historyBlend;
+        progressTick += 1;
+        generationHistory = appendHistory(generationHistory, generationLevel);
+        decodeHistory = appendHistory(decodeHistory, decodeLevel);
+        waveSampleCount = Math.min(historySize, waveSampleCount + 1);
         historyBlend = 0;
         if (surfaceVisible && !reducedMotion) waveformTransition.restart();
         else historyBlend = 1;
@@ -117,6 +116,9 @@ Item {
         activityLevel = 0;
         generationLevel = 0;
         decodeLevel = 0;
+        waveSampleCount = 0;
+        progressTick = 0;
+        previousProgressTick = 0;
         if (waveformTransition) waveformTransition.stop();
         generationHistory = emptyHistory();
         decodeHistory = emptyHistory();
@@ -139,11 +141,12 @@ Item {
             const genMs = generationElapsedMs - seenGenerationMs;
             const decMs = decodeElapsedMs - seenDecodeMs;
             if (genMs <= 0 || decMs <= 0) return;
-            // Match the request-average speeds reported by the numeric meter.
-            // A fixed linear scale makes twice the speed twice the amplitude
-            // below the visual ceiling, without adding the two rates together.
-            generationLevel = levelForRate(tokenCount * 1000 / generationElapsedMs);
-            decodeLevel = levelForRate(tokenCount * 1000 / decodeElapsedMs);
+            // Request averages hide changes during a stream. The waveform uses
+            // the newest token/timing deltas; numeric labels retain their exact
+            // request-average definition. Both views still use measured tokens.
+            const delta = tokenCount - seenTokens;
+            generationLevel = levelForRate(delta * 1000 / genMs);
+            decodeLevel = levelForRate(delta * 1000 / decMs);
             updateWaveforms();
             seenTokens = tokenCount;
             seenGenerationMs = generationElapsedMs;
@@ -212,7 +215,7 @@ Item {
         property: "historyBlend"
         from: 0
         to: 1
-        duration: 220
+        duration: 140
         easing.type: Easing.OutCubic
     }
     Canvas {
@@ -232,7 +235,7 @@ Item {
             ctx.reset();
             ctx.clearRect(0, 0, width, height);
             ctx.imageSmoothingEnabled = false;
-            const cell = 5, row = 3;
+            const cell = 5, row = 2;
             const columns = Math.max(1, Math.floor(width / cell));
             const baseline = Math.floor((height - 1) / row) * row;
             const intensity = meter.reducedMotion ? 0 : meter.activityLevel;
@@ -241,32 +244,36 @@ Item {
             if (intensity <= 0) return;
             const gen = meter.blendedHistory(meter.previousGenerationHistory, meter.generationHistory);
             const dec = meter.blendedHistory(meter.previousDecodeHistory, meter.decodeHistory);
-            // Neighbor smoothing joins cells into a stepped, filled waveform,
-            // rather than isolated histogram bars. Vertical levels keep the
-            // cobalt/periwinkle layers and hard pixel edges of the selected style.
+            // Interpolate the measured contour without averaging away its peaks.
+            // Short histories spread across the plot; full histories roll left.
+            const first = Math.max(0, meter.historySize - meter.waveSampleCount);
             function envelope(history, column) {
-                const position = column * (history.length - 1) / Math.max(1, columns - 1);
-                const center = Math.round(position);
-                let total = 0, weight = 0;
-                for (let offset = -1; offset <= 1; ++offset) {
-                    const index = center + offset;
-                    if (index < 0 || index >= history.length) continue;
-                    const w = 2 - Math.abs(offset);
-                    total += history[index] * w;
-                    weight += w;
-                }
-                return weight > 0 ? total / weight : 0;
+                if (meter.waveSampleCount === 0) return 0;
+                const position = first + column * (history.length - 1 - first) / Math.max(1, columns - 1);
+                const left = Math.floor(position), right = Math.min(history.length - 1, left + 1);
+                return history[left] + (history[right] - history[left]) * (position - left);
             }
             const maxRows = Math.max(1, Math.floor(baseline / row));
+            const phase = meter.previousProgressTick + (meter.progressTick - meter.previousProgressTick) * meter.historyBlend;
             for (let x = 0; x < columns; ++x) {
-                const genRows = meter.tokenSpeedMode === "DECODE" ? 0 : Math.round(envelope(gen, x) * intensity * maxRows);
-                const decRows = meter.tokenSpeedMode === "GENERATION" ? 0 : Math.round(envelope(dec, x) * intensity * maxRows);
-                const rows = Math.max(genRows, decRows);
-                // One filled waveform: generation is the cobalt body; decode
-                // extends its periwinkle edge on the identical baseline/scale.
+                // Unequal traveling ripples supply the pixel-wave style. Their
+                // phase advances only on real incoming progress, while measured
+                // recent rates determine height. This is activity feedback, not
+                // a claim that individual GPU timings form a sinusoidal trace.
+                const a = Math.sin(x * 0.13 + phase * 0.33);
+                const b = Math.sin(x * 0.29 - phase * 0.21 + 1.4);
+                const ripple = 0.16 + 0.48 * a * a + 0.36 * b * b;
+                const g = envelope(gen, x) * ripple, d = envelope(dec, x) * ripple;
+                const both = meter.tokenSpeedMode === "BOTH";
+                const level = both ? (g + d) / 2 : meter.tokenSpeedMode === "DECODE" ? d : g;
+                const rows = Math.round(level * intensity * maxRows);
+                const genRows = meter.tokenSpeedMode === "DECODE" ? 0 : both
+                    ? Math.min(rows, Math.round(g * 0.5 * intensity * maxRows)) : rows;
+                // Both rates affect the outer size. Using max(gen, decode)
+                // concealed generation changes whenever decode stayed faster.
                 for (let y = 0; y < rows; ++y) {
-                    const decodeEdge = y >= genRows || (meter.tokenSpeedMode === "BOTH" && y === decRows - 1);
-                    if (decodeEdge) ctx.fillStyle = y === decRows - 1 ? "#9EAEFF" : "#657FE8";
+                    const decodeEdge = y >= genRows;
+                    if (decodeEdge) ctx.fillStyle = y === rows - 1 ? "#9EAEFF" : "#657FE8";
                     else ctx.fillStyle = y === genRows - 1 ? "#5F81FF" : y >= genRows * 0.55 ? "#3E62F0" : "#2445C8";
                     ctx.globalAlpha = decodeEdge ? 0.80 : 0.97;
                     ctx.fillRect(x * cell, baseline - (y + 1) * row, cell, row);
@@ -279,6 +286,6 @@ Item {
     ToolTip.visible: hover.hovered
     ToolTip.delay: 500
     ToolTip.text: meter.metricsAvailable
-        ? qsTr("One wave: cobalt body = generation speed; periwinkle edge = decode speed. Both heights use the same fixed 0–100 tok/s scale; faster rates stay at the visual ceiling while numbers remain exact. Includes structured model output for this native request. Crests arrive with token updates. Last is the completed request.")
+        ? qsTr("One wave: cobalt = generation; periwinkle = decode. Incoming tokens move the contour; recent measured speeds set its height on a shared 0–100 tok/s scale. Both speeds affect its overall size. Numbers are request averages and include structured model output. Last is the completed request.")
         : qsTr("Live token metrics are available with the native local model.")
 }
