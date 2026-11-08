@@ -45,6 +45,9 @@ const QString kRewritten = QStringLiteral("Refactor the parser. Lower latency pe
 
 void prepare(HostController& c, std::atomic<int>& calls, int delayMs = 0) {
     c.setTransportOverrideForTesting([&calls, delayMs](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         ++calls;
         if (delayMs > 0) std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
         return prompt.find("<instructions>") == std::string_view::npos
@@ -233,7 +236,10 @@ void testReviewGeometryAndExplicitExpansion() {
         const double diffCap=std::max(80.0,std::min(240.0,viewport->height()*0.4));
         ROCLINT_CHECK(diff->height()<=diffCap+1.0);
         ROCLINT_CHECK(QMetaObject::invokeMethod(window,"openReview"));
-        QTest::qWait(100);
+        QElapsedTimer diffTimer; diffTimer.start();
+        while ((!fullyInViewport(window,diff) || !diff->hasActiveFocus()) && diffTimer.elapsed() < 1000) {
+            QTest::qWait(50);
+        }
         if (!fullyInViewport(window,diff) || !diff->hasActiveFocus()) {
             const auto rect=diff->mapRectToItem(window->contentItem(),diff->boundingRect());
             std::cerr << "Diff review geometry: " << size.width << 'x' << size.height
@@ -1125,6 +1131,9 @@ void testExplicitClarificationAndDeferredRewrite() {
     int discoveryCalls = 0, rewriteCalls = 0;
     QString instructions;
     controller.setTransportOverrideForTesting([&](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         if (prompt.find("<instructions>") != std::string_view::npos) {
             ++rewriteCalls;
             instructions = QString::fromUtf8(prompt.data(), static_cast<qsizetype>(prompt.size()));
@@ -1312,6 +1321,7 @@ void testGenerationMeterUsesMeasuredProgress() {
         if (wait>0) QTest::qWait(wait);
         savePreview(window,QStringLiteral("pixel-wave-burst-%1.png").arg(i));
     }
+    while (meter->property("recentActivity").toBool() && burst.elapsed() < 3200) QTest::qWait(50);
     ROCLINT_CHECK(!meter->property("recentActivity").toBool());
     std::cout << "  [PASS] Reference pixel wave preserves sub-frame bursts for 1.8s + 0.7s fade, throttles rates, labels completion, and respects reduced motion.\n";
 }
@@ -1327,6 +1337,9 @@ void testUserRequestedRewriteFromNewDraft() {
     int discoveries=0, rewrites=0;
     const QString draft="Refactor Reader::open for readability. Preserve behavior and caller-owned handles.";
     controller.setTransportOverrideForTesting([&](std::string_view request) -> Result<std::string> {
+        if (request.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         if (request.find("<instructions>")!=std::string_view::npos) {
             ++rewrites; return fx::rewriteReply(draft.toStdString());
         }
@@ -1369,6 +1382,9 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     controller.setAmbientModeEnabled(true);
     int modelCalls = 0;
     controller.setTransportOverrideForTesting([&](std::string_view request) -> Result<std::string> {
+        if (request.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         ++modelCalls;
         if (request.find("<instructions>") != std::string_view::npos) return fx::rewriteReply(kRewritten.toStdString());
         return std::string(R"({"status":"options_generated","choice_groups":[],"assumptions":[],"missing_decisions":[{"question":"Which performance goal should take priority?","blocking":true}],"conflicts":[],"clarification_question":""})");
@@ -1502,6 +1518,9 @@ void testManualRemainderCanFinishAndGeneratePreview() {
        {"label":"Input validation","why_material":"Input safety","evidence":["safer"]}]}],
       "assumptions":[],"missing_decisions":[{"question":"Which interpretation should be final?","blocking":true}],"conflicts":[],"clarification_question":""})";
     controller.setTransportOverrideForTesting([&](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         if (prompt.find("<instructions>") != std::string_view::npos) {
             ++rewriteCalls;
             return fx::rewriteReply("Reduce latency, binary size, and memory errors.");
@@ -1589,6 +1608,42 @@ void testForbiddenColorOptionIsBlockedInUiAndController() {
 }
 } // namespace
 
+void testInspectModeVisualInspector() {
+    QSettings().clear();
+    HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("hostController"), &controller);
+    engine.load(QUrl(QStringLiteral("qrc:/shell/FloatingCard.qml")));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    auto* card = window->findChild<QQuickItem*>(QStringLiteral("auditInspectorCard"));
+    auto* badge = window->findChild<QQuickItem*>(QStringLiteral("hudModeBadge"));
+    auto* modeLabel = window->findChild<QQuickItem*>(QStringLiteral("hudModeLabel"));
+    ROCLINT_CHECK(card && badge && modeLabel);
+
+    // In auto mode without audit failure, inspector card is hidden
+    ROCLINT_CHECK(!controller.isInspectMode());
+    ROCLINT_CHECK(!card->isVisible());
+    ROCLINT_CHECK(!badge->isVisible());
+
+    // Switch to inspect mode: badge and inspector card appear immediately
+    controller.setAssistanceMode(QStringLiteral("inspect"));
+    QTest::qWait(50);
+    ROCLINT_CHECK(controller.isInspectMode());
+    ROCLINT_CHECK(card->isVisible());
+    ROCLINT_CHECK(card->property("isExpanded").toBool());
+    ROCLINT_CHECK(badge->isVisible());
+    ROCLINT_CHECK(modeLabel->property("text").toString() == QStringLiteral("/INSPECT"));
+
+    // Switch back to auto mode: inspector card hides cleanly
+    controller.setAssistanceMode(QStringLiteral("auto"));
+    QTest::qWait(50);
+    ROCLINT_CHECK(!controller.isInspectMode());
+    ROCLINT_CHECK(!card->isVisible());
+    std::cout << "  [PASS] Inspect mode visual inspector and HUD badge react accurately.\n";
+}
+
 int main(int argc, char* argv[]) {
     // Opt in to native platform window/focus verification without changing the CI default.
     if (!qEnvironmentVariableIsSet("ROCLINT_NATIVE_UI_TEST")) {
@@ -1668,6 +1723,7 @@ int main(int argc, char* argv[]) {
     testAutoAnalysisResumesAfterDelivery();
     testManualRemainderCanFinishAndGeneratePreview();
     testForbiddenColorOptionIsBlockedInUiAndController();
+    testInspectModeVisualInspector();
     ROCLINT_CHECK(!QTest::currentTestFailed());
     std::cout << "[Product Alignment] All tests PASSED.\n";
     return 0;

@@ -145,6 +145,7 @@ Window {
     property alias reducedMotion: appearance.reducedMotion
     component HudButton: RocButton { currentTheme: rootWindow.currentTheme; reduceMotion: rootWindow.reducedMotion }
     property bool showWorkspaceOptions: false
+    property bool inspectPanelExplicitOpen: false
     property bool rewriteAfterReview: false
     property string rewriteDraft: ""
     readonly property color bgColor: rocPalette.background
@@ -651,6 +652,8 @@ Window {
                         color: rocPalette.surface
                         border.color: rocPalette.focus
                         border.width: 1
+                        Accessible.role: Accessible.Button
+                        Accessible.name: qsTr("Assistance mode %1").arg(rootWindow.hc ? hostController.assistanceMode : "")
                         Text {
                             id: modeLabel; objectName: "hudModeLabel"
                             anchors.fill: parent; anchors.margins: 4
@@ -658,6 +661,22 @@ Window {
                             font.family: rootWindow.monoFont; font.pixelSize: 10; font.bold: true
                             color: rocPalette.focus
                             verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignHCenter
+                        }
+                        MouseArea {
+                            id: modeBadgeMouse
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            hoverEnabled: true
+                            onClicked: {
+                                if (rootWindow.hc) {
+                                    if (hostController.isInspectMode) {
+                                        rootWindow.inspectPanelExplicitOpen = !rootWindow.inspectPanelExplicitOpen;
+                                    } else {
+                                        hostController.setAssistanceMode("inspect");
+                                        rootWindow.inspectPanelExplicitOpen = true;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -737,6 +756,12 @@ Window {
                                             promptInput.text = modelData.cmd + " ";
                                             promptInput.cursorPosition = promptInput.text.length;
                                             promptInput.forceActiveFocus();
+                                            if (rootWindow.hc) {
+                                                hostController.setAssistanceMode(modelData.cmd.substring(1));
+                                                if (modelData.cmd === "/inspect") {
+                                                    rootWindow.inspectPanelExplicitOpen = true;
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -841,6 +866,7 @@ Window {
                             currentTheme: rootWindow.currentTheme
                             viewportHeight: contentScroll.height
                             reducedMotion: rootWindow.reducedMotion
+                            inspectPanelExplicitOpen: rootWindow.inspectPanelExplicitOpen
                             draftAvailable: promptInput.text.trim().length > 0
                             onReviewRequested: rootWindow.analyzeNow()
                             onRewriteRequested: rootWindow.requestFullRewrite()

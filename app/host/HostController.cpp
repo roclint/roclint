@@ -2552,7 +2552,13 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
     auditReq.constraints = constraints;
 
     bridge::GraniteGoldfishAdapter goldfishAdapter;
-    const auto auditVerdict = goldfishAdapter.audit(auditReq, usesTransportOverride() ? m_transportOverride : nullptr);
+    bridge::GraniteTransport auditTransport = nullptr;
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+    if (usesTransportOverride()) {
+        auditTransport = m_transportOverride;
+    }
+#endif
+    const auto auditVerdict = goldfishAdapter.audit(auditReq, auditTransport);
     m_lastAuditResult = auditVerdict;
 
     if (auditVerdict.outcome == core::ValidationOutcome::Fail) {
