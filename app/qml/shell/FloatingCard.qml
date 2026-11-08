@@ -523,14 +523,15 @@ Window {
                     Item {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
-                        Layout.preferredHeight: 32
+                        Layout.preferredHeight: rootWindow.height <= 260 ? 30 : 40
                         GenerationMeter {
                             anchors.right: parent.right
-                            width: Math.min(185, parent.width)
-                            height: 32
-                            tokensPerSecond: rootWindow.hc && (!rootWindow.generationPending || hostController.isInferring) ? hostController.tokensPerSecond : 0
-                            tokenCount: rootWindow.hc && (!rootWindow.generationPending || hostController.isInferring) ? hostController.generationTokens : 0
+                            width: Math.min(250, parent.width)
+                            height: rootWindow.height <= 260 ? 30 : 40
+                            tokensPerSecond: rootWindow.hc ? hostController.tokensPerSecond : 0
+                            tokenCount: rootWindow.hc ? hostController.generationTokens : 0
                             processing: rootWindow.visible && rootWindow.hc && (rootWindow.generationPending || hostController.isInferring)
+                            preparing: rootWindow.generationPending && !hostController.isInferring
                             metricsAvailable: rootWindow.hc && hostController.nativeGraniteSelected
                             currentTheme: rootWindow.currentTheme
                             reducedMotion: rootWindow.reducedMotion
