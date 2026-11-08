@@ -140,6 +140,26 @@ struct GroundedPromptContext {
 // gestures; every mutation goes through a version-checked command below.
 class HostController : public QObject {
     Q_OBJECT
+
+public:
+    enum class AssistanceMode : quint8 {
+        Auto,
+        Tech,
+        Create,
+        Strict,
+        Inspect,
+        Quiet
+    };
+    Q_ENUM(AssistanceMode)
+
+    struct ParsedCommand {
+        AssistanceMode mode{AssistanceMode::Auto};
+        QString cleanText{};
+        bool hasCommand{false};
+    };
+
+    Q_PROPERTY(QString assistanceMode READ assistanceMode WRITE setAssistanceMode NOTIFY assistanceModeChanged)
+    Q_PROPERTY(bool isInspectMode READ isInspectMode NOTIFY assistanceModeChanged)
     Q_PROPERTY(bool isCardVisible READ isCardVisible NOTIFY cardVisibilityChanged)
     Q_PROPERTY(bool isDashboardVisible READ isDashboardVisible NOTIFY dashboardVisibilityChanged)
     Q_PROPERTY(QString hostStateString READ hostStateString NOTIFY hostStateChanged)
@@ -364,6 +384,12 @@ public:
     [[nodiscard]] QString confirmedIntentSummary() const;
     [[nodiscard]] QVariantList confirmedItems() const;
     [[nodiscard]] QStringList unresolvedItems() const;
+    [[nodiscard]] QString assistanceMode() const;
+    [[nodiscard]] bool isInspectMode() const noexcept;
+    Q_INVOKABLE void setAssistanceMode(const QString& mode);
+    void applyAssistanceMode(AssistanceMode mode);
+    [[nodiscard]] static ParsedCommand parseCommandPrefix(QString text);
+
     [[nodiscard]] QString rewriteProfile() const { return m_rewriteProfile; }
     [[nodiscard]] QVariantList availableRewriteProfiles() const;
     [[nodiscard]] bool isRewriteEnabled() const;
@@ -632,6 +658,7 @@ signals:
     void hideDashboardRequested();
     void quitRequested();
     void stateVersionChanged();
+    void assistanceModeChanged();
     void lastCopiedTextChanged();
     void lastErrorChanged();
     void shortcutWarningChanged();
@@ -1001,6 +1028,7 @@ private:
     std::optional<PipelineTicket> m_promptTriageLoad;
     std::optional<core::analysis::PromptTriage> m_promptTriage;
     core::analysis::ReviewTrigger m_reviewTrigger{core::analysis::ReviewTrigger::Automatic};
+    AssistanceMode m_assistanceMode{AssistanceMode::Auto};
     core::analysis::PromptTriageRoute m_promptTriageLastRoute{core::analysis::PromptTriageRoute::Original};
     std::shared_ptr<AnalysisGroup> m_routedAnalysisGroup;
     QString m_recommendedOption;

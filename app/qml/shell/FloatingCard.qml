@@ -642,6 +642,24 @@ Window {
                             verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
                         }
                     }
+                    Rectangle {
+                        id: hudModeBadge
+                        objectName: "hudModeBadge"
+                        visible: rootWindow.hc && hostController.assistanceMode !== "auto"
+                        implicitWidth: modeLabel.implicitWidth + 14
+                        implicitHeight: 23; radius: 6
+                        color: rocPalette.surface
+                        border.color: rocPalette.focus
+                        border.width: 1
+                        Text {
+                            id: modeLabel; objectName: "hudModeLabel"
+                            anchors.fill: parent; anchors.margins: 4
+                            text: "/" + (rootWindow.hc ? hostController.assistanceMode.toUpperCase() : "")
+                            font.family: rootWindow.monoFont; font.pixelSize: 10; font.bold: true
+                            color: rocPalette.focus
+                            verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignHCenter
+                        }
+                    }
                 }
 
                 Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: rootWindow.borderColor }
@@ -676,6 +694,54 @@ Window {
                                 color: rootWindow.fgColor; wrapMode: Text.WordWrap
                             }
                         }
+                        RowLayout {
+                            id: commandPaletteRow
+                            visible: rootWindow.showPromptEditor && promptInput.text.startsWith("/") && !promptInput.text.includes(" ")
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Repeater {
+                                model: [
+                                    { cmd: "/auto", desc: "Auto" },
+                                    { cmd: "/tech", desc: "Tech" },
+                                    { cmd: "/create", desc: "Create" },
+                                    { cmd: "/strict", desc: "Strict" },
+                                    { cmd: "/inspect", desc: "Inspect" },
+                                    { cmd: "/quiet", desc: "Quiet" }
+                                ]
+                                delegate: Rectangle {
+                                    readonly property bool matches: modelData.cmd.startsWith(promptInput.text.toLowerCase())
+                                    visible: matches
+                                    implicitWidth: cmdText.implicitWidth + 14
+                                    implicitHeight: 22
+                                    radius: 6
+                                    color: pillArea.containsMouse ? rocPalette.surface : rocPalette.inset
+                                    border.color: promptInput.text.toLowerCase() === modelData.cmd ? rocPalette.focus : rootWindow.borderColor
+                                    border.width: 1
+
+                                    Text {
+                                        id: cmdText
+                                        anchors.centerIn: parent
+                                        text: modelData.cmd
+                                        font.family: rootWindow.monoFont
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                        color: rootWindow.fgColor
+                                    }
+                                    MouseArea {
+                                        id: pillArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            promptInput.text = modelData.cmd + " ";
+                                            promptInput.cursorPosition = promptInput.text.length;
+                                            promptInput.forceActiveFocus();
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         Rectangle {
                             visible: rootWindow.showPromptEditor
                             Layout.fillWidth: true
@@ -701,6 +767,20 @@ Window {
                                     placeholderText: qsTr("Describe the change you want to make.\nKeep the details that matter to you.")
                                     placeholderTextColor: rootWindow.mutedTextColor
                                     padding: 0
+                                    Keys.onTabPressed: (event) => {
+                                        if (text.startsWith("/") && !text.includes(" ")) {
+                                            const cmds = ["/auto", "/tech", "/create", "/strict", "/inspect", "/quiet"];
+                                            for (let i = 0; i < cmds.length; ++i) {
+                                                if (cmds[i].startsWith(text.toLowerCase())) {
+                                                    text = cmds[i] + " ";
+                                                    cursorPosition = text.length;
+                                                    event.accepted = true;
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                        event.accepted = false;
+                                    }
                                     onActiveFocusChanged: if (activeFocus) {
                                         rootWindow.requestActivate();
                                         if (rootWindow.hc) hostController.pauseAmbientFollowing();

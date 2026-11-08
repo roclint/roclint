@@ -51,6 +51,7 @@ set(ROCLINT_CORE_SOURCES
     src/bridge/GraniteAdapter.cpp
     src/bridge/S1TriageAdapter.cpp
     src/bridge/GraniteRewriteAdapter.cpp
+    src/bridge/GraniteGoldfishAdapter.cpp
     src/rewrite/RewriteProfile.cpp
     src/rewrite/RewriteProposal.cpp
     src/rewrite/RewriteValidator.cpp
@@ -654,6 +655,7 @@ if(BUILD_TESTING)
     roclint_add_test(roclint_jev_checkpoint        tests/analysis/test_jev_checkpoint.cpp            roclint_core_testing)
     roclint_add_test(roclint_granite_adapter       tests/bridge/test_granite_adapter.cpp             roclint_core_testing)
     roclint_add_test(roclint_s1_triage_adapter     tests/bridge/test_s1_triage_adapter.cpp           roclint_core_testing)
+    roclint_add_test(roclint_granite_goldfish_adapter tests/bridge/test_granite_goldfish_adapter.cpp roclint_core_testing)
     roclint_add_test(roclint_intervention_state_machine tests/intent/testInterventionStateMachine.cpp roclint_core_testing)
     roclint_add_test(roclint_clarification_checkpoint tests/intent/test_clarification_checkpoint.cpp roclint_core_testing)
     roclint_add_test(roclint_confirmed_intent      tests/intent/testConfirmedIntent.cpp              roclint_core_testing)

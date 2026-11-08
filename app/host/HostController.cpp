@@ -833,6 +833,11 @@ void HostController::pauseAmbientFollowing() {
 
 
 AsyncTask<core::Status> HostController::commitPromptOperation(QString text, quint64 expectedVersion) {
+        const auto parsedCmd = parseCommandPrefix(text);
+        if (parsedCmd.hasCommand) {
+            applyAssistanceMode(parsedCmd.mode);
+            text = parsedCmd.cleanText;
+        }
 
         const std::string canonical = core::normalizeLineEndings(ss(text));
         if (isBlank(canonical)) {
@@ -890,7 +895,9 @@ void HostController::invalidateDownstreamPipeline() {
     m_promptTriageLoad.reset();
     if (m_cancelWorkspaceContext) m_cancelWorkspaceContext();
     m_promptTriage.reset();
-    m_reviewTrigger = analysis::ReviewTrigger::Automatic;
+    m_reviewTrigger = (m_assistanceMode == AssistanceMode::Strict)
+        ? analysis::ReviewTrigger::ExplicitReview
+        : analysis::ReviewTrigger::Automatic;
     if (!m_recommendedOption.isEmpty() || m_recommendedConfidence > 0.0) {
         m_recommendedOption.clear();
         m_recommendedConfidence = 0.0;
@@ -1173,6 +1180,14 @@ AsyncTask<core::Status> HostController::cancelAnalysisOperation(quint64 expected
 }
 
 AsyncTask<core::Status> HostController::analyzePromptOperation(QString text, quint64 expectedVersion, analysis::ReviewTrigger trigger) {
+        const auto parsedCmd = parseCommandPrefix(text);
+        if (parsedCmd.hasCommand) {
+            applyAssistanceMode(parsedCmd.mode);
+            text = parsedCmd.cleanText;
+            if (parsedCmd.mode == AssistanceMode::Strict) {
+                trigger = analysis::ReviewTrigger::ExplicitReview;
+            }
+        }
 
         const std::string canonical = core::normalizeLineEndings(ss(text));
         if (isBlank(canonical)) {
@@ -4747,6 +4762,91 @@ quint64 HostController::submitCustomIntent(QString customText, quint64 expectedV
 
 quint64 HostController::confirmChoice(QString alternativeId, quint64 expectedVersion) {
     return enqueueStorageCommand("confirmChoice", [=, this]() { return confirmChoiceOperation(alternativeId, expectedVersion); });
+}
+
+HostController::ParsedCommand HostController::parseCommandPrefix(QString text) {
+    const QString trimmed = text.trimmed();
+    if (!trimmed.startsWith(QLatin1Char('/'))) {
+        return {AssistanceMode::Auto, text, false};
+    }
+
+    int firstSpace = -1;
+    for (int i = 0; i < trimmed.size(); ++i) {
+        if (trimmed.at(i).isSpace()) {
+            firstSpace = i;
+            break;
+        }
+    }
+
+    const QString cmd = (firstSpace == -1) ? trimmed.toLower() : trimmed.left(firstSpace).toLower();
+    const QString rest = (firstSpace == -1) ? QString{} : trimmed.mid(firstSpace).trimmed();
+
+    if (cmd == QStringLiteral("/auto")) {
+        return {AssistanceMode::Auto, rest, true};
+    } else if (cmd == QStringLiteral("/tech")) {
+        return {AssistanceMode::Tech, rest, true};
+    } else if (cmd == QStringLiteral("/create")) {
+        return {AssistanceMode::Create, rest, true};
+    } else if (cmd == QStringLiteral("/strict")) {
+        return {AssistanceMode::Strict, rest, true};
+    } else if (cmd == QStringLiteral("/inspect")) {
+        return {AssistanceMode::Inspect, rest, true};
+    } else if (cmd == QStringLiteral("/quiet")) {
+        return {AssistanceMode::Quiet, rest, true};
+    }
+
+    return {AssistanceMode::Auto, text, false};
+}
+
+void HostController::applyAssistanceMode(AssistanceMode mode) {
+    if (m_assistanceMode == mode) return;
+    m_assistanceMode = mode;
+    switch (mode) {
+        case AssistanceMode::Auto:
+        case AssistanceMode::Tech:
+        case AssistanceMode::Create:
+        case AssistanceMode::Inspect:
+        case AssistanceMode::Quiet:
+            m_reviewTrigger = analysis::ReviewTrigger::Automatic;
+            break;
+        case AssistanceMode::Strict:
+            m_reviewTrigger = analysis::ReviewTrigger::ExplicitReview;
+            break;
+    }
+    emit assistanceModeChanged();
+}
+
+QString HostController::assistanceMode() const {
+    switch (m_assistanceMode) {
+        case AssistanceMode::Auto: return QStringLiteral("auto");
+        case AssistanceMode::Tech: return QStringLiteral("tech");
+        case AssistanceMode::Create: return QStringLiteral("create");
+        case AssistanceMode::Strict: return QStringLiteral("strict");
+        case AssistanceMode::Inspect: return QStringLiteral("inspect");
+        case AssistanceMode::Quiet: return QStringLiteral("quiet");
+    }
+    return QStringLiteral("auto");
+}
+
+bool HostController::isInspectMode() const noexcept {
+    return m_assistanceMode == AssistanceMode::Inspect;
+}
+
+void HostController::setAssistanceMode(const QString& mode) {
+    const QString lower = mode.trimmed().toLower();
+    if (lower == QStringLiteral("auto") || lower == QStringLiteral("/auto")) {
+        applyAssistanceMode(AssistanceMode::Auto);
+    } else if (lower == QStringLiteral("tech") || lower == QStringLiteral("/tech")) {
+        applyAssistanceMode(AssistanceMode::Tech);
+    } else if (lower == QStringLiteral("create") || lower == QStringLiteral("/create")) {
+        applyAssistanceMode(AssistanceMode::Create);
+    } else if (lower == QStringLiteral("strict") || lower == QStringLiteral("/strict")) {
+        applyAssistanceMode(AssistanceMode::Strict);
+    } else if (lower == QStringLiteral("inspect") || lower == QStringLiteral("/inspect")) {
+        applyAssistanceMode(AssistanceMode::Inspect);
+    } else if (lower == QStringLiteral("quiet") || lower == QStringLiteral("/quiet")) {
+        applyAssistanceMode(AssistanceMode::Quiet);
+    }
 }
 
 quint64 HostController::analyzePrompt(QString text, quint64 expectedVersion) {

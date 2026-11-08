@@ -866,6 +866,75 @@ void testStrictNegativeGuardrailsPassThrough() {
     std::cout << "  [PASS] Strict negative guardrails on affirmative tasks pass through cleanly.\n";
 }
 
+void testCommandPaletteAndAssistanceModes() {
+    // 1. Static command prefix parsing
+    {
+        auto r1 = HostController::parseCommandPrefix(QStringLiteral("/tech Render packet forwarding"));
+        ROCLINT_CHECK(r1.hasCommand);
+        ROCLINT_CHECK(r1.mode == HostController::AssistanceMode::Tech);
+        ROCLINT_CHECK(r1.cleanText == QStringLiteral("Render packet forwarding"));
+
+        auto r2 = HostController::parseCommandPrefix(QStringLiteral("/STRICT  Refactor auth logic "));
+        ROCLINT_CHECK(r2.hasCommand);
+        ROCLINT_CHECK(r2.mode == HostController::AssistanceMode::Strict);
+        ROCLINT_CHECK(r2.cleanText == QStringLiteral("Refactor auth logic"));
+
+        auto r3 = HostController::parseCommandPrefix(QStringLiteral("/create"));
+        ROCLINT_CHECK(r3.hasCommand);
+        ROCLINT_CHECK(r3.mode == HostController::AssistanceMode::Create);
+        ROCLINT_CHECK(r3.cleanText.isEmpty());
+
+        auto r4 = HostController::parseCommandPrefix(QStringLiteral("/inspect Show AST symbols"));
+        ROCLINT_CHECK(r4.hasCommand);
+        ROCLINT_CHECK(r4.mode == HostController::AssistanceMode::Inspect);
+        ROCLINT_CHECK(r4.cleanText == QStringLiteral("Show AST symbols"));
+
+        auto r5 = HostController::parseCommandPrefix(QStringLiteral("/quiet Do minimal check"));
+        ROCLINT_CHECK(r5.hasCommand);
+        ROCLINT_CHECK(r5.mode == HostController::AssistanceMode::Quiet);
+        ROCLINT_CHECK(r5.cleanText == QStringLiteral("Do minimal check"));
+
+        auto r6 = HostController::parseCommandPrefix(QStringLiteral("/auto Normal prompt"));
+        ROCLINT_CHECK(r6.hasCommand);
+        ROCLINT_CHECK(r6.mode == HostController::AssistanceMode::Auto);
+        ROCLINT_CHECK(r6.cleanText == QStringLiteral("Normal prompt"));
+
+        // Non-command words starting with slash or normal text
+        auto r7 = HostController::parseCommandPrefix(QStringLiteral("/technicality is not a command"));
+        ROCLINT_CHECK(!r7.hasCommand);
+        ROCLINT_CHECK(r7.cleanText == QStringLiteral("/technicality is not a command"));
+
+        auto r8 = HostController::parseCommandPrefix(QStringLiteral("Standard prompt without prefix"));
+        ROCLINT_CHECK(!r8.hasCommand);
+        ROCLINT_CHECK(r8.cleanText == QStringLiteral("Standard prompt without prefix"));
+    }
+
+    // 2. Integration with HostController session dispatch
+    {
+        HostController c(QStringLiteral(":memory:"));
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        ROCLINT_CHECK(c.assistanceMode() == QStringLiteral("auto"));
+        ROCLINT_CHECK(!c.isInspectMode());
+
+        // Commit prompt with /strict prefix
+        const QString strictPrompt = QStringLiteral("/strict Refactor database pool without altering schema");
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(strictPrompt, 0)));
+        ROCLINT_CHECK(c.assistanceMode() == QStringLiteral("strict"));
+        ROCLINT_CHECK(c.currentRevisionText() == QStringLiteral("Refactor database pool without altering schema"));
+
+        // Switch to /inspect
+        c.setAssistanceMode(QStringLiteral("inspect"));
+        ROCLINT_CHECK(c.assistanceMode() == QStringLiteral("inspect"));
+        ROCLINT_CHECK(c.isInspectMode());
+
+        // Switch back to /auto
+        c.setAssistanceMode(QStringLiteral("auto"));
+        ROCLINT_CHECK(c.assistanceMode() == QStringLiteral("auto"));
+        ROCLINT_CHECK(!c.isInspectMode());
+    }
+    std::cout << "  [PASS] Command palette prefix detection and assistance modes work accurately.\n";
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -893,6 +962,7 @@ int main(int argc, char* argv[]) {
     testSubmitClarificationDeferral();
     testChoicePolarityUnderRuleConflict();
     testStrictNegativeGuardrailsPassThrough();
+    testCommandPaletteAndAssistanceModes();
     std::cout << "[Test Host Controller] All tests PASSED.\n";
     return 0;
 }
