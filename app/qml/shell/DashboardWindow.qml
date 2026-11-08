@@ -270,7 +270,13 @@ Window {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: dashboardWindow.showMinimized()
+                            onClicked: {
+                                if (dashboardWindow.isMac) {
+                                    dashboardWindow.dismissDashboard();
+                                } else {
+                                    dashboardWindow.showMinimized();
+                                }
+                            }
                         }
                     }
 

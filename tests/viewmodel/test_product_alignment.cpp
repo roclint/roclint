@@ -909,6 +909,20 @@ void testHudPresentationSurvivesDraftAndDelivery() {
     window->showNormal();
     ROCLINT_CHECK(editor->property("text").toString() == localDraft && window->property("isDetailedExpanded").toBool());
 
+    auto* minButton = window->findChild<QQuickItem*>("minButton");
+    ROCLINT_CHECK(minButton != nullptr);
+    ROCLINT_CHECK(QMetaObject::invokeMethod(minButton, "clicked"));
+#if defined(Q_OS_MACOS)
+    ROCLINT_CHECK(!controller.isCardVisible() && !window->isVisible());
+    controller.showCard();
+    ROCLINT_CHECK(controller.isCardVisible() && window->isVisible());
+    ROCLINT_CHECK(editor->property("text").toString() == localDraft && window->property("isDetailedExpanded").toBool());
+#else
+    QTRY_COMPARE(window->visibility(), QWindow::Minimized);
+    window->showNormal();
+    ROCLINT_CHECK(editor->property("text").toString() == localDraft && window->property("isDetailedExpanded").toBool());
+#endif
+
     // Returning to the source app must not implicitly dismiss the HUD.
     window->requestActivate(); QTRY_VERIFY(window->isActive());
     QQuickWindow other; other.resize(200, 100); other.show(); other.requestActivate();

@@ -587,7 +587,13 @@ Window {
                         HudButton {
                             objectName: "minButton"
                             compact: true; quiet: true; iconName: "minus"; tip: qsTr("Minimize")
-                            onClicked: rootWindow.showMinimized()
+                            onClicked: {
+                                if (rootWindow.isMac) {
+                                    if (rootWindow.hc) hostController.hideCard(); else rootWindow.hide();
+                                } else {
+                                    rootWindow.showMinimized();
+                                }
+                            }
                         }
                         HudButton {
                             objectName: "closeButton"
