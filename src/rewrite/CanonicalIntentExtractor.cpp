@@ -111,7 +111,7 @@ bool isWordChar(char character) {
     return std::isalnum(value) != 0 || character == '_' || character == '-';
 }
 
-std::vector<std::string> words(std::string_view text) {
+[[maybe_unused]] std::vector<std::string> words(std::string_view text) {
     std::vector<std::string> result;
     std::string current;
     for (const char character : text) {
@@ -141,7 +141,7 @@ std::string cleanTarget(std::string_view text) {
     return trim(value);
 }
 
-std::size_t findPhrase(const std::string& lowerText, std::string_view phrase) {
+[[maybe_unused]] std::size_t findPhrase(const std::string& lowerText, std::string_view phrase) {
     return lowerText.find(phrase);
 }
 

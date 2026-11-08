@@ -1312,6 +1312,7 @@ void testGenerationMeterUsesMeasuredProgress() {
         if (wait>0) QTest::qWait(wait);
         savePreview(window,QStringLiteral("pixel-wave-burst-%1.png").arg(i));
     }
+    QTRY_VERIFY_WITH_TIMEOUT(!meter->property("recentActivity").toBool(), 1000);
     ROCLINT_CHECK(!meter->property("recentActivity").toBool());
     std::cout << "  [PASS] Reference pixel wave preserves sub-frame bursts for 1.8s + 0.7s fade, throttles rates, labels completion, and respects reduced motion.\n";
 }

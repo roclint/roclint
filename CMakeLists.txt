@@ -235,6 +235,23 @@ if(BUILD_DESKTOP)
             else()
                 message(WARNING "windeployqt was not found; run start_roclint.bat to fall back to the Qt bin directory on PATH.")
             endif()
+        elseif(APPLE AND ROCLINT_DEPLOY_QT)
+            get_target_property(_roclint_qt_core_location Qt6::Core IMPORTED_LOCATION_RELEASE)
+            if(NOT _roclint_qt_core_location)
+                get_target_property(_roclint_qt_core_location Qt6::Core IMPORTED_LOCATION)
+            endif()
+            if(_roclint_qt_core_location)
+                get_filename_component(_roclint_qt_bin "${_roclint_qt_core_location}" DIRECTORY)
+                find_program(MACDEPLOYQT_EXECUTABLE NAMES macdeployqt HINTS "${_roclint_qt_bin}" /opt/homebrew/opt/qt/bin /usr/local/opt/qt/bin NO_DEFAULT_PATH)
+            endif()
+            if(NOT MACDEPLOYQT_EXECUTABLE)
+                find_program(MACDEPLOYQT_EXECUTABLE NAMES macdeployqt HINTS /opt/homebrew/opt/qt/bin /usr/local/opt/qt/bin)
+            endif()
+            if(MACDEPLOYQT_EXECUTABLE)
+                message(STATUS "macOS Qt deployment enabled: ${MACDEPLOYQT_EXECUTABLE}")
+            else()
+                message(WARNING "macdeployqt was not found; install Qt Tools to enable standalone bundle deployment.")
+            endif()
         endif()
 
         set(CMAKE_AUTOMOC ON)
@@ -330,6 +347,10 @@ if(BUILD_DESKTOP)
         )
         if(WIN32)
             target_sources(roclint_host PRIVATE app/host/roclint.rc)
+        elseif(APPLE)
+            target_sources(roclint_host PRIVATE app/host/Roclint.icns)
+            set_source_files_properties(app/host/Roclint.icns PROPERTIES
+                MACOSX_PACKAGE_LOCATION "Resources")
         endif()
         if(ROCLINT_HOST_OUTPUT_DIRECTORY)
             set_target_properties(roclint_host PROPERTIES
@@ -545,6 +566,27 @@ if(BUILD_DESKTOP)
                     COMMENT "Qt runtime deployment was requested but windeployqt was not found"
                     VERBATIM)
             endif()
+        elseif(APPLE AND ROCLINT_DEPLOY_QT)
+            set(_roclint_deploy_deps roclint_host roclint_runtime_files roclint_workspace_runtime_files)
+            if(TARGET roclint_native_runtime_files)
+                list(APPEND _roclint_deploy_deps roclint_native_runtime_files)
+            endif()
+            if(TARGET roclint_guardian_runtime_files)
+                list(APPEND _roclint_deploy_deps roclint_guardian_runtime_files)
+            endif()
+            if(MACDEPLOYQT_EXECUTABLE)
+                add_custom_target(roclint_deploy_qt ALL
+                    COMMAND ${CMAKE_COMMAND}
+                        "-DMACDEPLOYQT=${MACDEPLOYQT_EXECUTABLE}"
+                        "-DBUNDLE_DIR=$<TARGET_BUNDLE_DIR:roclint_host>"
+                        "-DQML_DIR=${CMAKE_CURRENT_SOURCE_DIR}/app/qml"
+                        "-DEXECUTABLE_1=$<TARGET_FILE_DIR:roclint_host>/runtime/roclint_granite_worker"
+                        "-DEXECUTABLE_2=$<TARGET_FILE_DIR:roclint_host>/runtime/roclint_workspace_helper"
+                        -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/deploy_qt.cmake"
+                    DEPENDS ${_roclint_deploy_deps}
+                    COMMENT "Staging self-contained Qt runtime in $<TARGET_BUNDLE_DIR:roclint_host>"
+                    VERBATIM)
+            endif()
         endif()
 
         # Propagate the resolved accelerator name so HostController::acceleratorName()
@@ -561,6 +603,23 @@ if(BUILD_DESKTOP)
             set_target_properties(roclint_host PROPERTIES
                 WIN32_EXECUTABLE TRUE # Everyday launch is a native GUI app; redirected diagnostics still work.
             )
+        elseif(APPLE)
+            set_target_properties(roclint_host PROPERTIES
+                MACOSX_BUNDLE TRUE
+                OUTPUT_NAME "Roclint"
+                MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/app/host/Info.plist.in"
+                MACOSX_BUNDLE_BUNDLE_NAME "Roclint"
+                MACOSX_BUNDLE_GUI_IDENTIFIER "com.roclint.desktop"
+                MACOSX_BUNDLE_ICON_FILE "Roclint.icns"
+                MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
+                MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+            )
+            add_custom_command(TARGET roclint_host POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E create_symlink
+                    "$<TARGET_FILE:roclint_host>"
+                    "${CMAKE_CURRENT_BINARY_DIR}/roclint_host"
+                COMMENT "Creating roclint_host symlink for CLI compatibility"
+                VERBATIM)
         endif()
     else()
         message(STATUS "Qt6 not found. Skipping roclint_host desktop target. (Install Qt6 and set CMAKE_PREFIX_PATH to enable)")

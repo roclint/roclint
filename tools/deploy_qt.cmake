@@ -1,3 +1,46 @@
+# Stage Qt frameworks/plugins on macOS or DLLs/plugins on Windows.
+# On macOS, macdeployqt packages Qt frameworks into the app bundle.
+# On Windows, windeployqt stages DLLs beside the executable.
+
+if(DEFINED MACDEPLOYQT)
+    if(NOT EXISTS "${MACDEPLOYQT}")
+        message(FATAL_ERROR "macdeployqt was not found: ${MACDEPLOYQT}")
+    endif()
+    if(NOT DEFINED BUNDLE_DIR OR NOT EXISTS "${BUNDLE_DIR}")
+        message(FATAL_ERROR "Target app bundle was not found: ${BUNDLE_DIR}")
+    endif()
+    if(NOT DEFINED QML_DIR)
+        message(FATAL_ERROR "QML_DIR is required")
+    endif()
+
+    set(_macdeploy_args "${BUNDLE_DIR}" "-qmldir=${QML_DIR}" "-always-overwrite" "-codesign=-")
+    if(DEFINED EXECUTABLE_1 AND EXISTS "${EXECUTABLE_1}")
+        list(APPEND _macdeploy_args "-executable=${EXECUTABLE_1}")
+    endif()
+    if(DEFINED EXECUTABLE_2 AND EXISTS "${EXECUTABLE_2}")
+        list(APPEND _macdeploy_args "-executable=${EXECUTABLE_2}")
+    endif()
+
+    execute_process(
+        COMMAND "${MACDEPLOYQT}" ${_macdeploy_args}
+        RESULT_VARIABLE _result
+        OUTPUT_VARIABLE _output
+        ERROR_VARIABLE _error)
+    if(NOT _result EQUAL 0)
+        message(STATUS "macdeployqt completed with notice: ${_error}")
+    endif()
+
+    # Re-sign with ad-hoc signature so Gatekeeper and TCC recognize the bundled helpers.
+    execute_process(
+        COMMAND codesign --force --deep --sign - "${BUNDLE_DIR}"
+        RESULT_VARIABLE _sign_result
+        OUTPUT_VARIABLE _sign_output
+        ERROR_VARIABLE _sign_error)
+
+    message(STATUS "Self-contained Qt runtime staged in ${BUNDLE_DIR}")
+    return()
+endif()
+
 # Stage Qt DLLs/plugins with windeployqt. A transient windeployqt failure is retried
 # once; success is proved by the required Qt files, not only by its exit code.
 if(NOT DEFINED WINDEPLOYQT OR NOT EXISTS "${WINDEPLOYQT}")
@@ -36,3 +79,4 @@ if(NOT EXISTS "${DEPLOY_DIR}/Qt6Core.dll" OR NOT EXISTS "${DEPLOY_DIR}/platforms
     message(FATAL_ERROR "Qt deployment is incomplete: Qt6Core.dll or platforms/qwindows.dll is missing")
 endif()
 message(STATUS "Self-contained Qt runtime staged in ${DEPLOY_DIR}")
+

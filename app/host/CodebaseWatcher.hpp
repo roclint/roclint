@@ -103,6 +103,13 @@ public:
         // well as on failure/overflow so missed creation/deletion events are
         // eventually noticed without a per-keystroke rescan.
         int fallbackRefreshIntervalMs{5 * 60 * 1000};
+
+        Limits()
+            : maximumWatchedDirectories(2048),
+              maximumWatchedFiles(8192),
+              maximumPendingPaths(4096),
+              debounceMs(250),
+              fallbackRefreshIntervalMs(5 * 60 * 1000) {}
     };
 
     explicit CodebaseWatcher(QObject* parent = nullptr);

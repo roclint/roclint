@@ -593,8 +593,9 @@ Window {
                         objectName: "projectSelectorButton"
                         label: rootWindow.activeProject.name
                         iconName: "caret-down"; compact: true; quiet: true
-                        Layout.preferredWidth: Math.min(160, implicitWidth)
-                        Layout.maximumWidth: 160
+                        Layout.preferredWidth: Math.min(rootWindow.width < 500 ? 120 : 160, implicitWidth)
+                        Layout.maximumWidth: rootWindow.width < 500 ? 120 : 160
+                        Layout.minimumWidth: 40
                         clip: true
                         tip: qsTr("Choose workspace and scope")
                         onClicked: {
@@ -607,8 +608,9 @@ Window {
                     Item { Layout.fillWidth: true; Layout.minimumWidth: 0 }
                     Rectangle {
                         objectName: "engineBadge"
-                        Layout.preferredWidth: Math.min(160, runtimeLabel.implicitWidth + 16)
-                        Layout.maximumWidth: rootWindow.width < 500 ? 120 : 160
+                        Layout.preferredWidth: Math.min(rootWindow.width < 500 ? 100 : 160, runtimeLabel.implicitWidth + 16)
+                        Layout.maximumWidth: rootWindow.width < 500 ? 100 : 160
+                        Layout.minimumWidth: 40
                         implicitHeight: 23
                         radius: 6; color: rocPalette.surface
                         Text {
@@ -630,7 +632,9 @@ Window {
                     Rectangle {
                         objectName: "hudStateBadge"
                         implicitWidth: stateLabel.implicitWidth + 16
-                        Layout.maximumWidth: 120
+                        Layout.preferredWidth: Math.min(rootWindow.width < 500 ? 100 : 120, implicitWidth)
+                        Layout.maximumWidth: rootWindow.width < 500 ? 100 : 120
+                        Layout.minimumWidth: 40
                         implicitHeight: 23; radius: 6
                         color: rocPalette.surface
                         Text {

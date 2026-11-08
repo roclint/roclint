@@ -1,4 +1,4 @@
-﻿#include "roclint/storage/AstSymbolExtractor.hpp"
+#include "roclint/storage/AstSymbolExtractor.hpp"
 
 #include "roclint/core/crypto/Sha256.hpp"
 
@@ -1158,7 +1158,7 @@ AstExtractionResult AstSymbolExtractor::extractSymbols(std::string_view sourceCo
         result.recovered = true;
     }
 
-    Extractor extractor{sourceCode, std::string(filePath), {}};
+    Extractor extractor{sourceCode, std::string(filePath), {}, {}};
     extractor.visit(root, {});
     result.parseOk = !result.recovered;
     result.symbols = std::move(extractor.symbols);

@@ -55,7 +55,7 @@ void write(const fs::path& root, std::string_view relative, std::string_view tex
     stream << text;
 }
 
-std::string readFile(const fs::path& path) {
+[[maybe_unused]] std::string readFile(const fs::path& path) {
     std::ifstream stream(path, std::ios::binary);
     return std::string((std::istreambuf_iterator<char>(stream)), std::istreambuf_iterator<char>());
 }
