@@ -220,6 +220,7 @@ public:
     Q_PROPERTY(QVariantList confirmedItems READ confirmedItems NOTIFY intentChanged)
     Q_PROPERTY(QStringList unresolvedItems READ unresolvedItems NOTIFY intentChanged)
     Q_PROPERTY(QString auditOutcome READ auditOutcome NOTIFY rewriteProposalChanged)
+    Q_PROPERTY(QString auditExecutionStatus READ auditExecutionStatus NOTIFY rewriteProposalChanged)
     Q_PROPERTY(QVariantList auditViolations READ auditViolations NOTIFY rewriteProposalChanged)
     Q_PROPERTY(QVariantList auditUnresolved READ auditUnresolved NOTIFY rewriteProposalChanged)
     Q_PROPERTY(QString rewriteProfile READ rewriteProfile NOTIFY rewriteProfileChanged)
@@ -406,6 +407,7 @@ public:
     [[nodiscard]] static ParsedCommand parseCommandPrefix(QString text);
 
     [[nodiscard]] QString auditOutcome() const;
+    [[nodiscard]] QString auditExecutionStatus() const;
     [[nodiscard]] QVariantList auditViolations() const;
     [[nodiscard]] QVariantList auditUnresolved() const;
     [[nodiscard]] const std::optional<core::ValidationResult>& lastAuditResult() const noexcept { return m_lastAuditResult; }
@@ -780,6 +782,7 @@ private:
         std::uint64_t workspaceEpoch{0};
         core::analysis::ReviewTrigger reviewTrigger{core::analysis::ReviewTrigger::Automatic};
         std::string attemptId;
+        std::string intentId;
         std::string configuration;
         bridge::GraniteModelInfo model;
         std::shared_ptr<AnalysisGroup> analysisGroup;
@@ -899,6 +902,13 @@ private:
                            core::Result<core::rewrite::RewriteProposal> result,
                            GroundedPromptContext grounding, bool evidenceCurrent,
                            core::ValidationResult auditVerdict = core::ValidationResult{});
+    void onAlternativeAuditFinished(PipelineTicket ticket, int index, std::string candidateHash,
+                                   std::uint64_t prevVersion, core::ValidationResult auditVerdict);
+    AsyncTask<core::Status> persistSelectedAlternativeOperation(PipelineTicket ticket, int index,
+                                                                std::string candidateHash,
+                                                                std::uint64_t prevVersion,
+                                                                core::ValidationResult auditVerdict,
+                                                                core::rewrite::RewriteProposal capturedProposal);
     AsyncTask<void> onHealthFinished(HealthResult result);
     AsyncTask<void> rebuildFromRestore(storage::RestoredSession restored);
 
@@ -1138,6 +1148,7 @@ private:
     std::optional<core::ValidationResult> m_lastAuditResult;
     std::optional<core::rewrite::RewriteProposal> m_currentProposal;
     std::vector<core::rewrite::CreativeAlternative> m_creativeAlternatives{};
+    std::vector<core::AuditExecutionStatus> m_creativeAlternativeAuditExecutionStatuses{};
     int m_selectedAlternativeIndex{0};
     std::set<std::string> m_acknowledgedConstraints;
     std::optional<core::review::ApprovalRecord> m_currentApproval;

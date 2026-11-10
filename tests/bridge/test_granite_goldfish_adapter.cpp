@@ -121,7 +121,8 @@ void testResponseParsing() {
     {
         const std::string json = R"({
             "outcome": "Pass",
-            "violations": [{"constraint_id": "c_breach", "explanation": "Negative boundary violated"}]
+            "violations": [{"constraint_id": "c_breach", "explanation": "Negative boundary violated"}],
+            "unresolved": []
         })";
         auto res = parseGoldfishAuditResponse(json);
         ROCLINT_CHECK(res.ok());
@@ -256,7 +257,8 @@ void testModelSemanticViolationDetected() {
             "outcome": "Fail",
             "violations": [
                 {"constraint_id": "c_empty_inputs", "explanation": "Candidate rewrite treats empty inputs as unsupported, contradicting requirement"}
-            ]
+            ],
+            "unresolved": []
         })");
     };
 
@@ -328,32 +330,307 @@ void testGracefulDegradationOffline() {
         const auto result = adapter.audit(req, nullptr);
         ROCLINT_CHECK(result.outcome == ValidationOutcome::Pass);
         ROCLINT_CHECK(result.violations.empty());
+        ROCLINT_CHECK(result.executionStatus == AuditExecutionStatus::DeterministicOnly);
     }
 
-    // 2. Transport error (model timed out or process crashed)
+    // 2. Transport error (model timed out or process crashed) - F02: must be Unresolved with Unavailable status
     {
         GraniteTransport failingTransport = [](std::string_view) -> Result<std::string> {
             return makeError(ErrorCode::ProviderUnavailable, "Granite runtime offline");
         };
 
         const auto result = adapter.audit(req, failingTransport);
-        // Graceful fallback to deterministic result
-        ROCLINT_CHECK(result.outcome == ValidationOutcome::Pass);
+        ROCLINT_CHECK(result.outcome == ValidationOutcome::Unresolved);
         ROCLINT_CHECK(result.violations.empty());
+        ROCLINT_CHECK(result.executionStatus == AuditExecutionStatus::Unavailable);
+        ROCLINT_CHECK(result.unresolved.size() == 1);
+        ROCLINT_CHECK(result.unresolved[0].constraintId == "goldfish_audit");
     }
 
-    // 3. Unparseable JSON from model
+    // 3. Unparseable JSON from model - F02: Malformed status
     {
         GraniteTransport garbageTransport = [](std::string_view) -> Result<std::string> {
             return std::string("Sorry, I cannot help with that as an AI language model.");
         };
 
         const auto result = adapter.audit(req, garbageTransport);
-        // Preserves deterministic pass, but marks unresolved note regarding model response
         ROCLINT_CHECK(result.outcome == ValidationOutcome::Unresolved);
         ROCLINT_CHECK(result.violations.empty());
+        ROCLINT_CHECK(result.executionStatus == AuditExecutionStatus::Malformed);
         ROCLINT_CHECK(!result.unresolved.empty());
         ROCLINT_CHECK(result.unresolved[0].constraintId == "goldfish_audit");
+    }
+}
+
+void testF01ExplicitOutcomesAndMalformedShapes() {
+    GraniteGoldfishAdapter adapter;
+    GoldfishAuditRequest req;
+    req.originalPrompt = "Refactor Reader::open.";
+    req.candidateRewrite = "Refactor Reader::open.";
+    req.sessionId = "sess_f01";
+
+    // F01: Explicit Fail with empty array remains Fail
+    {
+        auto mock = [](std::string_view) -> Result<std::string> {
+            return std::string(R"({"outcome":"Fail","violations":[],"unresolved":[]})");
+        };
+        const auto res = adapter.audit(req, mock);
+        ROCLINT_CHECK(res.outcome == ValidationOutcome::Fail);
+        ROCLINT_CHECK(res.executionStatus == AuditExecutionStatus::Completed);
+    }
+
+    // F01: Explicit Unresolved with empty array remains Unresolved
+    {
+        auto mock = [](std::string_view) -> Result<std::string> {
+            return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[]})");
+        };
+        const auto res = adapter.audit(req, mock);
+        ROCLINT_CHECK(res.outcome == ValidationOutcome::Unresolved);
+        ROCLINT_CHECK(res.executionStatus == AuditExecutionStatus::Completed);
+    }
+
+    // F01: Malformed JSON shapes rejected
+    {
+        auto p1 = parseGoldfishAuditResponse("{}");
+        ROCLINT_CHECK(!p1.ok());
+
+        auto p2 = parseGoldfishAuditResponse(R"({"outcome":"maybe","violations":[],"unresolved":[]})");
+        ROCLINT_CHECK(!p2.ok());
+    }
+}
+
+void testF04AdvisoryVetoPrevention() {
+    GraniteGoldfishAdapter adapter;
+    GoldfishAuditRequest req;
+    req.originalPrompt = "Draw a plain chart.";
+    req.candidateRewrite = "Draw a plain chart.";
+    req.sessionId = "sess_f04";
+
+    ScopedConstraint advisory;
+    advisory.id = "optional_glow";
+    advisory.rule = "Use glowing particles";
+    advisory.origin = Origin::Model;
+    advisory.derivation = Derivation::Assumed;
+    advisory.enforcement = Enforcement::Advisory;
+
+    req.constraints = {advisory};
+
+    // Model reports violation for Advisory constraint - must NOT veto
+    auto mock = [](std::string_view) -> Result<std::string> {
+        return std::string(R"({"outcome":"Fail","violations":[{"constraint_id":"optional_glow","explanation":"Omitted glow"}],"unresolved":[]})");
+    };
+    const auto res = adapter.audit(req, mock);
+    ROCLINT_CHECK(res.outcome == ValidationOutcome::Pass);
+    ROCLINT_CHECK(res.violations.empty());
+}
+
+void testR06ParserBoundarySchemaValidation() {
+    // 1. Missing violations array
+    {
+        auto p = parseGoldfishAuditResponse(R"({"outcome":"Pass","unresolved":[]})");
+        ROCLINT_CHECK(!p.ok());
+    }
+
+    // 2. Missing unresolved array
+    {
+        auto p = parseGoldfishAuditResponse(R"({"outcome":"Pass","violations":[]})");
+        ROCLINT_CHECK(!p.ok());
+    }
+
+    // 3. Both arrays missing (e.g. {"outcome":"Pass"})
+    {
+        auto p = parseGoldfishAuditResponse(R"({"outcome":"Pass"})");
+        ROCLINT_CHECK(!p.ok());
+    }
+
+    // 4. Empty finding object in violations
+    {
+        auto p = parseGoldfishAuditResponse(R"({"outcome":"Pass","violations":[{}],"unresolved":[]})");
+        ROCLINT_CHECK(!p.ok());
+    }
+
+    // 5. Empty finding object in unresolved
+    {
+        auto p = parseGoldfishAuditResponse(R"({"outcome":"Pass","violations":[],"unresolved":[{}]})");
+        ROCLINT_CHECK(!p.ok());
+    }
+
+    // 6. Wrong field type (non-string constraint_id)
+    {
+        auto p = parseGoldfishAuditResponse(R"({"outcome":"Pass","violations":[{"constraint_id":123,"explanation":"test"}],"unresolved":[]})");
+        ROCLINT_CHECK(!p.ok());
+    }
+
+    // 7. Wrong field type (non-string explanation)
+    {
+        auto p = parseGoldfishAuditResponse(R"({"outcome":"Pass","violations":[{"constraint_id":"c1","explanation":456}],"unresolved":[]})");
+        ROCLINT_CHECK(!p.ok());
+    }
+
+    // 8. Empty constraint_id string
+    {
+        auto p = parseGoldfishAuditResponse(R"({"outcome":"Pass","violations":[{"constraint_id":"","explanation":"test"}],"unresolved":[]})");
+        ROCLINT_CHECK(!p.ok());
+    }
+
+    // 9. Empty explanation string
+    {
+        auto p = parseGoldfishAuditResponse(R"({"outcome":"Pass","violations":[{"constraint_id":"c1","explanation":""}],"unresolved":[]})");
+        ROCLINT_CHECK(!p.ok());
+    }
+
+    // 10. Missing explanation field
+    {
+        auto p = parseGoldfishAuditResponse(R"({"outcome":"Pass","violations":[{"constraint_id":"c1"}],"unresolved":[]})");
+        ROCLINT_CHECK(!p.ok());
+    }
+
+    // 11. Missing constraint_id field
+    {
+        auto p = parseGoldfishAuditResponse(R"({"outcome":"Pass","violations":[{"explanation":"desc"}],"unresolved":[]})");
+        ROCLINT_CHECK(!p.ok());
+    }
+
+    // 12. Non-array violations/unresolved
+    {
+        auto p = parseGoldfishAuditResponse(R"({"outcome":"Pass","violations":"not_array","unresolved":[]})");
+        ROCLINT_CHECK(!p.ok());
+        auto p2 = parseGoldfishAuditResponse(R"({"outcome":"Pass","violations":[],"unresolved":123})");
+        ROCLINT_CHECK(!p2.ok());
+    }
+
+    // 13. End-to-end adapter audit: malformed shapes yield Malformed + Unresolved + goldfish_audit finding
+    {
+        GraniteGoldfishAdapter adapter;
+        GoldfishAuditRequest req;
+        req.originalPrompt = "Refactor Reader::open.";
+        req.candidateRewrite = "Refactor Reader::open.";
+        req.sessionId = "sess_r06";
+
+        // Payloads missing required arrays
+        auto mock1 = [](std::string_view) -> Result<std::string> {
+            return std::string(R"({"outcome":"Pass"})");
+        };
+        const auto res1 = adapter.audit(req, mock1);
+        ROCLINT_CHECK(res1.executionStatus == AuditExecutionStatus::Malformed);
+        ROCLINT_CHECK(res1.outcome == ValidationOutcome::Unresolved);
+        ROCLINT_CHECK(res1.unresolved.size() == 1);
+        ROCLINT_CHECK(res1.unresolved[0].constraintId == "goldfish_audit");
+
+        // Payloads containing empty finding objects
+        auto mock2 = [](std::string_view) -> Result<std::string> {
+            return std::string(R"({"outcome":"Pass","violations":[{}],"unresolved":[]})");
+        };
+        const auto res2 = adapter.audit(req, mock2);
+        ROCLINT_CHECK(res2.executionStatus == AuditExecutionStatus::Malformed);
+        ROCLINT_CHECK(res2.outcome == ValidationOutcome::Unresolved);
+        ROCLINT_CHECK(res2.unresolved.size() == 1);
+        ROCLINT_CHECK(res2.unresolved[0].constraintId == "goldfish_audit");
+    }
+}
+
+void testR05AdvisoryAuthorityAndHonestUncertainty() {
+    GraniteGoldfishAdapter adapter;
+    GoldfishAuditRequest req;
+    req.originalPrompt = "Draw a plain chart.";
+    req.candidateRewrite = "Draw a plain chart.";
+    req.sessionId = "sess_r05";
+
+    ScopedConstraint advisory;
+    advisory.id = "optional_glow";
+    advisory.rule = "Use glowing particles";
+    advisory.origin = Origin::Model;
+    advisory.derivation = Derivation::Assumed;
+    advisory.enforcement = Enforcement::Advisory;
+
+    ScopedConstraint condInactive;
+    condInactive.id = "c_token_rule";
+    condInactive.rule = "Do not touch token validation";
+    condInactive.origin = Origin::User;
+    condInactive.derivation = Derivation::Direct;
+    condInactive.enforcement = Enforcement::Hard;
+    condInactive.polarity = Polarity::Prohibit;
+    condInactive.appliesWhen = "touches_token_validation"; // Inactive for "Draw a plain chart."
+
+    req.constraints = {advisory, condInactive};
+
+    // 1. Advisory-only Unresolved: must NOT block approval -> resolves to Pass with 0 findings
+    {
+        auto mock = [](std::string_view) -> Result<std::string> {
+            return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"optional_glow","explanation":"Cannot verify glow"}]})");
+        };
+        const auto res = adapter.audit(req, mock);
+        ROCLINT_CHECK(res.outcome == ValidationOutcome::Pass);
+        ROCLINT_CHECK(res.violations.empty());
+        ROCLINT_CHECK(res.unresolved.empty());
+        ROCLINT_CHECK(res.executionStatus == AuditExecutionStatus::Completed);
+    }
+
+    // 2. Inactive conditional Unresolved: must NOT block approval -> resolves to Pass
+    {
+        auto mock = [](std::string_view) -> Result<std::string> {
+            return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"c_token_rule","explanation":"Token validation status unknown"}]})");
+        };
+        const auto res = adapter.audit(req, mock);
+        ROCLINT_CHECK(res.outcome == ValidationOutcome::Pass);
+        ROCLINT_CHECK(res.violations.empty());
+        ROCLINT_CHECK(res.unresolved.empty());
+    }
+
+    // 3. Inactive conditional Fail: must NOT block approval -> resolves to Pass
+    {
+        auto mock = [](std::string_view) -> Result<std::string> {
+            return std::string(R"({"outcome":"Fail","violations":[{"constraint_id":"c_token_rule","explanation":"Candidate touched token validation"}],"unresolved":[]})");
+        };
+        const auto res = adapter.audit(req, mock);
+        ROCLINT_CHECK(res.outcome == ValidationOutcome::Pass);
+        ROCLINT_CHECK(res.violations.empty());
+        ROCLINT_CHECK(res.unresolved.empty());
+    }
+
+    // 4. Unexplained Unresolved (totalReported == 0): must preserve honest uncertainty under goldfish_audit
+    {
+        auto mock = [](std::string_view) -> Result<std::string> {
+            return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[]})");
+        };
+        const auto res = adapter.audit(req, mock);
+        ROCLINT_CHECK(res.outcome == ValidationOutcome::Unresolved);
+        ROCLINT_CHECK(res.unresolved.size() == 1);
+        ROCLINT_CHECK(res.unresolved[0].constraintId == "goldfish_audit");
+    }
+
+    // 5. Unexplained Fail (totalReported == 0): must preserve honest fail under goldfish_audit
+    {
+        auto mock = [](std::string_view) -> Result<std::string> {
+            return std::string(R"({"outcome":"Fail","violations":[],"unresolved":[]})");
+        };
+        const auto res = adapter.audit(req, mock);
+        ROCLINT_CHECK(res.outcome == ValidationOutcome::Fail);
+        ROCLINT_CHECK(res.violations.size() == 1);
+        ROCLINT_CHECK(res.violations[0].constraintId == "goldfish_audit");
+    }
+
+    // 6. Unknown constraint ID in violations: demoted to unresolved, preserving unknown ID
+    {
+        auto mock = [](std::string_view) -> Result<std::string> {
+            return std::string(R"({"outcome":"Fail","violations":[{"constraint_id":"c_hallucinated_rule","explanation":"Unknown rule violated"}],"unresolved":[]})");
+        };
+        const auto res = adapter.audit(req, mock);
+        ROCLINT_CHECK(res.outcome == ValidationOutcome::Unresolved);
+        ROCLINT_CHECK(res.violations.empty());
+        ROCLINT_CHECK(res.unresolved.size() == 1);
+        ROCLINT_CHECK(res.unresolved[0].constraintId == "c_hallucinated_rule");
+    }
+
+    // 7. Unknown constraint ID in unresolved: preserved in combined.unresolved
+    {
+        auto mock = [](std::string_view) -> Result<std::string> {
+            return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"c_unknown_rule","explanation":"Cannot verify mystery constraint"}]})");
+        };
+        const auto res = adapter.audit(req, mock);
+        ROCLINT_CHECK(res.outcome == ValidationOutcome::Unresolved);
+        ROCLINT_CHECK(res.unresolved.size() == 1);
+        ROCLINT_CHECK(res.unresolved[0].constraintId == "c_unknown_rule");
     }
 }
 
@@ -368,6 +645,10 @@ int main() {
     testModelSemanticViolationDetected();
     testModelHonestUnknowns();
     testGracefulDegradationOffline();
+    testF01ExplicitOutcomesAndMalformedShapes();
+    testF04AdvisoryVetoPrevention();
+    testR06ParserBoundarySchemaValidation();
+    testR05AdvisoryAuthorityAndHonestUncertainty();
     std::cout << "[PASS] All granite goldfish adapter tests passed successfully.\n";
     return 0;
 }

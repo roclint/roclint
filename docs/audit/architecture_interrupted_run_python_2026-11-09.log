@@ -1,0 +1,32 @@
+.........FF..F..............................................s.................
+======================================================================
+FAIL: test_checkout_line_endings_do_not_change_contract_content (test_check_structure.StructureGuardTests.test_checkout_line_endings_do_not_change_contract_content)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\Stardust\roclint\tools\test_check_structure.py", line 105, in test_checkout_line_endings_do_not_change_contract_content
+    self.assertTrue(self.check()["passed"])
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_current_source_passes (test_check_structure.StructureGuardTests.test_current_source_passes)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\Stardust\roclint\tools\test_check_structure.py", line 40, in test_current_source_passes
+    self.assertTrue(self.check()["passed"])
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_original_content_comparison_normalizes_checkout_line_endings (test_check_structure.StructureGuardTests.test_original_content_comparison_normalizes_checkout_line_endings)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "D:\Stardust\roclint\tools\test_check_structure.py", line 61, in test_original_content_comparison_normalizes_checkout_line_endings
+    self.assertTrue(result["passed"])
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+----------------------------------------------------------------------
+Ran 78 tests in 52.709s
+
+FAILED (failures=3, skipped=1)

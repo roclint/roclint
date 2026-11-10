@@ -50,6 +50,34 @@ FocusScope {
     Component.onCompleted: reviewPresented = hc && hostController.proposalStatus === "READY_FOR_REVIEW"
     property int reviewRefresh: 0
     property var pendingDecisions: ({})
+    Dialog {
+        id: reviewExplanationDialog
+        objectName: "reviewExplanationDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(600, parent ? parent.width - 32 : 600)
+        height: Math.min(420, parent ? parent.height - 32 : 420)
+        title: qsTr("Why this needs review")
+        modal: true
+        standardButtons: Dialog.Close
+        property string explanation: ""
+        property var returnFocusItem: null
+        onClosed: if (returnFocusItem) returnFocusItem.forceActiveFocus(Qt.TabFocusReason)
+        contentItem: ScrollView {
+            objectName: "reviewExplanationViewport"
+            clip: true
+            TextArea {
+                objectName: "reviewExplanationText"
+                text: reviewExplanationDialog.explanation
+                textFormat: TextEdit.PlainText
+                readOnly: true
+                focus: true
+                selectByMouse: true
+                wrapMode: TextEdit.Wrap
+                Accessible.name: qsTr("Full audit explanation")
+            }
+        }
+    }
     Connections {
         target: rootWindow.hc ? hostController : null
         function onStorageCommandFinished(requestId, name, succeeded, errorCode, message) {
@@ -698,18 +726,37 @@ FocusScope {
                                     if (!hostController.acknowledgeConstraint(modelData.id, checked, hostController.stateVersion)) rootWindow.reviewRefresh++;
                                 }
                             }
-                            Text {
-                                id: constraintLabel
-                                objectName: "reviewLabel_" + modelData.id
+                            ColumnLayout {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
-                                textFormat: Text.PlainText
-                                text: (rootWindow.showDiagnostics ? "[" + modelData.status + "] " : "") + modelData.description
-                                    + (modelData.needsReview && modelData.evidence.length ? "\nYour answer: “" + modelData.evidence + "”" : "")
-                                wrapMode: Text.Wrap
-                                font.family: rootWindow.sansFont
-                                font.pixelSize: 14
-                                color: modelData.status === "FAILED" ? rootWindow.errorColor : rootWindow.fgColor
+                                spacing: 4
+                                Text {
+                                    id: constraintLabel
+                                    objectName: "reviewLabel_" + modelData.id
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    textFormat: Text.PlainText
+                                    text: (rootWindow.showDiagnostics ? "[" + modelData.status + "] " : "") + modelData.description
+                                        + (modelData.needsReview && modelData.evidence.length ? "\nYour answer: “" + modelData.evidence + "”" : "")
+                                    wrapMode: Text.Wrap
+                                    maximumLineCount: 4
+                                    elide: Text.ElideRight
+                                    font.family: rootWindow.sansFont
+                                    font.pixelSize: 14
+                                    color: modelData.status === "FAILED" ? rootWindow.errorColor : rootWindow.fgColor
+                                }
+                                ActionButton {
+                                    objectName: "reviewExplanation_" + modelData.id
+                                    readonly property bool hasAuditExplanation: typeof modelData.auditExplanation === "string" && modelData.auditExplanation.length > 0
+                                    visible: hasAuditExplanation || constraintLabel.truncated
+                                    label: hasAuditExplanation ? qsTr("Why review?") : qsTr("Read full requirement")
+                                    onClicked: {
+                                        reviewExplanationDialog.explanation = constraintLabel.text
+                                            + (hasAuditExplanation ? "\n\n" + modelData.auditExplanation : "");
+                                        reviewExplanationDialog.returnFocusItem = constraintCheck;
+                                        reviewExplanationDialog.open();
+                                    }
+                                }
                             }
                         }
                     }
@@ -1017,12 +1064,23 @@ FocusScope {
 
                         // Clean Pass summary
                         Text {
-                            visible: rootWindow.hc && hostController.auditOutcome === "Pass" && hostController.auditViolations.length === 0 && hostController.auditUnresolved.length === 0
+                            visible: rootWindow.hc && hostController.auditOutcome === "Pass" && hostController.auditViolations.length === 0 && hostController.auditUnresolved.length === 0 && hostController.auditExecutionStatus !== "DeterministicOnly"
                             Layout.fillWidth: true
                             text: qsTr("All user constraints and negative boundaries verified compliant by zero-memory audit pass.")
                             font.family: rootWindow.sansFont
                             font.pixelSize: 12
                             color: rootWindow.addedColor
+                            wrapMode: Text.WordWrap
+                        }
+
+                        // Deterministic fallback summary
+                        Text {
+                            visible: rootWindow.hc && hostController.auditOutcome === "Pass" && hostController.auditViolations.length === 0 && hostController.auditUnresolved.length === 0 && hostController.auditExecutionStatus === "DeterministicOnly"
+                            Layout.fillWidth: true
+                            text: qsTr("Verified compliant by deterministic checks only. Model audit is offline; acknowledge the fallback item to approve.")
+                            font.family: rootWindow.sansFont
+                            font.pixelSize: 12
+                            color: rootWindow.warnColor
                             wrapMode: Text.WordWrap
                         }
 

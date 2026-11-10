@@ -1,0 +1,5 @@
+before_restore|audit=Unresolved|can_approve=0|pending=1
+after_restore|audit=|can_approve=1|pending=0|has_proposal=1
+selection_runtime|native=1
+selection_thread|worker_audits=1|gui_audits=1|can_approve=1
+native_selection_no_override|audit=Pass|can_approve=1|gui_audits=1|worker_audits=1

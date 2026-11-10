@@ -20,6 +20,16 @@ const char* toString(ValidationOutcome outcome) noexcept {
     return "Unresolved";
 }
 
+const char* toString(AuditExecutionStatus status) noexcept {
+    switch (status) {
+        case AuditExecutionStatus::Completed: return "Completed";
+        case AuditExecutionStatus::Unavailable: return "Unavailable";
+        case AuditExecutionStatus::Malformed: return "Malformed";
+        case AuditExecutionStatus::DeterministicOnly: return "DeterministicOnly";
+    }
+    return "Completed";
+}
+
 Result<ApplicabilityStatus> parseApplicabilityStatus(std::string_view text) noexcept {
     if (text == "Active") return ApplicabilityStatus::Active;
     if (text == "Inactive") return ApplicabilityStatus::Inactive;
@@ -32,6 +42,14 @@ Result<ValidationOutcome> parseValidationOutcome(std::string_view text) noexcept
     if (text == "Fail") return ValidationOutcome::Fail;
     if (text == "Unresolved") return ValidationOutcome::Unresolved;
     return makeError(ErrorCode::InvalidInput, "Unknown ValidationOutcome: " + std::string(text));
+}
+
+Result<AuditExecutionStatus> parseAuditExecutionStatus(std::string_view text) noexcept {
+    if (text == "Completed") return AuditExecutionStatus::Completed;
+    if (text == "Unavailable") return AuditExecutionStatus::Unavailable;
+    if (text == "Malformed") return AuditExecutionStatus::Malformed;
+    if (text == "DeterministicOnly") return AuditExecutionStatus::DeterministicOnly;
+    return makeError(ErrorCode::InvalidInput, "Unknown AuditExecutionStatus: " + std::string(text));
 }
 
 json::Value toJson(const ValidationFinding& finding) {
@@ -60,6 +78,7 @@ Result<ValidationFinding> validationFindingFromJson(const json::Value& val) {
 json::Value toJson(const ValidationResult& result) {
     auto obj = json::Value::object();
     obj.set("outcome", json::Value::string(toString(result.outcome)));
+    obj.set("execution_status", json::Value::string(toString(result.executionStatus)));
 
     auto violationsArr = json::Value::array();
     for (const auto& finding : result.violations) {
@@ -96,16 +115,23 @@ Result<ValidationResult> validationResultFromJson(const json::Value& val) {
     ValidationResult res;
     res.outcome = outcome.value();
 
+    if (const auto* execVal = val.find("execution_status"); execVal && execVal->isString()) {
+        auto execStatus = parseAuditExecutionStatus(execVal->asString());
+        if (execStatus.ok()) {
+            res.executionStatus = execStatus.value();
+        }
+    }
+
     for (const auto& itemVal : violationsVal->asArray()) {
         auto findingRes = validationFindingFromJson(itemVal);
         if (!findingRes.ok()) return findingRes.error();
-        res.violations.push_back(std::move(findingRes.value()));
+        res.violations.push_back(findingRes.value());
     }
 
     for (const auto& itemVal : unresolvedVal->asArray()) {
         auto findingRes = validationFindingFromJson(itemVal);
         if (!findingRes.ok()) return findingRes.error();
-        res.unresolved.push_back(std::move(findingRes.value()));
+        res.unresolved.push_back(findingRes.value());
     }
 
     return res;

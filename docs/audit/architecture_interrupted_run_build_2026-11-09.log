@@ -1,0 +1,158 @@
+MSBuild version 17.14.10+8b8e13593 for .NET Framework
+
+  Checking File Globs
+  Automatic MOC and UIC for target ggml-base
+  Automatic MOC and UIC for target roclint_workspace_helper
+  Automatic MOC and UIC for target cpp-httplib
+  1>Performing build step for 'vulkan-shaders-gen'
+  Automatic MOC and UIC for target llama-common-base
+  MSBuild version 17.14.10+8b8e13593 for .NET Framework
+
+    vulkan-shaders-gen.vcxproj -> D:\Stardust\roclint\build\native-llama\ggml\src\ggml-vulkan\vulkan-shaders-gen-prefix\src\vulkan-shaders-gen-build\Release\vulkan-shaders-gen.exe
+  Performing install step for 'vulkan-shaders-gen'
+  -- Up-to-date: D:/Stardust/roclint/build/Release/./vulkan-shaders-gen.exe
+  Completed 'vulkan-shaders-gen'
+  llama-common-base.vcxproj -> D:\Stardust\roclint\build\native-llama\common\Release\llama-common-base.lib
+  cpp-httplib.vcxproj -> D:\Stardust\roclint\build\native-llama\vendor\cpp-httplib\Release\cpp-httplib.lib
+  roclint_core.vcxproj -> D:\Stardust\roclint\build\Release\roclint_core.lib
+  roclint_workspace_helper.vcxproj -> D:\Stardust\roclint\build\Release\roclint_workspace_helper.exe
+  roclint_sqlite.vcxproj -> D:\Stardust\roclint\build\Release\roclint_sqlite.lib
+  roclint_tree_sitter.vcxproj -> D:\Stardust\roclint\build\Release\roclint_tree_sitter.lib
+  ggml-base.vcxproj -> D:\Stardust\roclint\build\native-llama\ggml\src\Release\ggml-base.lib
+  1>Automatic MOC and UIC for target ggml-vulkan
+  Automatic MOC and UIC for target ggml-cpu
+  ggml-cpu.vcxproj -> D:\Stardust\roclint\build\native-llama\ggml\src\Release\ggml-cpu.lib
+  roclint_storage.vcxproj -> D:\Stardust\roclint\build\Release\roclint_storage.lib
+  Automatic MOC and UIC for target roclint_host_lib
+  roclint_host_lib.vcxproj -> D:\Stardust\roclint\build\Release\roclint_host_lib.lib
+  ggml-vulkan.vcxproj -> D:\Stardust\roclint\build\native-llama\ggml\src\ggml-vulkan\Release\ggml-vulkan.lib
+  Automatic MOC and UIC for target ggml
+  ggml.vcxproj -> D:\Stardust\roclint\build\native-llama\ggml\src\Release\ggml.lib
+  Automatic MOC and UIC for target llama
+C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\Microsoft.CppBuild.targets(1129,5): warning MSB8027: Two or more files with the name of llama.cpp will produce outputs to the same location. This can lead to an incorrect build result.  The files involved are D:\Stardust\roclint\build\deps\llama.cpp\src\llama.cpp, D:\Stardust\roclint\build\deps\llama.cpp\src\models\llama.cpp. [D:\Stardust\roclint\build\native-llama\src\llama.vcxproj]
+  llama.vcxproj -> D:\Stardust\roclint\build\native-llama\src\Release\llama.lib
+  Automatic MOC and UIC for target llama-common
+  llama-common.vcxproj -> D:\Stardust\roclint\build\native-llama\common\Release\llama-common.lib
+  Automatic MOC and UIC for target roclint_granite_worker
+  roclint_granite_worker.vcxproj -> D:\Stardust\roclint\build\Release\roclint_granite_worker.exe
+  Automatic MOC and UIC for target roclint_host
+  roclint_host.vcxproj -> D:\Stardust\roclint\build\Release\roclint_host.exe
+  Automatic MOC and UIC for target roclint_report_verification_probe
+  roclint_report_verification_probe.vcxproj -> D:\Stardust\roclint\build\Release\report-verification-probe.exe
+  Staging self-contained Qt runtime under D:/Stardust/roclint/build/Release/bin
+  -- Self-contained Qt runtime staged in D:/Stardust/roclint/build/Release/bin
+  Automatic MOC and UIC for target roclint_ast_grounding_benchmark
+  roclint_ast_evaluator.vcxproj -> D:\Stardust\roclint\build\Release\roclint_ast_evaluator.exe
+  roclint_core_testing.vcxproj -> D:\Stardust\roclint\build\Release\roclint_core_testing.lib
+  Automatic MOC and UIC for target roclint_analysis_checkpoint_tests
+  Automatic MOC and UIC for target roclint_citation_evaluator_tests
+  roclint_ast_grounding_benchmark.vcxproj -> D:\Stardust\roclint\build\Release\ast-grounding-benchmark.exe
+  Automatic MOC and UIC for target roclint_clarification_checkpoint_tests
+  roclint_analysis_checkpoint_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_analysis_checkpoint_tests.exe
+  Automatic MOC and UIC for target roclint_confirmed_intent_tests
+  roclint_citation_evaluator_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_citation_evaluator_tests.exe
+  Automatic MOC and UIC for target roclint_constraint_reconciler_tests
+  roclint_storage_testing.vcxproj -> D:\Stardust\roclint\build\Release\roclint_storage_testing.lib
+  roclint_clarification_checkpoint_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_clarification_checkpoint_tests.exe
+  Automatic MOC and UIC for target roclint_core_smoke_tests
+  Automatic MOC and UIC for target roclint_core_primitives_tests
+  roclint_confirmed_intent_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_confirmed_intent_tests.exe
+  roclint_constraint_reconciler_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_constraint_reconciler_tests.exe
+  Automatic MOC and UIC for target roclint_creative_expansion_tests
+  roclint_core_primitives_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_core_primitives_tests.exe
+  roclint_core_smoke_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_core_smoke_tests.exe
+  Automatic MOC and UIC for target roclint_granite_adapter_tests
+  Automatic MOC and UIC for target roclint_host_lib_testing
+  Automatic MOC and UIC for target roclint_ast_token_budget_tests
+  roclint_creative_expansion_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_creative_expansion_tests.exe
+  Automatic MOC and UIC for target roclint_codebase_index_freshness_tests
+  roclint_granite_adapter_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_granite_adapter_tests.exe
+  Automatic MOC and UIC for target roclint_approval_record_tests
+  Automatic MOC and UIC for target roclint_ast_grounding_tests
+  Automatic MOC and UIC for target roclint_granite_contracts
+  Automatic MOC and UIC for target roclint_assumption_scoring_tests
+  Automatic MOC and UIC for target roclint_ast_symbol_extractor_tests
+  Automatic MOC and UIC for target roclint_granite_goldfish_adapter_tests
+  roclint_granite_contracts.vcxproj -> D:\Stardust\roclint\build\Release\roclint_granite_contracts.exe
+  Automatic MOC and UIC for target roclint_analysis_snapshot_tests
+  Automatic MOC and UIC for target roclint_approval_checkpoint_tests
+  roclint_granite_goldfish_adapter_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_granite_goldfish_adapter_tests.exe
+  Automatic MOC and UIC for target roclint_intent_checkpoint_tests
+  Automatic MOC and UIC for target roclint_intervention_state_machine_tests
+  roclint_approval_checkpoint_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_approval_checkpoint_tests.exe
+  roclint_ast_symbol_extractor_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_ast_symbol_extractor_tests.exe
+  roclint_ast_grounding_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_ast_grounding_tests.exe
+  Automatic MOC and UIC for target roclint_jev_checkpoint_tests
+  roclint_intent_checkpoint_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_intent_checkpoint_tests.exe
+  roclint_host_lib_testing.vcxproj -> D:\Stardust\roclint\build\Release\roclint_host_lib_testing.lib
+  roclint_intervention_state_machine_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_intervention_state_machine_tests.exe
+  roclint_analysis_snapshot_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_analysis_snapshot_tests.exe
+  Automatic MOC and UIC for target roclint_ast_freshness_integration_tests
+  roclint_assumption_scoring_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_assumption_scoring_tests.exe
+  roclint_approval_record_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_approval_record_tests.exe
+  roclint_codebase_index_freshness_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_codebase_index_freshness_tests.exe
+  roclint_ast_token_budget_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_ast_token_budget_tests.exe
+  Automatic MOC and UIC for target roclint_host_lifecycle_tests
+  roclint_jev_checkpoint_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_jev_checkpoint_tests.exe
+  Automatic MOC and UIC for target roclint_materiality_policy_tests
+  Automatic MOC and UIC for target roclint_ipc_hardening_tests
+  roclint_ast_freshness_integration_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_ast_freshness_integration_tests.exe
+  Automatic MOC and UIC for target roclint_native_granite_tests
+  roclint_host_lifecycle_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_host_lifecycle_tests.exe
+  roclint_materiality_policy_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_materiality_policy_tests.exe
+  Automatic MOC and UIC for target roclint_async_persistence_tests
+  roclint_ipc_hardening_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_ipc_hardening_tests.exe
+  Automatic MOC and UIC for target roclint_invocation_binding_tests
+  Automatic MOC and UIC for target roclint_normalized_analysis_tests
+  roclint_native_granite_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_native_granite_tests.exe
+  roclint_async_persistence_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_async_persistence_tests.exe
+  Automatic MOC and UIC for target roclint_ast_stale_recovery_tests
+  Automatic MOC and UIC for target roclint_product_alignment_tests
+  roclint_normalized_analysis_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_normalized_analysis_tests.exe
+  roclint_invocation_binding_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_invocation_binding_tests.exe
+  Automatic MOC and UIC for target roclint_host_persistence_tests
+  Automatic MOC and UIC for target roclint_production_snapshot_tests
+  roclint_ast_stale_recovery_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_ast_stale_recovery_tests.exe
+  roclint_product_alignment_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_product_alignment_tests.exe
+  Automatic MOC and UIC for target roclint_prompt_repository_tests
+  roclint_host_persistence_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_host_persistence_tests.exe
+  Automatic MOC and UIC for target roclint_prompt_revision_tests
+  Automatic MOC and UIC for target roclint_host_controller_tests
+  roclint_production_snapshot_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_production_snapshot_tests.exe
+  Automatic MOC and UIC for target roclint_revision_state_tests
+  roclint_prompt_repository_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_prompt_repository_tests.exe
+  roclint_prompt_revision_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_prompt_revision_tests.exe
+  roclint_host_controller_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_host_controller_tests.exe
+  Automatic MOC and UIC for target roclint_host_context_tests
+  Automatic MOC and UIC for target roclint_rewrite_checkpoint_tests
+  Automatic MOC and UIC for target roclint_rewrite_profiles_tests
+  roclint_revision_state_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_revision_state_tests.exe
+  Automatic MOC and UIC for target roclint_rewrite_proposal_tests
+  roclint_rewrite_checkpoint_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_rewrite_checkpoint_tests.exe
+  roclint_host_context_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_host_context_tests.exe
+  roclint_rewrite_profiles_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_rewrite_profiles_tests.exe
+  Automatic MOC and UIC for target roclint_dual_mode_tests
+  Automatic MOC and UIC for target roclint_s1_triage_adapter_tests
+  Automatic MOC and UIC for target roclint_scoped_constraint_tests
+  roclint_rewrite_proposal_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_rewrite_proposal_tests.exe
+  Automatic MOC and UIC for target roclint_scored_history_tests
+  roclint_dual_mode_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_dual_mode_tests.exe
+  roclint_s1_triage_adapter_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_s1_triage_adapter_tests.exe
+  Automatic MOC and UIC for target roclint_codebase_watcher_tests
+  roclint_scoped_constraint_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_scoped_constraint_tests.exe
+  Automatic MOC and UIC for target roclint_source_span_tests
+  Automatic MOC and UIC for target roclint_storage_tests
+  roclint_scored_history_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_scored_history_tests.exe
+  roclint_codebase_watcher_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_codebase_watcher_tests.exe
+  Automatic MOC and UIC for target roclint_structured_entity_extractor_tests
+  roclint_source_span_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_source_span_tests.exe
+  Automatic MOC and UIC for target roclint_terminal_adapter_tests
+  roclint_storage_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_storage_tests.exe
+  Automatic MOC and UIC for target roclint_triage_audit_chain_tests
+  Automatic MOC and UIC for target roclint_upstream_compatibility_tests
+  roclint_structured_entity_extractor_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_structured_entity_extractor_tests.exe
+  roclint_terminal_adapter_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_terminal_adapter_tests.exe
+  Automatic MOC and UIC for target roclint_workspace_inspection_tests
+  roclint_triage_audit_chain_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_triage_audit_chain_tests.exe
+  roclint_upstream_compatibility_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_upstream_compatibility_tests.exe
+  roclint_workspace_inspection_tests.vcxproj -> D:\Stardust\roclint\build\Release\roclint_workspace_inspection_tests.exe

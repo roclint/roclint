@@ -400,6 +400,174 @@ void testAstSnapshotHashPayloadRoundTrip() {
     ROCLINT_CHECK(legacyDecoded.value().proposalHash == legacy.proposalHash);
 }
 
+void testPayloadCodecCustomProposalIdAndValidation() {
+    fx::Chain chain;
+    auto proposal = chain.proposal;
+    proposal.id = "prop_custom_payload_id_42";
+    rewrite::ProposalHasher::seal(proposal);
+    const auto encoded = encodeProposal(proposal);
+    const auto decoded = decodeProposal(encoded);
+    ROCLINT_CHECK(decoded.ok());
+    ROCLINT_CHECK(decoded.value().id == "prop_custom_payload_id_42");
+    ROCLINT_CHECK(decoded.value().proposalHash == proposal.proposalHash);
+
+    // Tamper with proposal ID in JSON: missing prop_ prefix
+    auto badPrefixJson = encoded;
+    const std::string findId = "\"id\":\"prop_custom_payload_id_42\"";
+    const std::string badId = "\"id\":\"unprefixed_payload_id_42\"";
+    const auto pos = badPrefixJson.find(findId);
+    ROCLINT_CHECK(pos != std::string::npos);
+    badPrefixJson.replace(pos, findId.size(), badId);
+    ROCLINT_CHECK(!decodeProposal(badPrefixJson).ok());
+
+    // Tamper with proposal ID in JSON: empty id
+    auto emptyIdJson = encoded;
+    const std::string emptyId = "\"id\":\"\"";
+    emptyIdJson.replace(pos, findId.size(), emptyId);
+    ROCLINT_CHECK(!decodeProposal(emptyIdJson).ok());
+
+    // Tamper with proposal hash in JSON
+    auto badHashJson = encoded;
+    const std::string findHash = "\"proposal_hash\":\"" + proposal.proposalHash + "\"";
+    const std::string badHash = "\"proposal_hash\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"";
+    const auto hashPos = badHashJson.find(findHash);
+    ROCLINT_CHECK(hashPos != std::string::npos);
+    badHashJson.replace(hashPos, findHash.size(), badHash);
+    ROCLINT_CHECK(!decodeProposal(badHashJson).ok());
+}
+
+void testReselectionWithDistinctIdsInsertsSeparateRowsAndRestoresLatest() {
+    Store store;
+    fx::Chain c("sess_reselect");
+    ROCLINT_CHECK(store.repo->createSessionWithRootRevision(root("sess_reselect"), 100).ok());
+    fx::recordSnapshotAttempts(*store.repo, c.snapshot);
+    ROCLINT_CHECK(store.repo->insertAnalysisSnapshot(c.snapshot, 200).ok());
+    ROCLINT_CHECK(store.repo->insertIntentVersion(c.intent, 300).ok());
+
+    // Selection 1: Candidate A
+    auto propA1 = c.proposal;
+    propA1.id = "prop_candA_sel1";
+    rewrite::ProposalHasher::seal(propA1);
+    ROCLINT_CHECK(store.repo->insertProposal(propA1, 400).ok());
+
+    // Selection 2: Candidate B (different text)
+    auto propB = c.proposal;
+    propB.rewrittenText = "Candidate B distinct text.\n";
+    propB.diffText = rewrite::RewriteValidator::computeAccessibleDiff(propB.originalText, propB.rewrittenText);
+    const auto profile = rewrite::ProfileRegistry::getProfile(propB.rewriteProfileId);
+    ROCLINT_CHECK(profile.has_value());
+    propB.constraints = rewrite::RewriteValidator::deriveConstraints(c.intent, *profile, propB.rewrittenText);
+    propB.id = "prop_candB_sel2";
+    rewrite::ProposalHasher::seal(propB);
+    ROCLINT_CHECK(store.repo->insertProposal(propB, 500).ok());
+
+    // Selection 3: Reselect Candidate A with fresh proposal ID and fresh audit verdict
+    auto propA2 = c.proposal; // identical text/hash to propA1
+    propA2.id = "prop_candA_sel3";
+    ValidationResult freshAudit;
+    freshAudit.outcome = ValidationOutcome::Unresolved;
+    freshAudit.executionStatus = AuditExecutionStatus::Completed;
+    freshAudit.unresolved.push_back({"constraint_1", "Fresh uncertainty review pending"});
+    propA2.auditResult = freshAudit;
+    rewrite::ProposalHasher::seal(propA2);
+    ROCLINT_CHECK(propA2.proposalHash == propA1.proposalHash);
+    ROCLINT_CHECK(store.repo->insertProposal(propA2, 600).ok());
+
+    // Verify all 3 selection rows exist in storage without conflict suppression
+    const auto count = store.db.queryText("SELECT COUNT(*) FROM proposals WHERE session_id = 'sess_reselect';");
+    ROCLINT_CHECK(count.ok() && count.value() == "3");
+
+    // Session restore retrieves the latest selected candidate (propA2) and its exact fresh audit
+    auto restored = store.repo->restoreSession(SessionId("sess_reselect"));
+    ROCLINT_CHECK(restored.ok());
+    ROCLINT_CHECK(restored.value().proposal.has_value());
+    const auto& rp = *restored.value().proposal;
+    ROCLINT_CHECK(rp.id == "prop_candA_sel3");
+    ROCLINT_CHECK(rp.proposalHash == propA1.proposalHash);
+    ROCLINT_CHECK(rp.rewrittenText == propA1.rewrittenText);
+    ROCLINT_CHECK(rp.auditResult.has_value());
+    ROCLINT_CHECK(rp.auditResult->outcome == ValidationOutcome::Unresolved);
+    ROCLINT_CHECK(!rp.auditResult->unresolved.empty());
+    ROCLINT_CHECK(rp.auditResult->unresolved[0].explanation == "Fresh uncertainty review pending");
+}
+
+void testHistoricalApprovalPreservedOnReselection() {
+    Store store;
+    fx::Chain c("sess_hist_appr");
+    ROCLINT_CHECK(store.repo->createSessionWithRootRevision(root("sess_hist_appr"), 100).ok());
+    fx::recordSnapshotAttempts(*store.repo, c.snapshot);
+    ROCLINT_CHECK(store.repo->insertAnalysisSnapshot(c.snapshot, 200).ok());
+    ROCLINT_CHECK(store.repo->insertIntentVersion(c.intent, 300).ok());
+
+    // Selection 1: Candidate A
+    auto propA1 = c.proposal;
+    propA1.id = "prop_candA_sel1";
+    rewrite::ProposalHasher::seal(propA1);
+    ROCLINT_CHECK(store.repo->insertProposal(propA1, 400).ok());
+
+    // Approve Selection 1
+    auto ctx = c.context();
+    ctx.proposal = &propA1;
+    auto appr = review::ApprovalFactory::createApproval(ctx, 450);
+    ROCLINT_CHECK(appr.ok());
+    ROCLINT_CHECK(store.repo->insertApproval(appr.value()).ok());
+
+    // Selection 2: Reselect Candidate A with fresh proposal ID (not yet approved)
+    auto propA2 = c.proposal;
+    propA2.id = "prop_candA_sel2";
+    rewrite::ProposalHasher::seal(propA2);
+    ROCLINT_CHECK(store.repo->insertProposal(propA2, 500).ok());
+
+    // Restore returns latest selection (propA2). Since propA2 has no approval, restored.approval is nullopt!
+    auto restored = store.repo->restoreSession(SessionId("sess_hist_appr"));
+    ROCLINT_CHECK(restored.ok());
+    ROCLINT_CHECK(restored.value().proposal.has_value());
+    ROCLINT_CHECK(restored.value().proposal->id == "prop_candA_sel2");
+    ROCLINT_CHECK(!restored.value().approval.has_value());
+
+    // Historical approval record bound to propA1 remains intact in database
+    auto history = store.repo->getApprovalHistory(SessionId("sess_hist_appr"));
+    ROCLINT_CHECK(history.ok());
+    ROCLINT_CHECK(history.value().size() == 1);
+    ROCLINT_CHECK(history.value()[0].proposalId == "prop_candA_sel1");
+    ROCLINT_CHECK(history.value()[0].proposalHash == propA1.proposalHash);
+    ROCLINT_CHECK(history.value()[0].id == appr.value().id);
+}
+
+void testInsertProposalRejectionAndDuplicateConflict() {
+    Store store;
+    fx::Chain c("sess_conflict");
+    ROCLINT_CHECK(store.repo->createSessionWithRootRevision(root("sess_conflict"), 100).ok());
+    fx::recordSnapshotAttempts(*store.repo, c.snapshot);
+    ROCLINT_CHECK(store.repo->insertAnalysisSnapshot(c.snapshot, 200).ok());
+    ROCLINT_CHECK(store.repo->insertIntentVersion(c.intent, 300).ok());
+
+    // Missing prop_ prefix is rejected before SQL
+    auto badPrefix = c.proposal;
+    badPrefix.id = "no_prefix_here";
+    ROCLINT_CHECK(!store.repo->insertProposal(badPrefix, 400).ok());
+
+    // Empty id is rejected before SQL
+    auto emptyId = c.proposal;
+    emptyId.id = "";
+    ROCLINT_CHECK(!store.repo->insertProposal(emptyId, 400).ok());
+
+    // Mismatched proposalHash is rejected before SQL
+    auto badHash = c.proposal;
+    badHash.id = "prop_valid_prefix";
+    badHash.proposalHash = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    ROCLINT_CHECK(!store.repo->insertProposal(badHash, 400).ok());
+
+    // Valid proposal inserts cleanly
+    auto prop1 = c.proposal;
+    prop1.id = "prop_unique_1";
+    rewrite::ProposalHasher::seal(prop1);
+    ROCLINT_CHECK(store.repo->insertProposal(prop1, 400).ok());
+
+    // Re-inserting the exact same proposal_id fails without conflict suppression
+    ROCLINT_CHECK(!store.repo->insertProposal(prop1, 401).ok());
+}
+
 } // namespace
 
 int main() {
@@ -416,6 +584,10 @@ int main() {
     testDeleteAndPurge();
     testStateCompareAndSwapAndArtifactFailuresRollBackTogether();
     testAstSnapshotHashPayloadRoundTrip();
+    testPayloadCodecCustomProposalIdAndValidation();
+    testReselectionWithDistinctIdsInsertsSeparateRowsAndRestoresLatest();
+    testHistoricalApprovalPreservedOnReselection();
+    testInsertProposalRejectionAndDuplicateConflict();
     std::cout << "[Test PromptRepository] All tests PASSED.\n";
     return 0;
 }

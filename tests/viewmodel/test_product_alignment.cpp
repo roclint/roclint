@@ -183,6 +183,9 @@ void testReviewGeometryAndExplicitExpansion() {
         std::string rewritten = "Refactor the parser to be quicker, improve documentation, and tidy tests.";
         if (size.width == 560) for (int i=0; i<80; ++i) rewritten += "\nA long synthetic diff line that wraps across the available review width.";
         c.setTransportOverrideForTesting([&](std::string_view prompt) -> Result<std::string> {
+            if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+                return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+            }
             ++calls; return prompt.find("<instructions>") == std::string_view::npos ? discovery : fx::rewriteReply(rewritten);
         });
         ROCLINT_CHECK(c.markModelReadyForTesting(fx::testModel()));
@@ -224,11 +227,40 @@ void testReviewGeometryAndExplicitExpansion() {
             const auto suffix=QStringLiteral("intent_item_grp_%1").arg(index);
             auto* check=findVisual(window->contentItem(),"constraintReview_"+suffix);
             auto* label=findVisual(window->contentItem(),"reviewLabel_"+suffix);
-            if (!fullyInViewport(window,check) || !fullyInViewport(window,label))
+            if (!fullyInViewport(window,check) || !fullyInViewport(window,label)) {
+                auto* sc = window->findChild<QQuickItem*>("workflowViewport");
                 std::cerr << "Review geometry failed at " << size.width << 'x' << size.height << " item " << index << '\n';
+                std::cerr << "  check in viewport: " << fullyInViewport(window, check) << " rect: " << check->mapRectToItem(window->contentItem(), check->boundingRect()).y() << " h: " << check->height() << '\n';
+                std::cerr << "  label in viewport: " << fullyInViewport(window, label) << " rect: " << label->mapRectToItem(window->contentItem(), label->boundingRect()).y() << " w: " << label->width() << " h: " << label->height() << " winW: " << window->width() << '\n';
+                std::cerr << "  label text: [" << label->property("text").toString().toStdString() << "]\n";
+                if (sc) std::cerr << "  contentScroll y: " << sc->mapRectToItem(window->contentItem(), sc->boundingRect()).y() << " h: " << sc->height() << " contentY: " << sc->property("contentY").toDouble() << '\n';
+                std::cerr << "  activeFocus: " << (window->activeFocusItem() ? window->activeFocusItem()->objectName().toStdString() : "none") << '\n';
+            }
             ROCLINT_CHECK(fullyInViewport(window,check) && fullyInViewport(window,label));
             ROCLINT_CHECK(check->hasActiveFocus() && c.pendingReviewCount()==3-index && !c.canApprove());
             ROCLINT_CHECK(fullyInViewport(window,primary));
+            if (index == 0) {
+                auto* why = findVisual(window->contentItem(), "reviewExplanation_" + suffix);
+                ROCLINT_CHECK(why && fullyInViewport(window, why));
+                QString explanation;
+                for (const auto& value : c.proposalConstraints()) {
+                    const auto item = value.toMap();
+                    if (item.value("id").toString() == suffix) explanation = item.value("auditExplanation").toString();
+                }
+                ROCLINT_CHECK(!explanation.isEmpty());
+                why->forceActiveFocus(Qt::TabFocusReason);
+                QTest::keyClick(window, Qt::Key_Space); QTest::qWait(50);
+                auto* dialog = window->findChild<QObject*>("reviewExplanationDialog");
+                auto* detail = window->findChild<QQuickItem*>("reviewExplanationText");
+                auto* detailViewport = window->findChild<QQuickItem*>("reviewExplanationViewport");
+                ROCLINT_CHECK(dialog && dialog->property("visible").toBool());
+                ROCLINT_CHECK(detail && detail->property("text").toString().contains(explanation));
+                ROCLINT_CHECK(detail->property("text").toString().contains(label->property("text").toString()));
+                ROCLINT_CHECK(detailViewport && fullyInViewport(window, detailViewport));
+                QTest::keyClick(window, Qt::Key_Escape); QTest::qWait(50);
+                ROCLINT_CHECK(!dialog->property("visible").toBool() && check->hasActiveFocus());
+                ROCLINT_CHECK(c.pendingReviewCount() == 3 && !c.hasApproval());
+            }
             if (index==0) savePreview(window,QString("review-checks-%1x%2.png").arg(size.width).arg(size.height));
             QTest::keyClick(window,Qt::Key_Space);
             ROCLINT_CHECK(c.waitForIdleForTesting(3000));
@@ -391,6 +423,9 @@ void testCompactHudControlsStayInsideWindow() {
         {"question":"Which docs?","alternatives":[{"label":"README","why_material":"Scope","evidence":["where needed"]},{"label":"All docs","why_material":"Scope","evidence":["where needed"]}]},
         {"question":"Which cleanup?","alternatives":[{"label":"Names","why_material":"Scope","evidence":["clean up the tests"]},{"label":"Dead tests","why_material":"Scope","evidence":["clean up the tests"]}]}]})";
     c.setTransportOverrideForTesting([discovery](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         return prompt.find("<instructions>") == std::string_view::npos ? discovery
             : fx::rewriteReply("Refactor the parser, update documentation, and tidy tests.");
     });
@@ -636,6 +671,9 @@ void testReviewRequiresExplicitActivation() {
     ROCLINT_CHECK(controller.waitForStorageForTesting());
     controller.setLegacyDiscoveryForTesting(true);
     controller.setTransportOverrideForTesting([](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         return prompt.find("<instructions>") == std::string_view::npos ? kDiscovery : fx::rewriteReply("Make the parser quicker.");
     });
     ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
@@ -680,6 +718,9 @@ void testReviewAcknowledgementStorageFailure() {
     HostController c(path); ROCLINT_CHECK(c.waitForStorageForTesting()); c.setAmbientModeEnabled(false);
     c.setLegacyDiscoveryForTesting(true);
     c.setTransportOverrideForTesting([](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         return prompt.find("<instructions>") == std::string_view::npos ? kDiscovery : fx::rewriteReply("Make the parser quicker.");
     });
     ROCLINT_CHECK(c.markModelReadyForTesting(fx::testModel()));

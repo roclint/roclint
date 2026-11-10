@@ -1042,7 +1042,7 @@ void testGoldfishAuditPipelineGating() {
 
 void testMultiCandidateCreativeExpansion() {
     ScriptedRuntime runtime;
-    runtime.rewriteText = "Create an accurate Layer 3 networking animation depicting IP packet forwarding decisions.";
+    runtime.rewriteText = "Refactor the parser for lower latency per call, streamlining execution paths and minimizing per-request overhead.";
     HostController c(QStringLiteral(":memory:"));
     ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
@@ -1061,6 +1061,7 @@ void testMultiCandidateCreativeExpansion() {
 
     // Select alternative 1
     c.selectAlternative(1);
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
     ROCLINT_CHECK(c.selectedAlternativeIndex() == 1);
     ROCLINT_CHECK(c.proposalText() != initialRewrittenText);
     ROCLINT_CHECK(c.proposalForTesting()->proposalHash != initialProposalHash);
@@ -1068,6 +1069,7 @@ void testMultiCandidateCreativeExpansion() {
 
     // Select alternative 2
     c.selectAlternative(2);
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
     ROCLINT_CHECK(c.selectedAlternativeIndex() == 2);
     ROCLINT_CHECK(c.proposalText() == alts[2].toMap().value("rewrittenText").toString());
 
@@ -1101,6 +1103,432 @@ void testTokenSpeedModesAndMetrics() {
     std::cout << "  [PASS] Token speed modes (BOTH, GENERATION, DECODE) switch and persist accurately.\n";
 }
 
+void testF07ReviewReuseAndVersionAdvancement() {
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+
+    std::atomic<int> auditCalls{0};
+    c.setTransportOverrideForTesting([&](std::string_view in) -> Result<std::string> {
+        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            ++auditCalls;
+            return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"intent_grp_0","explanation":"Manual review required"}]})");
+        }
+        if (in.find("<instructions>") != std::string_view::npos) {
+            return fx::rewriteReply("Refactor the parser for lower latency per call, streamlining execution paths and minimizing per-request overhead.");
+        }
+        return kDiscoveryReply;
+    });
+    ROCLINT_CHECK(c.markModelReadyForTesting(modelInfo()));
+    analyzeAndAnswer(c);
+    synthesize(c);
+
+    ROCLINT_CHECK(c.pendingReviewCount() == 1);
+    for (const auto& v : c.proposalConstraints()) {
+        const auto item = v.toMap();
+        if (item.value("needsReview").toBool()) {
+            ROCLINT_CHECK(c.waitForCommandForTesting(c.acknowledgeConstraint(item.value("id").toString(), true, c.stateVersion())));
+        }
+    }
+    ROCLINT_CHECK(c.pendingReviewCount() == 0);
+    ROCLINT_CHECK(c.canApprove());
+
+    const auto prevVersion = c.stateVersion();
+    const auto prevHash = c.proposalForTesting()->proposalHash;
+    const auto prevCalls = auditCalls.load();
+
+    // Select alternative 1
+    c.selectAlternative(1);
+
+    // F07: State version must advance, proposal hash must change, previous acknowledgments cleared, new model audit invoked
+    ROCLINT_CHECK(c.stateVersion() > prevVersion);
+    ROCLINT_CHECK(c.proposalForTesting()->proposalHash != prevHash);
+    ROCLINT_CHECK(!c.canApprove());
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(c.pendingReviewCount() == 1);
+    ROCLINT_CHECK(!c.canApprove());
+    ROCLINT_CHECK(auditCalls.load() > prevCalls);
+
+    std::cout << "  [PASS] F07: Stale review acknowledgments cleared and state version advanced on selection.\n";
+}
+
+void testF08SelectionPersistenceAndApproval() {
+    QTemporaryDir tempDir;
+    ROCLINT_CHECK(tempDir.isValid());
+    const QString dbPath = tempDir.filePath("f08_test.sqlite3");
+
+    HostController c(dbPath);
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+
+    std::atomic<int> auditCalls{0};
+    auto discovery = kDiscoveryReply;
+    const auto at = discovery.find("Lower latency per call");
+    if (at != std::string::npos) {
+        discovery.replace(at, std::string("Lower latency per call").size(), "lower call latency");
+    }
+    c.setTransportOverrideForTesting([&](std::string_view in) -> Result<std::string> {
+        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            ++auditCalls;
+            return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+        }
+        if (in.find("<instructions>") != std::string_view::npos) {
+            return fx::rewriteReply("Refactor the parser for lower call latency and clearer error paths.");
+        }
+        return discovery;
+    });
+
+    ROCLINT_CHECK(c.markModelReadyForTesting(modelInfo()));
+    analyzeAndAnswer(c);
+    synthesize(c);
+
+    const auto baseHash = c.proposalForTesting()->proposalHash;
+    const auto session = c.currentSessionIdString();
+
+    // Select alternative 1
+    c.selectAlternative(1);
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    const auto selectedHash = c.proposalForTesting()->proposalHash;
+    ROCLINT_CHECK(selectedHash != baseHash);
+    ROCLINT_CHECK(c.canApprove());
+
+    // Approve and copy rewrite
+    const auto approved = c.waitForCommandForTesting(c.approveAndCopyRewrite(c.stateVersion()));
+    ROCLINT_CHECK(approved);
+    ROCLINT_CHECK(c.lastError().isEmpty());
+
+    // Restore session and verify selected candidate is retained
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.restoreSession(session, c.stateVersion())));
+    ROCLINT_CHECK(c.proposalForTesting()->proposalHash == selectedHash);
+    ROCLINT_CHECK(c.proposalForTesting()->proposalHash != baseHash);
+
+    std::cout << "  [PASS] F08: Selected alternative persisted, approved without FK error, and restored cleanly.\n";
+}
+
+void testF09UnresolvedHardAuditGating() {
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+
+    c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
+        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"intent_grp_0","explanation":"Cannot verify the hard performance requirement"}]})");
+        }
+        if (in.find("<instructions>") != std::string_view::npos) {
+            return fx::rewriteReply(kVerifiedRewrite);
+        }
+        return kDiscoveryReply;
+    });
+
+    ROCLINT_CHECK(c.markModelReadyForTesting(modelInfo()));
+    analyzeAndAnswer(c);
+    synthesize(c);
+
+    // F09: Unresolved hard invariant must NOT allow unearned approval
+    ROCLINT_CHECK(c.auditOutcome() == QStringLiteral("Unresolved"));
+    ROCLINT_CHECK(c.proposalStatus() == QStringLiteral("READY_FOR_REVIEW"));
+    ROCLINT_CHECK(!c.canApprove());
+    ROCLINT_CHECK(c.pendingReviewCount() == 1);
+
+    // User explicitly reviews and acknowledges the uncertainty
+    bool acknowledged = false;
+    for (const auto& v : c.proposalConstraints()) {
+        const auto item = v.toMap();
+        if (item.value("needsReview").toBool()) {
+            ROCLINT_CHECK(c.waitForCommandForTesting(c.acknowledgeConstraint(item.value("id").toString(), true, c.stateVersion())));
+            acknowledged = true;
+        }
+    }
+    ROCLINT_CHECK(acknowledged);
+    ROCLINT_CHECK(c.pendingReviewCount() == 0);
+    ROCLINT_CHECK(c.canApprove());
+
+    std::cout << "  [PASS] F09: Hard unresolved audit findings gate approval until explicitly acknowledged.\n";
+}
+
+void testAsyncSelectionNativeTicketAndOffGuiExecution() {
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+
+    auto guiAudits = std::make_shared<std::atomic<int>>(0);
+    auto workerAudits = std::make_shared<std::atomic<int>>(0);
+
+    c.setTransportOverrideForTesting([guiAudits, workerAudits](std::string_view in) -> Result<std::string> {
+        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            if (QThread::currentThread() == QCoreApplication::instance()->thread()) {
+                ++(*guiAudits);
+            } else {
+                ++(*workerAudits);
+            }
+            return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+        }
+        if (in.find("<instructions>") != std::string_view::npos) {
+            return fx::rewriteReply(kVerifiedRewrite);
+        }
+        return kDiscoveryReply;
+    });
+
+    ROCLINT_CHECK(c.markModelReadyForTesting(modelInfo()));
+    analyzeAndAnswer(c);
+    synthesize(c);
+
+    // Initial audit ran during synthesize
+    ROCLINT_CHECK(workerAudits->load() == 1);
+    ROCLINT_CHECK(guiAudits->load() == 0);
+
+    // Select candidate 1
+    c.selectAlternative(1);
+
+    // Immediately on GUI thread: status is Generating, cannot approve, zero GUI audits
+    ROCLINT_CHECK(c.proposalStatus() == QStringLiteral("GENERATING"));
+    ROCLINT_CHECK(!c.canApprove());
+    ROCLINT_CHECK(guiAudits->load() == 0);
+
+    // Wait for async selection audit to finish
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(guiAudits->load() == 0);
+    ROCLINT_CHECK(workerAudits->load() == 2);
+    ROCLINT_CHECK(c.proposalStatus() == QStringLiteral("READY_FOR_REVIEW"));
+    ROCLINT_CHECK(c.canApprove());
+    ROCLINT_CHECK(c.auditExecutionStatus() == QStringLiteral("Completed"));
+
+    // Verify creativeAlternatives map exposes auditExecutionStatus honestly
+    const auto alts = c.creativeAlternatives();
+    ROCLINT_CHECK(!alts.isEmpty());
+    ROCLINT_CHECK(alts[1].toMap().value("auditExecutionStatus").toString() == QStringLiteral("Completed"));
+
+    std::cout << "  [PASS] Async selection: Native attempt ticket bound, audited off GUI thread, honesty exposed.\n";
+}
+
+void testAsyncSelectionDelayedTransportResponsiveness() {
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+
+    c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
+        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            QThread::msleep(100);
+            return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+        }
+        if (in.find("<instructions>") != std::string_view::npos) {
+            return fx::rewriteReply(kVerifiedRewrite);
+        }
+        return kDiscoveryReply;
+    });
+
+    ROCLINT_CHECK(c.markModelReadyForTesting(modelInfo()));
+    analyzeAndAnswer(c);
+    synthesize(c);
+
+    c.selectAlternative(1);
+    ROCLINT_CHECK(c.proposalStatus() == QStringLiteral("GENERATING"));
+    ROCLINT_CHECK(!c.hasProposal());
+    ROCLINT_CHECK(!c.canApprove());
+
+    // UI remains responsive while background audit is in flight
+    QCoreApplication::processEvents();
+
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(c.proposalStatus() == QStringLiteral("READY_FOR_REVIEW"));
+    ROCLINT_CHECK(c.hasProposal());
+    ROCLINT_CHECK(c.canApprove());
+
+    std::cout << "  [PASS] Async selection: Delayed transport keeps UI responsive and blocks approval until complete.\n";
+}
+
+void testAsyncSelectionStaleSelectionRejection() {
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+
+    std::atomic<int> auditCount{0};
+    c.setTransportOverrideForTesting([&](std::string_view in) -> Result<std::string> {
+        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            ++auditCount;
+            QThread::msleep(80);
+            return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+        }
+        if (in.find("<instructions>") != std::string_view::npos) {
+            return fx::rewriteReply(kVerifiedRewrite);
+        }
+        return kDiscoveryReply;
+    });
+
+    ROCLINT_CHECK(c.markModelReadyForTesting(modelInfo()));
+    analyzeAndAnswer(c);
+    synthesize(c);
+
+    const auto alts = c.creativeAlternatives();
+    ROCLINT_CHECK(alts.size() >= 3);
+
+    // Rapid selection: select 1 then immediately select 2
+    c.selectAlternative(1);
+    const auto alt1Version = c.stateVersion();
+    c.selectAlternative(2);
+    const auto alt2Version = c.stateVersion();
+    ROCLINT_CHECK(alt2Version > alt1Version);
+
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+
+    // Alternative 2 should win; completion of 1 must have been rejected as stale
+    ROCLINT_CHECK(c.selectedAlternativeIndex() == 2);
+    ROCLINT_CHECK(c.proposalText() == alts[2].toMap().value("rewrittenText").toString());
+    ROCLINT_CHECK(c.canApprove());
+
+    std::cout << "  [PASS] Async selection: Rapid selection rejects stale audit results.\n";
+}
+
+void testAsyncSelectionSaveFailurePreventsApproval() {
+    QTemporaryDir tempDir;
+    ROCLINT_CHECK(tempDir.isValid());
+    const QString dbPath = tempDir.filePath("save_fail_test.sqlite3");
+
+    HostController c(dbPath);
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+
+    c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
+        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+        }
+        if (in.find("<instructions>") != std::string_view::npos) {
+            return fx::rewriteReply(kVerifiedRewrite);
+        }
+        return kDiscoveryReply;
+    });
+
+    ROCLINT_CHECK(c.markModelReadyForTesting(modelInfo()));
+    analyzeAndAnswer(c);
+    synthesize(c);
+    ROCLINT_CHECK(c.canApprove());
+
+    // Corrupt / drop proposals table behind the scenes
+    {
+        roclint::storage::Database db(std::filesystem::path(dbPath.toStdString()));
+        ROCLINT_CHECK(db.execute("DROP TABLE approvals; DROP TABLE proposals;").ok());
+    }
+
+    // Now select alternative 1
+    c.selectAlternative(1);
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+
+    // Save failure must transition proposal to Failed and NOT expose approval
+    ROCLINT_CHECK(c.proposalStatus() == QStringLiteral("FAILED"));
+    ROCLINT_CHECK(!c.canApprove());
+    ROCLINT_CHECK(!c.hasProposal());
+
+    std::cout << "  [PASS] Async selection: SQLite persistence failure prevents publishing approvable state.\n";
+}
+
+void testSessionRestoreUncertaintyPreservation() {
+    QTemporaryDir tempDir;
+    ROCLINT_CHECK(tempDir.isValid());
+    const QString dbPath = tempDir.filePath("restore_uncertainty_test.sqlite3");
+
+    QString session;
+    quint64 version = 0;
+    {
+        HostController c(dbPath);
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+
+        c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
+            if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+                return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"intent_grp_0","explanation":"Cannot verify the hard performance requirement"}]})");
+            }
+            if (in.find("<instructions>") != std::string_view::npos) {
+                return fx::rewriteReply(kVerifiedRewrite);
+            }
+            return kDiscoveryReply;
+        });
+
+        ROCLINT_CHECK(c.markModelReadyForTesting(modelInfo()));
+        analyzeAndAnswer(c);
+        synthesize(c);
+
+        ROCLINT_CHECK(c.auditOutcome() == QStringLiteral("Unresolved"));
+        ROCLINT_CHECK(!c.canApprove());
+        ROCLINT_CHECK(c.pendingReviewCount() == 1);
+
+        session = c.currentSessionIdString();
+        version = c.stateVersion();
+    }
+
+    // Restore in a fresh controller
+    {
+        HostController c(dbPath);
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.restoreSession(session, c.stateVersion())));
+
+        // Unresolved audit uncertainty must be preserved on restore
+        ROCLINT_CHECK(c.hasProposal());
+        ROCLINT_CHECK(c.auditOutcome() == QStringLiteral("Unresolved"));
+        ROCLINT_CHECK(!c.canApprove());
+        ROCLINT_CHECK(c.pendingReviewCount() == 1);
+    }
+
+    // Now test restore when auditResult is absent in the database
+    {
+        roclint::storage::Database db(std::filesystem::path(dbPath.toStdString()));
+        ROCLINT_CHECK(db.execute("UPDATE proposals SET payload_json = REPLACE(payload_json, '\"audit_result\":', '\"old_audit\":');").ok());
+
+        HostController c(dbPath);
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.restoreSession(session, c.stateVersion())));
+
+        // Missing audit evidence must enforce hard-uncertainty gating
+        ROCLINT_CHECK(c.hasProposal());
+        ROCLINT_CHECK(!c.canApprove());
+        ROCLINT_CHECK(c.pendingReviewCount() > 0);
+    }
+
+    std::cout << "  [PASS] Session restore: Audit uncertainty preserved; absent evidence enforces hard-uncertainty gating.\n";
+}
+
+void testExactIdAcknowledgmentBinding() {
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+
+    c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
+        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"intent_grp_0","explanation":"Hard latency invariant"}]})");
+        }
+        if (in.find("<instructions>") != std::string_view::npos) {
+            return fx::rewriteReply(kVerifiedRewrite);
+        }
+        return kDiscoveryReply;
+    });
+
+    ROCLINT_CHECK(c.markModelReadyForTesting(modelInfo()));
+    analyzeAndAnswer(c);
+    synthesize(c);
+
+    ROCLINT_CHECK(!c.canApprove());
+    ROCLINT_CHECK(c.pendingReviewCount() == 1);
+
+    // Substring or mismatched IDs must NOT acknowledge intent_grp_0
+    (void)c.waitForCommandForTesting(c.acknowledgeConstraint(QStringLiteral("grp_0"), true, c.stateVersion()));
+    ROCLINT_CHECK(!c.canApprove());
+    ROCLINT_CHECK(c.pendingReviewCount() == 1);
+
+    (void)c.waitForCommandForTesting(c.acknowledgeConstraint(QStringLiteral("intent_grp_00"), true, c.stateVersion()));
+    ROCLINT_CHECK(!c.canApprove());
+    ROCLINT_CHECK(c.pendingReviewCount() == 1);
+
+    // Exact ID "intent_grp_0" or canonically mapped "intent_item_grp_0" succeeds
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.acknowledgeConstraint(QStringLiteral("intent_grp_0"), true, c.stateVersion())));
+    ROCLINT_CHECK(c.pendingReviewCount() == 0);
+    ROCLINT_CHECK(c.canApprove());
+
+    std::cout << "  [PASS] Exact ID binding: Substrings do not conflate; exact & canonical mapping binds correctly.\n";
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -1132,6 +1560,15 @@ int main(int argc, char* argv[]) {
     testGoldfishAuditPipelineGating();
     testMultiCandidateCreativeExpansion();
     testTokenSpeedModesAndMetrics();
+    testF07ReviewReuseAndVersionAdvancement();
+    testF08SelectionPersistenceAndApproval();
+    testF09UnresolvedHardAuditGating();
+    testAsyncSelectionNativeTicketAndOffGuiExecution();
+    testAsyncSelectionDelayedTransportResponsiveness();
+    testAsyncSelectionStaleSelectionRejection();
+    testAsyncSelectionSaveFailurePreventsApproval();
+    testSessionRestoreUncertaintyPreservation();
+    testExactIdAcknowledgmentBinding();
     std::cout << "[Test Host Controller] All tests PASSED.\n";
     return 0;
 }

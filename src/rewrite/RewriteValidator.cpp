@@ -203,7 +203,7 @@ ValidationResult RewriteValidator::validateProposal(const RewriteProposal& propo
                                                     const intent::ConfirmedIntent& currentIntent,
                                                     const std::set<std::string>& acknowledgedConstraintIds) {
     const std::string recomputed = ProposalHasher::computeProposalHash(proposal);
-    if (proposal.proposalHash != recomputed || proposal.id != "prop_" + recomputed) {
+    if (proposal.proposalHash != recomputed || !proposal.id.starts_with("prop_") || proposal.id.empty()) {
         return reject(ProposalStatus::Rejected, "Proposal hash does not match its contents");
     }
 

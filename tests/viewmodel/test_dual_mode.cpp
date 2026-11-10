@@ -58,6 +58,9 @@ struct Harness {
         const std::string rewrite = fx::rewriteReply(kRewrite);
         controller->setTransportOverrideForTesting(
             [c, r, discoveryReply, rewrite](std::string_view instruction) -> Result<std::string> {
+                if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+                    return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+                }
                 ++*c;
                 if (instruction.find("<instructions>") != std::string_view::npos) {
                     ++*r;

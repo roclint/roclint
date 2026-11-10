@@ -1,5 +1,6 @@
 #pragma once
 
+#include "roclint/core/validation_result.hpp"
 #include "roclint/intent/ConfirmedIntent.hpp"
 #include "roclint/rewrite/RewriteProfile.hpp"
 
@@ -37,7 +38,7 @@ struct ConstraintItem {
 
 // C06 rewrite proposal: bound to an exact revision, intent version, profile, and model identity.
 struct RewriteProposal {
-    std::string id{};             // prop_<proposalHash>
+    std::string id{};             // prop_<identifier>
     std::string proposalHash{};
     std::string sessionId{};
     std::string baseRevisionId{};
@@ -59,6 +60,7 @@ struct RewriteProposal {
     std::vector<ConstraintItem> constraints{};
     std::uint64_t proposalEditGeneration{0};
     std::int64_t createdAtMs{0};
+    std::optional<core::ValidationResult> auditResult{std::nullopt};
 
     [[nodiscard]] bool hasConstraint(std::string_view constraintId) const;
     [[nodiscard]] std::optional<ConstraintItem> getConstraint(std::string_view constraintId) const;
@@ -72,7 +74,7 @@ public:
     // Canonical SHA-256 over every bound field (createdAtMs and the derived id/hash excluded).
     [[nodiscard]] static std::string computeProposalHash(const RewriteProposal& proposal);
 
-    // Sets proposalHash and id = "prop_" + proposalHash.
+    // Computes canonical proposalHash. If id is empty, sets id = "prop_" + proposalHash; otherwise preserves valid id.
     static void seal(RewriteProposal& proposal);
 };
 

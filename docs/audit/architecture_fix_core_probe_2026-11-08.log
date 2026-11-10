@@ -1,0 +1,12 @@
+verdict=Fail parsed=Fail merged=Pass
+verdict=Unresolved parsed=Unresolved merged=Pass
+malformed_shape={} accepted=1 outcome=Pass
+malformed_shape={"outcome":"maybe","violations":[],"unresolved":[]} accepted=1 outcome=Pass
+audit_unavailable=Pass unresolved=0
+timeout_explicit_mutation=Pass violations=0 unresolved=0
+candidate=alt_prose pass=1 target=1 logging=1 text=Improve readability of Reader::open. Preserve the public API. Do not modify tests. Do not change logging.
+candidate=alt_steps pass=1 target=0 logging=0 text=1. Refactor the targeted routines for lower call latency and improved modularity.
+2. Leave forbidden areas strictly untouched: do not modify tests.
+candidate=alt_conservative pass=1 target=0 logging=0 text=Perform a minimal refactoring for speed, leaving do not modify tests strictly untouched and unchanged.
+advisory_veto=Fail violations=1
+selected_variant_structural=0 reason=Proposal constraint claims are not reproducible by the validator

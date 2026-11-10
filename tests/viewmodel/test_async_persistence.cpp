@@ -24,6 +24,8 @@ void ready(HostController& controller) {
 const QString prompt = QString::fromStdString(fx::kChainPrompt);
 void prepareProposal(HostController& controller) {
     controller.setTransportOverrideForTesting([](std::string_view instructions) -> Result<std::string> {
+        if (instructions.find("granite.goldfish_audit.v1") != std::string_view::npos)
+            return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
         if (instructions.find("<instructions>") != std::string_view::npos)
             return fx::rewriteReply("Refactor the parser for lower latency per call.");
         return std::string(R"({"status":"options_generated","choice_groups":[{"question":"What should faster mean?","alternatives":[

@@ -2,6 +2,7 @@
 
 #include "roclint/core/Json.hpp"
 #include "roclint/core/schema/SchemaVisitor.hpp"
+#include "roclint/core/validation_result.hpp"
 
 #include <cmath>
 #include <utility>
@@ -593,6 +594,9 @@ std::string encodeProposal(const rw::RewriteProposal& p) {
     root.set("constraints", std::move(constraints));
     root.set("proposal_edit_generation", num(p.proposalEditGeneration));
     root.set("created_at_ms", num(static_cast<std::uint64_t>(p.createdAtMs < 0 ? 0 : p.createdAtMs)));
+    if (p.auditResult.has_value()) {
+        root.set("audit_result", core::toJson(*p.auditResult));
+    }
     return json::serialize(root);
 }
 
@@ -640,9 +644,14 @@ Result<rw::RewriteProposal> decodeProposal(std::string_view payload) {
     }
     ROCLINT_TRY_ASSIGN(p.proposalEditGeneration, json::requireUInt(root, "proposal_edit_generation"));
     ROCLINT_TRY_ASSIGN(p.createdAtMs, readInt64(root, "created_at_ms"));
+    if (const auto* auditVal = root.find("audit_result")) {
+        auto auditRes = core::validationResultFromJson(*auditVal);
+        if (!auditRes.ok()) return auditRes.error();
+        p.auditResult = std::move(auditRes).value();
+    }
 
     const std::string recomputed = rw::ProposalHasher::computeProposalHash(p);
-    if (recomputed != p.proposalHash || p.id != "prop_" + recomputed) {
+    if (recomputed != p.proposalHash || !p.id.starts_with("prop_") || p.id.empty()) {
         return makeError(ErrorCode::ValidationFailed, "Stored proposal hash does not match its contents");
     }
     return p;

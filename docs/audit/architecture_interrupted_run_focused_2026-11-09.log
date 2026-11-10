@@ -1,0 +1,30 @@
+Internal ctest changing into directory: D:/Stardust/roclint/build
+Test project D:/Stardust/roclint/build
+    Start  5: roclint_constraint_reconciler
+1/5 Test  #5: roclint_constraint_reconciler ....   Passed    0.08 sec
+    Start 13: roclint_prompt_repository
+2/5 Test #13: roclint_prompt_repository ........   Passed    0.21 sec
+    Start 38: roclint_creative_expansion
+3/5 Test #38: roclint_creative_expansion .......   Passed    0.06 sec
+    Start 47: roclint_host_controller
+4/5 Test #47: roclint_host_controller ..........   Passed   14.90 sec
+    Start 55: roclint_product_alignment
+5/5 Test #55: roclint_product_alignment ........***Failed    4.02 sec
+  [PASS] Persisted v5 optional help has neutral, consistent presentation without inferred choices.
+Review geometry failed at 560x400 item 0
+  check in viewport: 1 rect: 150 h: 33
+  label in viewport: 0 rect: 150 w: 444 h: 170 winW: 560
+  label text: [Audit uncertainty: Candidate rewrite may paraphrase or omit user requirement (missing substantive terms: 'keep', 'explicitly', 'supplied', 'answer', 'enough', 'descriptive', 'wording', 'narrow', 'choice', 'remains', 'user's', 'decision'): 'Keep this explicitly supplied answer with enough descriptive wording to wrap in a narrow review: choice 0 remains the user's decision.'. Semantic review required.
+Your answer: “Keep this explicitly supplied answer with enough descriptive wording to wrap in a narrow review: choice 0 remains the user's decision.”]
+  contentScroll y: 142 h: 155 contentY: 130
+  activeFocus: constraintReview_intent_item_grp_0
+[CHECK FAILED] D:\Stardust\roclint\tests\viewmodel\test_product_alignment.cpp:239: fullyInViewport(window,check) && fullyInViewport(window,label)
+
+
+80% tests passed, 1 tests failed out of 5
+
+Total Test time (real) =  19.42 sec
+
+The following tests FAILED:
+	 55 - roclint_product_alignment (Failed)
+Errors while running CTest

@@ -11,7 +11,7 @@ using namespace roclint::core::rewrite;
 
 namespace {
 
-ValidationResult validate(const fx::Chain& c, const RewriteProposal& p, const std::set<std::string>& acks = {}) {
+roclint::core::rewrite::ValidationResult validate(const fx::Chain& c, const RewriteProposal& p, const std::set<std::string>& acks = {}) {
     return RewriteValidator::validateProposal(p, c.session, c.revision, c.intent, acks);
 }
 
@@ -248,6 +248,78 @@ void testAccessibleDiff() {
     ROCLINT_CHECK(RewriteValidator::computeAccessibleDiff("", "x") == "+ x\n");
 }
 
+void testProposalHasherCustomIdAndCanonicalSeal() {
+    fx::Chain c;
+    auto p1 = c.proposal;
+    p1.id.clear();
+    ProposalHasher::seal(p1);
+    ROCLINT_CHECK(p1.id == "prop_" + p1.proposalHash);
+
+    auto p2 = c.proposal;
+    p2.id = "prop_custom_selection_1";
+    ProposalHasher::seal(p2);
+    ROCLINT_CHECK(p2.id == "prop_custom_selection_1");
+    ROCLINT_CHECK(p2.proposalHash == c.proposal.proposalHash);
+
+    auto p3 = c.proposal;
+    p3.id = "custom_without_prefix";
+    ProposalHasher::seal(p3);
+    ROCLINT_CHECK(p3.id == "prop_custom_without_prefix");
+    ROCLINT_CHECK(p3.proposalHash == c.proposal.proposalHash);
+
+    // Proposals differing only in ID share the exact same canonical proposalHash
+    ROCLINT_CHECK(p1.proposalHash == p2.proposalHash);
+    ROCLINT_CHECK(p2.proposalHash == p3.proposalHash);
+}
+
+void testProposalValidatorAcceptsCustomIdAndRejectsInvalid() {
+    fx::Chain c;
+    auto validCustom = c.proposal;
+    validCustom.id = "prop_candidate_selection_42";
+    ProposalHasher::seal(validCustom);
+    const auto r = validate(c, validCustom);
+    ROCLINT_CHECK(r.structurallyValid);
+    ROCLINT_CHECK(r.isValid);
+
+    auto emptyId = c.proposal;
+    emptyId.id = "";
+    ROCLINT_CHECK(!validate(c, emptyId).structurallyValid);
+
+    auto missingPrefix = c.proposal;
+    missingPrefix.id = "unprefixed_id";
+    ROCLINT_CHECK(!validate(c, missingPrefix).structurallyValid);
+
+    auto badHash = validCustom;
+    badHash.proposalHash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    ROCLINT_CHECK(!validate(c, badHash).structurallyValid);
+}
+
+void testApprovalRecordAcceptsCustomProposalId() {
+    fx::Chain c;
+    auto customProp = c.proposal;
+    customProp.id = "prop_custom_approval_target";
+    ProposalHasher::seal(customProp);
+
+    auto ctx = c.context();
+    ctx.proposal = &customProp;
+    auto appResult = roclint::core::review::ApprovalFactory::createApproval(ctx, 3000);
+    ROCLINT_CHECK(appResult.ok());
+    const auto& app = appResult.value();
+    ROCLINT_CHECK(app.proposalId == "prop_custom_approval_target");
+    ROCLINT_CHECK(app.proposalHash == customProp.proposalHash);
+    ROCLINT_CHECK(roclint::core::review::ApprovalFactory::validate(app, ctx).ok());
+
+    auto badIdProp = customProp;
+    badIdProp.id = "bad_prefix_target";
+    ctx.proposal = &badIdProp;
+    ROCLINT_CHECK(!roclint::core::review::ApprovalFactory::createApproval(ctx, 3000).ok());
+
+    auto badHashProp = customProp;
+    badHashProp.proposalHash = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+    ctx.proposal = &badHashProp;
+    ROCLINT_CHECK(!roclint::core::review::ApprovalFactory::createApproval(ctx, 3000).ok());
+}
+
 } // namespace
 
 int main() {
@@ -264,6 +336,9 @@ int main() {
     testLeanWordingContractPreservesRequestedContent();
     testAccessibleDiff();
     testRewriteParserResilience();
+    testProposalHasherCustomIdAndCanonicalSeal();
+    testProposalValidatorAcceptsCustomIdAndRejectsInvalid();
+    testApprovalRecordAcceptsCustomProposalId();
     std::cout << "[Test RewriteProposal] All tests PASSED.\n";
     return 0;
 }

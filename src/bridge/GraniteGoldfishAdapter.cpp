@@ -104,68 +104,121 @@ core::Result<core::ValidationResult> parseGoldfishAuditResponse(std::string_view
         return core::makeError(core::ErrorCode::InvalidInput, "Audit response root must be a JSON object");
     }
 
-    // Accept "outcome", "verdict", or "status"
-    std::string outcomeStr = "pass";
-    if (const auto* val = root.find("outcome"); val && val->isString()) {
-        outcomeStr = toLowerAscii(val->asString());
-    } else if (const auto* val2 = root.find("verdict"); val2 && val2->isString()) {
-        outcomeStr = toLowerAscii(val2->asString());
-    } else if (const auto* val3 = root.find("status"); val3 && val3->isString()) {
-        outcomeStr = toLowerAscii(val3->asString());
+    // Accept "outcome", "verdict", or "status" (mandatory string)
+    const core::json::Value* outcomeVal = nullptr;
+    if (const auto* val = root.find("outcome"); val != nullptr) {
+        outcomeVal = val;
+    } else if (const auto* val2 = root.find("verdict"); val2 != nullptr) {
+        outcomeVal = val2;
+    } else if (const auto* val3 = root.find("status"); val3 != nullptr) {
+        outcomeVal = val3;
     }
 
+    if (outcomeVal == nullptr) {
+        return core::makeError(core::ErrorCode::InvalidInput, "Audit response missing required outcome field");
+    }
+    if (!outcomeVal->isString()) {
+        return core::makeError(core::ErrorCode::InvalidInput, "Audit response outcome field must be a string");
+    }
+
+    const std::string outcomeRaw = outcomeVal->asString();
+    if (outcomeRaw.empty()) {
+        return core::makeError(core::ErrorCode::InvalidInput, "Audit response outcome field cannot be empty");
+    }
+
+    std::string outcomeStr = toLowerAscii(outcomeRaw);
     core::ValidationResult result;
     if (outcomeStr == "fail") {
         result.outcome = core::ValidationOutcome::Fail;
     } else if (outcomeStr == "unresolved") {
         result.outcome = core::ValidationOutcome::Unresolved;
-    } else {
+    } else if (outcomeStr == "pass") {
         result.outcome = core::ValidationOutcome::Pass;
+    } else {
+        return core::makeError(core::ErrorCode::InvalidInput, "Unknown audit outcome: " + outcomeRaw);
     }
 
-    // Helper for finding string field with fallbacks
-    auto extractField = [](const core::json::Value& obj, std::initializer_list<const char*> keys) -> std::string {
+    // Helper to validate and extract required string field with allowed aliases
+    auto requireFieldString = [](const core::json::Value& obj,
+                                 std::initializer_list<const char*> keys,
+                                 const char* fieldName) -> core::Result<std::string> {
+        const core::json::Value* matched = nullptr;
         for (const char* key : keys) {
-            if (const auto* v = obj.find(key); v && v->isString()) {
-                return v->asString();
+            if (const auto* v = obj.find(key); v != nullptr) {
+                matched = v;
+                break;
             }
         }
-        return {};
+        if (matched == nullptr) {
+            return core::makeError(core::ErrorCode::InvalidInput,
+                                   std::string("Finding item missing required field: ") + fieldName);
+        }
+        if (!matched->isString()) {
+            return core::makeError(core::ErrorCode::InvalidInput,
+                                   std::string("Finding item field '") + fieldName + "' must be a string");
+        }
+        if (matched->asString().empty()) {
+            return core::makeError(core::ErrorCode::InvalidInput,
+                                   std::string("Finding item field '") + fieldName + "' cannot be empty");
+        }
+        return matched->asString();
     };
 
-    // Parse violations array
-    if (const auto* vArr = root.find("violations"); vArr && vArr->isArray()) {
-        for (const auto& item : vArr->asArray()) {
-            if (item.isObject()) {
-                core::ValidationFinding finding;
-                finding.constraintId = extractField(item, {"constraint_id", "id"});
-                finding.explanation = extractField(item, {"explanation", "reason", "description"});
-                if (!finding.constraintId.empty() || !finding.explanation.empty()) {
-                    result.violations.push_back(std::move(finding));
-                }
-            }
+    // Mandatory violations array validation
+    const auto* vArr = root.find("violations");
+    if (vArr == nullptr) {
+        return core::makeError(core::ErrorCode::InvalidInput, "Audit response missing required 'violations' array");
+    }
+    if (!vArr->isArray()) {
+        return core::makeError(core::ErrorCode::InvalidInput, "'violations' must be an array");
+    }
+    for (const auto& item : vArr->asArray()) {
+        if (!item.isObject()) {
+            return core::makeError(core::ErrorCode::InvalidInput, "violations item must be a JSON object");
         }
+        auto idRes = requireFieldString(item, {"constraint_id", "id"}, "constraint_id");
+        if (!idRes.ok()) return idRes.error();
+
+        auto expRes = requireFieldString(item, {"explanation", "reason", "description"}, "explanation");
+        if (!expRes.ok()) return expRes.error();
+
+        core::ValidationFinding finding;
+        finding.constraintId = std::move(idRes).value();
+        finding.explanation = std::move(expRes).value();
+        result.violations.push_back(std::move(finding));
     }
 
-    // Parse unresolved array
-    if (const auto* uArr = root.find("unresolved"); uArr && uArr->isArray()) {
-        for (const auto& item : uArr->asArray()) {
-            if (item.isObject()) {
-                core::ValidationFinding finding;
-                finding.constraintId = extractField(item, {"constraint_id", "id"});
-                finding.explanation = extractField(item, {"explanation", "reason", "description"});
-                if (!finding.constraintId.empty() || !finding.explanation.empty()) {
-                    result.unresolved.push_back(std::move(finding));
-                }
-            }
+    // Mandatory unresolved array validation
+    const auto* uArr = root.find("unresolved");
+    if (uArr == nullptr) {
+        return core::makeError(core::ErrorCode::InvalidInput, "Audit response missing required 'unresolved' array");
+    }
+    if (!uArr->isArray()) {
+        return core::makeError(core::ErrorCode::InvalidInput, "'unresolved' must be an array");
+    }
+    for (const auto& item : uArr->asArray()) {
+        if (!item.isObject()) {
+            return core::makeError(core::ErrorCode::InvalidInput, "unresolved item must be a JSON object");
         }
+        auto idRes = requireFieldString(item, {"constraint_id", "id"}, "constraint_id");
+        if (!idRes.ok()) return idRes.error();
+
+        auto expRes = requireFieldString(item, {"explanation", "reason", "description"}, "explanation");
+        if (!expRes.ok()) return expRes.error();
+
+        core::ValidationFinding finding;
+        finding.constraintId = std::move(idRes).value();
+        finding.explanation = std::move(expRes).value();
+        result.unresolved.push_back(std::move(finding));
     }
 
-    // Honest reconciliation: violations force Fail; unresolved forces Unresolved (if no violations)
+    // Honest reconciliation: violations force Fail; unresolved forces Unresolved (if not Fail)
     if (!result.violations.empty()) {
         result.outcome = core::ValidationOutcome::Fail;
     } else if (!result.unresolved.empty()) {
-        result.outcome = core::ValidationOutcome::Unresolved;
+        if (result.outcome == core::ValidationOutcome::Pass) {
+            result.outcome = core::ValidationOutcome::Unresolved;
+        }
     }
 
     return result;
@@ -183,11 +236,13 @@ core::ValidationResult GraniteGoldfishAdapter::audit(
 
     // If deterministic rules already flag a violation, fail-fast without invoking the model
     if (reconcilerResult.outcome == core::ValidationOutcome::Fail) {
+        reconcilerResult.executionStatus = core::AuditExecutionStatus::DeterministicOnly;
         return reconcilerResult;
     }
 
     // If no model transport is provided, return deterministic evaluation
     if (!transport) {
+        reconcilerResult.executionStatus = core::AuditExecutionStatus::DeterministicOnly;
         return reconcilerResult;
     }
 
@@ -195,8 +250,15 @@ core::ValidationResult GraniteGoldfishAdapter::audit(
     const std::string prompt = buildGoldfishAuditPrompt(request);
     auto transportResult = transport(prompt);
     if (!transportResult.ok()) {
-        // Model call failed (timeout or unavailable): graceful degradation to deterministic result
-        return reconcilerResult;
+        // Model call failed (timeout or unavailable): graceful degradation to unresolved with provenance
+        core::ValidationResult fallback = reconcilerResult;
+        fallback.executionStatus = core::AuditExecutionStatus::Unavailable;
+        fallback.unresolved.push_back(core::ValidationFinding{
+            "goldfish_audit",
+            "Model audit unavailable: " + transportResult.error().message
+        });
+        fallback.outcome = core::ValidationOutcome::Unresolved;
+        return fallback;
     }
 
     // Step 3: Parse model audit response
@@ -204,20 +266,68 @@ core::ValidationResult GraniteGoldfishAdapter::audit(
     if (!parsedAudit.ok()) {
         // Model returned unparseable output; preserve deterministic checks and record unresolved finding
         core::ValidationResult fallback = reconcilerResult;
+        fallback.executionStatus = core::AuditExecutionStatus::Malformed;
         fallback.unresolved.push_back(core::ValidationFinding{
             "goldfish_audit",
             "Model response could not be parsed: " + parsedAudit.error().message
         });
-        if (fallback.outcome == core::ValidationOutcome::Pass) {
-            fallback.outcome = core::ValidationOutcome::Unresolved;
-        }
+        fallback.outcome = core::ValidationOutcome::Unresolved;
         return fallback;
     }
 
-    // Step 4: Merge findings
+    // Step 4: Authority and finding validation against frozen constraints (F04 + R05)
+    std::unordered_map<std::string, const core::ScopedConstraint*> constraintMap;
+    for (const auto& c : request.constraints) {
+        constraintMap[c.id] = &c;
+    }
+
     core::ValidationResult combined = reconcilerResult;
+    combined.executionStatus = core::AuditExecutionStatus::Completed;
+
+    const bool hadModelFailVerdict = (parsedAudit.value().outcome == core::ValidationOutcome::Fail);
+    const bool hadModelUnresolvedVerdict = (parsedAudit.value().outcome == core::ValidationOutcome::Unresolved);
+    const size_t modelViolationsCount = parsedAudit.value().violations.size();
+    const size_t modelUnresolvedCount = parsedAudit.value().unresolved.size();
+
+    size_t hardViolationsAccepted = 0;
+    size_t hardUnresolvedAccepted = 0;
+    size_t unknownFindingsAccepted = 0;
+    size_t advisoryViolationsFiltered = 0;
+    size_t advisoryUnresolvedFiltered = 0;
+    size_t inactiveViolationsFiltered = 0;
+    size_t inactiveUnresolvedFiltered = 0;
 
     for (const auto& mv : parsedAudit.value().violations) {
+        auto it = constraintMap.find(mv.constraintId);
+        if (it == constraintMap.end()) {
+            // Unknown constraint ID: cannot be authoritative hard Fail, record as unresolved note to retain honest uncertainty
+            bool exists = false;
+            for (const auto& eu : combined.unresolved) {
+                if (eu.constraintId == mv.constraintId) { exists = true; break; }
+            }
+            if (!exists) {
+                combined.unresolved.push_back(core::ValidationFinding{
+                    mv.constraintId.empty() ? "goldfish_audit" : mv.constraintId,
+                    "Model reported violation for unknown constraint: " + mv.explanation
+                });
+                ++unknownFindingsAccepted;
+            }
+            continue;
+        }
+
+        const auto* c = it->second;
+        // Advisory constraints have ZERO veto power
+        if (c->enforcement == core::Enforcement::Advisory) {
+            ++advisoryViolationsFiltered;
+            continue;
+        }
+
+        // Check applicability for conditional constraints
+        if (reconciler_.evaluateApplicability(*c, request.candidateRewrite) == core::ApplicabilityStatus::Inactive) {
+            ++inactiveViolationsFiltered;
+            continue;
+        }
+
         bool exists = false;
         for (const auto& ev : combined.violations) {
             if (ev.constraintId == mv.constraintId) {
@@ -227,10 +337,38 @@ core::ValidationResult GraniteGoldfishAdapter::audit(
         }
         if (!exists) {
             combined.violations.push_back(mv);
+            ++hardViolationsAccepted;
         }
     }
 
     for (const auto& mu : parsedAudit.value().unresolved) {
+        auto it = constraintMap.find(mu.constraintId);
+        if (it == constraintMap.end()) {
+            // Unknown constraint ID: record as unresolved finding to retain honest uncertainty
+            bool exists = false;
+            for (const auto& eu : combined.unresolved) {
+                if (eu.constraintId == mu.constraintId) { exists = true; break; }
+            }
+            if (!exists) {
+                combined.unresolved.push_back(mu);
+                ++unknownFindingsAccepted;
+            }
+            continue;
+        }
+
+        const auto* c = it->second;
+        // Advisory uncertainty must not gain veto power
+        if (c->enforcement == core::Enforcement::Advisory) {
+            ++advisoryUnresolvedFiltered;
+            continue;
+        }
+
+        // Inactive conditional constraints must not block
+        if (reconciler_.evaluateApplicability(*c, request.candidateRewrite) == core::ApplicabilityStatus::Inactive) {
+            ++inactiveUnresolvedFiltered;
+            continue;
+        }
+
         bool exists = false;
         for (const auto& eu : combined.unresolved) {
             if (eu.constraintId == mu.constraintId) {
@@ -246,13 +384,43 @@ core::ValidationResult GraniteGoldfishAdapter::audit(
         }
         if (!exists) {
             combined.unresolved.push_back(mu);
+            ++hardUnresolvedAccepted;
         }
     }
+
+    // Step 5: Final verdict calculation (F01, F04, R05)
+    const size_t totalReported = modelViolationsCount + modelUnresolvedCount;
+    const size_t totalFiltered = advisoryViolationsFiltered + advisoryUnresolvedFiltered +
+                                 inactiveViolationsFiltered + inactiveUnresolvedFiltered;
 
     if (!combined.violations.empty()) {
         combined.outcome = core::ValidationOutcome::Fail;
     } else if (!combined.unresolved.empty()) {
         combined.outcome = core::ValidationOutcome::Unresolved;
+    } else if (hadModelFailVerdict) {
+        if (totalReported > 0 && totalFiltered == totalReported) {
+            // All findings reported were Advisory or Inactive; they carry zero veto power
+            combined.outcome = core::ValidationOutcome::Pass;
+        } else {
+            // Explicit Fail with no findings or unexplained findings
+            combined.outcome = core::ValidationOutcome::Fail;
+            combined.violations.push_back(core::ValidationFinding{
+                "goldfish_audit",
+                "Model audit returned an explicit Fail verdict."
+            });
+        }
+    } else if (hadModelUnresolvedVerdict) {
+        if (totalReported > 0 && totalFiltered == totalReported) {
+            // All findings reported were Advisory or Inactive; Advisory uncertainty has zero veto power
+            combined.outcome = core::ValidationOutcome::Pass;
+        } else {
+            // Explicit Unresolved verdict with no specific findings (unexplained)
+            combined.outcome = core::ValidationOutcome::Unresolved;
+            combined.unresolved.push_back(core::ValidationFinding{
+                "goldfish_audit",
+                "Model audit returned an explicit Unresolved verdict."
+            });
+        }
     } else {
         combined.outcome = core::ValidationOutcome::Pass;
     }

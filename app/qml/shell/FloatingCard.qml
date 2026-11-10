@@ -132,6 +132,7 @@ Window {
             // ListView delegates can own keyboard focus; reveal the bounded
             // diff viewport rather than scrolling only its first text line.
             if (ancestor.objectName === "diffView") item = ancestor;
+            if (ancestor.objectName.startsWith("reviewRow_")) item = ancestor;
             ancestor = ancestor.parent;
         }
         if (!ancestor) return;
