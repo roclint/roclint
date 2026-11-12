@@ -48,6 +48,8 @@ public:
     [[nodiscard]] bridge::GraniteModelInfo modelInfo() const;
     [[nodiscard]] QString configurationDetail() const;
     [[nodiscard]] double lastTokensPerSecond() const noexcept { return lastTokensPerSecond_; }
+    [[nodiscard]] double lastDecodeTokensPerSecond() const noexcept { return lastDecodeTokensPerSecond_; }
+    [[nodiscard]] double lastGenerationTokensPerSecond() const noexcept { return lastGenerationTokensPerSecond_; }
     [[nodiscard]] qint64 lastOutputTokens() const noexcept { return lastOutputTokens_; }
     [[nodiscard]] double lastDecodeMs() const noexcept { return lastDecodeMs_; }
     [[nodiscard]] double lastGenerationMs() const noexcept { return lastGenerationMs_; }
@@ -93,6 +95,7 @@ private:
                 const QString& schema, const std::shared_ptr<Call>& call);
     void cancelCall(const std::shared_ptr<Call>& call);
     void resetSpeedMetrics(quint64 requestId = 0);
+    bool updateSpeedMetrics(quint64 requestId, const QJsonObject& metrics, Call& call);
 
     QProcess* process_{nullptr};
     std::unique_ptr<OwnedProcessJob> job_;
@@ -122,6 +125,8 @@ private:
     quint64 restartEpoch_{0};
     quint64 requestEpoch_{0};
     double lastTokensPerSecond_{0.0};
+    double lastDecodeTokensPerSecond_{0.0};
+    double lastGenerationTokensPerSecond_{0.0};
     quint64 metricsRequestId_{0};
     qint64 lastOutputTokens_{0};
     double lastDecodeMs_{0.0};

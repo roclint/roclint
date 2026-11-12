@@ -18,7 +18,7 @@ function(roclint_apply_warnings target)
         target_compile_options(${target} PRIVATE /W4 /w14061 /WX /permissive- /utf-8
                                                  /external:anglebrackets /external:W0)
     else()
-        target_compile_options(${target} PRIVATE -Wall -Wextra -Wswitch-enum -Werror)
+        target_compile_options(${target} PRIVATE -Wall -Wextra -Wswitch-enum -Werror -Wno-missing-field-initializers)
     endif()
 endfunction()
 
@@ -37,6 +37,10 @@ set(ROCLINT_CORE_SOURCES
     src/core/prompt_state/PromptRevision.cpp
     src/core/prompt_state/RevisionState.cpp
     src/core/prompt_state/TextNormalization.cpp
+    src/core/scoped_constraint.cpp
+    src/core/validation_result.cpp
+    src/core/citation_evaluator.cpp
+    src/core/constraint_reconciler.cpp
     src/analysis/SourceSpan.cpp
     src/analysis/NormalizedAnalysis.cpp
     src/analysis/AnalysisSnapshot.cpp
@@ -47,11 +51,13 @@ set(ROCLINT_CORE_SOURCES
     src/bridge/GraniteAdapter.cpp
     src/bridge/S1TriageAdapter.cpp
     src/bridge/GraniteRewriteAdapter.cpp
+    src/bridge/GraniteGoldfishAdapter.cpp
     src/rewrite/RewriteProfile.cpp
     src/rewrite/RewriteProposal.cpp
     src/rewrite/RewriteValidator.cpp
     src/rewrite/CanonicalIntentExtractor.cpp
     src/rewrite/StructuredEntityExtractor.cpp
+    src/rewrite/CreativeExpansion.cpp
     src/review/ApprovalRecord.cpp
 )
 
@@ -663,6 +669,11 @@ if(BUILD_TESTING)
     # Retain the original upstream build target alongside the clearer test executable name.
     add_custom_target(roclint_core_tests DEPENDS roclint_core_smoke_tests)
     roclint_add_test(roclint_core_primitives       tests/core/testCorePrimitives.cpp                 roclint_core_testing)
+    roclint_add_test(roclint_scoped_constraint    tests/core/test_scoped_constraint.cpp             roclint_core_testing)
+    roclint_add_test(roclint_citation_evaluator   tests/core/test_citation_evaluator.cpp            roclint_core_testing)
+    roclint_add_test(roclint_constraint_reconciler tests/core/test_constraint_reconciler.cpp         roclint_core_testing)
+    roclint_add_test(roclint_adversarial_negation tests/core/test_adversarial_m1.cpp                  roclint_core_testing)
+    roclint_add_test(roclint_adversarial_rewrite tests/core/test_adversarial_comprehensive.cpp         roclint_core_testing)
     roclint_add_test(roclint_prompt_revision       tests/core/prompt_state/testPromptRevision.cpp    roclint_core_testing)
     roclint_add_test(roclint_revision_state        tests/core/prompt_state/testRevisionState.cpp     roclint_core_testing)
     roclint_add_test(roclint_storage               tests/storage/test_database.cpp                   roclint_storage_testing)
@@ -680,6 +691,7 @@ if(BUILD_TESTING)
             ROCLINT_GRANITE_TOKENIZER_MODEL="${CMAKE_CURRENT_SOURCE_DIR}/models/granite-4.2-3b/granite-4.2-3b-Q8_0.gguf")
     endif()
     roclint_add_test(roclint_prompt_repository     tests/storage/test_prompt_repository.cpp          roclint_storage_testing)
+    roclint_add_test(roclint_adversarial_persistence tests/storage/test_adversarial_m2.cpp             roclint_storage_testing)
     roclint_add_test(roclint_source_span           tests/analysis/testSourceSpan.cpp                 roclint_core_testing)
     roclint_add_test(roclint_normalized_analysis   tests/analysis/testNormalizedAnalysis.cpp         roclint_core_testing)
     roclint_add_test(roclint_analysis_snapshot     tests/analysis/testAnalysisSnapshot.cpp           roclint_storage_testing)
@@ -706,6 +718,7 @@ if(BUILD_TESTING)
     roclint_add_test(roclint_jev_checkpoint        tests/analysis/test_jev_checkpoint.cpp            roclint_core_testing)
     roclint_add_test(roclint_granite_adapter       tests/bridge/test_granite_adapter.cpp             roclint_core_testing)
     roclint_add_test(roclint_s1_triage_adapter     tests/bridge/test_s1_triage_adapter.cpp           roclint_core_testing)
+    roclint_add_test(roclint_granite_goldfish_adapter tests/bridge/test_granite_goldfish_adapter.cpp roclint_core_testing)
     roclint_add_test(roclint_intervention_state_machine tests/intent/testInterventionStateMachine.cpp roclint_core_testing)
     roclint_add_test(roclint_clarification_checkpoint tests/intent/test_clarification_checkpoint.cpp roclint_core_testing)
     roclint_add_test(roclint_confirmed_intent      tests/intent/testConfirmedIntent.cpp              roclint_core_testing)
@@ -714,6 +727,7 @@ if(BUILD_TESTING)
     roclint_add_test(roclint_rewrite_profiles      tests/rewrite/testRewriteProfiles.cpp             roclint_core_testing)
     roclint_add_test(roclint_rewrite_checkpoint    tests/rewrite/test_rewrite_checkpoint.cpp         roclint_core_testing)
     roclint_add_test(roclint_structured_entity_extractor tests/rewrite/testStructuredEntityExtractor.cpp roclint_core_testing)
+    roclint_add_test(roclint_creative_expansion    tests/rewrite/testCreativeExpansion.cpp           roclint_core_testing)
     roclint_add_test(roclint_approval_record       tests/review/testApprovalRecord.cpp               roclint_storage_testing)
     roclint_add_test(roclint_approval_checkpoint   tests/review/test_approval_checkpoint.cpp         roclint_storage_testing)
 

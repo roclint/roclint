@@ -1,0 +1,16 @@
+Internal ctest changing into directory: D:/Stardust/roclint/build
+Test project D:/Stardust/roclint/build
+    Start 55: roclint_product_alignment
+1/1 Test #55: roclint_product_alignment ........***Failed    3.47 sec
+  [PASS] Persisted v5 optional help has neutral, consistent presentation without inferred choices.
+Review geometry failed at 620x250 item 2
+[CHECK FAILED] D:\Stardust\roclint\tests\viewmodel\test_product_alignment.cpp:232: fullyInViewport(window,check) && fullyInViewport(window,label)
+
+
+0% tests passed, 1 tests failed out of 1
+
+Total Test time (real) =   3.50 sec
+
+The following tests FAILED:
+	 55 - roclint_product_alignment (Failed)
+Errors while running CTest

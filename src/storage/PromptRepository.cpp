@@ -1056,15 +1056,14 @@ Status PromptRepository::insertIntentVersion(const core::intent::ConfirmedIntent
 Status PromptRepository::insertProposal(const core::rewrite::RewriteProposal& proposal, std::int64_t nowMs, std::optional<std::uint64_t> expectedVersion) {
     return guarded([&]() -> Status {
         const auto recomputed = core::rewrite::ProposalHasher::computeProposalHash(proposal);
-        if (recomputed != proposal.proposalHash || proposal.id != "prop_" + recomputed) {
+        if (recomputed != proposal.proposalHash || !proposal.id.starts_with("prop_") || proposal.id.empty()) {
             fail(ErrorCode::InvalidInput, "Proposal hash does not match its contents");
         }
         Transaction tx(db_);
         if (expectedVersion) advanceStoredState(db_, proposal.sessionId, proposal.baseRevisionId, *expectedVersion, nowMs, std::nullopt, proposal.proposalEditGeneration);
         Statement s(db_.rawHandle(),
                     "INSERT INTO proposals (proposal_id, session_id, base_revision_id, intent_id, proposal_hash, "
-                    "proposal_edit_generation, payload_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) "
-                    "ON CONFLICT(proposal_id) DO NOTHING;");
+                    "proposal_edit_generation, payload_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8);");
         s.text(1, proposal.id)
             .text(2, proposal.sessionId)
             .text(3, proposal.baseRevisionId)

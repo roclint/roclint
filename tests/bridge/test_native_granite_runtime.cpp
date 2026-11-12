@@ -87,7 +87,7 @@ int fixture(const QString& mode) {
         }
         response.insert(QStringLiteral("result"), result);
         if (op == QLatin1String("granite_analyze") &&
-            (mode == QLatin1String("stream") || mode == QLatin1String("stream_metrics") || mode == QLatin1String("invalid_metrics") || mode == QLatin1String("bad_stream") || mode == QLatin1String("unbound_stream"))) {
+            (mode == QLatin1String("stream") || mode == QLatin1String("stream_metrics") || mode.startsWith("metrics_") || mode == QLatin1String("invalid_metrics") || mode == QLatin1String("bad_stream") || mode == QLatin1String("unbound_stream"))) {
             auto partial = response;
             partial.remove(QStringLiteral("result"));
             partial.insert(QStringLiteral("type"), QStringLiteral("partial_result"));
@@ -96,16 +96,25 @@ int fixture(const QString& mode) {
             if (mode == QLatin1String("unbound_stream")) partial = {{"type", "partial_result"}, {"request_id", response.value("request_id")}, {"chunk", "token"}};
             if (mode == QLatin1String("stream_metrics")) QThread::msleep(100);
             for (int i = 0; i < 65; ++i) {
-                if (mode == QLatin1String("stream_metrics") || mode == QLatin1String("invalid_metrics")) {
+                if (mode == QLatin1String("stream_metrics") || mode.startsWith("metrics_") || mode == QLatin1String("invalid_metrics")) {
                     partial.insert("output_tokens", mode == QLatin1String("invalid_metrics") ? 999999 : (i+1)*4);
                     partial.insert("decode_ms", mode == QLatin1String("invalid_metrics") ? -1 : (i+1)*20);
                     partial.insert("generation_ms", (i+1)*25);
+                    if (mode == "metrics_bad_partial" && i == 10) partial.insert("output_tokens", 1);
+                    if (mode == "metrics_bad_partial" && i == 11) partial.insert("decode_ms", (i+1)*30);
                 }
                 std::cout << QJsonDocument(partial).toJson(QJsonDocument::Compact).toStdString() << '\n' << std::flush;
                 if (mode == QLatin1String("stream_metrics")) QThread::msleep(2);
             }
-            if (mode == QLatin1String("stream_metrics")) {
+            if (mode == QLatin1String("stream_metrics") || mode.startsWith("metrics_")) {
                 result.insert("output_tokens",260); result.insert("decode_ms",1300); result.insert("generation_ms",1625);
+                if (mode == "metrics_bad_final_count") result.insert("output_tokens",999999);
+                if (mode == "metrics_fractional_final") result.insert("output_tokens",260.5);
+                if (mode == "metrics_backward_final") result.insert("output_tokens",256);
+                if (mode == "metrics_zero_time_final") result.insert("decode_ms",0);
+                if (mode == "metrics_missing_generation") result.remove("generation_ms");
+                if (mode == "metrics_decode_exceeds_generation") result.insert("decode_ms",2000);
+                if (mode == "metrics_backward_time") result.insert("decode_ms",1299);
                 response.insert("result",result);
             }
             std::cout << std::flush;
@@ -305,14 +314,40 @@ void protocolTests() {
     ROCLINT_CHECK(future.result().ok());
     bool liveMetrics=false;
     QObject::connect(&runtime,&NativeGraniteRuntime::speedMetricsChanged,[&]() {
-        if (runtime.state()=="BUSY" && runtime.lastOutputTokens()>0 && runtime.lastTokensPerSecond()==200.0)
+        if (runtime.state()=="BUSY" && runtime.lastOutputTokens()>0 && runtime.lastTokensPerSecond()==160.0 &&
+            runtime.lastGenerationTokensPerSecond()==160.0 && runtime.lastDecodeTokensPerSecond()==200.0)
             liveMetrics=true;
     });
     load(QStringLiteral("stream_metrics")); future=generate(runtime);
     waitUntil([&]() { return runtime.state()=="BUSY"; });
     ROCLINT_CHECK(runtime.lastOutputTokens()==0 && runtime.lastTokensPerSecond()==0);
     waitUntil([&]() { return future.isFinished() && liveMetrics; });
-    ROCLINT_CHECK(future.result().ok() && runtime.lastOutputTokens()==260 && runtime.lastTokensPerSecond()==200);
+    ROCLINT_CHECK(future.result().ok() && runtime.lastOutputTokens()==260 && runtime.lastTokensPerSecond()==160);
+    ROCLINT_CHECK(runtime.lastGenerationTokensPerSecond()==160 && runtime.lastDecodeTokensPerSecond()==200);
+    ROCLINT_CHECK(runtime.lastGenerationMs()==1625 && runtime.lastDecodeMs()==1300);
+    load(QStringLiteral("metrics_bad_partial"));
+    qint64 previousCount = 0;
+    const auto telemetryGuard = QObject::connect(&runtime, &NativeGraniteRuntime::speedMetricsChanged, [&]() {
+        if (runtime.lastOutputTokens() == 0) { previousCount = 0; return; }
+        ROCLINT_CHECK(runtime.lastOutputTokens() >= previousCount);
+        ROCLINT_CHECK(runtime.lastDecodeMs() > 0 && runtime.lastDecodeMs() <= runtime.lastGenerationMs());
+        previousCount = runtime.lastOutputTokens();
+    });
+    const int repairedChunks = chunks + 65;
+    future=generate(runtime);
+    // The future can finish on the I/O thread before the GUI sees even BUSY.
+    // Drain the bound chunks and final state, not the prior load's READY snapshot.
+    waitUntil([&]() { return future.isFinished() && chunks==repairedChunks && runtime.state()=="READY"; });
+    ROCLINT_CHECK(future.result().ok() && runtime.lastOutputTokens()==260 && runtime.lastTokensPerSecond()==160);
+    QObject::disconnect(telemetryGuard);
+    for (const auto* mode : {"metrics_bad_final_count", "metrics_fractional_final", "metrics_backward_final",
+            "metrics_zero_time_final", "metrics_missing_generation", "metrics_decode_exceeds_generation", "metrics_backward_time"}) {
+        load(QString::fromLatin1(mode));
+        const int completedChunks = chunks + 65;
+        future=generate(runtime);
+        waitUntil([&]() { return future.isFinished() && chunks==completedChunks && runtime.state()=="READY"; });
+        ROCLINT_CHECK(future.result().ok() && runtime.lastOutputTokens()==0 && runtime.lastGenerationTokensPerSecond()==0 && runtime.lastDecodeTokensPerSecond()==0);
+    }
     load(QStringLiteral("invalid_metrics")); future=generate(runtime);
     waitUntil([&]() { return future.isFinished(); });
     ROCLINT_CHECK(future.result().ok() && runtime.lastOutputTokens()==0 && runtime.lastTokensPerSecond()==0);
@@ -474,7 +509,7 @@ void speedMetricsClearOnStopTests() {
     auto future = generate(runtime);
     waitUntil([&]() { return future.isFinished(); });
     ROCLINT_CHECK(future.result().ok());
-    ROCLINT_CHECK(runtime.lastTokensPerSecond()==200 && runtime.lastOutputTokens()==260);
+    ROCLINT_CHECK(runtime.lastTokensPerSecond()==160 && runtime.lastOutputTokens()==260);
     runtime.stop();
     waitUntil([&]() { return !runtime.isRunning(); });
     ROCLINT_CHECK(runtime.lastTokensPerSecond() == 0.0);

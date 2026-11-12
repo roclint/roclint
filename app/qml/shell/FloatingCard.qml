@@ -132,6 +132,7 @@ Window {
             // ListView delegates can own keyboard focus; reveal the bounded
             // diff viewport rather than scrolling only its first text line.
             if (ancestor.objectName === "diffView") item = ancestor;
+            if (ancestor.objectName.startsWith("reviewRow_")) item = ancestor;
             ancestor = ancestor.parent;
         }
         if (!ancestor) return;
@@ -145,6 +146,7 @@ Window {
     property alias reducedMotion: appearance.reducedMotion
     component HudButton: RocButton { currentTheme: rootWindow.currentTheme; reduceMotion: rootWindow.reducedMotion }
     property bool showWorkspaceOptions: false
+    property bool inspectPanelExplicitOpen: false
     property bool rewriteAfterReview: false
     property string rewriteDraft: ""
     readonly property color bgColor: rocPalette.background
@@ -520,7 +522,7 @@ Window {
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    Layout.preferredHeight: rootWindow.height <= 260 ? 32 : 42
+                    Layout.preferredHeight: rootWindow.height <= 260 ? 32 : 54
                     spacing: 10
                     Image {
                         source: "assets/roc-mark.png"
@@ -543,13 +545,18 @@ Window {
                     Item {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
-                        Layout.preferredHeight: rootWindow.height <= 260 ? 30 : 40
+                        Layout.preferredHeight: rootWindow.height <= 260 ? 30 : 52
                         GenerationMeter {
                             anchors.right: parent.right
                             width: Math.min(250, parent.width)
-                            height: rootWindow.height <= 260 ? 30 : 40
+                            height: rootWindow.height <= 260 ? 30 : 52
                             tokensPerSecond: rootWindow.hc ? hostController.tokensPerSecond : 0
+                            generationTokensPerSecond: rootWindow.hc ? hostController.generationTokensPerSecond : 0
+                            decodeTokensPerSecond: rootWindow.hc ? hostController.decodeTokensPerSecond : 0
+                            tokenSpeedMode: rootWindow.hc ? hostController.tokenSpeedMode : "BOTH"
                             tokenCount: rootWindow.hc ? hostController.generationTokens : 0
+                            generationElapsedMs: rootWindow.hc ? hostController.generationElapsedMs : 0
+                            decodeElapsedMs: rootWindow.hc ? hostController.decodeElapsedMs : 0
                             processing: rootWindow.visible && rootWindow.hc && (rootWindow.generationPending || hostController.isInferring)
                             preparing: rootWindow.generationPending && !hostController.isInferring
                             metricsAvailable: rootWindow.hc && hostController.nativeGraniteSelected
@@ -672,6 +679,42 @@ Window {
                             verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
                         }
                     }
+                    Rectangle {
+                        id: hudModeBadge
+                        objectName: "hudModeBadge"
+                        visible: rootWindow.hc && hostController.assistanceMode !== "auto"
+                        implicitWidth: modeLabel.implicitWidth + 14
+                        implicitHeight: 23; radius: 6
+                        color: rocPalette.surface
+                        border.color: rocPalette.focus
+                        border.width: 1
+                        Accessible.role: Accessible.Button
+                        Accessible.name: qsTr("Assistance mode %1").arg(rootWindow.hc ? hostController.assistanceMode : "")
+                        Text {
+                            id: modeLabel; objectName: "hudModeLabel"
+                            anchors.fill: parent; anchors.margins: 4
+                            text: "/" + (rootWindow.hc ? hostController.assistanceMode.toUpperCase() : "")
+                            font.family: rootWindow.monoFont; font.pixelSize: 10; font.bold: true
+                            color: rocPalette.focus
+                            verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignHCenter
+                        }
+                        MouseArea {
+                            id: modeBadgeMouse
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            hoverEnabled: true
+                            onClicked: {
+                                if (rootWindow.hc) {
+                                    if (hostController.isInspectMode) {
+                                        rootWindow.inspectPanelExplicitOpen = !rootWindow.inspectPanelExplicitOpen;
+                                    } else {
+                                        hostController.setAssistanceMode("inspect");
+                                        rootWindow.inspectPanelExplicitOpen = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: rootWindow.borderColor }
@@ -706,6 +749,60 @@ Window {
                                 color: rootWindow.fgColor; wrapMode: Text.WordWrap
                             }
                         }
+                        RowLayout {
+                            id: commandPaletteRow
+                            visible: rootWindow.showPromptEditor && promptInput.text.startsWith("/") && !promptInput.text.includes(" ")
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Repeater {
+                                model: [
+                                    { cmd: "/auto", desc: "Auto" },
+                                    { cmd: "/tech", desc: "Tech" },
+                                    { cmd: "/create", desc: "Create" },
+                                    { cmd: "/strict", desc: "Strict" },
+                                    { cmd: "/inspect", desc: "Inspect" },
+                                    { cmd: "/quiet", desc: "Quiet" }
+                                ]
+                                delegate: Rectangle {
+                                    readonly property bool matches: modelData.cmd.startsWith(promptInput.text.toLowerCase())
+                                    visible: matches
+                                    implicitWidth: cmdText.implicitWidth + 14
+                                    implicitHeight: 22
+                                    radius: 6
+                                    color: pillArea.containsMouse ? rocPalette.surface : rocPalette.inset
+                                    border.color: promptInput.text.toLowerCase() === modelData.cmd ? rocPalette.focus : rootWindow.borderColor
+                                    border.width: 1
+
+                                    Text {
+                                        id: cmdText
+                                        anchors.centerIn: parent
+                                        text: modelData.cmd
+                                        font.family: rootWindow.monoFont
+                                        font.pixelSize: 11
+                                        font.bold: true
+                                        color: rootWindow.fgColor
+                                    }
+                                    MouseArea {
+                                        id: pillArea
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: {
+                                            promptInput.text = modelData.cmd + " ";
+                                            promptInput.cursorPosition = promptInput.text.length;
+                                            promptInput.forceActiveFocus();
+                                            if (rootWindow.hc) {
+                                                hostController.setAssistanceMode(modelData.cmd.substring(1));
+                                                if (modelData.cmd === "/inspect") {
+                                                    rootWindow.inspectPanelExplicitOpen = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         Rectangle {
                             visible: rootWindow.showPromptEditor
                             Layout.fillWidth: true
@@ -731,6 +828,20 @@ Window {
                                     placeholderText: qsTr("Describe the change you want to make.\nKeep the details that matter to you.")
                                     placeholderTextColor: rootWindow.mutedTextColor
                                     padding: 0
+                                    Keys.onTabPressed: (event) => {
+                                        if (text.startsWith("/") && !text.includes(" ")) {
+                                            const cmds = ["/auto", "/tech", "/create", "/strict", "/inspect", "/quiet"];
+                                            for (let i = 0; i < cmds.length; ++i) {
+                                                if (cmds[i].startsWith(text.toLowerCase())) {
+                                                    text = cmds[i] + " ";
+                                                    cursorPosition = text.length;
+                                                    event.accepted = true;
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                        event.accepted = false;
+                                    }
                                     onActiveFocusChanged: if (activeFocus) {
                                         rootWindow.requestActivate();
                                         if (rootWindow.hc) hostController.pauseAmbientFollowing();
@@ -791,6 +902,7 @@ Window {
                             currentTheme: rootWindow.currentTheme
                             viewportHeight: contentScroll.height
                             reducedMotion: rootWindow.reducedMotion
+                            inspectPanelExplicitOpen: rootWindow.inspectPanelExplicitOpen
                             draftAvailable: promptInput.text.trim().length > 0
                             onReviewRequested: rootWindow.analyzeNow()
                             onRewriteRequested: rootWindow.requestFullRewrite()

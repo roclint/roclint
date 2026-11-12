@@ -9,7 +9,7 @@ NativeGraniteRuntime::NativeGraniteRuntime(QObject* parent, QString path) : QObj
     const auto publish = [mailbox, worker, stamp](std::function<void(NativeGraniteRuntime*)> after = {}) {
         Snapshot snapshot{worker->isReady(), worker->isRunning(), worker->state(), worker->detail(), worker->residency(), worker->activeQuantization(),
             worker->configurationDetail(), worker->modelInfo(), worker->generationForFacade(), worker->requestEpochForFacade(),
-            worker->lastTokensPerSecond(), worker->lastDecodeMs(), worker->lastGenerationMs(), worker->lastOutputTokens()};
+            worker->lastTokensPerSecond(), worker->lastDecodeMs(), worker->lastGenerationMs(), worker->lastDecodeTokensPerSecond(), worker->lastGenerationTokensPerSecond(), worker->lastOutputTokens()};
         mailbox->post([snapshot, epoch = *stamp, after](auto* owner) { owner->apply(snapshot, epoch); if (after) after(owner); });
     };
     connect(worker, &NativeGraniteRuntimeWorker::stateChanged, worker, [publish]() { publish(); });
@@ -25,7 +25,7 @@ void NativeGraniteRuntime::apply(Snapshot snapshot, quint64 epoch) {
     if (epoch != epoch_) return;
     const bool changed = cache_.ready != snapshot.ready || cache_.running != snapshot.running || cache_.state != snapshot.state || cache_.detail != snapshot.detail ||
         cache_.configuration != snapshot.configuration || cache_.residency != snapshot.residency || cache_.generation != snapshot.generation || cache_.requestEpoch != snapshot.requestEpoch;
-    const bool speed = cache_.speed != snapshot.speed || cache_.tokens != snapshot.tokens || cache_.decode != snapshot.decode || cache_.generationMs != snapshot.generationMs;
+    const bool speed = cache_.speed != snapshot.speed || cache_.tokens != snapshot.tokens || cache_.decode != snapshot.decode || cache_.generationMs != snapshot.generationMs || cache_.decodeSpeed != snapshot.decodeSpeed || cache_.generationSpeed != snapshot.generationSpeed;
     cache_ = std::move(snapshot);
     if (cache_.ready || cache_.state == QLatin1String("FAILED") || !cache_.running) loading_ = false;
     if (changed) emit stateChanged(); if (speed) emit speedMetricsChanged();

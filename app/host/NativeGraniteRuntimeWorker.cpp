@@ -345,10 +345,35 @@ void NativeGraniteRuntimeWorker::readOutput() {
 void NativeGraniteRuntimeWorker::resetSpeedMetrics(quint64 requestId) {
     metricsRequestId_ = requestId;
     lastTokensPerSecond_ = 0.0;
+    lastDecodeTokensPerSecond_ = 0.0;
+    lastGenerationTokensPerSecond_ = 0.0;
     lastOutputTokens_ = 0;
     lastDecodeMs_ = 0.0;
     lastGenerationMs_ = 0.0;
     emit speedMetricsChanged();
+}
+
+bool NativeGraniteRuntimeWorker::updateSpeedMetrics(quint64 requestId, const QJsonObject& metrics, Call& call) {
+    const auto countValue = metrics.value(QStringLiteral("output_tokens"));
+    const auto decodeValue = metrics.value(QStringLiteral("decode_ms"));
+    const auto generationValue = metrics.value(QStringLiteral("generation_ms"));
+    const double count = countValue.toDouble(-1);
+    const double decode = decodeValue.toDouble(-1);
+    const double elapsed = generationValue.toDouble(-1);
+    if (requestId != metricsRequestId_ || !countValue.isDouble() || !decodeValue.isDouble() || !generationValue.isDouble() ||
+        !std::isfinite(count) || count <= 0 || std::floor(count) != count ||
+        count > manifest().value(QStringLiteral("output_tokens")).toInt() || count < call.streamedTokens ||
+        !std::isfinite(decode) || !std::isfinite(elapsed) || decode <= 0 || elapsed <= 0 || decode > elapsed ||
+        decode < call.streamedDecodeMs || elapsed < call.streamedGenerationMs) return false;
+    const double decSpeed = count * 1000.0 / decode;
+    const double genSpeed = count * 1000.0 / elapsed;
+    if (!std::isfinite(decSpeed) || !std::isfinite(genSpeed)) return false;
+    call.streamedTokens = lastOutputTokens_ = static_cast<qint64>(count);
+    call.streamedDecodeMs = lastDecodeMs_ = decode;
+    call.streamedGenerationMs = lastGenerationMs_ = elapsed;
+    lastDecodeTokensPerSecond_ = decSpeed;
+    lastGenerationTokensPerSecond_ = lastTokensPerSecond_ = genSpeed;
+    return true;
 }
 
 void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
@@ -370,23 +395,7 @@ void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
             }
             // Optional telemetry is non-authoritative: malformed/backwards metrics
             // never change accepted text, request binding or model-result validation.
-            const auto countValue = response.value(QStringLiteral("output_tokens"));
-            const double count = countValue.toDouble(-1);
-            const double decode = response.value(QStringLiteral("decode_ms")).toDouble(-1);
-            const double elapsed = response.value(QStringLiteral("generation_ms")).toDouble(-1);
-            if (id == metricsRequestId_ && countValue.isDouble() && std::isfinite(count) &&
-                count > 0 && count <= manifest().value(QStringLiteral("output_tokens")).toInt() && std::floor(count) == count &&
-                count >= pending.call->streamedTokens && std::isfinite(decode) && std::isfinite(elapsed) &&
-                decode >= pending.call->streamedDecodeMs && elapsed >= pending.call->streamedGenerationMs) {
-                pending.call->streamedTokens = static_cast<qint64>(count);
-                pending.call->streamedDecodeMs = decode;
-                pending.call->streamedGenerationMs = elapsed;
-                lastOutputTokens_ = static_cast<qint64>(count);
-                lastDecodeMs_ = decode;
-                lastGenerationMs_ = elapsed;
-                const double duration = decode > 0.0 ? decode : elapsed;
-                const double speed = duration > 0.0 ? count * 1000.0 / duration : 0.0;
-                lastTokensPerSecond_ = std::isfinite(speed) ? speed : 0.0;
+            if (updateSpeedMetrics(id, response, *pending.call)) {
                 emit speedMetricsChanged();
             }
             if (!chunk.isEmpty()) emit partialResultReceived(id, chunk);
@@ -462,17 +471,7 @@ void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
     if (op == QLatin1String("cancel")) return;
     if (request.call) {
         const auto output = result.value(QStringLiteral("text"));
-        const auto outputTokens = result.value(QStringLiteral("output_tokens")).toInteger();
-        const auto decodeMs = result.value(QStringLiteral("decode_ms")).toDouble();
-        const auto genMs = result.value(QStringLiteral("generation_ms")).toDouble();
-        if (id == metricsRequestId_) {
-            lastOutputTokens_ = std::max<qint64>(0, outputTokens);
-            lastDecodeMs_ = std::isfinite(decodeMs) && decodeMs >= 0 ? decodeMs : 0;
-            lastGenerationMs_ = std::isfinite(genMs) && genMs >= 0 ? genMs : 0;
-            const double duration = lastDecodeMs_ > 0 ? lastDecodeMs_ : lastGenerationMs_;
-            const double speed = duration > 0 ? static_cast<double>(lastOutputTokens_) * 1000.0 / duration : 0;
-            lastTokensPerSecond_ = std::isfinite(speed) ? speed : 0;
-        }
+        if (id == metricsRequestId_ && !updateSpeedMetrics(id, result, *request.call)) resetSpeedMetrics(id);
         if (!output.isString() || output.toString().toUtf8().size() > 64 * 1024) request.call->finish(core::makeError(core::ErrorCode::ValidationFailed, "Native output was absent or oversized."));
         else request.call->finish(ss(output.toString()));
         state(QStringLiteral("READY"), QStringLiteral("Native Granite completed this request locally."));

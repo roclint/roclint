@@ -938,7 +938,14 @@ Window {
 
                                                 Text {
                                                     visible: typeof hostController !== "undefined" && hostController.inferenceSpeed.length > 0
-                                                    text: "SPEED: " + (typeof hostController !== "undefined" ? hostController.inferenceSpeed : "")
+                                                    textFormat: Text.StyledText
+                                                    text: {
+                                                        if (typeof hostController === "undefined") return "";
+                                                        if (hostController.tokenSpeedMode === "BOTH" && hostController.generationTokensPerSecond > 0 && hostController.decodeTokensPerSecond > 0) {
+                                                            return "SPEED: <font color='#34D399'>" + hostController.generationSpeedLabel + " (gen)</font> · <font color='#94A3B8'>" + hostController.decodeSpeedLabel + " (dec)</font>";
+                                                        }
+                                                        return "SPEED: " + hostController.inferenceSpeed;
+                                                    }
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 11
                                                     font.bold: true

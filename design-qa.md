@@ -13,7 +13,7 @@ Date: 2026-11-07. Scope: first native HUD refresh and ordinary Windows launch. T
 - Full-view evidence: source and implementation were presented together in the same comparison tool call. Focused inspection covered their header/logo, large question, option rows, custom answer and bottom actions at readable resolution. The implementation's extra workspace/model controls and three-option explanation text are intentional product requirements, not omitted source elements.
 - Installed native observation: computer-use returned `Roclint — prompt assistant` as a normal targetable window from `%LOCALAPPDATA%/Programs/Roclint/Roclint.exe`; its screenshot and accessibility tree exposed the prompt editor, Clarify, Rewrite prompt, settings and close controls. No terminal appeared.
 
-## Live meter follow-up — 2026-11-07
+## Live meter follow-up — 2026-11-07 (historical; superseded below)
 
 The user's new reference is `docs/research/roclint-ui-2026-11-07-streaming-meter-reference.png` (502 × 144). It supersedes the decorative header waveform: remove Technical details and show tokens per second / streaming activity.
 
@@ -28,6 +28,76 @@ Implementation evidence: `docs/research/roclint-ui-2026-11-07-streaming-meter-im
 
 Verification: full CTest 52/52, then the final UI workflow rerun passed. The focused meter fixture also passes token deltas, stalls, request rollback and reduced motion. A first screenshot fixture lost its synthetic processing flag when its window became visible; the fixture now sets that state after showing the window and asserts non-flat history before capture. Native installed observation confirmed ordinary launch, no Technical details action and actual completed decode rates of 220.5 and 181.8 tok/s on one synthetic local session. Those are observations, not release performance gates. Native before-completion telemetry is covered by the bound runtime fixture; the live desktop observations captured completed rates. No generated prompt was approved, copied or inserted.
 
+## Reference-wave correction — 2026-11-08 (historical; superseded below)
+
+The user rejected the histogram-like implementation as visually unlike the reference and too brief to perceive. This supersedes the November 7 chart assessment above.
+
+Source truth: `docs/research/roclint-ui-2026-11-07-streaming-meter-reference.png` (502 × 144). The same original `assets/pixel-signal.png` now supplies the layered silhouette and cobalt/periwinkle pixels. A clipped image highlight travels across it. No replacement icon/art is drawn with bars.
+
+Rendered evidence: `docs/research/roclint-ui-2026-11-08-pixel-wave-implemented.png` (820 × 600 Qt window, DPR 1) and `docs/research/roclint-ui-2026-11-08-pixel-wave-short-burst.gif`. The GIF is a 275 × 50 header crop, enlarged to 550 × 100 with nearest-neighbor sampling. Source and implementation were inspected in the same comparison input; multiple sweep positions were inspected at header scale. Source canvas padding is not part of the native meter. Its 123.4 tok/s value is synthetic fixture input, not measured performance.
+
+- **P2 repaired — silhouette drift:** reused the actual layered pixel artwork instead of the uniform bars. The new meter remains bounded within the header (up to 250 × 40, shorter when compact).
+- **P2 repaired — imperceptible short bursts:** activity is latched on token arrival, held for 1.8 seconds and faded for 0.7 seconds. It survives completion even if generation finishes before the first display tick. This adds no inference or review delay.
+- **Typography/content:** mono rate updates at most twice a second; completed rates say Last. Newer generation/decode display options and colors are preserved. The animation fixture checks visible copy independently of that markup.
+- **Colors/assets:** original pixel layers and transparency retained. Quiet reference art remains visible while idle; the sweep identifies recent activity rather than claiming continued generation.
+- **Interaction/accessibility:** reduced motion suppresses the sweep, not the numeric rate. No Technical details action returns. The focused timing test and the full current product-alignment UI target pass. Installed startup and ordinary native launch are verified.
+
+See `docs/audit/pixel_wave_visibility_2026-11-08.md` for exact scope and results. Final result for the reference-wave correction: passed.
+
+## Runtime motion correction — 2026-11-08 (historical; superseded below)
+
+The user reported that the animation still did not work after additional product changes. The prior sweep assessment above did not establish visible motion during actual preparation. This section supersedes its animation verdict.
+
+- **P2 repaired — token-only activation:** Julia checks and model warmup can run before any Granite tokens arrive. The meter now moves gently while visible at idle and more strongly throughout `processing`, including zero-token work. Resetting a native subrequest's counters clears measurements without cutting off activity.
+- **P2 repaired — imperceptible movement:** replaced the faint highlight with quantized height and horizontal movement of the original reference PNG. The visible timer ticks every 50 ms; idle and working cycles are approximately 3.2 and 1.1 seconds. Completion holds working intensity for 1.8 seconds, then eases to idle over 0.7 seconds. Hidden/minimized windows and reduced motion stop the timer.
+- **Reference comparison:** the original 502 × 144 reference and current Qt header crop were inspected together. The cobalt/periwinkle silhouette comes from the same PNG; motion transforms that artwork rather than substituting uniform bars. Native header size differs from the reference canvas padding.
+- **Evidence:** `docs/research/roclint-ui-2026-11-08-visible-wave-motion.gif` is a nearest-neighbor enlarged Qt-rendered header crop; 123.4 tok/s is synthetic fixture input. `docs/research/roclint-ui-2026-11-08-wave-working-no-tokens.png` shows the zero-token preparation fixture. The installed Windows window was separately observed changing shape between native screenshots at idle and during Preparing / Loading model / Checking, before tokens arrived.
+- **Preserved product work:** generation/decode modes, their distinct colors and Settings selector, rewrite candidates and background audit remain present. Numeric speed still comes from measured telemetry, updates at most twice per second during work, and retains Last on completion. The wave is activity feedback, not a throughput graph; inference is not delayed.
+- **Interaction:** the synthetic native check completed with optional clarification choices. Nothing was approved, copied or inserted; the synthetic draft was cleared afterward. Reduced-motion frames remain identical while rate updates continue.
+- **Validation scope:** Release host and UI test target build; focused rendered-motion regression; full current `roclint_product_alignment` target; structure check; installed startup without developer Qt PATH. This correction does not claim a new full-repository CTest run or macOS validation.
+
+Exact commands, results and installed binary identity: `docs/audit/wave_motion_runtime_fix_2026-11-08.md`. Final result for the runtime motion correction: passed.
+
+## Measured generation/decode traces — 2026-11-08 (renderer superseded below)
+
+The user rejected passive motion and identified inflated token readings. This supersedes the ambient motion requirement and verdict above.
+
+- **P1 repaired — inflated decode throughput:** asynchronous GPU completion had been charged to sampling instead of decode. Forward-pass timing now includes `llama_synchronize`. One real Vulkan fixture produced the same 42-token output and hash before/after; decode changed from 168.7 to 26.5 tok/s, while corrected generation measured 25.7 tok/s. This is timing attribution evidence, not a speedup claim.
+- **P2 repaired — passive/unrelated animation:** idle, zero-token preparation and stalled streams remain still. Separate G/D traces update from real token/duration snapshots, with bounded interpolation and a 700 ms arrival tail. Both reuse the original pixel-wave art. No free-running phase or fabricated token count remains.
+- **P2 repaired — misleading metric substitution:** missing generation is never filled with decode throughput; unavailable measurements show a dash. The same count of native model-output tokens underlies both rates. Settings/tooltip explain that JSON/model output is included, and model loading/prefill/full-operation latency are excluded.
+- **Visual comparison:** the selected source motif is retained in both traces. Normal header height increases by 12 px to keep the two silhouettes readable; compact header sizing remains unchanged. `docs/research/roclint-ui-2026-11-08-measured-token-traces.png` and the companion idle PNG/GIF are actual Qt renderer fixtures with synthetic rates. Their values are not native benchmark results.
+- **Validation:** pixel comparisons establish still idle/preparation/stalled states, actual changes on arrivals and static reduced-motion traces with numeric updates. Full current product-alignment, native-runtime and host-controller targets pass; installed startup uses synchronized new host/helper binaries. No new full-repository or macOS run is claimed.
+
+Exact telemetry definitions, live measurements, test scope and deployment hashes: `docs/audit/measured_token_activity_2026-11-08.md`. Final result for measured traces: passed.
+
+## Evolving pixel waveform — 2026-11-08 (amplitude refined below)
+
+The user requested a waveform in the selected style, rather than the static design. This supersedes the image-based rendering above; the measured generation/decode definitions and GPU timing fix remain current.
+
+- **P2 repaired — fixed silhouette:** replaced both stretched PNG traces with one live Canvas plot. Actual token arrivals append crests to bounded generation/decode histories. Their amplitudes follow measured batch rates; interpolation reshapes the individual pixel columns. The waveform can now change its contour instead of moving the same image.
+- **Reference fidelity:** layered cobalt fills, periwinkle decode contour, hard pixel edges and stepped crests preserve the selected style. Source and Qt implementation were inspected together. A first rate-only envelope looked like a plateau; the final batch-arrival crests restore the reference's hills and valleys. The renderer intentionally evolves instead of reproducing the fixed source silhouette.
+- **Motion/meaning:** crests mark incoming batches, not per-token timestamps. No idle/preparation loop; stalls settle to a baseline. Reduced motion stays still. Rate values and their existing colors/modes remain measured and unchanged.
+- **Evidence:** `docs/research/roclint-ui-2026-11-08-live-pixel-waveform.png` and its idle PNG/GIF companion use the actual Qt renderer with synthetic telemetry. The regression compares the plot's pixels separately from the numeric labels and checks distinct histories, still states, reduced motion and completion.
+- **Validation:** focused regression, full current UI target, structure and installed startup pass. The unchanged native timing backend retains its preceding verification; no new repository-wide or macOS pass is claimed.
+
+Exact scope and installed identity: `docs/audit/live_pixel_waveform_2026-11-08.md`. Final result for the evolving waveform: passed.
+
+## Shared waveform speed scale — 2026-11-08 (dynamics superseded below)
+
+The user specified that the size of the same wave must reflect generation and decode speed. One filled contour now combines the cobalt generation body and periwinkle decode edge. Both use the same fixed linear scale, matching the numeric request-average measurements. Higher speed produces greater height; token totals and IPC batch size do not set wave size. A visual ceiling keeps it within the header; numbers above the scale remain exact.
+
+Rendered-pixel comparisons verify slow < medium < fast height, independent generation-body/decode-edge growth, and an identical wave at identical speeds despite tenfold batch size. The source palette and pixel grid remain; idle/reduced-motion and rate-integrity checks still pass. `docs/research/roclint-ui-2026-11-08-wave-speed-scale.gif` is the synthetic Qt comparison preview.
+
+Evidence and exact scale/limitations: `docs/audit/wave_speed_scale_2026-11-08.md`. Final result for the shared speed scale: passed.
+
+## Dynamic contour correction — 2026-11-08
+
+The user rejected the repeated, similarly sized waves. Removed the per-packet eight-cell crest template and switched visual amplitude from cumulative averages to recent token/timing deltas. Both channels now affect outer height, so a steady faster decode rate cannot hide generation changes. Unequal traveling ripples advance only on incoming progress, giving visible flow even at temporarily steady throughput; their height remains driven by measured recent rates. This is an activity visualization, not a literal GPU waveform. Exact numeric rates retain their request-average meaning.
+
+The 2-pixel grid preserves the selected cobalt/periwinkle style while exposing smaller changes. Regression covers steady-rate motion, alternating-rate response, independent channel contributions and quiet idle/stall/reduced-motion states. The preview includes actual Vulkan Q8_0 telemetry replayed in Qt, plus a separate synthetic varying-speed stress stream. Neither is presented as a native desktop recording. Prior fixed-crest/average-based renderer verdicts are superseded.
+
+Evidence: `docs/audit/dynamic_wave_2026-11-08.md` and `docs/research/roclint-ui-2026-11-08-dynamic-wave-live.gif`. Final result for the dynamic contour: passed.
+
 ## Required fidelity surfaces
 
 | Surface | Assessment |
@@ -35,7 +105,7 @@ Verification: full CTest 52/52, then the final UI workflow rerun passed. The foc
 | Typography | Embedded Inter Variable for reading, 26 px question hierarchy, 14–15 px prose, Consolas/Menlo for compact utility labels. Corrected the initial `Inter` family mismatch that fell back to monospaced text. |
 | Spacing/layout | Rounded 18 px outer panel, 20 px normal gutters, bounded draft and diff, persistent footer; question padding/row gaps reduced so all three alternatives, custom answer and skip action fit the 820 × 600 fixture. Extremely small windows scroll content while preserving window controls and delivery actions. |
 | Colors/tokens | Ink-blue background, cobalt primary/keyboard choice, warm-white prose, pale-blue perimeter and focus, muted periwinkle utility text. Semantic warning remains in the clarity label; focus uses a pale-blue boundary. |
-| Images/icons | Actual generated transparent Roc and official Phosphor SVG controls with licenses/provenance. The header signal is now a data chart, as requested; its earlier decorative PNG is archived. PNG assets retain aspect ratio and transparent surroundings. No text/emoji substitutes for logo or window icons. |
+| Images/icons | Actual generated transparent Roc and official Phosphor SVG controls with licenses/provenance. The meter paints an evolving stepped waveform in the original cobalt/periwinkle pixel style, with generation/decode layers responding to token arrivals. No text/emoji substitutes for logo or window icons. |
 | Copy/content | User-facing actions include Clarify, Rewrite prompt, Skip & rewrite, Keep original, Show changes and explicit Approve & Copy/Insert. No question is selected automatically; identical output says it is the original prompt. Empty drafts disable inapplicable actions. |
 
 ## Comparison and repair history

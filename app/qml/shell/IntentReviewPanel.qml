@@ -12,6 +12,7 @@ FocusScope {
     signal rewriteRequested()
     property bool reducedMotion: false
     property bool showChanges: false
+    property bool inspectPanelExplicitOpen: false
     property bool draftAvailable: hc && hostController.currentRevisionText.trim().length > 0
     signal revealReviewItem(var item)
     signal editDraftRequested()
@@ -49,6 +50,34 @@ FocusScope {
     Component.onCompleted: reviewPresented = hc && hostController.proposalStatus === "READY_FOR_REVIEW"
     property int reviewRefresh: 0
     property var pendingDecisions: ({})
+    Dialog {
+        id: reviewExplanationDialog
+        objectName: "reviewExplanationDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(600, parent ? parent.width - 32 : 600)
+        height: Math.min(420, parent ? parent.height - 32 : 420)
+        title: qsTr("Why this needs review")
+        modal: true
+        standardButtons: Dialog.Close
+        property string explanation: ""
+        property var returnFocusItem: null
+        onClosed: if (returnFocusItem) returnFocusItem.forceActiveFocus(Qt.TabFocusReason)
+        contentItem: ScrollView {
+            objectName: "reviewExplanationViewport"
+            clip: true
+            TextArea {
+                objectName: "reviewExplanationText"
+                text: reviewExplanationDialog.explanation
+                textFormat: TextEdit.PlainText
+                readOnly: true
+                focus: true
+                selectByMouse: true
+                wrapMode: TextEdit.Wrap
+                Accessible.name: qsTr("Full audit explanation")
+            }
+        }
+    }
     Connections {
         target: rootWindow.hc ? hostController : null
         function onStorageCommandFinished(requestId, name, succeeded, errorCode, message) {
@@ -697,18 +726,37 @@ FocusScope {
                                     if (!hostController.acknowledgeConstraint(modelData.id, checked, hostController.stateVersion)) rootWindow.reviewRefresh++;
                                 }
                             }
-                            Text {
-                                id: constraintLabel
-                                objectName: "reviewLabel_" + modelData.id
+                            ColumnLayout {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
-                                textFormat: Text.PlainText
-                                text: (rootWindow.showDiagnostics ? "[" + modelData.status + "] " : "") + modelData.description
-                                    + (modelData.needsReview && modelData.evidence.length ? "\nYour answer: “" + modelData.evidence + "”" : "")
-                                wrapMode: Text.Wrap
-                                font.family: rootWindow.sansFont
-                                font.pixelSize: 14
-                                color: modelData.status === "FAILED" ? rootWindow.errorColor : rootWindow.fgColor
+                                spacing: 4
+                                Text {
+                                    id: constraintLabel
+                                    objectName: "reviewLabel_" + modelData.id
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    textFormat: Text.PlainText
+                                    text: (rootWindow.showDiagnostics ? "[" + modelData.status + "] " : "") + modelData.description
+                                        + (modelData.needsReview && modelData.evidence.length ? "\nYour answer: “" + modelData.evidence + "”" : "")
+                                    wrapMode: Text.Wrap
+                                    maximumLineCount: 4
+                                    elide: Text.ElideRight
+                                    font.family: rootWindow.sansFont
+                                    font.pixelSize: 14
+                                    color: modelData.status === "FAILED" ? rootWindow.errorColor : rootWindow.fgColor
+                                }
+                                ActionButton {
+                                    objectName: "reviewExplanation_" + modelData.id
+                                    readonly property bool hasAuditExplanation: typeof modelData.auditExplanation === "string" && modelData.auditExplanation.length > 0
+                                    visible: hasAuditExplanation || constraintLabel.truncated
+                                    label: hasAuditExplanation ? qsTr("Why review?") : qsTr("Read full requirement")
+                                    onClicked: {
+                                        reviewExplanationDialog.explanation = constraintLabel.text
+                                            + (hasAuditExplanation ? "\n\n" + modelData.auditExplanation : "");
+                                        reviewExplanationDialog.returnFocusItem = constraintCheck;
+                                        reviewExplanationDialog.open();
+                                    }
+                                }
                             }
                         }
                     }
@@ -731,6 +779,47 @@ FocusScope {
                             onClicked: hostController.beginInsertionTargetSelection(hostController.stateVersion)
                         }
                     }
+                    // Creative Alternatives selector
+                    ColumnLayout {
+                        id: creativeAlternativesRow
+                        objectName: "creativeAlternativesRow"
+                        visible: rootWindow.hc && hostController.hasCreativeAlternatives && reviewPanel.status === "READY_FOR_REVIEW"
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        spacing: 6
+
+                        Text {
+                            text: qsTr("Creative Branches / Aesthetic Styles:")
+                            font.family: rootWindow.sansFont
+                            font.pixelSize: 11
+                            font.weight: Font.DemiBold
+                            color: rootWindow.mutedTextColor
+                        }
+
+                        RowLayout {
+                            spacing: 8
+                            Layout.fillWidth: true
+
+                            Repeater {
+                                model: rootWindow.hc ? hostController.creativeAlternatives : []
+                                delegate: ActionButton {
+                                    id: altPill
+                                    objectName: "creativeAlternativePill_" + index
+                                    label: modelData.title
+                                    tip: modelData.styleDescriptor
+                                    compact: true
+                                    primary: rootWindow.hc && hostController.selectedAlternativeIndex === index
+                                    quiet: !rootWindow.hc || hostController.selectedAlternativeIndex !== index
+                                    onClicked: {
+                                        if (rootWindow.hc) {
+                                            hostController.selectAlternative(index)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     Text {
                         visible: reviewPanel.status === "READY_FOR_REVIEW" && !rootWindow.showChanges
                         Layout.fillWidth: true; Layout.minimumWidth: 0
@@ -783,6 +872,263 @@ FocusScope {
                             color: modelData.startsWith("+ ") ? rootWindow.addedColor
                                  : modelData.startsWith("- ") ? rootWindow.removedColor
                                  : modelData.startsWith("~ ") ? rootWindow.changedColor : rootWindow.mutedTextColor
+                        }
+                    }
+                }
+            }
+
+            // Adversarial Audit Inspector (Goldfish Audit)
+            Rectangle {
+                id: auditInspectorCard
+                objectName: "auditInspectorCard"
+                visible: rootWindow.hc && (hostController.isInspectMode || rootWindow.inspectPanelExplicitOpen || hostController.auditOutcome === "Fail")
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                implicitHeight: auditBody.implicitHeight + 20
+                color: "transparent"
+                border.color: (rootWindow.hc && hostController.auditOutcome === "Fail") ? rootWindow.errorColor
+                            : (rootWindow.hc && hostController.auditOutcome === "Pass") ? rootWindow.addedColor
+                            : (rootWindow.hc && hostController.auditOutcome === "Unresolved") ? rootWindow.warnColor
+                            : rocPalette.focus
+                border.width: 1
+                radius: 10
+
+                property bool isExpanded: (rootWindow.hc && (hostController.isInspectMode || hostController.auditOutcome === "Fail")) || rootWindow.inspectPanelExplicitOpen
+
+                ColumnLayout {
+                    id: auditBody
+                    x: 10
+                    y: 10
+                    width: Math.max(0, parent.width - 20)
+                    spacing: 8
+
+                    // Header row: Title + Outcome Badge + Toggle
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Text {
+                            text: qsTr("ADVERSARIAL AUDIT (GOLDFISH)")
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 11
+                            font.bold: true
+                            color: rootWindow.fgColor
+                        }
+
+                        Rectangle {
+                            implicitHeight: 20
+                            implicitWidth: auditOutcomeText.implicitWidth + 12
+                            radius: 4
+                            color: (rootWindow.hc && hostController.auditOutcome === "Fail") ? Qt.rgba(0.93, 0.64, 0.69, 0.15)
+                                 : (rootWindow.hc && hostController.auditOutcome === "Pass") ? Qt.rgba(0.49, 0.91, 0.53, 0.15)
+                                 : (rootWindow.hc && hostController.auditOutcome === "Unresolved") ? Qt.rgba(0.89, 0.70, 0.25, 0.15)
+                                 : Qt.rgba(0.5, 0.5, 0.5, 0.1)
+                            border.color: (rootWindow.hc && hostController.auditOutcome === "Fail") ? rootWindow.errorColor
+                                        : (rootWindow.hc && hostController.auditOutcome === "Pass") ? rootWindow.addedColor
+                                        : (rootWindow.hc && hostController.auditOutcome === "Unresolved") ? rootWindow.warnColor
+                                        : rootWindow.mutedTextColor
+                            border.width: 1
+
+                            Text {
+                                id: auditOutcomeText
+                                anchors.centerIn: parent
+                                text: (rootWindow.hc && hostController.auditOutcome.length > 0)
+                                    ? hostController.auditOutcome.toUpperCase()
+                                    : (rootWindow.hc && hostController.isInspectMode ? qsTr("INSPECTING") : qsTr("STANDBY"))
+                                font.family: rootWindow.monoFont
+                                font.pixelSize: 10
+                                font.bold: true
+                                color: (rootWindow.hc && hostController.auditOutcome === "Fail") ? rootWindow.errorColor
+                                     : (rootWindow.hc && hostController.auditOutcome === "Pass") ? rootWindow.addedColor
+                                     : (rootWindow.hc && hostController.auditOutcome === "Unresolved") ? rootWindow.warnColor
+                                     : rootWindow.mutedTextColor
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        ActionButton {
+                            objectName: "auditToggleExpandButton"
+                            label: auditInspectorCard.isExpanded ? qsTr("Collapse") : qsTr("Expand")
+                            compact: true
+                            quiet: true
+                            onClicked: auditInspectorCard.isExpanded = !auditInspectorCard.isExpanded
+                        }
+                    }
+
+                    // Expanded content
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        visible: auditInspectorCard.isExpanded
+                        spacing: 8
+
+                        // Violations section
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            visible: rootWindow.hc && hostController.auditViolations.length > 0
+                            spacing: 4
+
+                            Text {
+                                text: qsTr("Negative Boundary Breaches (Hard Failures)")
+                                font.family: rootWindow.sansFont
+                                font.pixelSize: 12
+                                font.bold: true
+                                color: rootWindow.errorColor
+                            }
+
+                            Repeater {
+                                model: rootWindow.hc ? hostController.auditViolations : []
+                                delegate: Rectangle {
+                                    Layout.fillWidth: true
+                                    implicitHeight: violCol.implicitHeight + 12
+                                    color: rootWindow.inputBgColor
+                                    radius: 6
+                                    border.color: rootWindow.errorColor
+                                    border.width: 1
+
+                                    ColumnLayout {
+                                        id: violCol
+                                        anchors.fill: parent
+                                        anchors.margins: 6
+                                        spacing: 2
+
+                                        Text {
+                                            text: modelData.constraintId
+                                            font.family: rootWindow.monoFont
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                            color: rootWindow.errorColor
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: modelData.explanation
+                                            font.family: rootWindow.sansFont
+                                            font.pixelSize: 12
+                                            wrapMode: Text.WordWrap
+                                            color: rootWindow.fgColor
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Unresolved section
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            visible: rootWindow.hc && hostController.auditUnresolved.length > 0
+                            spacing: 4
+
+                            Text {
+                                text: qsTr("Unresolved Requirements (Semantic Review Required)")
+                                font.family: rootWindow.sansFont
+                                font.pixelSize: 12
+                                font.bold: true
+                                color: rootWindow.warnColor
+                            }
+
+                            Repeater {
+                                model: rootWindow.hc ? hostController.auditUnresolved : []
+                                delegate: Rectangle {
+                                    Layout.fillWidth: true
+                                    implicitHeight: unresCol.implicitHeight + 12
+                                    color: rootWindow.inputBgColor
+                                    radius: 6
+                                    border.color: rootWindow.warnColor
+                                    border.width: 1
+
+                                    ColumnLayout {
+                                        id: unresCol
+                                        anchors.fill: parent
+                                        anchors.margins: 6
+                                        spacing: 2
+
+                                        Text {
+                                            text: modelData.constraintId
+                                            font.family: rootWindow.monoFont
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                            color: rootWindow.warnColor
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: modelData.explanation
+                                            font.family: rootWindow.sansFont
+                                            font.pixelSize: 12
+                                            wrapMode: Text.WordWrap
+                                            color: rootWindow.fgColor
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Clean Pass summary
+                        Text {
+                            visible: rootWindow.hc && hostController.auditOutcome === "Pass" && hostController.auditViolations.length === 0 && hostController.auditUnresolved.length === 0 && hostController.auditExecutionStatus !== "DeterministicOnly"
+                            Layout.fillWidth: true
+                            text: qsTr("All user constraints and negative boundaries verified compliant by zero-memory audit pass.")
+                            font.family: rootWindow.sansFont
+                            font.pixelSize: 12
+                            color: rootWindow.addedColor
+                            wrapMode: Text.WordWrap
+                        }
+
+                        // Deterministic fallback summary
+                        Text {
+                            visible: rootWindow.hc && hostController.auditOutcome === "Pass" && hostController.auditViolations.length === 0 && hostController.auditUnresolved.length === 0 && hostController.auditExecutionStatus === "DeterministicOnly"
+                            Layout.fillWidth: true
+                            text: qsTr("Verified compliant by deterministic checks only. Model audit is offline; acknowledge the fallback item to approve.")
+                            font.family: rootWindow.sansFont
+                            font.pixelSize: 12
+                            color: rootWindow.warnColor
+                            wrapMode: Text.WordWrap
+                        }
+
+                        // Standby explanation
+                        Text {
+                            visible: rootWindow.hc && hostController.auditOutcome.length === 0
+                            Layout.fillWidth: true
+                            text: qsTr("Adversarial Goldfish pass is standing by. When you improve wording or synthesize a rewrite, candidate text is checked cold against negative boundaries and mandatory constraints.")
+                            font.family: rootWindow.sansFont
+                            font.pixelSize: 12
+                            color: rootWindow.mutedTextColor
+                            wrapMode: Text.WordWrap
+                        }
+
+                        // Recovery actions on audit breach
+                        RowLayout {
+                            Layout.fillWidth: true
+                            visible: rootWindow.hc && hostController.auditOutcome === "Fail"
+                            spacing: 8
+
+                            ActionButton {
+                                objectName: "auditClarifyBoundaryButton"
+                                label: qsTr("Clarify Boundary")
+                                quiet: true
+                                iconName: "sparkle"
+                                onClicked: rootWindow.reviewRequested()
+                            }
+
+                            ActionButton {
+                                objectName: "auditStrictRewriteButton"
+                                label: qsTr("Strict Rewrite")
+                                primary: true
+                                iconName: "pencil-simple"
+                                onClicked: {
+                                    if (rootWindow.hc) {
+                                        hostController.setAssistanceMode("strict");
+                                    }
+                                    rootWindow.rewriteRequested();
+                                }
+                            }
+
+                            ActionButton {
+                                objectName: "auditRevertDraftButton"
+                                label: qsTr("Revert to Draft")
+                                quiet: true
+                                iconName: "pencil-simple"
+                                onClicked: rootWindow.editDraftRequested()
+                            }
                         }
                     }
                 }

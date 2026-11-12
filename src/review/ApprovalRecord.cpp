@@ -42,7 +42,7 @@ Status checkContext(const ApprovalContext& ctx) {
         return makeError(ErrorCode::PreconditionFailed, "Only a ready proposal can be approved");
     }
     if (rewrite::ProposalHasher::computeProposalHash(proposal) != proposal.proposalHash ||
-        proposal.id != "prop_" + proposal.proposalHash) {
+        !proposal.id.starts_with("prop_") || proposal.id.empty()) {
         return makeError(ErrorCode::ValidationFailed, "Proposal hash does not match its contents");
     }
     if (proposal.sessionId != ctx.sessionId || intent.sessionId != ctx.sessionId ||

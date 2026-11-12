@@ -472,6 +472,9 @@ void testExplicitSelectiveReview() {
         waitUntil([&]() { return c.juliaState() == "READY"; });
         std::atomic<int> calls{0};
         c.setTransportOverrideForTesting([&](std::string_view instruction) -> roclint::core::Result<std::string> {
+            if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+                return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+            }
             ++calls;
             if (instruction.find("<instructions>") != std::string_view::npos)
                 return fx::rewriteReply(item.prompt);
@@ -560,6 +563,9 @@ void testS1FirstControllerRouting() {
         waitUntil([&]() { return controller.juliaState() == QLatin1String("READY"); });
         int graniteCalls = 0, rewriteCalls = 0;
         controller.setTransportOverrideForTesting([&](std::string_view instruction) -> roclint::core::Result<std::string> {
+            if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+                return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+            }
             ++graniteCalls;
             if (std::string_view(mode) == "slow_triage") QThread::msleep(2500);
             if (instruction.find("<instructions>") != std::string_view::npos) {

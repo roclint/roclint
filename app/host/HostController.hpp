@@ -37,6 +37,7 @@
 #include "roclint/analysis/NormalizedAnalysis.hpp"
 #include "roclint/bridge/GraniteAdapter.hpp"
 #include "roclint/bridge/GraniteRewriteAdapter.hpp"
+#include "roclint/bridge/GraniteGoldfishAdapter.hpp"
 #include "roclint/bridge/S1TriageAdapter.hpp"
 #include "roclint/core/Result.hpp"
 #include "roclint/core/prompt_state/RevisionState.hpp"
@@ -45,6 +46,7 @@
 #include "roclint/review/ApprovalRecord.hpp"
 #include "roclint/rewrite/RewriteProposal.hpp"
 #include "roclint/rewrite/RewriteValidator.hpp"
+#include "roclint/rewrite/CreativeExpansion.hpp"
 #include "roclint/storage/Database.hpp"
 #include "roclint/storage/PromptRepository.hpp"
 
@@ -140,6 +142,26 @@ struct GroundedPromptContext {
 // gestures; every mutation goes through a version-checked command below.
 class HostController : public QObject {
     Q_OBJECT
+
+public:
+    enum class AssistanceMode : quint8 {
+        Auto,
+        Tech,
+        Create,
+        Strict,
+        Inspect,
+        Quiet
+    };
+    Q_ENUM(AssistanceMode)
+
+    struct ParsedCommand {
+        AssistanceMode mode{AssistanceMode::Auto};
+        QString cleanText{};
+        bool hasCommand{false};
+    };
+
+    Q_PROPERTY(QString assistanceMode READ assistanceMode WRITE setAssistanceMode NOTIFY assistanceModeChanged)
+    Q_PROPERTY(bool isInspectMode READ isInspectMode NOTIFY assistanceModeChanged)
     Q_PROPERTY(bool isCardVisible READ isCardVisible NOTIFY cardVisibilityChanged)
     Q_PROPERTY(bool isDashboardVisible READ isDashboardVisible NOTIFY dashboardVisibilityChanged)
     Q_PROPERTY(QString hostStateString READ hostStateString NOTIFY hostStateChanged)
@@ -198,6 +220,10 @@ class HostController : public QObject {
     Q_PROPERTY(QString confirmedIntentSummary READ confirmedIntentSummary NOTIFY intentChanged)
     Q_PROPERTY(QVariantList confirmedItems READ confirmedItems NOTIFY intentChanged)
     Q_PROPERTY(QStringList unresolvedItems READ unresolvedItems NOTIFY intentChanged)
+    Q_PROPERTY(QString auditOutcome READ auditOutcome NOTIFY rewriteProposalChanged)
+    Q_PROPERTY(QString auditExecutionStatus READ auditExecutionStatus NOTIFY rewriteProposalChanged)
+    Q_PROPERTY(QVariantList auditViolations READ auditViolations NOTIFY rewriteProposalChanged)
+    Q_PROPERTY(QVariantList auditUnresolved READ auditUnresolved NOTIFY rewriteProposalChanged)
     Q_PROPERTY(QString rewriteProfile READ rewriteProfile NOTIFY rewriteProfileChanged)
     Q_PROPERTY(QVariantList availableRewriteProfiles READ availableRewriteProfiles CONSTANT)
     Q_PROPERTY(bool isRewriteEnabled READ isRewriteEnabled NOTIFY intentChanged)
@@ -211,6 +237,9 @@ class HostController : public QObject {
     Q_PROPERTY(QVariantList proposalConstraints READ proposalConstraints NOTIFY rewriteProposalChanged)
     Q_PROPERTY(int pendingReviewCount READ pendingReviewCount NOTIFY rewriteProposalChanged)
     Q_PROPERTY(bool canApprove READ canApprove NOTIFY rewriteProposalChanged)
+    Q_PROPERTY(QVariantList creativeAlternatives READ creativeAlternatives NOTIFY creativeAlternativesChanged)
+    Q_PROPERTY(int selectedAlternativeIndex READ selectedAlternativeIndex WRITE selectAlternative NOTIFY selectedAlternativeChanged)
+    Q_PROPERTY(bool hasCreativeAlternatives READ hasCreativeAlternatives NOTIFY creativeAlternativesChanged)
     Q_PROPERTY(bool hasApproval READ hasApproval NOTIFY approvalChanged)
     Q_PROPERTY(QString approvalLabel READ approvalLabel NOTIFY approvalChanged)
     Q_PROPERTY(QVariantList groundedEvidence READ groundedEvidence NOTIFY groundingChanged)
@@ -250,9 +279,16 @@ class HostController : public QObject {
     Q_PROPERTY(bool isNativeGraniteQ8Installed READ isNativeGraniteQ8Installed NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(bool isNativeGraniteQ5Installed READ isNativeGraniteQ5Installed NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(bool isNativeGraniteQ4Installed READ isNativeGraniteQ4Installed NOTIFY modelEngineStatusChanged)
+    Q_PROPERTY(QString tokenSpeedMode READ tokenSpeedMode WRITE setTokenSpeedMode NOTIFY tokenSpeedModeChanged)
     Q_PROPERTY(QString inferenceSpeed READ inferenceSpeed NOTIFY inferenceSpeedChanged)
     Q_PROPERTY(double tokensPerSecond READ tokensPerSecond NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(double generationTokensPerSecond READ generationTokensPerSecond NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(double decodeTokensPerSecond READ decodeTokensPerSecond NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(QString generationSpeedLabel READ generationSpeedLabel NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(QString decodeSpeedLabel READ decodeSpeedLabel NOTIFY inferenceSpeedChanged)
     Q_PROPERTY(qint64 generationTokens READ generationTokens NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(double generationElapsedMs READ generationElapsedMs NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(double decodeElapsedMs READ decodeElapsedMs NOTIFY inferenceSpeedChanged)
     Q_PROPERTY(QString acceleratorName READ acceleratorName CONSTANT)
     Q_PROPERTY(QString nativeGraniteDiskStatus READ nativeGraniteDiskStatus NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(QString nativeGraniteMemoryStatus READ nativeGraniteMemoryStatus NOTIFY modelEngineStatusChanged)
@@ -367,6 +403,20 @@ public:
     [[nodiscard]] QString confirmedIntentSummary() const;
     [[nodiscard]] QVariantList confirmedItems() const;
     [[nodiscard]] QStringList unresolvedItems() const;
+    [[nodiscard]] QString assistanceMode() const;
+    [[nodiscard]] bool isInspectMode() const noexcept;
+    Q_INVOKABLE void setAssistanceMode(const QString& mode);
+    void applyAssistanceMode(AssistanceMode mode);
+    [[nodiscard]] static ParsedCommand parseCommandPrefix(QString text);
+
+    [[nodiscard]] QString auditOutcome() const;
+    [[nodiscard]] QString auditExecutionStatus() const;
+    [[nodiscard]] QVariantList auditViolations() const;
+    [[nodiscard]] QVariantList auditUnresolved() const;
+    [[nodiscard]] const std::optional<core::ValidationResult>& lastAuditResult() const noexcept { return m_lastAuditResult; }
+    [[nodiscard]] static std::vector<core::ScopedConstraint> extractSessionConstraints(
+        std::string_view originalPrompt, const core::intent::ConfirmedIntent& intent);
+
     [[nodiscard]] QString rewriteProfile() const { return m_rewriteProfile; }
     [[nodiscard]] QVariantList availableRewriteProfiles() const;
     [[nodiscard]] bool isRewriteEnabled() const;
@@ -380,6 +430,9 @@ public:
     [[nodiscard]] QVariantList proposalConstraints() const;
     [[nodiscard]] int pendingReviewCount() const;
     [[nodiscard]] bool canApprove() const;
+    [[nodiscard]] QVariantList creativeAlternatives() const;
+    [[nodiscard]] int selectedAlternativeIndex() const noexcept { return m_selectedAlternativeIndex; }
+    [[nodiscard]] bool hasCreativeAlternatives() const noexcept { return !m_creativeAlternatives.empty(); }
     [[nodiscard]] bool hasApproval() const noexcept { return m_currentApproval.has_value(); }
     [[nodiscard]] QString approvalLabel() const;
     [[nodiscard]] QVariantList groundedEvidence() const;
@@ -439,9 +492,17 @@ public:
     [[nodiscard]] bool isNativeGraniteQ8Installed() const;
     [[nodiscard]] bool isNativeGraniteQ5Installed() const;
     [[nodiscard]] bool isNativeGraniteQ4Installed() const;
+    [[nodiscard]] QString tokenSpeedMode() const { return m_tokenSpeedMode; }
+    Q_INVOKABLE void setTokenSpeedMode(const QString& mode);
     [[nodiscard]] QString inferenceSpeed() const;
     [[nodiscard]] double tokensPerSecond() const;
+    [[nodiscard]] double generationTokensPerSecond() const;
+    [[nodiscard]] double decodeTokensPerSecond() const;
+    [[nodiscard]] QString generationSpeedLabel() const;
+    [[nodiscard]] QString decodeSpeedLabel() const;
     [[nodiscard]] qint64 generationTokens() const;
+    [[nodiscard]] double generationElapsedMs() const;
+    [[nodiscard]] double decodeElapsedMs() const;
     [[nodiscard]] QString acceleratorName() const {
         // ROCLINT_ACCELERATOR_NAME is injected by CMakeLists.txt (PUBLIC) from the resolved
         // _roclint_backend variable so it always matches the actual compiled backend
@@ -514,6 +575,9 @@ public:
     [[nodiscard]] const std::optional<core::intent::ConfirmedIntent>& confirmedIntentForTesting() const noexcept {
         return m_confirmedIntent;
     }
+    [[nodiscard]] const std::vector<core::rewrite::CreativeAlternative>& creativeAlternativesForTesting() const noexcept {
+        return m_creativeAlternatives;
+    }
     [[nodiscard]] const std::optional<core::rewrite::RewriteProposal>& proposalForTesting() const noexcept {
         return m_currentProposal;
     }
@@ -580,6 +644,7 @@ public slots:
     Q_INVOKABLE quint64 approveAndCopyRewrite(quint64 expectedVersion);
     Q_INVOKABLE bool beginInsertionTargetSelection(quint64 expectedVersion);
     Q_INVOKABLE quint64 discardProposal(quint64 expectedVersion);
+    Q_INVOKABLE void selectAlternative(int index);
 
     // Ambient mode.
     Q_INVOKABLE bool requestAccessibilityPermission();
@@ -636,6 +701,7 @@ signals:
     void hideDashboardRequested();
     void quitRequested();
     void stateVersionChanged();
+    void assistanceModeChanged();
     void lastCopiedTextChanged();
     void lastErrorChanged();
     void shortcutWarningChanged();
@@ -654,6 +720,9 @@ signals:
     void intentChanged();
     void rewriteProfileChanged(const QString& profile);
     void rewriteProposalChanged();
+    void creativeAlternativesChanged();
+    void selectedAlternativeChanged();
+    void tokenSpeedModeChanged();
     void inferenceSpeedChanged();
     void approvalChanged();
     void groundingChanged();
@@ -717,6 +786,7 @@ private:
         std::uint64_t workspaceEpoch{0};
         core::analysis::ReviewTrigger reviewTrigger{core::analysis::ReviewTrigger::Automatic};
         std::string attemptId;
+        std::string intentId;
         std::string configuration;
         bridge::GraniteModelInfo model;
         std::shared_ptr<AnalysisGroup> analysisGroup;
@@ -830,10 +900,19 @@ private:
     AsyncTask<void> onDiscoveryFinishedAsync(PipelineTicket ticket,
                              core::Result<bridge::GraniteOptionDiscoveryResponse> result);
     void onRewriteFinished(PipelineTicket ticket, core::Result<core::rewrite::RewriteProposal> result,
-                           GroundedPromptContext grounding, bool evidenceCurrent);
+                           GroundedPromptContext grounding, bool evidenceCurrent,
+                           core::ValidationResult auditVerdict = core::ValidationResult{});
     AsyncTask<void> onRewriteFinishedAsync(PipelineTicket ticket,
                            core::Result<core::rewrite::RewriteProposal> result,
-                           GroundedPromptContext grounding, bool evidenceCurrent);
+                           GroundedPromptContext grounding, bool evidenceCurrent,
+                           core::ValidationResult auditVerdict = core::ValidationResult{});
+    void onAlternativeAuditFinished(PipelineTicket ticket, int index, std::string candidateHash,
+                                   std::uint64_t prevVersion, core::ValidationResult auditVerdict);
+    AsyncTask<core::Status> persistSelectedAlternativeOperation(PipelineTicket ticket, int index,
+                                                                std::string candidateHash,
+                                                                std::uint64_t prevVersion,
+                                                                core::ValidationResult auditVerdict,
+                                                                core::rewrite::RewriteProposal capturedProposal);
     AsyncTask<void> onHealthFinished(HealthResult result);
     AsyncTask<void> rebuildFromRestore(storage::RestoredSession restored);
 
@@ -1005,6 +1084,7 @@ private:
     std::optional<PipelineTicket> m_promptTriageLoad;
     std::optional<core::analysis::PromptTriage> m_promptTriage;
     core::analysis::ReviewTrigger m_reviewTrigger{core::analysis::ReviewTrigger::Automatic};
+    AssistanceMode m_assistanceMode{AssistanceMode::Auto};
     core::analysis::PromptTriageRoute m_promptTriageLastRoute{core::analysis::PromptTriageRoute::Original};
     std::shared_ptr<AnalysisGroup> m_routedAnalysisGroup;
     QString m_recommendedOption;
@@ -1069,7 +1149,11 @@ private:
     ProposalUiStatus m_proposalStatus{ProposalUiStatus::None};
     QString m_proposalMessage;
     QString m_streamingPreview;
+    std::optional<core::ValidationResult> m_lastAuditResult;
     std::optional<core::rewrite::RewriteProposal> m_currentProposal;
+    std::vector<core::rewrite::CreativeAlternative> m_creativeAlternatives{};
+    std::vector<core::AuditExecutionStatus> m_creativeAlternativeAuditExecutionStatuses{};
+    int m_selectedAlternativeIndex{0};
     std::set<std::string> m_acknowledgedConstraints;
     std::optional<core::review::ApprovalRecord> m_currentApproval;
     std::vector<GroundedEvidenceView> m_activeGroundedEvidence;
@@ -1111,6 +1195,7 @@ private:
     bool m_healthRecheckRequested{false};
     QString m_modelStatusDetail;
     QVariantList m_availableModels;
+    QString m_tokenSpeedMode{QStringLiteral("BOTH")};
     QString m_activeModel{NativeGraniteRuntime::modelTag(QStringLiteral("Q8_0"))};
     bool m_isDownloadingModel{false};
     int m_downloadProgress{0};

@@ -14,6 +14,10 @@
 #include <QFontDatabase>
 #include <QGuiApplication>
 #include <QJSValue>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlExpression>
@@ -23,6 +27,7 @@
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTimer>
+#include <QTextDocument>
 #include "roclint/storage/Database.hpp"
 #include <QtTest/QTest>
 
@@ -45,6 +50,9 @@ const QString kRewritten = QStringLiteral("Refactor the parser. Lower latency pe
 
 void prepare(HostController& c, std::atomic<int>& calls, int delayMs = 0) {
     c.setTransportOverrideForTesting([&calls, delayMs](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         ++calls;
         if (delayMs > 0) std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
         return prompt.find("<instructions>") == std::string_view::npos
@@ -175,6 +183,9 @@ void testReviewGeometryAndExplicitExpansion() {
         std::string rewritten = "Refactor the parser to be quicker, improve documentation, and tidy tests.";
         if (size.width == 560) for (int i=0; i<80; ++i) rewritten += "\nA long synthetic diff line that wraps across the available review width.";
         c.setTransportOverrideForTesting([&](std::string_view prompt) -> Result<std::string> {
+            if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+                return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+            }
             ++calls; return prompt.find("<instructions>") == std::string_view::npos ? discovery : fx::rewriteReply(rewritten);
         });
         ROCLINT_CHECK(c.markModelReadyForTesting(fx::testModel()));
@@ -216,11 +227,40 @@ void testReviewGeometryAndExplicitExpansion() {
             const auto suffix=QStringLiteral("intent_item_grp_%1").arg(index);
             auto* check=findVisual(window->contentItem(),"constraintReview_"+suffix);
             auto* label=findVisual(window->contentItem(),"reviewLabel_"+suffix);
-            if (!fullyInViewport(window,check) || !fullyInViewport(window,label))
+            if (!fullyInViewport(window,check) || !fullyInViewport(window,label)) {
+                auto* sc = window->findChild<QQuickItem*>("workflowViewport");
                 std::cerr << "Review geometry failed at " << size.width << 'x' << size.height << " item " << index << '\n';
+                std::cerr << "  check in viewport: " << fullyInViewport(window, check) << " rect: " << check->mapRectToItem(window->contentItem(), check->boundingRect()).y() << " h: " << check->height() << '\n';
+                std::cerr << "  label in viewport: " << fullyInViewport(window, label) << " rect: " << label->mapRectToItem(window->contentItem(), label->boundingRect()).y() << " w: " << label->width() << " h: " << label->height() << " winW: " << window->width() << '\n';
+                std::cerr << "  label text: [" << label->property("text").toString().toStdString() << "]\n";
+                if (sc) std::cerr << "  contentScroll y: " << sc->mapRectToItem(window->contentItem(), sc->boundingRect()).y() << " h: " << sc->height() << " contentY: " << sc->property("contentY").toDouble() << '\n';
+                std::cerr << "  activeFocus: " << (window->activeFocusItem() ? window->activeFocusItem()->objectName().toStdString() : "none") << '\n';
+            }
             ROCLINT_CHECK(fullyInViewport(window,check) && fullyInViewport(window,label));
             ROCLINT_CHECK(check->hasActiveFocus() && c.pendingReviewCount()==3-index && !c.canApprove());
             ROCLINT_CHECK(fullyInViewport(window,primary));
+            if (index == 0) {
+                auto* why = findVisual(window->contentItem(), "reviewExplanation_" + suffix);
+                ROCLINT_CHECK(why && fullyInViewport(window, why));
+                QString explanation;
+                for (const auto& value : c.proposalConstraints()) {
+                    const auto item = value.toMap();
+                    if (item.value("id").toString() == suffix) explanation = item.value("auditExplanation").toString();
+                }
+                ROCLINT_CHECK(!explanation.isEmpty());
+                why->forceActiveFocus(Qt::TabFocusReason);
+                QTest::keyClick(window, Qt::Key_Space); QTest::qWait(50);
+                auto* dialog = window->findChild<QObject*>("reviewExplanationDialog");
+                auto* detail = window->findChild<QQuickItem*>("reviewExplanationText");
+                auto* detailViewport = window->findChild<QQuickItem*>("reviewExplanationViewport");
+                ROCLINT_CHECK(dialog && dialog->property("visible").toBool());
+                ROCLINT_CHECK(detail && detail->property("text").toString().contains(explanation));
+                ROCLINT_CHECK(detail->property("text").toString().contains(label->property("text").toString()));
+                ROCLINT_CHECK(detailViewport && fullyInViewport(window, detailViewport));
+                QTest::keyClick(window, Qt::Key_Escape); QTest::qWait(50);
+                ROCLINT_CHECK(!dialog->property("visible").toBool() && check->hasActiveFocus());
+                ROCLINT_CHECK(c.pendingReviewCount() == 3 && !c.hasApproval());
+            }
             if (index==0) savePreview(window,QString("review-checks-%1x%2.png").arg(size.width).arg(size.height));
             QTest::keyClick(window,Qt::Key_Space);
             ROCLINT_CHECK(c.waitForIdleForTesting(3000));
@@ -233,7 +273,10 @@ void testReviewGeometryAndExplicitExpansion() {
         const double diffCap=std::max(80.0,std::min(240.0,viewport->height()*0.4));
         ROCLINT_CHECK(diff->height()<=diffCap+1.0);
         ROCLINT_CHECK(QMetaObject::invokeMethod(window,"openReview"));
-        QTest::qWait(100);
+        QElapsedTimer diffTimer; diffTimer.start();
+        while ((!fullyInViewport(window,diff) || !diff->hasActiveFocus()) && diffTimer.elapsed() < 1000) {
+            QTest::qWait(50);
+        }
         if (!fullyInViewport(window,diff) || !diff->hasActiveFocus()) {
             const auto rect=diff->mapRectToItem(window->contentItem(),diff->boundingRect());
             std::cerr << "Diff review geometry: " << size.width << 'x' << size.height
@@ -380,6 +423,9 @@ void testCompactHudControlsStayInsideWindow() {
         {"question":"Which docs?","alternatives":[{"label":"README","why_material":"Scope","evidence":["where needed"]},{"label":"All docs","why_material":"Scope","evidence":["where needed"]}]},
         {"question":"Which cleanup?","alternatives":[{"label":"Names","why_material":"Scope","evidence":["clean up the tests"]},{"label":"Dead tests","why_material":"Scope","evidence":["clean up the tests"]}]}]})";
     c.setTransportOverrideForTesting([discovery](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         return prompt.find("<instructions>") == std::string_view::npos ? discovery
             : fx::rewriteReply("Refactor the parser, update documentation, and tidy tests.");
     });
@@ -625,6 +671,9 @@ void testReviewRequiresExplicitActivation() {
     ROCLINT_CHECK(controller.waitForStorageForTesting());
     controller.setLegacyDiscoveryForTesting(true);
     controller.setTransportOverrideForTesting([](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         return prompt.find("<instructions>") == std::string_view::npos ? kDiscovery : fx::rewriteReply("Make the parser quicker.");
     });
     ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
@@ -669,6 +718,9 @@ void testReviewAcknowledgementStorageFailure() {
     HostController c(path); ROCLINT_CHECK(c.waitForStorageForTesting()); c.setAmbientModeEnabled(false);
     c.setLegacyDiscoveryForTesting(true);
     c.setTransportOverrideForTesting([](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         return prompt.find("<instructions>") == std::string_view::npos ? kDiscovery : fx::rewriteReply("Make the parser quicker.");
     });
     ROCLINT_CHECK(c.markModelReadyForTesting(fx::testModel()));
@@ -1139,6 +1191,9 @@ void testExplicitClarificationAndDeferredRewrite() {
     int discoveryCalls = 0, rewriteCalls = 0;
     QString instructions;
     controller.setTransportOverrideForTesting([&](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         if (prompt.find("<instructions>") != std::string_view::npos) {
             ++rewriteCalls;
             instructions = QString::fromUtf8(prompt.data(), static_cast<qsizetype>(prompt.size()));
@@ -1280,55 +1335,201 @@ void testGenerationMeterUsesMeasuredProgress() {
     auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());
     auto* meter=window->findChild<QQuickItem*>("generationMeter");
     ROCLINT_CHECK(meter && !window->findChild<QObject*>("reviewDiagnosticsButton"));
-    auto* wave=window->findChild<QObject*>("referencePixelWave");
-    ROCLINT_CHECK(wave && wave->property("source").toUrl().toString().endsWith("assets/pixel-signal.png"));
+    meter->setProperty("tokenSpeedMode",QStringLiteral("BOTH"));
+    const auto plainRate=[&]() {
+        QTextDocument label; label.setHtml(meter->property("rateText").toString());
+        return label.toPlainText();
+    };
+    const auto invoke=[&](const char* name, double now) {
+        ROCLINT_CHECK(QMetaObject::invokeMethod(meter,name,Q_ARG(QVariant,QVariant(now))));
+    };
+    const auto publish=[&](double count, double genMs, double decMs) {
+        meter->setProperty("generationElapsedMs",genMs);
+        meter->setProperty("decodeElapsedMs",decMs);
+        meter->setProperty("generationTokensPerSecond",genMs>0 ? count*1000/genMs : 0);
+        meter->setProperty("decodeTokensPerSecond",decMs>0 ? count*1000/decMs : 0);
+        meter->setProperty("tokenCount",count);
+        QTest::qWait(5); // Coalesced controller snapshot.
+    };
     window->show(); ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
-    ROCLINT_CHECK(meter->property("rateText").toString()=="— tok/s" && !meter->property("recentActivity").toBool());
-    meter->setProperty("processing",true);
-    ROCLINT_CHECK(meter->property("rateText").toString()=="Preparing…");
-    meter->setProperty("tokensPerSecond",200.0);
-    meter->setProperty("tokenCount",12.0); // A burst shorter than one display tick.
-    const double started=meter->property("activityStartedAt").toDouble();
-    ROCLINT_CHECK(started>0 && meter->property("recentActivity").toBool());
-    meter->setProperty("tokensPerSecond",210.0);
-    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"refreshRate",Q_ARG(QVariant,QVariant(started+100)),Q_ARG(QVariant,QVariant(false))));
-    ROCLINT_CHECK(meter->property("displayedRate").toDouble()==200.0); // Readable, throttled number.
-    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"refreshRate",Q_ARG(QVariant,QVariant(started+600)),Q_ARG(QVariant,QVariant(false))));
-    ROCLINT_CHECK(meter->property("displayedRate").toDouble()==210.0);
-    meter->setProperty("preparing",true); // Warmup hides the cached rate without erasing recent activity.
-    ROCLINT_CHECK(meter->property("rateText").toString()=="Preparing…" && meter->property("recentActivity").toBool());
-    meter->setProperty("preparing",false);
-    meter->setProperty("processing",false);
-    ROCLINT_CHECK(meter->property("rateText").toString()=="Last · 210.0 tok/s" && meter->property("recentActivity").toBool());
-    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(started+1700))));
-    ROCLINT_CHECK(meter->property("activityLevel").toDouble()==1.0); // Completion never cuts the burst short.
-    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(started+2150))));
-    ROCLINT_CHECK(meter->property("activityLevel").toDouble()>0 && meter->property("activityLevel").toDouble()<1);
-    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"advance",Q_ARG(QVariant,QVariant(started+2600))));
+    window->update(); QTest::qWait(400);
+    const auto region=meter->mapRectToItem(window->contentItem(),meter->boundingRect()).toAlignedRect();
+    const auto idleFirst=window->grabWindow().copy(region);
+    QTest::qWait(350);
+    ROCLINT_CHECK(!idleFirst.isNull() && idleFirst==window->grabWindow().copy(region));
     ROCLINT_CHECK(!meter->property("recentActivity").toBool());
-    meter->setProperty("tokenCount",1.0); // New request/cancellation counter reset clears history.
-    ROCLINT_CHECK(!meter->property("recentActivity").toBool() && meter->property("displayedRate").toDouble()==0);
+    savePreview(window,QStringLiteral("measured-wave-idle.png"));
+    meter->setProperty("processing",true);
+    ROCLINT_CHECK(plainRate()=="Preparing…" && !meter->property("recentActivity").toBool());
+    QTest::qWait(400);
+    const auto preparingFirst=window->grabWindow().copy(region);
+    QTest::qWait(350);
+    ROCLINT_CHECK(preparingFirst==window->grabWindow().copy(region)); // No fake zero-token progress.
+    publish(12,300,240);
+    ROCLINT_CHECK(plainRate()=="40.0 gen · 50.0 dec tok/s" && meter->property("recentActivity").toBool());
+    auto* waveform=findVisual(window->contentItem(),"tokenPixelWaveform");
+    ROCLINT_CHECK(waveform && !findVisual(window->contentItem(),"referencePixelWave"));
+    const auto waveformRegion=waveform->mapRectToItem(window->contentItem(),waveform->boundingRect()).toAlignedRect();
+    const double started=meter->property("rateUpdatedAt").toDouble();
+    publish(24,900,400);
+    ROCLINT_CHECK(meter->property("displayedGenRate").toDouble()==40); // 500 ms readable-rate throttle.
+    ROCLINT_CHECK(QMetaObject::invokeMethod(meter,"refreshRate",Q_ARG(QVariant,QVariant(started+600)),Q_ARG(QVariant,QVariant(false))));
+    ROCLINT_CHECK(plainRate()=="26.7 gen · 60.0 dec tok/s");
+    ROCLINT_CHECK(meter->property("generationLevel").toDouble()!=meter->property("decodeLevel").toDouble());
+    const auto movingFirst=window->grabWindow().copy(waveformRegion);
+    QTest::qWait(100);
+    ROCLINT_CHECK(movingFirst!=window->grabWindow().copy(waveformRegion)); // Wave shape changes; exclude numeric labels.
+    const auto genHistory=meter->property("generationHistory").value<QJSValue>().toVariant().toList();
+    const auto decHistory=meter->property("decodeHistory").value<QJSValue>().toVariant().toList();
+    ROCLINT_CHECK(genHistory.size()==48 && decHistory.size()==48 && genHistory!=decHistory);
+    ROCLINT_CHECK(genHistory.first().toDouble()==0 && genHistory.last().toDouble()>0);
+    ROCLINT_CHECK(std::any_of(genHistory.begin(),genHistory.end(),[](const QVariant& value) { return value.toDouble()>0.1; }));
+    invoke("advance",meter->property("fadeUntil").toDouble()+1);
+    QTest::qWait(300);
+    const auto stalled=window->grabWindow().copy(region);
+    QTest::qWait(350);
+    ROCLINT_CHECK(!meter->property("recentActivity").toBool() && stalled==window->grabWindow().copy(region));
+    publish(36,1200,600);
+    ROCLINT_CHECK(meter->property("recentActivity").toBool());
+    meter->setProperty("processing",false);
+    ROCLINT_CHECK(plainRate()=="Last · 30.0 gen · 60.0 dec tok/s");
+    const double heldUntil=meter->property("holdUntil").toDouble();
+    invoke("advance",heldUntil+175);
+    ROCLINT_CHECK(meter->property("activityLevel").toDouble()>0 && meter->property("activityLevel").toDouble()<1);
+    invoke("advance",heldUntil+351);
+    ROCLINT_CHECK(!meter->property("recentActivity").toBool());
+    meter->setProperty("generationTokensPerSecond",0.0);
+    meter->setProperty("tokenSpeedMode",QStringLiteral("GENERATION"));
+    ROCLINT_CHECK(plainRate()=="Last · — tok/s"); // Decode is never passed off as generation.
+    meter->setProperty("generationTokensPerSecond",30.0);
+    meter->setProperty("decodeTokensPerSecond",0.0);
+    meter->setProperty("tokenSpeedMode",QStringLiteral("DECODE"));
+    ROCLINT_CHECK(plainRate()=="Last · — tok/s (dec)");
+    meter->setProperty("tokenSpeedMode",QStringLiteral("BOTH"));
+    publish(0,0,0);
+    ROCLINT_CHECK(!meter->property("recentActivity").toBool() && meter->property("seenTokens").toDouble()==0);
+    meter->setProperty("processing",true);
+    publish(8,200,150); // New native subrequest, independent counters and clocks.
+    ROCLINT_CHECK(plainRate()=="40.0 gen · 53.3 dec tok/s");
     meter->setProperty("reducedMotion",true);
-    meter->setProperty("tokensPerSecond",123.4);
-    meter->setProperty("tokenCount",20.0);
-    ROCLINT_CHECK(!meter->property("recentActivity").toBool() && meter->property("displayedRate").toDouble()==123.4);
-    savePreview(window,QStringLiteral("pixel-wave-reduced-motion.png"));
-    meter->setProperty("tokenCount",0.0);
+    QTest::qWait(300);
+    const QRect waveRegion(region.x(),region.y()+14,region.width(),region.height()-14);
+    const auto stillFirst=window->grabWindow().copy(waveRegion);
+    publish(12,300,240);
+    QTest::qWait(350);
+    ROCLINT_CHECK(!meter->property("recentActivity").toBool() && stillFirst==window->grabWindow().copy(waveRegion));
+    meter->setProperty("processing",false);
+    ROCLINT_CHECK(plainRate()=="Last · 40.0 gen · 50.0 dec tok/s");
+    savePreview(window,QStringLiteral("measured-wave-reduced-motion.png"));
+    publish(0,0,0);
     meter->setProperty("reducedMotion",false);
     meter->setProperty("processing",true);
-    meter->setProperty("tokensPerSecond",123.4);
-    meter->setProperty("tokenCount",24.0);
-    meter->setProperty("processing",false); // No simulated ongoing inference in the preview.
-    QElapsedTimer burst; burst.start();
-    const int offsets[]={0,300,600,1200,1800,2500};
-    for (int i=0;i<6;++i) {
-        const int wait=offsets[i]-static_cast<int>(burst.elapsed());
-        if (wait>0) QTest::qWait(wait);
-        savePreview(window,QStringLiteral("pixel-wave-burst-%1.png").arg(i));
+    for(int i=1;i<=6;++i) {
+        publish(i*16.0,i*240.0+(i%2)*80.0,i*180.0+(i%2)*50.0);
+        const auto artifacts=qEnvironmentVariable("ROCLINT_TEST_ARTIFACT_DIR");
+        if (!artifacts.isEmpty()) {
+            for (int frame=0;frame<3;++frame) {
+                QTest::qWait(70);
+                window->update();
+                ROCLINT_CHECK(window->grabWindow().save(artifacts+QString("/pixel-waveform-motion-%1.png").arg((i-1)*3+frame)));
+            }
+        }
+        savePreview(window,QStringLiteral("measured-wave-stream-%1.png").arg(i));
     }
-    QTRY_VERIFY_WITH_TIMEOUT(!meter->property("recentActivity").toBool(), 1000);
-    ROCLINT_CHECK(!meter->property("recentActivity").toBool());
-    std::cout << "  [PASS] Reference pixel wave preserves sub-frame bursts for 1.8s + 0.7s fade, throttles rates, labels completion, and respects reduced motion.\n";
+    const auto speedFrame=[&](double genRate, double decRate, double tokens, const QString& name) {
+        publish(0,0,0);
+        for (int batch=1;batch<=6;++batch)
+            publish(tokens*batch,tokens*batch*1000/genRate,tokens*batch*1000/decRate);
+        // Hold identical visual age for the size comparison; test actual speed,
+        // excluding fade timing, label changes and interpolation in progress.
+        const double hold=meter->property("holdUntil").toDouble()+2000;
+        meter->setProperty("holdUntil",hold);
+        meter->setProperty("fadeUntil",hold+350);
+        QTest::qWait(250);
+        window->update();
+        const auto frame=window->grabWindow();
+        const auto artifacts=qEnvironmentVariable("ROCLINT_TEST_ARTIFACT_DIR");
+        if (!artifacts.isEmpty()) ROCLINT_CHECK(frame.save(artifacts+"/"+name+".png"));
+        return frame.copy(waveformRegion);
+    };
+    const auto peakRow=[](const QImage& image) {
+        for (int y=0;y<image.height();++y)
+            for (int x=0;x<image.width();++x) {
+                const auto pixel=image.pixelColor(x,y);
+                if (pixel.blue()>120 && pixel.blue()>pixel.red()+20) return y;
+            }
+        return image.height();
+    };
+    const auto cobaltPixels=[](const QImage& image) {
+        int count=0;
+        for (int y=0;y<image.height();++y)
+            for (int x=0;x<image.width();++x) {
+                const auto pixel=image.pixelColor(x,y);
+                if (pixel.blue()>140 && pixel.blue()-pixel.green()>100) ++count;
+            }
+        return count;
+    };
+    const auto slow=speedFrame(10,20,16,"wave-speed-slow");
+    const auto medium=speedFrame(30,50,16,"wave-speed-medium");
+    const auto fast=speedFrame(60,90,16,"wave-speed-fast");
+    ROCLINT_CHECK(peakRow(fast)<peakRow(medium) && peakRow(medium)<peakRow(slow));
+    const auto decodeFaster=speedFrame(30,90,16,"wave-speed-decode-faster");
+    ROCLINT_CHECK(peakRow(decodeFaster)<peakRow(medium)); // Only decode changes the outer edge.
+    const auto generationFaster=speedFrame(60,90,16,"wave-speed-generation-faster");
+    ROCLINT_CHECK(peakRow(generationFaster)<peakRow(decodeFaster) && cobaltPixels(generationFaster)>cobaltPixels(decodeFaster));
+    const auto largerBatch=speedFrame(30,50,160,"wave-speed-same-rate-larger-batch");
+    ROCLINT_CHECK(largerBatch==medium); // Same speeds, ten times the tokens: identical wave size.
+    publish(1120,1120*1000/30.0,1120*1000/50.0);
+    QTest::qWait(160);
+    ROCLINT_CHECK(window->grabWindow().copy(waveformRegion)!=largerBatch); // Even steady-rate incoming tokens move the contour.
+    const auto ceiling=speedFrame(150,200,16,"wave-speed-ceiling");
+    ROCLINT_CHECK(meter->property("generationLevel").toDouble()==1 && meter->property("decodeLevel").toDouble()==1);
+    ROCLINT_CHECK(!ceiling.isNull());
+    // Averages barely move during a stream; the waveform must still react to
+    // real speed changes, without reproducing an identical crest per packet.
+    publish(0,0,0);
+    double genClock=0, decClock=0;
+    const double genRates[]={20,70,15,60,25,80,18,55,30,75,22,65};
+    const double decRates[]={30,90,25,85,45,100,35,75,50,95,40,90};
+    for(int i=0;i<12;++i) {
+        genClock+=8000/genRates[i]; decClock+=8000/decRates[i];
+        publish((i+1)*8,genClock,decClock);
+        ROCLINT_CHECK(std::abs(meter->property("generationLevel").toDouble()-genRates[i]/100)<0.00001);
+        QTest::qWait(160);
+        const auto artifacts=qEnvironmentVariable("ROCLINT_TEST_ARTIFACT_DIR");
+        if (!artifacts.isEmpty()) ROCLINT_CHECK(window->grabWindow().save(artifacts+QString("/dynamic-variable-%1.png").arg(i)));
+    }
+    const auto dynamicHistory=meter->property("generationHistory").value<QJSValue>().toVariant().toList();
+    ROCLINT_CHECK(std::abs(dynamicHistory.last().toDouble()-0.65)<0.00001);
+    ROCLINT_CHECK(std::abs(dynamicHistory[dynamicHistory.size()-2].toDouble()-0.22)<0.00001);
+    // Optional replay of a real synthetic-model run: captures only counts and
+    // elapsed times, never application history or a transport override in the app.
+    const auto replay=qEnvironmentVariable("ROCLINT_WAVE_REPLAY_FILE");
+    if (!replay.isEmpty()) {
+        QFile trace(replay); ROCLINT_CHECK(trace.open(QIODevice::ReadOnly));
+        const auto samples=QJsonDocument::fromJson(trace.readAll()).object().value("samples").toArray();
+        ROCLINT_CHECK(!samples.isEmpty());
+        publish(0,0,0);
+        int index=0;
+        for (const auto& sample:samples) {
+            const auto point=sample.toObject();
+            publish(point.value("output_tokens").toDouble(),point.value("generation_ms").toDouble(),point.value("decode_ms").toDouble());
+            QTest::qWait(160);
+            const auto artifacts=qEnvironmentVariable("ROCLINT_TEST_ARTIFACT_DIR");
+            if (!artifacts.isEmpty()) ROCLINT_CHECK(window->grabWindow().save(artifacts+QString("/dynamic-live-%1.png").arg(index)));
+            ++index;
+        }
+    }
+    // Restore the normal arrival tail for the existing completion check.
+    publish(0,0,0);
+    publish(16,400,320);
+    meter->setProperty("processing",false);
+    QTest::qWait(1100);
+    const auto completed=window->grabWindow().copy(region);
+    QTest::qWait(350);
+    ROCLINT_CHECK(!meter->property("recentActivity").toBool() && completed==window->grabWindow().copy(region));
+    savePreview(window,QStringLiteral("measured-wave-complete.png"));
+    std::cout << "  [PASS] One rolling wave responds to recent measured speed changes without repeating crests; shared scale, idle, stalls, rate integrity and reduced motion remain correct.\n";
 }
 
 void testUserRequestedRewriteFromNewDraft() {
@@ -1342,6 +1543,9 @@ void testUserRequestedRewriteFromNewDraft() {
     int discoveries=0, rewrites=0;
     const QString draft="Refactor Reader::open for readability. Preserve behavior and caller-owned handles.";
     controller.setTransportOverrideForTesting([&](std::string_view request) -> Result<std::string> {
+        if (request.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         if (request.find("<instructions>")!=std::string_view::npos) {
             ++rewrites; return fx::rewriteReply(draft.toStdString());
         }
@@ -1384,6 +1588,9 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     controller.setAmbientModeEnabled(true);
     int modelCalls = 0;
     controller.setTransportOverrideForTesting([&](std::string_view request) -> Result<std::string> {
+        if (request.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         ++modelCalls;
         if (request.find("<instructions>") != std::string_view::npos) return fx::rewriteReply(kRewritten.toStdString());
         return std::string(R"({"status":"options_generated","choice_groups":[],"assumptions":[],"missing_decisions":[{"question":"Which performance goal should take priority?","blocking":true}],"conflicts":[],"clarification_question":""})");
@@ -1517,6 +1724,9 @@ void testManualRemainderCanFinishAndGeneratePreview() {
        {"label":"Input validation","why_material":"Input safety","evidence":["safer"]}]}],
       "assumptions":[],"missing_decisions":[{"question":"Which interpretation should be final?","blocking":true}],"conflicts":[],"clarification_question":""})";
     controller.setTransportOverrideForTesting([&](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         if (prompt.find("<instructions>") != std::string_view::npos) {
             ++rewriteCalls;
             return fx::rewriteReply("Reduce latency, binary size, and memory errors.");
@@ -1604,6 +1814,49 @@ void testForbiddenColorOptionIsBlockedInUiAndController() {
 }
 } // namespace
 
+void testInspectModeVisualInspector() {
+    QSettings().clear();
+    HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("hostController"), &controller);
+    engine.load(QUrl(QStringLiteral("qrc:/shell/FloatingCard.qml")));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    auto* card = window->findChild<QQuickItem*>(QStringLiteral("auditInspectorCard"));
+    auto* badge = window->findChild<QQuickItem*>(QStringLiteral("hudModeBadge"));
+    auto* modeLabel = window->findChild<QQuickItem*>(QStringLiteral("hudModeLabel"));
+    ROCLINT_CHECK(card && badge && modeLabel);
+
+    // In auto mode without audit failure, inspector card is hidden
+    ROCLINT_CHECK(!controller.isInspectMode());
+    ROCLINT_CHECK(!card->isVisible());
+    ROCLINT_CHECK(!badge->isVisible());
+
+    // Switch to inspect mode: badge and inspector card appear immediately
+    controller.setAssistanceMode(QStringLiteral("inspect"));
+    QTest::qWait(50);
+    ROCLINT_CHECK(controller.isInspectMode());
+    ROCLINT_CHECK(card->isVisible());
+    ROCLINT_CHECK(card->property("isExpanded").toBool());
+    ROCLINT_CHECK(badge->isVisible());
+    ROCLINT_CHECK(modeLabel->property("text").toString() == QStringLiteral("/INSPECT"));
+
+    // Switch back to auto mode: inspector card hides cleanly
+    controller.setAssistanceMode(QStringLiteral("auto"));
+    QTest::qWait(50);
+    ROCLINT_CHECK(!controller.isInspectMode());
+    ROCLINT_CHECK(!card->isVisible());
+
+    // Verify that failure recovery action buttons exist in the hierarchy
+    auto* clarifyBtn = window->findChild<QQuickItem*>(QStringLiteral("auditClarifyBoundaryButton"));
+    auto* strictBtn = window->findChild<QQuickItem*>(QStringLiteral("auditStrictRewriteButton"));
+    auto* revertBtn = window->findChild<QQuickItem*>(QStringLiteral("auditRevertDraftButton"));
+    ROCLINT_CHECK(clarifyBtn && strictBtn && revertBtn);
+
+    std::cout << "  [PASS] Inspect mode visual inspector and HUD badge react accurately.\n";
+}
+
 int main(int argc, char* argv[]) {
     // Opt in to native platform window/focus verification without changing the CI default.
     if (!qEnvironmentVariableIsSet("ROCLINT_NATIVE_UI_TEST")) {
@@ -1683,6 +1936,7 @@ int main(int argc, char* argv[]) {
     testAutoAnalysisResumesAfterDelivery();
     testManualRemainderCanFinishAndGeneratePreview();
     testForbiddenColorOptionIsBlockedInUiAndController();
+    testInspectModeVisualInspector();
     ROCLINT_CHECK(!QTest::currentTestFailed());
     std::cout << "[Product Alignment] All tests PASSED.\n";
     return 0;

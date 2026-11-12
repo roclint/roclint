@@ -59,7 +59,11 @@ std::string ProposalHasher::computeProposalHash(const RewriteProposal& p) {
 
 void ProposalHasher::seal(RewriteProposal& proposal) {
     proposal.proposalHash = computeProposalHash(proposal);
-    proposal.id = "prop_" + proposal.proposalHash;
+    if (proposal.id.empty()) {
+        proposal.id = "prop_" + proposal.proposalHash;
+    } else if (!proposal.id.starts_with("prop_")) {
+        proposal.id = "prop_" + proposal.id;
+    }
 }
 
 const char* toString(ProposalStatus status) noexcept {

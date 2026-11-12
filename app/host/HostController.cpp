@@ -93,6 +93,28 @@ bool isBlank(const std::string& text) {
     return std::all_of(text.begin(), text.end(), [](unsigned char c) { return c == ' ' || c == '\t' || c == '\n'; });
 }
 
+bool isMatchingConstraintId(std::string_view a, std::string_view b) noexcept {
+    if (a == b) return true;
+
+    if (a.starts_with("intent_grp_") && b.starts_with("intent_item_grp_")) {
+        return a.substr(11) == b.substr(16);
+    }
+    if (b.starts_with("intent_grp_") && a.starts_with("intent_item_grp_")) {
+        return b.substr(11) == a.substr(16);
+    }
+
+    if (a.starts_with("intent_") && !a.starts_with("intent_grp_") &&
+        b.starts_with("intent_item_") && !b.starts_with("intent_item_grp_")) {
+        return a.substr(7) == b.substr(12);
+    }
+    if (b.starts_with("intent_") && !b.starts_with("intent_grp_") &&
+        a.starts_with("intent_item_") && !a.starts_with("intent_item_grp_")) {
+        return b.substr(7) == a.substr(12);
+    }
+
+    return false;
+}
+
 QString analysisDeadlineReason() {
     return QStringLiteral("ANALYSIS_GROUP_DEADLINE: The active analysis time limit expired. Retry explicitly or keep the original prompt.");
 }
@@ -234,6 +256,7 @@ HostController::HostController(const QString& dbPathOverride,
         m_juliaModelDirectory = settings.value(QStringLiteral("scoring/juliaDirectory"), m_modelsBaseDirectory + QStringLiteral("/s1")).toString();
         m_juliaPython = settings.value(QStringLiteral("scoring/juliaPython"), m_juliaPython).toString();
         m_juliaDevice = settings.value(QStringLiteral("scoring/juliaDevice"), QString{}).toString();
+        m_tokenSpeedMode = settings.value(QStringLiteral("models/tokenSpeedMode"), QStringLiteral("BOTH")).toString();
         m_activeModel = settings.value(QStringLiteral("models/active"), m_activeModel).toString();
         m_modelDirectory = settings.value(QStringLiteral("models/directory")).toString();
         m_nativeDirectory = settings.value(QStringLiteral("models/nativeDirectory"), m_modelsBaseDirectory + QStringLiteral("/s2")).toString();
@@ -855,6 +878,11 @@ void HostController::pauseAmbientFollowing() {
 
 
 AsyncTask<core::Status> HostController::commitPromptOperation(QString text, quint64 expectedVersion) {
+        const auto parsedCmd = parseCommandPrefix(text);
+        if (parsedCmd.hasCommand) {
+            applyAssistanceMode(parsedCmd.mode);
+            text = parsedCmd.cleanText;
+        }
 
         const std::string canonical = core::normalizeLineEndings(ss(text));
         if (isBlank(canonical)) {
@@ -909,10 +937,13 @@ AsyncTask<core::Status> HostController::hardBypassOperation(QString text, quint6
 void HostController::invalidateDownstreamPipeline() {
     m_selectingInsertionTarget = false;
     ++m_pipelineSerial;
+    m_lastAuditResult.reset();
     m_promptTriageLoad.reset();
     if (m_cancelWorkspaceContext) m_cancelWorkspaceContext();
     m_promptTriage.reset();
-    m_reviewTrigger = analysis::ReviewTrigger::Automatic;
+    m_reviewTrigger = (m_assistanceMode == AssistanceMode::Strict)
+        ? analysis::ReviewTrigger::ExplicitReview
+        : analysis::ReviewTrigger::Automatic;
     if (!m_recommendedOption.isEmpty() || m_recommendedConfidence > 0.0) {
         m_recommendedOption.clear();
         m_recommendedConfidence = 0.0;
@@ -941,6 +972,11 @@ void HostController::invalidateDownstreamPipeline() {
     m_activeScore.reset();
     m_confirmedIntent.reset();
     m_currentProposal.reset();
+    m_creativeAlternatives.clear();
+    m_creativeAlternativeAuditExecutionStatuses.clear();
+    m_selectedAlternativeIndex = 0;
+    emit creativeAlternativesChanged();
+    emit selectedAlternativeChanged();
     m_proposalWorkspaceEpoch = 0;
     m_acknowledgedConstraints.clear();
     m_currentApproval.reset();
@@ -1000,8 +1036,14 @@ AsyncTask<core::Status> HostController::advanceProposalGeneration() {
 
 AsyncTask<core::Status> HostController::invalidateProposalArtifacts() {
     if (auto status = (co_await advanceProposalGeneration()); !status.ok()) co_return status;
+    m_lastAuditResult.reset();
     m_pendingNativeRewrite.reset();
     m_currentProposal.reset();
+    m_creativeAlternatives.clear();
+    m_creativeAlternativeAuditExecutionStatuses.clear();
+    m_selectedAlternativeIndex = 0;
+    emit creativeAlternativesChanged();
+    emit selectedAlternativeChanged();
     m_proposalWorkspaceEpoch = 0;
     m_acknowledgedConstraints.clear();
     m_currentApproval.reset();
@@ -1195,6 +1237,14 @@ AsyncTask<core::Status> HostController::cancelAnalysisOperation(quint64 expected
 }
 
 AsyncTask<core::Status> HostController::analyzePromptOperation(QString text, quint64 expectedVersion, analysis::ReviewTrigger trigger) {
+        const auto parsedCmd = parseCommandPrefix(text);
+        if (parsedCmd.hasCommand) {
+            applyAssistanceMode(parsedCmd.mode);
+            text = parsedCmd.cleanText;
+            if (parsedCmd.mode == AssistanceMode::Strict) {
+                trigger = analysis::ReviewTrigger::ExplicitReview;
+            }
+        }
 
         const std::string canonical = core::normalizeLineEndings(ss(text));
         if (isBlank(canonical)) {
@@ -2424,7 +2474,15 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
         setProposalStatus(ProposalUiStatus::Generating, QStringLiteral("Writing a suggested rewrite."));
         emit modelEngineStatusChanged();
 
-        using RewriteResult = core::Result<rewrite::RewriteProposal>;
+        const auto auditTransport = currentTransport(bridge::goldfishAuditResponseSchema(), &ticket, QStringLiteral("granite_rewrite"),
+            qs(request.originalText), qs(request.confirmedIntent.id), m_rewriteProfile);
+
+        struct RewriteExecutionResult {
+            core::Result<rewrite::RewriteProposal> proposal;
+            core::ValidationResult auditVerdict;
+        };
+        using RewriteResult = RewriteExecutionResult;
+
         auto adapter = m_graniteAdapter;
         auto grounding = std::make_shared<GroundedPromptContext>();
         auto evidenceCurrent = std::make_shared<bool>(true);
@@ -2437,29 +2495,40 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
             [this, watcher, ticket, nativeWork, grounding, evidenceCurrent]() {
                 --m_inFlight;
                 if (nativeWork) --m_nativeSemanticInFlight;
-                const RewriteResult result = watcher->result();
+                RewriteResult execResult = watcher->result();
                 watcher->deleteLater();
                 if (isTicketCurrent(ticket, true)) applyGroundingContext(*grounding);
-                onRewriteFinished(ticket, result, *grounding, *evidenceCurrent);
+                onRewriteFinished(ticket, std::move(execResult.proposal), *grounding, *evidenceCurrent, std::move(execResult.auditVerdict));
                 finishQuitWhenRuntimesStopped();
             });
         const std::int64_t startedAt = nowMs();
         watcher->setFuture(QtConcurrent::run(
-            [adapter, request, transport, startedAt, groundingInput, grounding, evidenceCurrent]() mutable -> RewriteResult {
+            [adapter, request, transport, auditTransport, startedAt, groundingInput, grounding, evidenceCurrent, ticketSessionId = ticket.sessionId]() mutable -> RewriteResult {
                 try {
                     *grounding = computeGroundedPromptContext(groundingInput);
                     request.groundedCanonicalIntentXml = grounding->xml;
                     request.astSnapshotHash = grounding->astSnapshotHash;
-                    auto result = bridge::GraniteRewriteAdapter::synthesizeRewrite(
+                    auto proposalRes = bridge::GraniteRewriteAdapter::synthesizeRewrite(
                         request, *adapter, transport, startedAt);
+                    core::ValidationResult auditVerdict;
+                    if (proposalRes.ok() && proposalRes.value().status == rewrite::ProposalStatus::ProposalReady) {
+                        bridge::GraniteGoldfishAdapter goldfishAdapter;
+                        const auto constraints = HostController::extractSessionConstraints(proposalRes.value().originalText, request.confirmedIntent);
+                        bridge::GoldfishAuditRequest auditReq;
+                        auditReq.sessionId = ticketSessionId;
+                        auditReq.originalPrompt = proposalRes.value().originalText;
+                        auditReq.candidateRewrite = proposalRes.value().rewrittenText;
+                        auditReq.constraints = constraints;
+                        auditVerdict = goldfishAdapter.audit(auditReq, auditTransport);
+                    }
                     if (grounding->available && grounding->validated) {
                         const auto post = computeGroundedPromptContext(groundingInput);
                         *evidenceCurrent = post.available && post.validated &&
                             post.astSnapshotHash == grounding->astSnapshotHash;
                     }
-                    return result;
+                    return RewriteExecutionResult{std::move(proposalRes), std::move(auditVerdict)};
                 } catch (const std::exception& ex) {
-                    return makeError(ErrorCode::Internal, std::string("Rewrite crashed: ") + ex.what());
+                    return RewriteExecutionResult{makeError(ErrorCode::Internal, std::string("Rewrite crashed: ") + ex.what()), core::ValidationResult{}};
                 }
             }));
         co_return Status::success();
@@ -2467,18 +2536,20 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
 }
 
 void HostController::onRewriteFinished(PipelineTicket ticket, core::Result<rewrite::RewriteProposal> result,
-                                       GroundedPromptContext grounding, bool evidenceCurrent) {
+                                       GroundedPromptContext grounding, bool evidenceCurrent,
+                                       core::ValidationResult auditVerdict) {
     queueModelCompletion("finishRewrite",
         [this, ticket = std::move(ticket), result = std::move(result),
-         grounding = std::move(grounding), evidenceCurrent]() mutable {
+         grounding = std::move(grounding), evidenceCurrent, auditVerdict = std::move(auditVerdict)]() mutable {
             return onRewriteFinishedAsync(std::move(ticket), std::move(result), std::move(grounding),
-                                          evidenceCurrent);
+                                          evidenceCurrent, std::move(auditVerdict));
         });
 }
 
 AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
                                        core::Result<rewrite::RewriteProposal> result,
-                                       GroundedPromptContext grounding, bool evidenceCurrent) {
+                                       GroundedPromptContext grounding, bool evidenceCurrent,
+                                       core::ValidationResult auditVerdict) {
     if (m_healthRecheckRequested && !m_healthCheckInFlight) refreshAvailableModels();
     emit modelEngineStatusChanged();
     if (m_ambientCheckPending) {
@@ -2503,7 +2574,7 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
         co_return;
     }
 
-    const rewrite::RewriteProposal& proposal = result.value();
+    rewrite::RewriteProposal proposal = result.value();
     if (!evidenceCurrent ||
         (!proposal.astSnapshotHash.empty() &&
          (!grounding.validated || proposal.astSnapshotHash != grounding.astSnapshotHash))) {
@@ -2589,6 +2660,38 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
                           QStringLiteral("That rewrite couldn't be verified. Retry explicitly or keep the original prompt."));
         co_return;
     }
+
+    // Independent Goldfish Audit Pass (Zero-Memory Adversarial Audit)
+    if (auditVerdict.outcome == core::ValidationOutcome::Unresolved && auditVerdict.violations.empty() && auditVerdict.unresolved.empty()) {
+        const auto constraints = extractSessionConstraints(proposal.originalText, *m_confirmedIntent);
+        bridge::GoldfishAuditRequest auditReq;
+        auditReq.sessionId = ticket.sessionId;
+        auditReq.originalPrompt = proposal.originalText;
+        auditReq.candidateRewrite = proposal.rewrittenText;
+        auditReq.constraints = constraints;
+
+        bridge::GraniteGoldfishAdapter goldfishAdapter;
+        bridge::GraniteTransport auditTransport = nullptr;
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+        if (usesTransportOverride()) {
+            auditTransport = m_transportOverride;
+        }
+#endif
+        auditVerdict = goldfishAdapter.audit(auditReq, auditTransport);
+    }
+    m_lastAuditResult = auditVerdict;
+    proposal.auditResult = auditVerdict;
+
+    if (auditVerdict.outcome == core::ValidationOutcome::Fail) {
+        const std::string explanation = auditVerdict.violations.empty()
+            ? "Proposal violated invariant constraints"
+            : auditVerdict.violations.front().explanation;
+        completeAttempt(ticket, storage::AttemptStatus::Failed, "Goldfish audit failed: " + explanation, &model);
+        setProposalStatus(ProposalUiStatus::ValidationFailed,
+                          qs("Audit rejected rewrite: " + explanation));
+        co_return;
+    }
+
     if (auto st = (co_await persistProposal()); !st.ok()) {
         completeAttempt(ticket, storage::AttemptStatus::Failed, st.error().message, &model);
         if (ticket.workspaceEpoch != m_workspaceEpoch || ticket.serial != m_pipelineSerial) co_return;
@@ -2601,6 +2704,21 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
     m_currentProposal = proposal;
     m_proposalWorkspaceEpoch = ticket.workspaceEpoch;
     m_acknowledgedConstraints.clear();
+    {
+        const auto constraints = extractSessionConstraints(proposal.originalText, *m_confirmedIntent);
+        m_creativeAlternatives = core::rewrite::CreativeExpansionEngine::expand(
+            proposal.originalText, proposal.rewrittenText, constraints);
+        m_creativeAlternativeAuditExecutionStatuses.assign(m_creativeAlternatives.size(), core::AuditExecutionStatus::Unavailable);
+        if (m_lastAuditResult.has_value() && !m_creativeAlternativeAuditExecutionStatuses.empty()) {
+            m_creativeAlternativeAuditExecutionStatuses[0] = m_lastAuditResult->executionStatus;
+        }
+        if (m_lastAuditResult.has_value() && !m_creativeAlternatives.empty()) {
+            m_creativeAlternatives[0].auditOutcome = m_lastAuditResult->outcome;
+        }
+        m_selectedAlternativeIndex = 0;
+        emit creativeAlternativesChanged();
+        emit selectedAlternativeChanged();
+    }
     if (grounding.available && grounding.validated) {
         m_activeGroundedEvidence = grounding.evidence;
     } else {
@@ -2613,7 +2731,8 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
     m_activeGroundingSessionId = ticket.sessionId;
     m_activeGroundingRevisionId = ticket.revisionId;
     emit stateVersionChanged();
-    const auto pending = validation.pendingAcknowledgments.size();
+    const auto currentValidation = validateCurrentProposal();
+    const auto pending = currentValidation.pendingAcknowledgments.size();
     setProposalStatus(ProposalUiStatus::ReadyForReview,
                       proposal.rewrittenText == proposal.originalText
                           ? QStringLiteral("No wording changes suggested. This is your original prompt.")
@@ -2628,9 +2747,51 @@ rewrite::ValidationResult HostController::validateCurrentProposal() const {
         m_proposalWorkspaceEpoch != m_workspaceEpoch) {
         return rewrite::ValidationResult{};
     }
-    return rewrite::RewriteValidator::validateProposal(*m_currentProposal, currentSessionId(),
-                                                       m_revisionState->currentRevision().revisionId().value(),
-                                                       *m_confirmedIntent, m_acknowledgedConstraints);
+    auto result = rewrite::RewriteValidator::validateProposal(*m_currentProposal, currentSessionId(),
+                                                              m_revisionState->currentRevision().revisionId().value(),
+                                                              *m_confirmedIntent, m_acknowledgedConstraints);
+    if (!result.structurallyValid) {
+        return result;
+    }
+    if (m_lastAuditResult.has_value()) {
+        if (m_lastAuditResult->executionStatus == core::AuditExecutionStatus::DeterministicOnly) {
+            const std::string fallbackId = "deterministic_fallback";
+            const bool acknowledged = m_acknowledgedConstraints.count(fallbackId) > 0;
+            if (!acknowledged) {
+                if (std::find(result.pendingAcknowledgments.begin(), result.pendingAcknowledgments.end(), fallbackId) == result.pendingAcknowledgments.end()) {
+                    result.pendingAcknowledgments.push_back(fallbackId);
+                }
+                result.isValid = false;
+            }
+        }
+        if (m_lastAuditResult->outcome == core::ValidationOutcome::Fail) {
+            result.isValid = false;
+        } else if (m_lastAuditResult->outcome == core::ValidationOutcome::Unresolved) {
+            for (const auto& u : m_lastAuditResult->unresolved) {
+                std::string targetId = u.constraintId;
+                for (const auto& c : m_currentProposal->constraints) {
+                    if (isMatchingConstraintId(c.id, u.constraintId)) {
+                        targetId = c.id;
+                        break;
+                    }
+                }
+                const bool acknowledged = m_acknowledgedConstraints.count(targetId) > 0 ||
+                                          m_acknowledgedConstraints.count(u.constraintId) > 0;
+                if (!acknowledged) {
+                    if (std::find(result.pendingAcknowledgments.begin(), result.pendingAcknowledgments.end(), targetId) == result.pendingAcknowledgments.end()) {
+                        result.pendingAcknowledgments.push_back(targetId);
+                    }
+                    result.isValid = false;
+                }
+            }
+        }
+    } else {
+        result.isValid = false;
+        if (result.pendingAcknowledgments.empty()) {
+            result.pendingAcknowledgments.push_back("audit_required");
+        }
+    }
+    return result;
 }
 
 std::optional<review::ApprovalContext> HostController::approvalContext() const {
@@ -2665,7 +2826,18 @@ AsyncTask<core::Status> HostController::acknowledgeConstraintOperation(QString c
         }
         const std::string id = ss(constraintId);
         const auto constraint = m_currentProposal->getConstraint(id);
-        if (!constraint.has_value() || constraint->status != rewrite::ConstraintStatus::SemanticReviewRequired) {
+        bool isAuditUnresolved = false;
+        if (m_lastAuditResult.has_value() && m_lastAuditResult->outcome == core::ValidationOutcome::Unresolved) {
+            for (const auto& u : m_lastAuditResult->unresolved) {
+                if (isMatchingConstraintId(id, u.constraintId)) {
+                    isAuditUnresolved = true;
+                    break;
+                }
+            }
+        }
+        const bool isDeterministicFallback = (id == "deterministic_fallback" && m_lastAuditResult.has_value() &&
+                                              m_lastAuditResult->executionStatus == core::AuditExecutionStatus::DeterministicOnly);
+        if ((!constraint.has_value() || constraint->status != rewrite::ConstraintStatus::SemanticReviewRequired) && !isAuditUnresolved && !isDeterministicFallback) {
             co_return makeError(ErrorCode::InvalidInput, "That item doesn't need your review.");
         }
         if ((m_acknowledgedConstraints.count(id) > 0) == acknowledged) co_return Status::success();
@@ -2679,8 +2851,22 @@ AsyncTask<core::Status> HostController::acknowledgeConstraintOperation(QString c
         }
         if (acknowledged) {
             m_acknowledgedConstraints.insert(id);
+            if (isAuditUnresolved && m_lastAuditResult.has_value()) {
+                for (const auto& u : m_lastAuditResult->unresolved) {
+                    if (isMatchingConstraintId(id, u.constraintId)) {
+                        m_acknowledgedConstraints.insert(u.constraintId);
+                    }
+                }
+            }
         } else {
             m_acknowledgedConstraints.erase(id);
+            if (isAuditUnresolved && m_lastAuditResult.has_value()) {
+                for (const auto& u : m_lastAuditResult->unresolved) {
+                    if (isMatchingConstraintId(id, u.constraintId)) {
+                        m_acknowledgedConstraints.erase(u.constraintId);
+                    }
+                }
+            }
         }
         emit rewriteProposalChanged();
         emit stateVersionChanged();
@@ -2747,6 +2933,11 @@ AsyncTask<core::Status> HostController::approveAndCopyRewriteOperation(quint64 e
         }
         if (!review::ApprovalFactory::isApprovalValid(approval.value(), *ctx)) {
             co_return makeError(ErrorCode::Internal, "The approval record failed its own validation");
+        }
+        // F08: Ensure the proposal row exists in the repository before inserting approval
+        if (m_storage) {
+            (void)co_await m_storage->call(&storage::PromptRepository::insertProposal,
+                                           *m_currentProposal, nowMs(), std::nullopt);
         }
         if (auto st = (co_await m_repository->insertApproval(approval.value(), expectedVersion)); !st.ok()) {
             co_return st;
@@ -2895,19 +3086,323 @@ QString HostController::lastDiffText() const {
     return hasProposal() ? qs(m_currentProposal->diffText) : QString();
 }
 
+QVariantList HostController::creativeAlternatives() const {
+    QVariantList list;
+    list.reserve(static_cast<qsizetype>(m_creativeAlternatives.size()));
+    for (size_t i = 0; i < m_creativeAlternatives.size(); ++i) {
+        const auto& alt = m_creativeAlternatives[i];
+        QVariantMap map;
+        map.insert(QStringLiteral("id"), qs(alt.id));
+        map.insert(QStringLiteral("title"), qs(alt.title));
+        map.insert(QStringLiteral("styleDescriptor"), qs(alt.styleDescriptor));
+        map.insert(QStringLiteral("rewrittenText"), qs(alt.rewrittenText));
+        map.insert(QStringLiteral("diffText"), qs(alt.diffText));
+        map.insert(QStringLiteral("auditOutcome"), QString::fromUtf8(toString(alt.auditOutcome)));
+
+        core::AuditExecutionStatus execStatus = core::AuditExecutionStatus::Completed;
+        if (static_cast<int>(i) == m_selectedAlternativeIndex && m_lastAuditResult.has_value()) {
+            execStatus = m_lastAuditResult->executionStatus;
+        } else if (i < m_creativeAlternativeAuditExecutionStatuses.size()) {
+            execStatus = m_creativeAlternativeAuditExecutionStatuses[i];
+        }
+        map.insert(QStringLiteral("auditExecutionStatus"), QString::fromUtf8(core::toString(execStatus)));
+        list.append(map);
+    }
+    return list;
+}
+
+void HostController::selectAlternative(int index) {
+    if (index < 0 || index >= static_cast<int>(m_creativeAlternatives.size()) || !m_currentProposal) {
+        return;
+    }
+    if (m_selectedAlternativeIndex == index) {
+        return;
+    }
+    m_selectedAlternativeIndex = index;
+    const auto& alt = m_creativeAlternatives[static_cast<size_t>(index)];
+    m_currentProposal->rewrittenText = alt.rewrittenText;
+    m_currentProposal->diffText = alt.diffText;
+
+    // F06: Recompute text-derived constraints for the selected text
+    if (m_confirmedIntent) {
+        if (const auto profile = rewrite::ProfileRegistry::getProfile(ss(m_rewriteProfile)); profile.has_value()) {
+            m_currentProposal->constraints = rewrite::RewriteValidator::deriveConstraints(
+                *m_confirmedIntent, *profile, alt.rewrittenText);
+        }
+    }
+
+    // Assign a unique proposal ID on each candidate selection
+    m_currentProposal->id = newOpaqueId("prop_");
+
+    // Clear stale audit presentation immediately so stale audit results
+    // are not displayed while background audit is in progress for the new candidate
+    m_lastAuditResult.reset();
+
+    // Invalidate prior review acknowledgments and advance state version
+    m_acknowledgedConstraints.clear();
+    m_currentApproval.reset();
+    const auto prevVersion = m_revisionState ? m_revisionState->stateVersion() : 0;
+    if (m_revisionState) {
+        (void)m_revisionState->advanceState(prevVersion);
+    }
+
+    core::rewrite::ProposalHasher::seal(*m_currentProposal);
+    if (!m_activeGroundingProposalId.empty()) {
+        m_activeGroundingProposalId = m_currentProposal->id;
+    }
+    const std::string candidateHash = m_currentProposal->proposalHash;
+
+    setProposalStatus(ProposalUiStatus::Generating,
+                      QStringLiteral("Auditing selected candidate rewrite..."));
+
+    emit selectedAlternativeChanged();
+    emit rewriteProposalChanged();
+    emit stateVersionChanged();
+    emit approvalChanged();
+
+    // Prepare ticket for asynchronous selection audit
+    PipelineTicket ticket = makeTicket();
+    ticket.attemptId = newOpaqueId("att_sel_");
+    if (m_confirmedIntent) {
+        ticket.intentId = m_confirmedIntent->id;
+    }
+    if (m_currentProposal) {
+        ticket.model.modelId = m_currentProposal->modelId;
+        ticket.model.digest = m_currentProposal->modelDigest;
+        ticket.model.quantization = m_currentProposal->quantization;
+        ticket.model.transport = m_currentProposal->transport;
+    } else if (m_graniteAdapter) {
+        ticket.model = m_graniteAdapter->modelInfo();
+    }
+
+    bridge::GraniteTransport auditTransport = nullptr;
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+    if (usesTransportOverride()) {
+        auditTransport = m_transportOverride;
+    }
+#endif
+    if (!auditTransport) {
+        auditTransport = currentTransport(bridge::goldfishAuditResponseSchema(), &ticket, QStringLiteral("granite_rewrite"),
+            qs(m_currentProposal->originalText), qs(m_confirmedIntent ? m_confirmedIntent->id : std::string()), m_rewriteProfile);
+    }
+
+    bridge::GoldfishAuditRequest auditReq;
+    auditReq.originalPrompt = m_currentProposal->originalText;
+    auditReq.candidateRewrite = m_currentProposal->rewrittenText;
+    if (m_confirmedIntent) {
+        auditReq.constraints = extractSessionConstraints(m_currentProposal->originalText, *m_confirmedIntent);
+    }
+    auditReq.sessionId = currentSessionId();
+
+    auto* watcher = new QFutureWatcher<core::ValidationResult>(this);
+    ++m_inFlight;
+    const bool nativeWork = nativeGraniteSelected() && !usesTransportOverride();
+    if (nativeWork) ++m_nativeSemanticInFlight;
+
+    connect(watcher, &QFutureWatcherBase::finished, this,
+        [this, watcher, ticket, index, candidateHash, prevVersion, nativeWork]() {
+            --m_inFlight;
+            if (nativeWork) --m_nativeSemanticInFlight;
+            core::ValidationResult result = watcher->result();
+            watcher->deleteLater();
+            onAlternativeAuditFinished(ticket, index, candidateHash, prevVersion, std::move(result));
+            finishQuitWhenRuntimesStopped();
+        });
+
+    watcher->setFuture(QtConcurrent::run(
+        [auditReq, auditTransport]() -> core::ValidationResult {
+            bridge::GraniteGoldfishAdapter goldfishAdapter;
+            return goldfishAdapter.audit(auditReq, auditTransport);
+        }));
+}
+
+void HostController::onAlternativeAuditFinished(
+    PipelineTicket ticket, int index, std::string candidateHash, std::uint64_t prevVersion, core::ValidationResult auditVerdict) {
+    if (!isTicketCurrent(ticket, false) ||
+        !m_currentProposal ||
+        m_selectedAlternativeIndex != index ||
+        m_currentProposal->proposalHash != candidateHash ||
+        m_proposalWorkspaceEpoch != ticket.workspaceEpoch) {
+        return;
+    }
+
+    m_currentProposal->auditResult = auditVerdict;
+
+    // Capture an immutable RewriteProposal before enqueuing persistence
+    core::rewrite::RewriteProposal capturedProposal = *m_currentProposal;
+    capturedProposal.auditResult = auditVerdict;
+
+    const auto cmdId = enqueueStorageCommand("persistSelectedAlternative",
+        [this, ticket = std::move(ticket), index, candidateHash = std::move(candidateHash), prevVersion, auditVerdict = std::move(auditVerdict), capturedProposal = std::move(capturedProposal)]() mutable {
+            return persistSelectedAlternativeOperation(std::move(ticket), index, std::move(candidateHash), prevVersion, std::move(auditVerdict), std::move(capturedProposal));
+        });
+    if (cmdId == 0) {
+        setProposalStatus(ProposalUiStatus::Failed, QStringLiteral("Storage command queue rejected save."));
+        emit rewriteProposalChanged();
+        emit approvalChanged();
+    }
+}
+
+AsyncTask<core::Status> HostController::persistSelectedAlternativeOperation(
+    PipelineTicket ticket, int index, std::string candidateHash, [[maybe_unused]] std::uint64_t prevVersion, core::ValidationResult auditVerdict, core::rewrite::RewriteProposal capturedProposal) {
+    auto isSelectionCurrent = [this, &ticket, index, &candidateHash, &capturedProposal]() -> bool {
+        return isTicketCurrent(ticket, false) &&
+               m_currentProposal.has_value() &&
+               m_selectedAlternativeIndex == index &&
+               m_currentProposal->proposalHash == candidateHash &&
+               m_currentProposal->id == capturedProposal.id &&
+               m_proposalWorkspaceEpoch == ticket.workspaceEpoch;
+    };
+
+    if (!isSelectionCurrent()) {
+        co_return makeError(ErrorCode::StaleVersion, "Candidate selection is stale");
+    }
+
+    if (!m_storage || !m_repository) {
+        setProposalStatus(ProposalUiStatus::Failed, QStringLiteral("Storage is unavailable."));
+        emit rewriteProposalChanged();
+        emit approvalChanged();
+        co_return storageUnavailable();
+    }
+
+    auto sessRes = co_await m_storage->call(&storage::PromptRepository::getSession, core::SessionId(currentSessionId()));
+    if (!sessRes.ok()) {
+        setProposalStatus(ProposalUiStatus::Failed, plainError(sessRes.error()));
+        setLastError(sessRes.error());
+        emit rewriteProposalChanged();
+        emit approvalChanged();
+        co_return sessRes.error();
+    }
+
+    if (!isSelectionCurrent()) {
+        co_return makeError(ErrorCode::StaleVersion, "Candidate selection became stale during session fetch");
+    }
+
+    auto storedVer = sessRes.value().stateVersion;
+    const auto ts = nowMs();
+    while (storedVer + 1 < ticket.stateVersion) {
+        core::RevisionState intermediateState(
+            m_revisionState->currentRevision(),
+            m_revisionState->highestIssuedSequence(),
+            storedVer + 1,
+            m_revisionState->draftEditGeneration(),
+            m_revisionState->proposalEditGeneration());
+        auto advStatus = co_await m_storage->call(
+            &storage::PromptRepository::advanceSessionState,
+            intermediateState, storedVer, ts);
+        if (!advStatus.ok()) {
+            setProposalStatus(ProposalUiStatus::Failed, plainError(advStatus.error()));
+            setLastError(advStatus.error());
+            emit rewriteProposalChanged();
+            emit approvalChanged();
+            co_return advStatus;
+        }
+        if (!isSelectionCurrent()) {
+            co_return makeError(ErrorCode::StaleVersion, "Candidate selection became stale during session state advance");
+        }
+        ++storedVer;
+    }
+
+    auto status = co_await m_storage->call(
+        &storage::PromptRepository::insertProposal,
+        capturedProposal, ts,
+        storedVer > 0 ? std::optional<uint64_t>(storedVer) : std::nullopt);
+
+    if (!status.ok()) {
+        setProposalStatus(ProposalUiStatus::Failed, plainError(status.error()));
+        setLastError(status.error());
+        emit rewriteProposalChanged();
+        emit approvalChanged();
+        co_return status;
+    }
+
+    if (!isSelectionCurrent()) {
+        co_return makeError(ErrorCode::StaleVersion, "Candidate selection became stale during persistence");
+    }
+
+    m_lastAuditResult = auditVerdict;
+    m_currentProposal->auditResult = auditVerdict;
+    if (index >= 0 && static_cast<size_t>(index) < m_creativeAlternatives.size()) {
+        m_creativeAlternatives[static_cast<size_t>(index)].auditOutcome = auditVerdict.outcome;
+    }
+    if (index >= 0 && static_cast<size_t>(index) < m_creativeAlternativeAuditExecutionStatuses.size()) {
+        m_creativeAlternativeAuditExecutionStatuses[static_cast<size_t>(index)] = auditVerdict.executionStatus;
+    }
+
+    const auto currentValidation = validateCurrentProposal();
+    const auto pending = currentValidation.pendingAcknowledgments.size();
+    setProposalStatus(ProposalUiStatus::ReadyForReview,
+                      m_currentProposal->rewrittenText == m_currentProposal->originalText
+                          ? QStringLiteral("No wording changes suggested. This is your original prompt.")
+                      : pending == 0 ? QStringLiteral("Review the suggested wording, then choose Insert or Copy.")
+                                   : QStringLiteral("Check the %1 highlighted item(s), then approve the wording.").arg(pending));
+
+    emit selectedAlternativeChanged();
+    emit rewriteProposalChanged();
+    emit stateVersionChanged();
+    emit approvalChanged();
+
+    co_return Status::success();
+}
+
 QVariantList HostController::proposalConstraints() const {
     QVariantList list;
     if (!hasProposal()) {
         return list;
     }
+    std::set<std::string> handledAuditIds;
     for (const auto& c : m_currentProposal->constraints) {
         QVariantMap map;
         map[QStringLiteral("id")] = qs(c.id);
         map[QStringLiteral("description")] = qs(c.description);
         map[QStringLiteral("status")] = QString::fromUtf8(rewrite::toString(c.status));
         map[QStringLiteral("evidence")] = qs(c.evidence);
-        map[QStringLiteral("needsReview")] = c.status == rewrite::ConstraintStatus::SemanticReviewRequired;
-        map[QStringLiteral("acknowledged")] = m_acknowledgedConstraints.count(c.id) > 0;
+        bool needsReview = c.status == rewrite::ConstraintStatus::SemanticReviewRequired;
+        bool acknowledged = m_acknowledgedConstraints.count(c.id) > 0;
+
+        if (m_lastAuditResult.has_value() && m_lastAuditResult->outcome == core::ValidationOutcome::Unresolved) {
+            for (const auto& u : m_lastAuditResult->unresolved) {
+                if (isMatchingConstraintId(c.id, u.constraintId)) {
+                    needsReview = true;
+                    if (!u.explanation.empty()) {
+                        map[QStringLiteral("auditExplanation")] = qs(u.explanation);
+                    }
+                    map[QStringLiteral("status")] = QStringLiteral("SemanticReviewRequired");
+                    acknowledged = m_acknowledgedConstraints.count(c.id) > 0 || m_acknowledgedConstraints.count(u.constraintId) > 0;
+                    handledAuditIds.insert(u.constraintId);
+                    break;
+                }
+            }
+        }
+
+        map[QStringLiteral("needsReview")] = needsReview;
+        map[QStringLiteral("acknowledged")] = acknowledged;
+        list.append(map);
+    }
+
+    if (m_lastAuditResult.has_value() && m_lastAuditResult->outcome == core::ValidationOutcome::Unresolved) {
+        for (const auto& u : m_lastAuditResult->unresolved) {
+            if (handledAuditIds.count(u.constraintId) == 0) {
+                QVariantMap map;
+                map[QStringLiteral("id")] = qs(u.constraintId);
+                map[QStringLiteral("description")] = qs("Audit uncertainty: " + (u.explanation.empty() ? std::string("Unresolved hard invariant") : u.explanation));
+                map[QStringLiteral("status")] = QStringLiteral("SemanticReviewRequired");
+                map[QStringLiteral("evidence")] = qs(u.constraintId);
+                map[QStringLiteral("needsReview")] = true;
+                map[QStringLiteral("acknowledged")] = m_acknowledgedConstraints.count(u.constraintId) > 0;
+                list.append(map);
+            }
+        }
+    }
+    if (m_lastAuditResult.has_value() && m_lastAuditResult->executionStatus == core::AuditExecutionStatus::DeterministicOnly) {
+        const std::string fallbackId = "deterministic_fallback";
+        QVariantMap map;
+        map[QStringLiteral("id")] = qs(fallbackId);
+        map[QStringLiteral("description")] = QStringLiteral("Deterministic fallback: Model transport offline; verify boundaries manually before approval.");
+        map[QStringLiteral("status")] = QStringLiteral("SemanticReviewRequired");
+        map[QStringLiteral("evidence")] = QStringLiteral("DeterministicOnly");
+        map[QStringLiteral("needsReview")] = true;
+        map[QStringLiteral("acknowledged")] = m_acknowledgedConstraints.count(fallbackId) > 0;
         list.append(map);
     }
     return list;
@@ -3307,6 +3802,22 @@ AsyncTask<void> HostController::rebuildFromRestore(storage::RestoredSession r) {
         co_return;
     }
     m_currentProposal = proposal;
+    m_lastAuditResult = proposal.auditResult;
+    if (m_confirmedIntent) {
+        const auto constraints = extractSessionConstraints(proposal.originalText, *m_confirmedIntent);
+        m_creativeAlternatives = core::rewrite::CreativeExpansionEngine::expand(
+            proposal.originalText, proposal.rewrittenText, constraints);
+        m_creativeAlternativeAuditExecutionStatuses.assign(m_creativeAlternatives.size(), core::AuditExecutionStatus::Unavailable);
+        if (m_lastAuditResult.has_value() && !m_creativeAlternativeAuditExecutionStatuses.empty()) {
+            m_creativeAlternativeAuditExecutionStatuses[0] = m_lastAuditResult->executionStatus;
+        }
+        if (m_lastAuditResult.has_value() && !m_creativeAlternatives.empty()) {
+            m_creativeAlternatives[0].auditOutcome = m_lastAuditResult->outcome;
+        }
+        m_selectedAlternativeIndex = 0;
+        emit creativeAlternativesChanged();
+        emit selectedAlternativeChanged();
+    }
     // A restored proposal is admitted only into the restore path's current
     // workspace epoch. AST-bound proposals are still revalidated below before
     // approval can remain enabled.
@@ -3778,17 +4289,77 @@ qint64 HostController::generationTokens() const {
     return nativeGraniteSelected() && m_native ? m_native->lastOutputTokens() : 0;
 }
 
-double HostController::tokensPerSecond() const {
+double HostController::generationElapsedMs() const {
+    return nativeGraniteSelected() && m_native ? m_native->lastGenerationMs() : 0;
+}
+
+double HostController::decodeElapsedMs() const {
+    return nativeGraniteSelected() && m_native ? m_native->lastDecodeMs() : 0;
+}
+
+void HostController::setTokenSpeedMode(const QString& mode) {
+    if (m_tokenSpeedMode == mode) return;
+    m_tokenSpeedMode = mode;
+    if (!QCoreApplication::organizationName().isEmpty()) {
+        QSettings settings;
+        settings.setValue(QStringLiteral("models/tokenSpeedMode"), mode);
+    }
+    emit tokenSpeedModeChanged();
+    emit inferenceSpeedChanged();
+}
+
+double HostController::generationTokensPerSecond() const {
     if (nativeGraniteSelected() && m_native) {
-        return m_native->lastTokensPerSecond();
+        return m_native->lastGenerationTokensPerSecond();
     }
     return 0.0;
 }
 
+double HostController::decodeTokensPerSecond() const {
+    if (nativeGraniteSelected() && m_native) {
+        return m_native->lastDecodeTokensPerSecond();
+    }
+    return 0.0;
+}
+
+double HostController::tokensPerSecond() const {
+    if (m_tokenSpeedMode == QLatin1String("DECODE")) {
+        return decodeTokensPerSecond();
+    }
+    return generationTokensPerSecond();
+}
+
+QString HostController::generationSpeedLabel() const {
+    const double s = generationTokensPerSecond();
+    if (s > 0.0) {
+        return QStringLiteral("%1 tok/s").arg(s, 0, 'f', 1);
+    }
+    return {};
+}
+
+QString HostController::decodeSpeedLabel() const {
+    const double s = decodeTokensPerSecond();
+    if (s > 0.0) {
+        return QStringLiteral("%1 tok/s").arg(s, 0, 'f', 1);
+    }
+    return {};
+}
+
 QString HostController::inferenceSpeed() const {
-    const double tps = tokensPerSecond();
-    if (tps > 0.0) {
-        return QStringLiteral("%1 tok/s").arg(tps, 0, 'f', 1);
+    const double gen = generationTokensPerSecond();
+    const double dec = decodeTokensPerSecond();
+    if (m_tokenSpeedMode == QLatin1String("BOTH")) {
+        if (gen > 0.0 && dec > 0.0) {
+            return QStringLiteral("%1 tok/s (gen) · %2 tok/s (dec)")
+                .arg(gen, 0, 'f', 1)
+                .arg(dec, 0, 'f', 1);
+        }
+        if (gen > 0.0) return QStringLiteral("%1 tok/s (gen)").arg(gen, 0, 'f', 1);
+        if (dec > 0.0) return QStringLiteral("%1 tok/s (dec)").arg(dec, 0, 'f', 1);
+    } else if (m_tokenSpeedMode == QLatin1String("DECODE")) {
+        if (dec > 0.0) return QStringLiteral("%1 tok/s (dec)").arg(dec, 0, 'f', 1);
+    } else {
+        if (gen > 0.0) return QStringLiteral("%1 tok/s (gen)").arg(gen, 0, 'f', 1);
     }
     return {};
 }
@@ -4836,6 +5407,264 @@ quint64 HostController::submitCustomIntent(QString customText, quint64 expectedV
 
 quint64 HostController::confirmChoice(QString alternativeId, quint64 expectedVersion) {
     return enqueueStorageCommand("confirmChoice", [=, this]() { return confirmChoiceOperation(alternativeId, expectedVersion); });
+}
+
+HostController::ParsedCommand HostController::parseCommandPrefix(QString text) {
+    const QString trimmed = text.trimmed();
+    if (!trimmed.startsWith(QLatin1Char('/'))) {
+        return {AssistanceMode::Auto, text, false};
+    }
+
+    int firstSpace = -1;
+    for (int i = 0; i < trimmed.size(); ++i) {
+        if (trimmed.at(i).isSpace()) {
+            firstSpace = i;
+            break;
+        }
+    }
+
+    const QString cmd = (firstSpace == -1) ? trimmed.toLower() : trimmed.left(firstSpace).toLower();
+    const QString rest = (firstSpace == -1) ? QString{} : trimmed.mid(firstSpace).trimmed();
+
+    if (cmd == QStringLiteral("/auto")) {
+        return {AssistanceMode::Auto, rest, true};
+    } else if (cmd == QStringLiteral("/tech")) {
+        return {AssistanceMode::Tech, rest, true};
+    } else if (cmd == QStringLiteral("/create")) {
+        return {AssistanceMode::Create, rest, true};
+    } else if (cmd == QStringLiteral("/strict")) {
+        return {AssistanceMode::Strict, rest, true};
+    } else if (cmd == QStringLiteral("/inspect")) {
+        return {AssistanceMode::Inspect, rest, true};
+    } else if (cmd == QStringLiteral("/quiet")) {
+        return {AssistanceMode::Quiet, rest, true};
+    }
+
+    return {AssistanceMode::Auto, text, false};
+}
+
+void HostController::applyAssistanceMode(AssistanceMode mode) {
+    if (m_assistanceMode == mode) return;
+    m_assistanceMode = mode;
+    switch (mode) {
+        case AssistanceMode::Auto:
+        case AssistanceMode::Tech:
+        case AssistanceMode::Create:
+        case AssistanceMode::Inspect:
+        case AssistanceMode::Quiet:
+            m_reviewTrigger = analysis::ReviewTrigger::Automatic;
+            break;
+        case AssistanceMode::Strict:
+            m_reviewTrigger = analysis::ReviewTrigger::ExplicitReview;
+            break;
+    }
+    emit assistanceModeChanged();
+}
+
+QString HostController::assistanceMode() const {
+    switch (m_assistanceMode) {
+        case AssistanceMode::Auto: return QStringLiteral("auto");
+        case AssistanceMode::Tech: return QStringLiteral("tech");
+        case AssistanceMode::Create: return QStringLiteral("create");
+        case AssistanceMode::Strict: return QStringLiteral("strict");
+        case AssistanceMode::Inspect: return QStringLiteral("inspect");
+        case AssistanceMode::Quiet: return QStringLiteral("quiet");
+    }
+    return QStringLiteral("auto");
+}
+
+bool HostController::isInspectMode() const noexcept {
+    return m_assistanceMode == AssistanceMode::Inspect;
+}
+
+void HostController::setAssistanceMode(const QString& mode) {
+    const QString lower = mode.trimmed().toLower();
+    if (lower == QStringLiteral("auto") || lower == QStringLiteral("/auto")) {
+        applyAssistanceMode(AssistanceMode::Auto);
+    } else if (lower == QStringLiteral("tech") || lower == QStringLiteral("/tech")) {
+        applyAssistanceMode(AssistanceMode::Tech);
+    } else if (lower == QStringLiteral("create") || lower == QStringLiteral("/create")) {
+        applyAssistanceMode(AssistanceMode::Create);
+    } else if (lower == QStringLiteral("strict") || lower == QStringLiteral("/strict")) {
+        applyAssistanceMode(AssistanceMode::Strict);
+    } else if (lower == QStringLiteral("inspect") || lower == QStringLiteral("/inspect")) {
+        applyAssistanceMode(AssistanceMode::Inspect);
+    } else if (lower == QStringLiteral("quiet") || lower == QStringLiteral("/quiet")) {
+        applyAssistanceMode(AssistanceMode::Quiet);
+    }
+}
+
+QString HostController::auditOutcome() const {
+    if (!m_lastAuditResult.has_value()) return QString{};
+    switch (m_lastAuditResult->outcome) {
+        case core::ValidationOutcome::Pass: return QStringLiteral("Pass");
+        case core::ValidationOutcome::Fail: return QStringLiteral("Fail");
+        case core::ValidationOutcome::Unresolved: return QStringLiteral("Unresolved");
+    }
+    return QString{};
+}
+
+QString HostController::auditExecutionStatus() const {
+    if (!m_lastAuditResult.has_value()) return QString{};
+    return QString::fromUtf8(core::toString(m_lastAuditResult->executionStatus));
+}
+
+QVariantList HostController::auditViolations() const {
+    QVariantList list;
+    if (!m_lastAuditResult.has_value()) return list;
+    for (const auto& v : m_lastAuditResult->violations) {
+        QVariantMap map;
+        map.insert(QStringLiteral("constraintId"), qs(v.constraintId));
+        map.insert(QStringLiteral("explanation"), qs(v.explanation));
+        list.append(map);
+    }
+    return list;
+}
+
+QVariantList HostController::auditUnresolved() const {
+    QVariantList list;
+    if (!m_lastAuditResult.has_value()) return list;
+    for (const auto& u : m_lastAuditResult->unresolved) {
+        QVariantMap map;
+        map.insert(QStringLiteral("constraintId"), qs(u.constraintId));
+        map.insert(QStringLiteral("explanation"), qs(u.explanation));
+        list.append(map);
+    }
+    return list;
+}
+
+std::vector<core::ScopedConstraint> HostController::extractSessionConstraints(
+    std::string_view originalPrompt,
+    const core::intent::ConfirmedIntent& intent) {
+
+    std::vector<core::ScopedConstraint> constraints;
+
+    for (const auto& item : intent.items) {
+        core::ScopedConstraint c;
+        c.id = "intent_" + item.itemId;
+        c.origin = core::Origin::User;
+        c.enforcement = core::Enforcement::Hard;
+
+        switch (item.kind) {
+            case core::intent::IntentResolutionKind::SelectedAlternative:
+            case core::intent::IntentResolutionKind::CustomText: {
+                c.derivation = core::Derivation::Direct;
+                c.polarity = core::Polarity::Require;
+                c.aspect = "user_choice";
+                c.rule = (item.kind == core::intent::IntentResolutionKind::CustomText)
+                             ? item.customText : item.chosenValue;
+                constraints.push_back(std::move(c));
+                break;
+            }
+            case core::intent::IntentResolutionKind::AcceptedAssumption: {
+                c.derivation = core::Derivation::Entailed;
+                c.polarity = core::Polarity::Require;
+                c.aspect = "assumption";
+                c.rule = "Accepted assumption: " + item.itemId;
+                constraints.push_back(std::move(c));
+                break;
+            }
+            case core::intent::IntentResolutionKind::DeclinedAssumption: {
+                c.derivation = core::Derivation::Direct;
+                c.polarity = core::Polarity::Prohibit;
+                c.aspect = "assumption";
+                c.rule = "Do not assume: " + item.itemId;
+                constraints.push_back(std::move(c));
+                break;
+            }
+            case core::intent::IntentResolutionKind::UseOriginal: {
+                c.derivation = core::Derivation::Direct;
+                c.polarity = core::Polarity::Require;
+                c.aspect = "original_wording";
+                c.rule = "Keep original wording";
+                constraints.push_back(std::move(c));
+                break;
+            }
+        }
+    }
+
+    const std::string promptStr(originalPrompt);
+    std::vector<std::string> clauses;
+    std::string current;
+    for (std::size_t i = 0; i < promptStr.size(); ++i) {
+        const char ch = promptStr[i];
+        if (ch == '.' || ch == ';' || ch == '\n' || ch == '\r') {
+            if (!current.empty()) {
+                clauses.push_back(std::move(current));
+                current.clear();
+            }
+        } else if (ch == ',' && i + 4 < promptStr.size() &&
+                   promptStr.substr(i + 1, 4) == " but") {
+            if (!current.empty()) {
+                clauses.push_back(std::move(current));
+                current.clear();
+            }
+            i += 4;
+        } else {
+            current.push_back(ch);
+        }
+    }
+    if (!current.empty()) {
+        clauses.push_back(std::move(current));
+    }
+
+    int prohibitIdx = 0;
+    for (auto& clause : clauses) {
+        const auto start = clause.find_first_not_of(" \t");
+        if (start == std::string::npos) continue;
+        const auto end = clause.find_last_not_of(" \t");
+        std::string trimmed = clause.substr(start, end - start + 1);
+
+        if (trimmed.starts_with("but ")) trimmed = trimmed.substr(4);
+        else if (trimmed.starts_with("and ")) trimmed = trimmed.substr(4);
+
+        std::string lower;
+        lower.reserve(trimmed.size());
+        for (char c : trimmed) lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+
+        static const std::string_view kNegPrefixes[] = {
+            "do not ", "don't ", "dont ", "without ", "never ", "leave untouched", "leaving unchanged", "keep intact"
+        };
+        bool isNegative = false;
+        for (const auto& marker : kNegPrefixes) {
+            if (lower.find(marker) != std::string::npos) {
+                isNegative = true;
+                break;
+            }
+        }
+
+        if (isNegative) {
+            core::ScopedConstraint sc;
+            sc.id = "prohibit_boundary_" + std::to_string(++prohibitIdx);
+            sc.rule = trimmed;
+            sc.origin = core::Origin::User;
+            sc.derivation = core::Derivation::Direct;
+            sc.enforcement = core::Enforcement::Hard;
+            sc.polarity = core::Polarity::Prohibit;
+            sc.aspect = "boundary";
+            constraints.push_back(std::move(sc));
+        }
+    }
+
+    std::string lowerPrompt;
+    lowerPrompt.reserve(promptStr.size());
+    for (char c : promptStr) lowerPrompt.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+
+    if (lowerPrompt.find("layer 3") != std::string::npos || lowerPrompt.find("packet forwarding") != std::string::npos) {
+        core::ScopedConstraint sc;
+        sc.id = "domain_l3_forwarding";
+        sc.rule = "Destination forwarding follows longest prefix match";
+        sc.origin = core::Origin::Domain;
+        sc.derivation = core::Derivation::Entailed;
+        sc.enforcement = core::Enforcement::Conditional;
+        sc.polarity = core::Polarity::Require;
+        sc.aspect = "networking";
+        sc.appliesWhen = "depicts_ipv4_forwarding";
+        sc.authorityRef = "RFC 1812";
+        constraints.push_back(std::move(sc));
+    }
+
+    return constraints;
 }
 
 quint64 HostController::analyzePrompt(QString text, quint64 expectedVersion) {
