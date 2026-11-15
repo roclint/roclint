@@ -164,12 +164,20 @@ void installScriptedRewrite(HostController& controller, const std::string& rewri
     controller.setTransportOverrideForTesting(
         [rewrite, beforeRewriteReply = std::move(beforeRewriteReply),
          beforeDiscoveryReply = std::move(beforeDiscoveryReply)](std::string_view instruction) -> Result<std::string> {
-            if (instruction.find("<instructions>") != std::string_view::npos) {
+            // Audit prompts also contain <instructions>; they must not fire rewrite-side
+            // mutations before the actual synthesis has captured its AST evidence.
+            if (instruction.find("granite.goldfish_") != std::string_view::npos) {
+                return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+            }
+            if (instruction.find("granite.rewrite.format.") != std::string_view::npos) {
                 if (beforeRewriteReply) beforeRewriteReply();
                 return rewrite;
             }
-            if (beforeDiscoveryReply) beforeDiscoveryReply();
-            return std::string(kDiscoveryReply);
+            if (instruction.find("granite.discovery.selective.") != std::string_view::npos) {
+                if (beforeDiscoveryReply) beforeDiscoveryReply();
+                return std::string(kDiscoveryReply);
+            }
+            return makeError(ErrorCode::InvalidInput, "Unexpected AST freshness test operation");
         });
     ROCLINT_CHECK(controller.markModelReadyForTesting(testModelInfo()));
 }
@@ -612,17 +620,64 @@ void testIncompleteScanDegradesAndRecovers() {
     ROCLINT_CHECK(!controller.codebaseIndexReadyForTesting());
     ROCLINT_CHECK(controller.groundingStatus() == QStringLiteral("INCOMPLETE"));
 
+    ROCLINT_CHECK(controller.lastError().contains(QStringLiteral("0-second scan limit")));
+    ROCLINT_CHECK(controller.lastError().contains(QStringLiteral("0 source files")));
+    ROCLINT_CHECK(controller.lastError().contains(QStringLiteral("smaller project folder")));
+
     // An explicit refresh uses normal limits and recovers the snapshot.
     controller.setCodebaseRefreshLimitsForTesting(std::nullopt);
     ROCLINT_CHECK(controller.refreshCodebaseIndex());
     ROCLINT_CHECK(controller.waitForIdleForTesting(15000));
     ROCLINT_CHECK(controller.codebaseIndexReadyForTesting());
+    ROCLINT_CHECK(controller.lastError().isEmpty());
     const QString xml = controller.groundedIntentXmlForTesting(
         QStringLiteral("Rename demo::run to step in demo."));
     ROCLINT_CHECK(xml.contains(QStringLiteral("VERIFIED")));
     ROCLINT_CHECK(controller.groundingStatus() == QStringLiteral("CURRENT"));
 
+    // A newer unrelated error belongs to its own action, not to index recovery.
+    controller.setCodebaseRefreshLimitsForTesting(limits);
+    ROCLINT_CHECK(controller.refreshCodebaseIndex());
+    ROCLINT_CHECK(controller.waitForIdleForTesting(15000));
+    ROCLINT_CHECK(!controller.codebaseIndexReadyForTesting());
+    ROCLINT_CHECK(controller.scopePreamble({}, QStringLiteral("global"), {}).isEmpty());
+    const auto unrelatedError = controller.lastError();
+    ROCLINT_CHECK(unrelatedError == QStringLiteral("Choose an existing workspace before applying scope."));
+    controller.setCodebaseRefreshLimitsForTesting(std::nullopt);
+    ROCLINT_CHECK(controller.refreshCodebaseIndex());
+    ROCLINT_CHECK(controller.waitForIdleForTesting(15000));
+    ROCLINT_CHECK(controller.codebaseIndexReadyForTesting());
+    ROCLINT_CHECK(controller.lastError() == unrelatedError);
+
     std::cout << "  [PASS] An incomplete scan withholds grounding, and explicit refresh recovers.\n";
+}
+
+void testWorkspaceSwitchClearsOnlyOwnedIndexWarning() {
+    QTemporaryDir workspace;
+    QTemporaryDir nextWorkspace;
+    QTemporaryDir data;
+    ROCLINT_CHECK(workspace.isValid() && nextWorkspace.isValid() && data.isValid());
+    writeSource(QDir(workspace.path()).filePath("one.hpp"), "int first();\n");
+    writeSource(QDir(workspace.path()).filePath("two.hpp"), "int second();\n");
+    writeSource(QDir(nextWorkspace.path()).filePath("next.hpp"), "int next();\n");
+    HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
+    controller.setCodebaseIndexPathForTesting(indexDatabase(data));
+    roclint::storage::CodebaseIndexLimits limits;
+    limits.maximumFiles = 1;
+    controller.setCodebaseRefreshLimitsForTesting(limits);
+    controller.startCodebaseRefreshForTesting(workspace.path(), true);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(15000));
+    ROCLINT_CHECK(!controller.codebaseIndexReadyForTesting());
+    ROCLINT_CHECK(controller.lastError().contains(QStringLiteral("1-source-file limit")));
+
+    controller.setCodebaseRefreshLimitsForTesting(std::nullopt);
+    controller.startCodebaseRefreshForTesting(nextWorkspace.path(), true);
+    ROCLINT_CHECK(controller.lastError().isEmpty());
+    ROCLINT_CHECK(controller.waitForIdleForTesting(15000));
+    ROCLINT_CHECK(controller.codebaseIndexReadyForTesting());
+    ROCLINT_CHECK(controller.lastError().isEmpty());
+    std::cout << "  [PASS] Workspace switch clears its old index warning; file-limit diagnostics are explicit.\n";
 }
 
 void testUnavailableCodebaseDoesNotBlockGrounding() {
@@ -1246,6 +1301,7 @@ int main(int argc, char* argv[]) {
     testStaleRevalidationCannotInvalidateNewerProposal();
     testPostGenerationEvidenceChangeDiscardsProposal();
     testIncompleteScanDegradesAndRecovers();
+    testWorkspaceSwitchClearsOnlyOwnedIndexWarning();
     testUnavailableCodebaseDoesNotBlockGrounding();
     testWorkspaceSwitchInvalidatesProposalAndApproval();
     testWorkspaceSwitchDuringDiscoveryDoesNotPublishIntoNewWorkspace();

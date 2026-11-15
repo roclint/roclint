@@ -20,6 +20,10 @@ struct WorkspaceContext {
     bool consented{false};
 };
 
+enum class CodebaseIndexIncompleteReason {
+    None, TimeBudget, FileLimit, Filesystem, DirtyFiles
+};
+
 struct CodebaseIndexStats {
     std::size_t filesVisited{0};
     std::size_t filesIndexed{0};
@@ -34,6 +38,8 @@ struct CodebaseIndexStats {
     // file cap or scan budget. They are marked dirty and remain unqueryable
     // until a later pass revalidates them.
     std::vector<std::string> unprocessedPaths{};
+    // First observed cause; diagnostic only, never a substitute for completeness.
+    CodebaseIndexIncompleteReason incompleteReason{CodebaseIndexIncompleteReason::None};
 };
 
 // Bounded exact query result. `truncated` is true when at least one eligible

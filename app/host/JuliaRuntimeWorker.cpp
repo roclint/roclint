@@ -383,7 +383,10 @@ quint64 JuliaRuntimeWorker::evaluate(const core::analysis::NormalizedAnalysis& a
                         {QStringLiteral("snapshot_id"), qs(analysis.id)}, {QStringLiteral("groups"), groups},
                         {QStringLiteral("plan_version"), 2}, {QStringLiteral("assumptions"), assumptions}};
     const auto id = send(QStringLiteral("evaluate"), request, qs(analysis.id), kEvaluationTimeoutMs, &context);
-    if (id != 0) setState(QStringLiteral("SCORING"), QStringLiteral("Julia is scoring the supplied choices and material assumptions locally."));
+    if (id != 0) {
+        pending_[id].analysis = analysis;
+        setState(QStringLiteral("SCORING"), QStringLiteral("Julia is scoring the supplied choices and material assumptions locally."));
+    }
     return id;
 }
 
@@ -686,6 +689,14 @@ void JuliaRuntimeWorker::receive(const QJsonObject& object) {
         score.uncertaintyScore = assumption.value(QStringLiteral("uncertainty")).toDouble(-1);
         score.noulCertainty = assumption.value(QStringLiteral("noul_certainty")).toBool();
         response.assumptionScores.push_back(std::move(score));
+    }
+    if (request.analysis.has_value()) {
+        const auto rec = bridge::S1TriageAdapter::extractJustifiedRecommendation(*request.analysis, response);
+        if (rec.has_value()) {
+            lastRecommendedOption_ = qs(rec->alternativeLabel);
+            lastChoiceConfidence_ = rec->confidence;
+            lastChoicePolarity_ = rec->isJustified ? QStringLiteral("JUSTIFIED") : QStringLiteral("UNCONFIRMED");
+        }
     }
     setState(QStringLiteral("READY"), QStringLiteral("Julia-1 is ready. The last local scoring request completed."));
     emit evaluationFinished(id, response);

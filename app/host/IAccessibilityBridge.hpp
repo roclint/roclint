@@ -47,6 +47,17 @@ struct InjectionRequest {
     QString appIdentifier;
 };
 
+struct RangeInjectionRequest {
+    quint64 requestId{0};
+    quint64 fieldToken{0};
+    FieldKind kind{FieldKind::GuiEditor};
+    int startOffset{0};
+    int endOffset{0};
+    QString originalRangeText;
+    QString replacementText;
+    QString expectedCurrentText; // Full text before injection for stale guard
+};
+
 enum class InjectionOutcome {
     Injected,     // Written and read back unchanged
     FieldChanged, // Focus moved or the text changed since capture; nothing was written
@@ -71,12 +82,16 @@ public:
     virtual void refreshFocusedField(quint64 requestId = 0) { Q_UNUSED(requestId); }
     // Completion is always reported through injectionFinished, including immediate refusals.
     virtual void inject(const InjectionRequest& request) = 0;
+    // Specific range injection for word-level companion replacements. Implementations that do
+    // not support range editing must override or inherit this explicit completion result.
+    virtual void injectRange(const RangeInjectionRequest& request);
 
 signals:
     void accessChanged();
     void fieldObserved(const roclint::host::ObservedField& field);
     void fieldLost();
     void injectionFinished(quint64 requestId, roclint::host::InjectionOutcome outcome, const QString& detail);
+    void rangeInjectionFinished(quint64 requestId, roclint::host::InjectionOutcome outcome, const QString& detail);
 };
 
 // The accessibility bridge for this platform; an always-unavailable bridge elsewhere.
@@ -90,4 +105,5 @@ signals:
 
 Q_DECLARE_METATYPE(roclint::host::ObservedField)
 Q_DECLARE_METATYPE(roclint::host::InjectionRequest)
+Q_DECLARE_METATYPE(roclint::host::RangeInjectionRequest)
 Q_DECLARE_METATYPE(roclint::host::InjectionOutcome)

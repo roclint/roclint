@@ -143,8 +143,12 @@ QJsonObject decode(const QByteArray& frame, const QJsonObject& identity) {
             return !(value >= QLatin1Char('0') && value <= QLatin1Char('9')) && !(value >= QLatin1Char('a') && value <= QLatin1Char('f'));
         })) throw GraniteFailure(QStringLiteral("PROTOCOL"), "Native input hash is invalid.");
     const auto op = request.value(QStringLiteral("op")).toString();
-    if (op == QLatin1String("granite_analyze") || op == QLatin1String("granite_rewrite")) {
+    if (op == QLatin1String("granite_analyze") || op == QLatin1String("granite_rewrite") ||
+        op == QLatin1String("granite_word_refinement")) {
         const auto payload = request.value(QStringLiteral("payload")).toObject();
+        if (request.contains("thinking_enabled") &&
+            (!request.value("thinking_enabled").isBool() || payload.value("thinking_enabled") != request.value("thinking_enabled")))
+            throw GraniteFailure(QStringLiteral("PROTOCOL"), "Native reasoning mode failed its request binding.");
         const auto prompt = payload.value(QStringLiteral("prompt"));
         const auto bytes = prompt.toString().toUtf8();
         if (!prompt.isString() || bytes.size() > 64 * 1024 || bytes.contains('\r') ||
@@ -176,6 +180,7 @@ int main(int argc, char** argv) {
     parser.addOption({QStringLiteral("sampling-temperature"),
         QStringLiteral("Development-only sampling experiment; overrides the pinned temperature. Not a release configuration."),
         QStringLiteral("value")});
+    parser.addOption({QStringLiteral("no-thinking-reference"), QStringLiteral("Development-only A/B reference: disable the bounded reasoning phase.")});
     parser.addOption({QStringLiteral("cpu-reference"),
         QStringLiteral("Development-only benchmark reference: force gpu_layers=0 with the same weights.")});
     parser.addOption({QStringLiteral("diagnostic-no-deadlines"), QStringLiteral("Development investigation only: disable semantic operation deadlines; cancellation and shutdown remain active.")});
@@ -196,7 +201,7 @@ int main(int argc, char** argv) {
     try {
         const bool diagnosticUnbounded = parser.isSet(QStringLiteral("diagnostic-no-deadlines"));
         GraniteEngine engine(parser.value(QStringLiteral("model-dir")), parser.value(QStringLiteral("quantization")),
-                             temperatureOverride, gpuLayersOverride);
+                             temperatureOverride, gpuLayersOverride, parser.isSet(QStringLiteral("no-thinking-reference")));
         const auto identity = engine.identity();
         const auto initialStatus = engine.status();
         std::mutex mutex;
@@ -225,11 +230,15 @@ int main(int argc, char** argv) {
                             {QStringLiteral("sampling_temperature"), initialStatus.value(QStringLiteral("sampling_temperature"))},
                             {QStringLiteral("kv_prefix_cache"), initialStatus.value(QStringLiteral("kv_prefix_cache"))},
                             {QStringLiteral("cpu_reference"), gpuLayersOverride.has_value()},
+                            {QStringLiteral("thinking_reference_disabled"), initialStatus.value(QStringLiteral("thinking_reference_disabled"))},
+                            {QStringLiteral("bounded_reasoning"), initialStatus.value(QStringLiteral("bounded_reasoning"))},
                             {QStringLiteral("gpu_layers"), initialStatus.value(QStringLiteral("gpu_layers"))},
                             {QStringLiteral("analysis_timeout_ms"), diagnosticUnbounded ? 0 : roclint::runtime::kGraniteAnalysisTimeoutMs},
                             {QStringLiteral("rewrite_timeout_ms"), diagnosticUnbounded ? 0 : roclint::runtime::kGraniteRewriteTimeoutMs},
+                            {QStringLiteral("word_refinement_timeout_ms"), diagnosticUnbounded ? 0 : roclint::runtime::kGraniteWordRefinementTimeoutMs},
                             {QStringLiteral("operations"), QJsonArray{
                             QStringLiteral("load"), QStringLiteral("warm"), QStringLiteral("granite_analyze"), QStringLiteral("granite_rewrite"),
+                            QStringLiteral("granite_word_refinement"),
                             QStringLiteral("runtime_status"), QStringLiteral("set_residency"), QStringLiteral("reset_cache"), QStringLiteral("cancel"), QStringLiteral("shutdown")}}}));
                     } else if (!hello) throw GraniteFailure(QStringLiteral("PROTOCOL"), "Native handshake is required before work.");
                     else if (op == QLatin1String("runtime_status")) emitFrame(reply(request, engine.status()));
@@ -251,10 +260,11 @@ int main(int argc, char** argv) {
                         emitFrame(reply(request, {{QStringLiteral("cancelled"), found}}));
                     } else if (op == QLatin1String("load") || op == QLatin1String("warm") || op == QLatin1String("reset_cache") ||
                                op == QLatin1String("set_residency") || op == QLatin1String("granite_analyze") ||
-                               op == QLatin1String("granite_rewrite")) {
+                               op == QLatin1String("granite_rewrite") || op == QLatin1String("granite_word_refinement")) {
                         const bool semantic = op == QLatin1String("granite_analyze") || op == QLatin1String("granite_rewrite");
                         const auto budget = op == QLatin1String("granite_analyze") ? roclint::runtime::kGraniteAnalysisTimeoutMs :
-                            op == QLatin1String("granite_rewrite") ? roclint::runtime::kGraniteRewriteTimeoutMs : kLoadBudgetMs;
+                            op == QLatin1String("granite_rewrite") ? roclint::runtime::kGraniteRewriteTimeoutMs :
+                            op == QLatin1String("granite_word_refinement") ? roclint::runtime::kGraniteWordRefinementTimeoutMs : kLoadBudgetMs;
                         const auto deadline = semantic && diagnosticUnbounded ? Clock::time_point::max() : Clock::now() + std::chrono::milliseconds(budget);
                         const std::lock_guard lock(mutex);
                         if (pending.size() >= 8) emitFrame(reply(request, {}, QStringLiteral("Native request queue is full."), QStringLiteral("QUEUE_FULL")));
@@ -298,6 +308,9 @@ int main(int argc, char** argv) {
                     partial.insert(QStringLiteral("ok"), true);
                     partial.insert(QStringLiteral("chunk"), QString(streamDecoder(QByteArrayView(progress.text.data(), static_cast<qsizetype>(progress.text.size())))));
                     partial.insert(QStringLiteral("output_tokens"), progress.outputTokens);
+                    partial.insert(QStringLiteral("reasoning_tokens"), progress.reasoningTokens);
+                    partial.insert(QStringLiteral("answer_tokens"), progress.answerTokens);
+                    partial.insert(QStringLiteral("phase"), progress.thinking ? QStringLiteral("thinking") : QStringLiteral("answer"));
                     partial.insert(QStringLiteral("decode_ms"), progress.decodeMs);
                     partial.insert(QStringLiteral("generation_ms"), progress.generationMs);
                     emitFrame(partial);

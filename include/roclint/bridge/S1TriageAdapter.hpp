@@ -48,6 +48,28 @@ struct S1TriageDecision {
     }
 };
 
+struct JustifiedRecommendation {
+    std::string groupId{};
+    std::string alternativeId{};
+    std::string alternativeLabel{};
+    double probability{0.0};
+    double confidence{0.0};
+    bool isJustified{false};
+    std::string rationale{};
+    bool operator==(const JustifiedRecommendation&) const = default;
+};
+
+struct AssumptionConfidence {
+    std::string assumptionId{};
+    double uncertaintyScore{1.0};
+    double confidence{0.0};
+    bool noulCertainty{false};
+    bool isEstablished{false};
+    bool isScored{false};
+    std::string unscoredReason{};
+    bool operator==(const AssumptionConfidence&) const = default;
+};
+
 class S1TriageAdapter {
 public:
     explicit S1TriageAdapter(ScorerEngine engine = ScorerEngine::JevCloud) : engine_(engine) {}
@@ -72,6 +94,29 @@ public:
     // Builds the DEGRADED_UNRANKED response for an analysis: every group unscored, no probabilities.
     [[nodiscard]] static SnapshotEvaluationResponse degradedResponse(const core::analysis::NormalizedAnalysis& analysis,
                                                                      std::string reason);
+
+    // Computes the shared heuristic recommendation confidence from alternative probabilities and
+    // the ambiguity head. This is not a statistically calibrated probability; it is a bounded
+    // policy score that requires clear margin and low ambiguity before auto-adoption.
+    [[nodiscard]] static double computeCalibratedConfidence(
+        const std::vector<AlternativeProbability>& probabilities,
+        std::optional<double> ambiguityScore = std::nullopt);
+
+    // Extracts the highest-ranked justified recommendation from an evaluation response,
+    // requiring calibrated confidence >= minConfidence, winner probability >= 0.50, and low ambiguity.
+    [[nodiscard]] static std::optional<JustifiedRecommendation> extractJustifiedRecommendation(
+        const core::analysis::NormalizedAnalysis& analysis,
+        const SnapshotEvaluationResponse& response,
+        double minConfidence = 0.70);
+
+    // Retrieves confidence and certainty for a specific material assumption.
+    [[nodiscard]] static std::optional<AssumptionConfidence> extractAssumptionConfidence(
+        const SnapshotEvaluationResponse& response,
+        std::string_view assumptionId);
+
+    // Retrieves confidence and certainty for all scored material assumptions.
+    [[nodiscard]] static std::vector<AssumptionConfidence> extractAllAssumptionConfidences(
+        const SnapshotEvaluationResponse& response);
 
 #if defined(ROCLINT_ENABLE_TEST_MOCKS)
     using MockCloudScorer =

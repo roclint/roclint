@@ -16,6 +16,9 @@ Item {
     property double decodeElapsedMs: 0
     property string tokenSpeedMode: "BOTH"
     property double tokenCount: 0
+    property double reasoningTokenCount: 0
+    property double answerTokenCount: 0
+    property string generationPhase: "idle"
     property bool processing: false
     property bool preparing: false
     property bool metricsAvailable: true
@@ -50,7 +53,7 @@ Item {
     readonly property string rateText: {
         if (preparing || (processing && !seenTokens)) return metricsAvailable ? qsTr("Preparing…") : qsTr("Working…");
         if (!seenTokens) return qsTr("— tok/s");
-        const prefix = processing ? "" : qsTr("Last · ");
+        const prefix = processing ? (generationPhase === "thinking" ? qsTr("Thinking · ") : "") : qsTr("Last · ");
         const g = rate(displayedGenRate), d = rate(displayedDecRate);
         if (tokenSpeedMode === "BOTH") {
             const suffixG = meter.width < 165 ? "g" : " gen";
@@ -71,7 +74,7 @@ Item {
         if (tokenSpeedMode === "BOTH") return prefix + rate(displayedGenRate) + " tok/s generation, " + rate(displayedDecRate) + " tok/s decode";
         return prefix + (tokenSpeedMode === "DECODE" ? rate(displayedDecRate) + " tok/s decode" : rate(displayedGenRate) + " tok/s generation");
     }
-    Accessible.description: qsTr("Generation and decode traces respond only to measured native token progress")
+    Accessible.description: qsTr("Measured tokens: %1 thinking, %2 answer. Generation and decode traces follow their combined measured progress.").arg(reasoningTokenCount).arg(answerTokenCount)
     RocTheme { id: theme; mode: meter.currentTheme }
 
     function emptyHistory() { return Array(historySize).fill(0); }
@@ -209,6 +212,17 @@ Item {
         font.family: theme.monoFont
         font.pixelSize: meter.width < 125 ? 10 : 12
     }
+    Text {
+        objectName: "generationTokenSplitLabel"
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.topMargin: 16
+        visible: meter.height >= 45 && meter.width >= 180 && (meter.reasoningTokenCount + meter.answerTokenCount > 0)
+        text: qsTr("Thinking %1 · Answer %2").arg(meter.reasoningTokenCount).arg(meter.answerTokenCount)
+        color: theme.muted
+        font.family: theme.monoFont
+        font.pixelSize: 9
+    }
     NumberAnimation {
         id: waveformTransition
         target: meter
@@ -224,7 +238,7 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        height: Math.max(12, meter.height - 14)
+        height: Math.max(12, meter.height - (meter.height >= 45 && meter.reasoningTokenCount + meter.answerTokenCount > 0 ? 28 : 14))
         visible: meter.width >= 28
         renderStrategy: Canvas.Immediate
         Accessible.ignored: true
@@ -286,6 +300,6 @@ Item {
     ToolTip.visible: hover.hovered
     ToolTip.delay: 500
     ToolTip.text: meter.metricsAvailable
-        ? qsTr("One wave: cobalt = generation; periwinkle = decode. Incoming tokens move the contour; recent measured speeds set its height on a shared 0–100 tok/s scale. Both speeds affect its overall size. Numbers are request averages and include structured model output. Last is the completed request.")
+        ? qsTr("Thinking: %1 tokens; answer: %2 tokens. One wave: cobalt = generation; periwinkle = decode. Incoming tokens move the contour; recent measured speeds set its height on a shared 0–100 tok/s scale. Both speeds affect its overall size. Numbers are request averages and include structured model output. Last is the completed request.").arg(reasoningTokenCount).arg(answerTokenCount)
         : qsTr("Live token metrics are available with the native local model.")
 }

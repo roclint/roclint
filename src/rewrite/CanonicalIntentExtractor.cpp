@@ -19,6 +19,7 @@ namespace {
 struct Clause {
     std::string text{};
     std::size_t startByte{0};
+    std::size_t endByte{0};
 };
 
 struct ActionMatch {
@@ -49,7 +50,7 @@ const std::set<std::string> kActionWords{
     "add", "append", "create", "delete", "drop", "eliminate", "enable", "ensure", "expand", "include",
     "insert", "keep", "limit", "modify", "move", "omit", "preserve", "refactor", "remove", "rename",
     "replace", "require", "retain", "rewrite", "set", "strip", "update", "change", "adjust", "hide",
-    "collapse", "convert", "allow", "permit"};
+    "collapse", "convert", "allow", "permit", "make"};
 
 const std::set<std::string> kPropertyWords{
     "color", "width", "height", "size", "timeout", "duration", "interval", "latency", "format",
@@ -57,7 +58,7 @@ const std::set<std::string> kPropertyWords{
     "case", "casing", "indentation", "spacing", "position", "alignment", "visibility", "state",
     "behavior", "performance", "memory", "throughput", "error", "status", "schema", "field", "key",
     "value", "count", "limit", "threshold", "recipient", "destination", "output", "input", "endpoint",
-    "api", "name", "heading"};
+    "api", "name", "heading", "signature", "semantics", "interface", "implementation"};
 
 const std::set<std::string> kStopWords{
     "a", "an", "the", "of", "for", "to", "in", "on", "at", "and", "or", "with", "by", "from", "as", "is",
@@ -197,6 +198,7 @@ std::optional<ActionMatch> detectAction(const std::string& lowerText) {
         {IntentAction::MODIFY, "set", false},
         {IntentAction::MODIFY, "adjust", false},
         {IntentAction::MODIFY, "modify", false},
+        {IntentAction::MODIFY, "make", false},
         {IntentAction::MODIFY, "rewrite", false},
         {IntentAction::MODIFY, "convert", false},
         {IntentAction::MODIFY, "expand", false},
@@ -252,7 +254,7 @@ std::vector<Clause> splitClauses(std::string_view text) {
         auto contentStart = start;
         while (contentStart < end && std::isspace(static_cast<unsigned char>(text[contentStart]))) ++contentStart;
         const auto sentence = trimClause(text.substr(contentStart, end - contentStart));
-        if (!sentence.empty()) clauses.push_back({sentence, contentStart});
+        if (!sentence.empty()) clauses.push_back({sentence, contentStart, end});
     };
     for (std::size_t index = 0; index < text.size(); ++index) {
         const char character = text[index];
@@ -368,6 +370,27 @@ std::string firstCodeTarget(const std::string& text) {
 std::string phraseAfterVerb(const std::string& clause, const ActionMatch& action) {
     const auto begin = std::min(clause.size(), action.verbStart + action.verbLength);
     auto phrase = cleanTarget(std::string_view(clause).substr(begin));
+    if (!phrase.empty() && (phrase.front() == '`' || phrase.front() == '\'' || phrase.front() == '"')) {
+        const auto close = phrase.find(phrase.front(), 1);
+        if (close != std::string::npos) {
+            const auto tail = trim(std::string_view(phrase).substr(close + 1));
+            static const std::regex declarator(R"(^(?:const|volatile|noexcept|requires|override|final)\b)",
+                                                std::regex::optimize);
+            if (tail.empty() || (std::isalpha(static_cast<unsigned char>(tail.front())) && !std::regex_search(tail, declarator)))
+                return phrase.substr(0, close + 1);
+        }
+    }
+    // Explicit entity nouns allow ordinary lower-case identifiers as well.
+    static const std::regex namedEntity(R"(^(?:function|method|class|struct|field|variable|parameter|namespace|file)\s+([A-Za-z_][A-Za-z0-9_]*)(?=$|\s))",
+                                        std::regex::icase | std::regex::optimize);
+    std::smatch named;
+    if (std::regex_search(phrase, named, namedEntity)) {
+        const auto tail = trim(std::string_view(phrase).substr(named.length()));
+        static const std::regex declarator(R"(^(?:const|volatile|noexcept|requires|override|final)\b)",
+                                            std::regex::optimize);
+        if (tail.empty() || (std::isalpha(static_cast<unsigned char>(tail.front())) && !std::regex_search(tail, declarator)))
+            return named[1].str();
+    }
     // A qualified identifier at the action's object boundary is an exact name,
     // not the prose following it. Never reduce explicit unsupported syntax to
     // a supported prefix (templates, signatures, member access or operators).
@@ -516,6 +539,9 @@ std::string CanonicalIntentExtractor::toJson(const std::vector<CanonicalIntent>&
         auto object = core::json::Value::object();
         object.set("action", core::json::Value::string(toString(intent.action)));
         object.set("target", core::json::Value::string(intent.target));
+        object.set("target_kind", core::json::Value::string(
+            intent.targetKind == IntentTargetKind::CodeEntity ? "code_entity" : "general_constraint"));
+        object.set("source_text", core::json::Value::string(intent.sourceText));
         object.set("property", core::json::Value::string(intent.property));
         object.set("value", core::json::Value::string(intent.value));
         object.set("disposition", core::json::Value::string(intent.disposition));
@@ -555,8 +581,32 @@ std::vector<CanonicalIntent> CanonicalIntentExtractor::extract(std::string_view 
         intent.target = cleanTarget(target);
         intent.property = detectProperty(clause.text, intent.action, intent.target);
         intent.value = extractValue(clause.text, intent.action);
+        static const std::regex prohibitionAtVerb(R"(^(?:must not|should not|shall not|cannot|can't|never)\b)",
+                                                  std::regex::optimize);
+        if (intent.action == IntentAction::CONSTRAIN &&
+            (action->negated || std::regex_search(lowerClause.substr(action->verbStart), prohibitionAtVerb)))
+            intent.value = "prohibited";
         intent.condition = extractCondition(clause.text);
         intent.disposition = "explicit_prompt";
+        intent.sourceText = trimClause(promptText.substr(clause.startByte, clause.endByte - clause.startByte));
+        // Syntax is evidence of an entity; prose requirements are kept separately.
+        // Do not scan trailing conditions for an identifier and promote an unrelated
+        // word to the target. Unsupported code syntax must still reach the resolver.
+        static const std::regex entityNoun(R"(\b(?:function|method|class|struct|field|variable|parameter|namespace|file)\s+[`"']?[A-Za-z_])",
+                                            std::regex::icase | std::regex::optimize);
+        const auto targetBoundary = intent.target.find_first_of(" \t");
+        const auto leadingTarget = intent.target.substr(0, targetBoundary);
+        const bool namedNoun = std::regex_search(clause.text, entityNoun);
+        // 'function behavior/signature' describes a property, not an identifier.
+        // Quoted or qualified spellings still explicitly name real entities.
+        const bool namedProperty = namedNoun && kPropertyWords.contains(lower(intent.target));
+        const bool explicitEntity = leadingTarget.find('`') != std::string::npos ||
+            looksLikeCodeToken(leadingTarget) || (namedNoun && !namedProperty);
+        const bool bareEdit = intent.action == IntentAction::MODIFY &&
+            !namedProperty &&
+            lowerClause.substr(action->verbStart, action->verbLength) != "make" &&
+            intent.target.find_first_of(" \t") == std::string::npos;
+        intent.targetKind = explicitEntity || bareEdit ? IntentTargetKind::CodeEntity : IntentTargetKind::GeneralConstraint;
 
         const auto targetSpan = analysis::findUniqueSpan(promptText, intent.target);
         if (targetSpan.status == analysis::SpanMatchStatus::ExactMatch && targetSpan.span.has_value())

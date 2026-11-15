@@ -321,6 +321,45 @@ void testDeterministicAndFast() {
     ROCLINT_CHECK(elapsed / kSamples < 5.0); // Generous CI ceiling; the measured target is <1 ms.
 }
 
+void testEntityAndConstraintRoles() {
+    using roclint::core::rewrite::CanonicalIntentExtractor;
+    using roclint::core::rewrite::IntentTargetKind;
+    for (const auto* verb : {"Make", "Change", "Refactor", "Update"}) {
+        const auto intents = CanonicalIntentExtractor::extract(std::string(verb) +
+            " demo::Queue::flush non-blocking. Keep the public signature unchanged. Do not add logging.");
+        ROCLINT_CHECK(intents.size() == 3);
+        ROCLINT_CHECK(intents[0].target == "demo::Queue::flush");
+        ROCLINT_CHECK(intents[0].targetKind == IntentTargetKind::CodeEntity);
+        ROCLINT_CHECK(intents[1].targetKind == IntentTargetKind::GeneralConstraint);
+        ROCLINT_CHECK(intents[2].targetKind == IntentTargetKind::GeneralConstraint);
+        ROCLINT_CHECK(CanonicalIntentExtractor::toJson(intents).find("general_constraint") != std::string::npos);
+    }
+    const auto symbol = CanonicalIntentExtractor::extract("Keep `run` unchanged.");
+    ROCLINT_CHECK(symbol.size() == 1 && symbol[0].targetKind == IntentTargetKind::CodeEntity);
+    const auto ordinary = CanonicalIntentExtractor::extract("Make `run` non-blocking. Make function flush asynchronous.");
+    ROCLINT_CHECK(ordinary.size() == 2 && ordinary[0].target == "`run`" && ordinary[1].target == "flush");
+    for (const auto* syntax : {"function run const", "function run (int)", "function run noexcept"}) {
+        const auto unsupported = CanonicalIntentExtractor::extract(std::string("Refactor ") + syntax + ".");
+        ROCLINT_CHECK(unsupported.size() == 1 && unsupported[0].target != "run");
+    }
+    const auto plain = CanonicalIntentExtractor::extract("Make the app easy to browse. Preserve public API compatibility.");
+    ROCLINT_CHECK(plain.size() == 2);
+    for (const auto& item : plain) ROCLINT_CHECK(item.targetKind == IntentTargetKind::GeneralConstraint);
+    const auto literal = CanonicalIntentExtractor::extract("Preserve the label 'Do not send'.");
+    ROCLINT_CHECK(literal.size() == 1 && literal[0].sourceText == "Preserve the label 'Do not send'");
+    for (const auto* property : {"behavior", "signature", "interface", "semantics"}) {
+        const auto requirement = CanonicalIntentExtractor::extract(std::string("Keep function ") + property + " unchanged.");
+        ROCLINT_CHECK(requirement.size() == 1 && requirement[0].targetKind == IntentTargetKind::GeneralConstraint);
+    }
+    for (const auto* negative : {"Never add logging.", "Logging must not be enabled.", "Do not add logging."}) {
+        const auto constraints = CanonicalIntentExtractor::extract(negative);
+        ROCLINT_CHECK(constraints.size() == 1 && constraints[0].value == "prohibited");
+        ROCLINT_CHECK(constraints[0].targetKind == IntentTargetKind::GeneralConstraint);
+    }
+    const auto positive = CanonicalIntentExtractor::extract("The operation must finish without adding logging.");
+    ROCLINT_CHECK(positive.size() == 1 && positive[0].value == "required");
+}
+
 } // namespace
 
 int main() {
@@ -342,6 +381,7 @@ int main() {
     testCanonicalIntentDeterminismAndJson();
     testQualifiedTargetsAndQuotedDataBoundaries();
     testDeterministicAndFast();
+    testEntityAndConstraintRoles();
     std::cout << "Structured pre-flight extraction and same-target conflict detection passed.\n";
     return 0;
 }

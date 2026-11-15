@@ -2,6 +2,20 @@
 
 Roclint is a resident native prompt-engineering application built with C++20, Qt Quick/QML and SQLite. The supplied Stardust v4.2 product contracts guide the implementation.
 
+November 13 native runtime update: an experimental **Think before answering**
+setting provides bounded private reasoning before constrained JSON, with
+separate thinking/answer token accounting in the HUD. It defaults off because
+the six-case real-model comparison did not show consistent suggestion-quality
+improvement. See [the implementation and evidence](audit/bounded_thinking_2026-11-13.md)
+for budgets, cancellation, timing, validation and deployment status.
+
+November 14 context-quality update: source-linked general constraints are kept
+separately from AST entities; compact discovery v11 distinguishes source quotations from
+creative proposals and disclosed assumptions. Local word edits require a separate
+complete-draft model audit. Recovery and auditing share the original host deadline,
+and short budgets limit the number and length of questions. See the
+[contracts, verification and limits](audit/context_quality_remediation_2026-11-14.md).
+
 The AST correctness baseline is sealed at `deadd39` with workspace/scope epochs,
 failed-cache invalidation, meaningful bounded renderer identity and automatic
 stale-path recovery. [Baseline verification](audit/ast_baseline_verification_2026-11-05.md)
@@ -86,6 +100,14 @@ The follow-up removes that second invocation: a visible HUD awaiting a field can
 Final follow-up verification: the capture/delivery and actual QML suites passed in 31.38 seconds (`build/continuous-bind-final-tests.log`), then the full rebuilt project passed 38/38 suites in 83.99 seconds (`build/continuous-bind-complete-tests.log`). The running normal Release build recorded three consecutive native `INJECTED` results with empty error details in `build/roclint-continuous-ready-error.log`, each after a capture invocation; no failed insertion result was logged for those attempts. These are exact-field readback results, separate from the user's visual feedback. Insertion diagnostics contain tokens, outcomes and fixed failure reasons; timeout diagnostics add character counts and final-line-break flags, never prompt or selection text. No prompt is submitted to the target agent by Roclint.
 
 ## AST grounding reliability — November 5, 2026
+
+November 14 follow-up: the saved workspace was narrowed to the user-selected
+Roclint repository, and existing schema-v5 caches now gain a `file_id` lookup
+index so revalidating each file does not scan every cached symbol. Scan warnings
+explain their cause and clear on successful recovery without hiding unrelated
+errors. The installed cache completed with 221 files / 9,771 symbols. See
+[the recovery report](audit/codebase_index_recovery_2026-11-14.md), including
+actual-cache comparisons and the remaining intermittent UI-test timeout.
 
 The code index now uses schema v5 with per-file `snapshot_generation`/`dirty` membership plus separate `last_refresh_complete` and `coverage_complete` flags. A full refresh advances the workspace generation; `refreshPaths` carries forward only previous-generation eligible files, records and dirties unprocessed paths, and revalidates the requested saved paths, so unrelated unchanged files remain grounded. Missing, unreadable and oversized files are invalidated rather than retained as current evidence. Queries require current snapshot membership and cannot surface older cached rows; `SymbolQueryResult.complete` propagates coverage independently of truncation.
 

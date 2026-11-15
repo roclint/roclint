@@ -20,6 +20,8 @@ enum class IntentAction {
     PRESERVE
 };
 
+enum class IntentTargetKind { CodeEntity, GeneralConstraint };
+
 [[nodiscard]] const char* toString(IntentAction action) noexcept;
 
 enum class GroundingStatus : std::uint8_t {
@@ -69,6 +71,9 @@ struct CanonicalIntent {
     std::string nodeId{};
     analysis::SourceSpan source{};
     std::optional<AstGroundingEvidence> grounding{};
+    // General requirements remain source-linked intent, but are not AST symbols.
+    IntentTargetKind targetKind{IntentTargetKind::CodeEntity};
+    std::string sourceText{}; // Complete explicit clause, including negation/preservation.
 
     bool operator==(const CanonicalIntent&) const = default;
 };

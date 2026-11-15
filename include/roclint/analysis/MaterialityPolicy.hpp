@@ -62,7 +62,8 @@ struct OverallPolicyResult {
 // Human-authored materiality policy (C03). Changing any rule requires bumping kPolicyVersion.
 class MaterialityPolicyV1 {
 public:
-    static constexpr const char* kPolicyVersion = "materiality_policy_v1";
+    // v2: overlapping evidence is excused only by explicit, distinct decision dimensions.
+    static constexpr const char* kPolicyVersion = "materiality_policy_v2";
     static constexpr std::size_t kMaxAssumptionBudget = 3;
     static constexpr std::size_t kMinAlternatives = 2;
     static constexpr std::size_t kMaxAlternatives = 3;

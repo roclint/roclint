@@ -87,7 +87,9 @@ void testWatcherLifecycleAndChanges() {
         ROCLINT_CHECK(save.open(QIODevice::WriteOnly));
         const QByteArray text = "int gamma;\n";
         ROCLINT_CHECK(save.write(text) == text.size());
-        ROCLINT_CHECK(save.commit());
+        const bool committed = save.commit();
+        if (!committed) std::cerr << "Atomic save failed: " << save.errorString().toStdString() << '\n';
+        ROCLINT_CHECK(committed);
     }
     ROCLINT_CHECK(waitFor([&]() {
         return events.fullRefresh > 0 || events.paths.contains(QStringLiteral("src/a.cpp")) ||

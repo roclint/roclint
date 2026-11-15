@@ -1,0 +1,57 @@
+{
+  "manifest_version": 2,
+  "model_family": "ibm-granite/granite-embedding-311m-multilingual-r2",
+  "model_id": "ibm-granite/granite-embedding-311m-multilingual-r2",
+  "model_revision": "44399559930365213510b1ee2eb15ded83374f0e",
+  "dimensions": 768,
+  "normalized": true,
+  "max_sequence_length": 8192,
+  "architecture": "modernbert_encoder_cls_pooling",
+  "pooling": "cls",
+  "task_type": "retrieval",
+  "query_prefix": "",
+  "document_prefix": "",
+  "matryoshka_dimensions": [256, 512, 768],
+  "languages": ["en", "de", "es", "fr", "ja", "ko", "pt", "ar", "cs", "it", "ru", "zh"],
+  "model_license": "Apache-2.0",
+  "model_source": "https://huggingface.co/ibm-granite/granite-embedding-311m-multilingual-r2",
+  "runtime": {
+    "type": "python_subprocess",
+    "worker_script": "embedding_worker.py",
+    "requirements_file": "embedding-requirements.txt",
+    "startup_timeout_ms": 60000
+  },
+  "required_assets": {
+    "config.json": {
+      "description": "Model configuration"
+    },
+    "1_Pooling/config.json": {
+      "description": "Pooling configuration (CLS token)"
+    },
+    "tokenizer.json": {
+      "description": "Fast tokenizer"
+    },
+    "tokenizer_config.json": {
+      "description": "Tokenizer configuration"
+    },
+    "special_tokens_map.json": {
+      "description": "Special tokens"
+    },
+    "model.safetensors": {
+      "description": "Model weights (safetensors format, ~588MB)"
+    }
+  },
+  "notes": [
+    "Pinned to immutable revision 44399559930365213510b1ee2eb15ded83374f0e (HEAD as of 2026-05-18).",
+    "CORRECTION: This model uses CLS-token pooling, NOT mean pooling.",
+    "  Verified via 1_Pooling/config.json: pooling_mode_cls_token=true, pooling_mode_mean_tokens=false.",
+    "  sentence-transformers reads this config and applies CLS pooling automatically.",
+    "L2 normalization is required and applied by embedding_worker.py.",
+    "No query or document prefixes are needed for this model.",
+    "768-dimensional full embeddings are used by default.",
+    "Matryoshka representation learning supports 256 and 512 dims after baseline.",
+    "sentence-transformers>=3.0 required at runtime.",
+    "Start with full 768-dim embeddings; evaluate reduced dims only after quality baseline.",
+    "Previous revision d9ade47c9b2b2afee75f29fd8a1cef279a0e9aea returned HTTP 404 and must not be used."
+  ]
+}

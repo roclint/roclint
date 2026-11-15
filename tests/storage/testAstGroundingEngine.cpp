@@ -2380,9 +2380,30 @@ void testPromptXmlTotalBudget() {
     ROCLINT_CHECK(signatureBytes <= 300);
 }
 
+void testGeneralConstraintsAreNotSymbols() {
+    TempArea area; const auto workspace=area.workspace("constraints");
+    write(workspace,"src/queue.hpp","namespace demo { struct Queue { bool push(int item); }; }");
+    storage::CodebaseIndex index(area.database("constraints"));
+    ROCLINT_CHECK(index.refresh({workspace,{},true}).ok());
+    const auto raw=core::rewrite::CanonicalIntentExtractor::extract("Make demo::Queue::push return false when full. Keep the public signature unchanged. Do not add logging.");
+    const auto grounded=core::rewrite::AstGroundingEngine::groundIntents(raw,{},index);
+    ROCLINT_CHECK(grounded.size()==3 && statusOf(grounded[0])==core::rewrite::GroundingStatus::Verified);
+    ROCLINT_CHECK(!grounded[1].grounding && !grounded[2].grounding);
+    ROCLINT_CHECK(grounded[2].sourceText=="Do not add logging" && grounded[2].value=="prohibited");
+    const auto rendered=core::rewrite::AstGroundingEngine::renderPromptContext(grounded);
+    ROCLINT_CHECK(rendered.rendered.size()==1 && rendered.xml.find("signature unchanged")==std::string::npos);
+    ROCLINT_CHECK(rendered.xml.find("NOT_FOUND")==std::string::npos);
+    write(workspace,"src/collision.hpp","void behavior(); void signature();\n");
+    ROCLINT_CHECK(index.refresh({workspace,{},true}).ok());
+    const auto requirements=core::rewrite::CanonicalIntentExtractor::extract("Keep function behavior unchanged. Preserve function signature.");
+    const auto collisions=core::rewrite::AstGroundingEngine::groundIntents(requirements,{},index);
+    ROCLINT_CHECK(collisions.size()==2 && !collisions[0].grounding && !collisions[1].grounding);
+}
+
 } // namespace
 
 int main() {
+    testGeneralConstraintsAreNotSymbols();
     testExactScopeAndHallucination();
     testWorkspaceIsolationAndCloneIdentity();
     testFailedWorkspaceRefreshDoesNotFallBack();

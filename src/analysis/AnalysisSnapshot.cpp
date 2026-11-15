@@ -180,7 +180,8 @@ Status validateAnalysisSnapshot(const AnalysisSnapshot& snapshot) {
                 return invalid("Automatic review does not follow the classifier route");
             if (empty != (policy.assistance == AssistanceKind::None)) return invalid("Assistance does not match review contents");
             if (isOptionalAssistance(policy.assistance) &&
-                (snapshot.normalized.choiceGroups.size() != 1 || !snapshot.normalized.choiceGroups.front().material ||
+                (snapshot.normalized.choiceGroups.empty() || snapshot.normalized.choiceGroups.size() > kMaxOptionalChoiceGroups ||
+                 std::ranges::any_of(snapshot.normalized.choiceGroups, [](const auto& group) { return !group.material; }) ||
                  !snapshot.normalized.conflicts.empty() || !snapshot.normalized.missingDecisions.empty() ||
                  !snapshot.normalized.assumptions.empty())) return invalid("Optional help cannot conceal unresolved requirements");
         }

@@ -4,12 +4,14 @@
 #include <QDeadlineTimer>
 #include <QProcess>
 #include <QRect>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 
+#include <atomic>
 #include <cstdint>
 #include <algorithm>
 #include <filesystem>
@@ -202,6 +204,8 @@ public:
     Q_PROPERTY(QString activeItemId READ activeItemId NOTIFY interventionChanged)
     Q_PROPERTY(QString activeItemKind READ activeItemKind NOTIFY interventionChanged)
     Q_PROPERTY(QString activeQuestion READ activeQuestion NOTIFY interventionChanged)
+    Q_PROPERTY(bool isCheckingClarification READ isCheckingClarification NOTIFY clarificationCheckChanged)
+    Q_PROPERTY(QString clarificationFeedback READ clarificationFeedback NOTIFY clarificationCheckChanged)
     Q_PROPERTY(QString activeDimension READ activeDimension NOTIFY interventionChanged)
     Q_PROPERTY(QVariantList activeAlternatives READ activeAlternatives NOTIFY interventionChanged)
     Q_PROPERTY(int roundsCompleted READ roundsCompleted NOTIFY interventionChanged)
@@ -262,6 +266,18 @@ public:
     Q_PROPERTY(QString shortcutLabel READ shortcutLabel NOTIFY shortcutChanged)
     Q_PROPERTY(QString invocationShortcut READ invocationShortcut NOTIFY shortcutChanged)
     Q_PROPERTY(bool hostContextEnabled READ hostContextEnabled WRITE setHostContextEnabled NOTIFY hostContextEnabledChanged)
+    Q_PROPERTY(bool hasWordRefinement READ hasWordRefinement NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QString wordRefinementOriginal READ wordRefinementOriginal NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QString wordRefinementReplacement READ wordRefinementReplacement NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QString wordRefinementExplanation READ wordRefinementExplanation NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QVariantList wordRefinementAlternatives READ wordRefinementAlternatives NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QVariantList wordRefinementCandidates READ wordRefinementCandidates NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QString wordRefinementSelectedCandidateId READ wordRefinementSelectedCandidateId NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QString wordRefinementAssumption READ wordRefinementAssumption NOTIFY wordRefinementChanged)
+    Q_PROPERTY(bool wordRefinementNeedsClarification READ wordRefinementNeedsClarification NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QString wordRefinementClarificationQuestion READ wordRefinementClarificationQuestion NOTIFY wordRefinementChanged)
+    Q_PROPERTY(bool wordRefinementApplying READ wordRefinementApplying NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QRect wordRefinementAnchorRect READ wordRefinementAnchorRect NOTIFY wordRefinementChanged)
 
     Q_PROPERTY(QString scorerEngine READ scorerEngine NOTIFY scorerEngineChanged)
     Q_PROPERTY(QString scorerStatus READ scorerStatus NOTIFY scorerEngineChanged)
@@ -288,6 +304,10 @@ public:
     Q_PROPERTY(QString decodeSpeedLabel READ decodeSpeedLabel NOTIFY inferenceSpeedChanged)
     Q_PROPERTY(qint64 generationTokens READ generationTokens NOTIFY inferenceSpeedChanged)
     Q_PROPERTY(double generationElapsedMs READ generationElapsedMs NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(qint64 reasoningTokens READ reasoningTokens NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(qint64 answerTokens READ answerTokens NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(QString generationPhase READ generationPhase NOTIFY inferenceSpeedChanged)
+    Q_PROPERTY(bool thinkingEnabled READ thinkingEnabled NOTIFY modelEngineStatusChanged)
     Q_PROPERTY(double decodeElapsedMs READ decodeElapsedMs NOTIFY inferenceSpeedChanged)
     Q_PROPERTY(QString acceleratorName READ acceleratorName CONSTANT)
     Q_PROPERTY(QString nativeGraniteDiskStatus READ nativeGraniteDiskStatus NOTIFY modelEngineStatusChanged)
@@ -386,6 +406,8 @@ public:
     [[nodiscard]] QString activeItemId() const;
     [[nodiscard]] QString activeItemKind() const;
     [[nodiscard]] QString activeQuestion() const { return m_activeQuestion; }
+    [[nodiscard]] bool isCheckingClarification() const { return m_checkingClarification; }
+    [[nodiscard]] QString clarificationFeedback() const { return m_clarificationFeedback; }
     [[nodiscard]] QString activeDimension() const { return m_activeDimension; }
     [[nodiscard]] QVariantList activeAlternatives() const { return m_activeAlternatives; }
     [[nodiscard]] int roundsCompleted() const noexcept;
@@ -457,6 +479,26 @@ public:
     [[nodiscard]] QString recommendedOption() const { return m_recommendedOption; }
     [[nodiscard]] double recommendedConfidence() const noexcept { return m_recommendedConfidence; }
 
+    [[nodiscard]] bool hasWordRefinement() const noexcept { return m_hasWordRefinement; }
+    [[nodiscard]] QString wordRefinementOriginal() const { return m_wordRefinementOriginal; }
+    [[nodiscard]] QString wordRefinementReplacement() const { return m_wordRefinementReplacement; }
+    [[nodiscard]] QString wordRefinementExplanation() const { return m_wordRefinementExplanation; }
+    [[nodiscard]] QVariantList wordRefinementAlternatives() const { return m_wordRefinementAlternatives; }
+    [[nodiscard]] QVariantList wordRefinementCandidates() const { return m_wordRefinementCandidates; }
+    [[nodiscard]] QString wordRefinementSelectedCandidateId() const { return m_wordRefinementSelectedCandidateId; }
+    [[nodiscard]] QString wordRefinementAssumption() const { return m_wordRefinementAssumption; }
+    [[nodiscard]] bool wordRefinementNeedsClarification() const noexcept { return m_wordRefinementNeedsClarification; }
+    [[nodiscard]] QString wordRefinementClarificationQuestion() const { return m_wordRefinementClarificationQuestion; }
+    [[nodiscard]] bool wordRefinementApplying() const noexcept { return m_wordRefinementInFlight; }
+    [[nodiscard]] QRect wordRefinementAnchorRect() const noexcept { return m_wordRefinementAnchorRect; }
+
+    // Resolves the stable candidate identity before the write. The candidate id is optional only
+    // for backward compatibility; the companion and HUD always pass it explicitly.
+    Q_INVOKABLE quint64 applyWordRefinement(quint64 expectedVersion = 0, const QString& candidateId = QString());
+    Q_INVOKABLE void selectWordRefinementCandidate(const QString& candidateId);
+    Q_INVOKABLE void dismissWordRefinement();
+    Q_INVOKABLE void exploreInCompanion();
+
     [[nodiscard]] QString scorerEngine() const;
     [[nodiscard]] QString scorerStatus() const;
     [[nodiscard]] QString juliaState() const { return m_julia->state(); }
@@ -494,6 +536,8 @@ public:
     [[nodiscard]] bool isNativeGraniteQ4Installed() const;
     [[nodiscard]] QString tokenSpeedMode() const { return m_tokenSpeedMode; }
     Q_INVOKABLE void setTokenSpeedMode(const QString& mode);
+    bool thinkingEnabled() const { return m_thinkingEnabled; }
+    Q_INVOKABLE void setThinkingEnabled(bool enabled);
     [[nodiscard]] QString inferenceSpeed() const;
     [[nodiscard]] double tokensPerSecond() const;
     [[nodiscard]] double generationTokensPerSecond() const;
@@ -502,6 +546,9 @@ public:
     [[nodiscard]] QString decodeSpeedLabel() const;
     [[nodiscard]] qint64 generationTokens() const;
     [[nodiscard]] double generationElapsedMs() const;
+    [[nodiscard]] qint64 reasoningTokens() const;
+    [[nodiscard]] qint64 answerTokens() const;
+    [[nodiscard]] QString generationPhase() const;
     [[nodiscard]] double decodeElapsedMs() const;
     [[nodiscard]] QString acceleratorName() const {
         // ROCLINT_ACCELERATOR_NAME is injected by CMakeLists.txt (PUBLIC) from the resolved
@@ -555,6 +602,16 @@ public:
     void setRecommendedOptionForTesting(const QString& option, double confidence) {
         m_recommendedOption = option;
         m_recommendedConfidence = confidence;
+        m_recommendedGroupId = m_currentDecision.activeItemId.has_value()
+            ? QString::fromStdString(*m_currentDecision.activeItemId) : QString();
+        m_recommendedAlternativeId.clear();
+        for (const auto& item : m_activeAlternatives) {
+            const auto map = item.toMap();
+            if (map.value(QStringLiteral("label")).toString() == option) {
+                m_recommendedAlternativeId = map.value(QStringLiteral("id")).toString();
+                break;
+            }
+        }
         emit recommendedOptionChanged();
     }
     bool setNativeWorkerForTesting(const QString& worker) { return m_native->setWorkerForTesting(worker); }
@@ -717,6 +774,8 @@ signals:
     void revisionRestored(const QString& text);
     void analysisStatusChanged();
     void interventionChanged();
+    void clarificationCheckChanged();
+    void clarificationAnswerChecked(bool accepted);
     void intentChanged();
     void rewriteProfileChanged(const QString& profile);
     void rewriteProposalChanged();
@@ -725,6 +784,7 @@ signals:
     void tokenSpeedModeChanged();
     void inferenceSpeedChanged();
     void approvalChanged();
+    void wordRefinementChanged();
     void groundingChanged();
     void accessibilityTrustedChanged();
     void ambientModeEnabledChanged();
@@ -791,6 +851,10 @@ private:
         bridge::GraniteModelInfo model;
         std::shared_ptr<AnalysisGroup> analysisGroup;
     };
+
+    void resetClarificationCheck();
+    AsyncTask<void> finishClarificationCheck(PipelineTicket ticket, quint64 checkSerial, std::string itemId,
+        QString answer, core::Result<bridge::ClarificationCheckResponse> result);
 
     struct HealthResult {
         std::optional<core::Result<std::vector<OllamaModelEntry>>> models;
@@ -943,7 +1007,9 @@ private:
                          const bridge::GraniteModelInfo* model = nullptr);
 
     [[nodiscard]] bridge::GraniteTransport currentTransport(const std::string& outputSchema, const PipelineTicket* ticket = nullptr,
-        const QString& operation = {}, const QString& prompt = {}, const QString& intentId = {}, const QString& profileId = {}) const;
+        const QString& operation = {}, const QString& prompt = {}, const QString& intentId = {}, const QString& profileId = {},
+        std::shared_ptr<std::atomic_bool> cancellation = {}) const;
+    int analysisGroupBudgetMs() const;
     void prepareNativeModel();
     void initializeResidencyPolicy();
     void applyResidencyPolicy();
@@ -958,6 +1024,8 @@ private:
     void scheduleGroundingRevalidation();
     [[nodiscard]] QString codebaseIndexPathForHost() const;
     void startCodebaseRefresh(const QString& projectPath);
+    void setCodebaseRefreshError(const QString& message);
+    void clearCodebaseRefreshError();
     void startCodebaseWatcher(const QString& projectPath);
     void stopCodebaseWatcher();
     void maybeRecoverCodebaseWatcher();
@@ -979,6 +1047,16 @@ private:
     // Delivers text for the current capture: injection for ambient captures, clipboard otherwise.
     core::Status deliver(const QString& text);
     void onInjectionFinished(quint64 requestId, InjectionOutcome outcome, const QString& detail);
+    void onRangeInjectionFinished(quint64 requestId, InjectionOutcome outcome, const QString& detail);
+    void detectWordRefinements(const ObservedField& field);
+    void requestWordRefinement(const ObservedField& field, int startOffset, int endOffset,
+                               const QString& selectedText);
+    void finishWordRefinementRequest(quint64 suggestionId, quint64 stateVersion, std::string sessionId,
+                                     std::string revisionId, const std::string& textHash,
+                                     const bridge::WordRefinementRequest& request,
+                                     core::Result<bridge::WordRefinementResponse> result);
+    void clearWordRefinement();
+    void startPendingWordRefinement();
     void onFieldObserved(const ObservedField& field);
     void followAmbientDraft();
     void onFieldLost();
@@ -1002,6 +1080,36 @@ private:
     bool m_hostContextEnabled{true};
     HostContextObservation m_hostContext;
     QString m_capturedDraftText;
+    bool m_hasWordRefinement{false};
+    QString m_wordRefinementOriginal;
+    QString m_wordRefinementReplacement;
+    QString m_wordRefinementExplanation;
+    QString m_wordRefinementAssumption;
+    QVariantList m_wordRefinementAlternatives;
+    QVariantList m_wordRefinementCandidates;
+    QString m_wordRefinementSelectedCandidateId;
+    QString m_wordRefinementClarificationQuestion;
+    bool m_wordRefinementNeedsClarification{false};
+    bool m_wordRefinementInFlight{false};
+    QRect m_wordRefinementAnchorRect;
+    int m_wordRefinementStartOffset{-1};
+    int m_wordRefinementEndOffset{-1};
+    quint64 m_wordRefinementRequestId{0};
+    quint64 m_wordRefinementSuggestionId{0};
+    quint64 m_wordRefinementInFlightSuggestionId{0};
+    quint64 m_wordRefinementFieldToken{0};
+    quint64 m_wordRefinementWorkspaceEpoch{0};
+    quint64 m_wordRefinementPipelineSerial{0};
+    quint64 m_wordRefinementStateVersion{0};
+    std::string m_wordRefinementTextHash;
+    QString m_wordRefinementFieldText;
+    QString m_wordRefinementKey;
+    QSet<QString> m_wordRefinementDismissedKeys;
+    QTimer m_wordRefinementDebounce;
+    // One active generation and one replaceable latest snapshot, separate from insertion.
+    bool m_wordRefinementGenerating{false};
+    std::function<void()> m_pendingWordRefinement;
+    std::shared_ptr<std::atomic_bool> m_wordRefinementCancellation;
 
     struct StorageCommand { quint64 id; quint64 editSerial; QString name; std::function<AsyncTask<core::Status>()> operation; bool modelCompletion{false}; };
     struct DraftBatch { core::RevisionState next; quint64 expectedVersion; std::vector<std::pair<quint64, quint64>> requests; };
@@ -1088,6 +1196,8 @@ private:
     core::analysis::PromptTriageRoute m_promptTriageLastRoute{core::analysis::PromptTriageRoute::Original};
     std::shared_ptr<AnalysisGroup> m_routedAnalysisGroup;
     QString m_recommendedOption;
+    QString m_recommendedGroupId;
+    QString m_recommendedAlternativeId;
     double m_recommendedConfidence{0.0};
 #ifdef ROCLINT_ENABLE_TEST_MOCKS
     bool m_promptTriageRouting{true};
@@ -1104,6 +1214,7 @@ private:
     int m_codebaseRefreshSerial{0};
     bool m_codebaseRefreshInFlight{false};
     bool m_codebaseIndexReady{false};
+    QString m_codebaseRefreshError;
     int m_codebaseIncompleteRetries{0};
     int m_codebasePathsRetries{0};
     std::unique_ptr<CodebaseWatcher> m_codebaseWatcher;
@@ -1139,6 +1250,9 @@ private:
     core::intent::InterventionDecision m_currentDecision;
     core::intent::WorkingIntentState m_workingIntent;
     QString m_activeQuestion;
+    quint64 m_clarificationCheckSerial{0};
+    bool m_checkingClarification{false};
+    QString m_clarificationFeedback;
     QString m_activeDimension;
     QVariantList m_activeAlternatives;
     std::optional<double> m_activeScore;
@@ -1195,6 +1309,7 @@ private:
     bool m_healthRecheckRequested{false};
     QString m_modelStatusDetail;
     QVariantList m_availableModels;
+    bool m_thinkingEnabled{false}; // Opt-in until held-out semantic quality improves consistently.
     QString m_tokenSpeedMode{QStringLiteral("BOTH")};
     QString m_activeModel{NativeGraniteRuntime::modelTag(QStringLiteral("Q8_0"))};
     bool m_isDownloadingModel{false};

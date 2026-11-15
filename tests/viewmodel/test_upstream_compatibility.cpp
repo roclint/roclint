@@ -16,6 +16,7 @@
 #include <QThread>
 
 #include <iostream>
+#include <source_location>
 #include <atomic>
 #include <cstdlib>
 #include <QTimer>
@@ -135,13 +136,15 @@ int protocolWorker(const QString& rawMode) {
     return 0;
 }
 
-template<class Predicate> void waitUntil(Predicate predicate, int timeoutMs = 5000) {
+template<class Predicate> void waitUntil(Predicate predicate, int timeoutMs = 5000,
+    const std::source_location& caller = std::source_location::current()) {
     QElapsedTimer timer;
     timer.start();
     while (!predicate() && timer.elapsed() < timeoutMs) {
         QCoreApplication::processEvents();
         QThread::msleep(1);
     }
+    if (!predicate()) std::cerr << "Timed out at " << caller.file_name() << ":" << caller.line() << "\n";
     ROCLINT_CHECK(predicate());
 }
 
@@ -398,7 +401,9 @@ void testSharedDiscoveryJuliaDeadline() {
         controller.setAnalysisGroupTimeoutForTesting(budget);
         controller.refreshJuliaModel();
         waitUntil([&]() { return controller.juliaState() == QLatin1String("READY"); });
-        controller.setTransportOverrideForTesting([](std::string_view) -> roclint::core::Result<std::string> {
+        controller.setTransportOverrideForTesting([](std::string_view instruction) -> roclint::core::Result<std::string> {
+            if (instruction.find("granite.goldfish_") != std::string_view::npos)
+                return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
             QThread::msleep(100);
             return std::string(R"({"status":"options_generated","choice_groups":[{"question":"Which speed?","material":true,
                 "alternatives":[{"label":"Lower latency","why_material":"Single calls","evidence":["runs faster"]},
@@ -453,7 +458,7 @@ void testExplicitSelectiveReview() {
     settings.setValue("scoring/juliaDirectory", "clear");
     QTemporaryDir history;
     const QString database = history.filePath("selective.db");
-    struct Case { const char* prompt; const char* reply; const char* outcome; };
+    struct Case { const char* prompt; const char* reply; const char* outcome; bool multipleChoices{false}; };
     const Case cases[] = {
         {"Change the button to blue.", R"({"status":"no_ambiguity","assistance_kind":"none"})", "READY"},
         {"Make my website cool.", R"({"status":"options_generated","assistance_kind":"creative","choice_groups":[{"dimension":"visual_direction","question":"Explore a direction?","material":true,"alternatives":[{"label":"Bold and playful","why_material":"Emphasis","evidence":["cool"]},{"label":"Calm and minimal","why_material":"Emphasis","evidence":["cool"]}]}]})", "OPTIONAL_HELP"},
@@ -462,7 +467,16 @@ void testExplicitSelectiveReview() {
         {"Improve this code without changing its API.", R"({"status":"no_ambiguity","assistance_kind":"none"})", "READY"},
         {"Give it a fresh look.", R"({"status":"options_generated","assistance_kind":"creative","choice_groups":[{"question":"Explore a direction?","material":true,"alternatives":[{"label":"Bold","why_material":"Visual emphasis","evidence":["modern"]},{"label":"Calm","why_material":"Visual emphasis","evidence":["modern"]}]}]})", "UNAVAILABLE"},
 
-        {"Add login, photo uploads, comments, and mobile support.", R"({"status":"options_generated","assistance_kind":"decomposition","choice_groups":[{"dimension":"sequence","question":"Would you like a staged plan for all four features?","material":true,"alternatives":[{"label":"Plan stages for all features","why_material":"Sequence","evidence":["login, photo uploads, comments, and mobile support"]},{"label":"Keep the complete request together","why_material":"Sequence","evidence":["login, photo uploads, comments, and mobile support"]}]}]})", "OPTIONAL_HELP"}
+        {"Add login, photo uploads, comments, and mobile support.", R"({"status":"options_generated","assistance_kind":"decomposition","choice_groups":[{"dimension":"sequence","question":"Would you like a staged plan for all four features?","material":true,"alternatives":[{"label":"Plan stages for all features","why_material":"Sequence","evidence":["login, photo uploads, comments, and mobile support"]},{"label":"Keep the complete request together","why_material":"Sequence","evidence":["login, photo uploads, comments, and mobile support"]}]}]})", "OPTIONAL_HELP"},
+        {"Design an app with small text and a mix of 1990s and Revolver album influences.", R"({
+            "status":"options_generated","assistance_kind":"creative","choice_groups":[
+                {"dimension":"typography","question":"What size should the body text be?","material":true,"alternatives":[
+                    {"label":"12 pt body text","why_material":"More comfortable for reading","evidence":["small text"]},
+                    {"label":"11 pt body text","why_material":"Fits more per screen","evidence":["small text"]}]},
+                {"dimension":"style_priority","question":"Which reference should lead?","material":true,"alternatives":[
+                    {"label":"1990s layout with Revolver-inspired illustrations","why_material":"The 1990s shapes the interface","evidence":["1990s and Revolver"]},
+                    {"label":"Revolver collage with 1990s controls","why_material":"The album leads the artwork","evidence":["1990s and Revolver"]}]}]})",
+            "OPTIONAL_HELP", true}
     };
     QString savedSession;
     for (const auto& item : cases) {
@@ -472,11 +486,11 @@ void testExplicitSelectiveReview() {
         waitUntil([&]() { return c.juliaState() == "READY"; });
         std::atomic<int> calls{0};
         c.setTransportOverrideForTesting([&](std::string_view instruction) -> roclint::core::Result<std::string> {
-            if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            if (instruction.find("granite.goldfish_") != std::string_view::npos) {
                 return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
             }
             ++calls;
-            if (instruction.find("<instructions>") != std::string_view::npos)
+            if (instruction.find("granite.rewrite.format.") != std::string_view::npos)
                 return fx::rewriteReply(item.prompt);
             ROCLINT_CHECK(instruction.find("explicitly requested deeper review") != std::string_view::npos);
             return std::string(item.reply);
@@ -488,7 +502,8 @@ void testExplicitSelectiveReview() {
         ROCLINT_CHECK(calls == 0 && c.isOriginalRoute() && !c.hasProposal());
         ROCLINT_CHECK(c.waitForCommandForTesting(c.reviewPrompt(item.prompt, c.stateVersion())));
         ROCLINT_CHECK(c.waitForIdleForTesting(5000));
-        ROCLINT_CHECK(calls == 1 && c.currentRevisionText() == item.prompt && !c.hasApproval());
+        const int expectedCalls = QString::fromUtf8(item.outcome) == "UNAVAILABLE" ? 2 : 1;
+        ROCLINT_CHECK(calls == expectedCalls && c.currentRevisionText() == item.prompt && !c.hasApproval());
         const auto& snapshot = *c.finalSnapshotForTesting();
         ROCLINT_CHECK(snapshot.payloadVersion == 5 && snapshot.reviewPolicy.trigger == an::ReviewTrigger::ExplicitReview);
         ROCLINT_CHECK(snapshot.promptTriage->ambiguityScore == .20 && c.reviewOutcome() == item.outcome);
@@ -501,7 +516,16 @@ void testExplicitSelectiveReview() {
         }
         if (c.reviewOutcome() == "OPTIONAL_HELP") {
             ROCLINT_CHECK(c.isOptionalHelp());
-            ROCLINT_CHECK(c.waitForCommandForTesting(c.keepOriginalPrompt(c.stateVersion())));
+            if (item.multipleChoices) {
+                ROCLINT_CHECK(c.activeDimension() == "typography");
+                const auto option = c.activeAlternatives().first().toMap().value("id").toString();
+                ROCLINT_CHECK(c.waitForCommandForTesting(c.confirmChoice(option, c.stateVersion())));
+                ROCLINT_CHECK(c.isOptionalHelp() && c.activeDimension() == "style_priority");
+                ROCLINT_CHECK(c.waitForCommandForTesting(c.skipCurrentItem(c.stateVersion())));
+                ROCLINT_CHECK(c.isRewriteEnabled() && c.confirmedIntentForTesting()->items.size() == 1);
+            } else {
+                ROCLINT_CHECK(c.waitForCommandForTesting(c.keepOriginalPrompt(c.stateVersion())));
+            }
             ROCLINT_CHECK(c.currentRevisionText() == item.prompt && !c.hasProposal() && calls == 1);
         }
         if (c.reviewOutcome() == "READY") {
@@ -520,6 +544,7 @@ void testExplicitSelectiveReview() {
         ROCLINT_CHECK(restored.waitForCommandForTesting(restored.restoreSession(savedSession, 0)));
         ROCLINT_CHECK(restored.isOptionalHelp() && restored.finalSnapshotForTesting()->reviewPolicy.trigger == an::ReviewTrigger::ExplicitReview);
         ROCLINT_CHECK(restored.finalSnapshotForTesting()->promptTriage->ambiguityScore == .20);
+        ROCLINT_CHECK(restored.finalSnapshotForTesting()->normalized.choiceGroups.size() == 2);
     }
     {
         HostController stale(":memory:");
@@ -541,7 +566,7 @@ void testExplicitSelectiveReview() {
         stale.requestQuit(); waitUntil([&]() { return stale.juliaState() == "NOT_LOADED"; });
     }
     settings.remove("scoring/juliaPython"); settings.remove("scoring/juliaDirectory");
-    std::cout << "  [PASS] Explicit low-score review, six assistance fixtures, original wording, optional help and history.\n";
+    std::cout << "  [PASS] Explicit low-score review, original wording, optional choices and history.\n";
 }
 
 void testS1FirstControllerRouting() {
@@ -563,12 +588,12 @@ void testS1FirstControllerRouting() {
         waitUntil([&]() { return controller.juliaState() == QLatin1String("READY"); });
         int graniteCalls = 0, rewriteCalls = 0;
         controller.setTransportOverrideForTesting([&](std::string_view instruction) -> roclint::core::Result<std::string> {
-            if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            if (instruction.find("granite.goldfish_") != std::string_view::npos) {
                 return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
             }
             ++graniteCalls;
             if (std::string_view(mode) == "slow_triage") QThread::msleep(2500);
-            if (instruction.find("<instructions>") != std::string_view::npos) {
+            if (instruction.find("granite.rewrite.format.") != std::string_view::npos) {
                 ++rewriteCalls;
                 return fx::rewriteReply("Refactor the parser to reduce single-call latency.");
             }

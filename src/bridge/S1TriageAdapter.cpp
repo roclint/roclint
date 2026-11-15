@@ -243,4 +243,159 @@ SnapshotEvaluationResponse S1TriageAdapter::validateLocalEvaluation(
     return sanitize(std::move(response), analysis, ScorerEngine::JuliaLocal, true);
 }
 
+double S1TriageAdapter::computeCalibratedConfidence(
+    const std::vector<AlternativeProbability>& probabilities,
+    std::optional<double> ambiguityScore) {
+    if (probabilities.empty()) return 0.0;
+    if (probabilities.size() == 1) return 1.0;
+
+    double pTop = -1.0;
+    double pSecond = -1.0;
+    for (const auto& ap : probabilities) {
+        if (ap.probability > pTop) {
+            pSecond = pTop;
+            pTop = ap.probability;
+        } else if (ap.probability > pSecond) {
+            pSecond = ap.probability;
+        }
+    }
+    if (pTop < 0.0) return 0.0;
+    if (pSecond < 0.0) pSecond = 0.0;
+
+    const double margin = std::max(0.0, pTop - pSecond);
+
+    // Entropy factor across candidate probabilities
+    const std::size_t k = probabilities.size();
+    double entropy = 0.0;
+    for (const auto& ap : probabilities) {
+        if (ap.probability > 0.0) {
+            entropy -= ap.probability * std::log(ap.probability);
+        }
+    }
+    const double maxEntropy = std::log(static_cast<double>(k));
+    const double entropyConf = maxEntropy > 0.0 ? std::max(0.0, std::min(1.0, 1.0 - (entropy / maxEntropy))) : 1.0;
+
+    // Combined confidence: margin reflects net separation over alternatives
+    double baseConf = (0.70 * margin + 0.30 * entropyConf) * std::sqrt(std::max(0.0, pTop));
+
+    // Ambiguity head discount: decisions with ambiguity <= 0.30 are clear (no penalty).
+    // Above 0.30, uncertainty scales down confidence.
+    if (ambiguityScore.has_value() && std::isfinite(*ambiguityScore)) {
+        const double ambigPenalty = *ambiguityScore > 0.30 ? (*ambiguityScore - 0.30) / 0.70 : 0.0;
+        baseConf *= (1.0 - 0.80 * std::min(1.0, ambigPenalty));
+    }
+
+    return std::max(0.0, std::min(1.0, baseConf));
+}
+
+// Extracts the single policy recommendation used by the host and the Julia worker parser.
+std::optional<JustifiedRecommendation> S1TriageAdapter::extractJustifiedRecommendation(
+    const core::analysis::NormalizedAnalysis& analysis,
+    const SnapshotEvaluationResponse& response,
+    double minConfidence) {
+    if (!response.isRanked() || response.groupScores.empty()) {
+        return std::nullopt;
+    }
+
+    for (const auto& gs : response.groupScores) {
+        if (!gs.isScored || !gs.probabilities.has_value() || !gs.winningAlternativeId.has_value()) {
+            continue;
+        }
+
+        const auto& probs = *gs.probabilities;
+        if (probs.empty()) continue;
+
+        const double confidence = computeCalibratedConfidence(probs, gs.ambiguityScore);
+
+        const auto groupIt = std::find_if(analysis.choiceGroups.begin(), analysis.choiceGroups.end(),
+                                          [&](const auto& g) { return g.id == gs.groupId; });
+        if (groupIt == analysis.choiceGroups.end()) continue;
+
+        const auto altIt = std::find_if(groupIt->alternatives.begin(), groupIt->alternatives.end(),
+                                        [&](const auto& a) { return a.id == *gs.winningAlternativeId; });
+        if (altIt == groupIt->alternatives.end()) continue;
+
+        double winP = 0.0;
+        for (const auto& ap : probs) {
+            if (ap.alternativeId == *gs.winningAlternativeId) {
+                winP = ap.probability;
+                break;
+            }
+        }
+
+        double secondP = 0.0;
+        for (const auto& ap : probs) {
+            if (ap.alternativeId != *gs.winningAlternativeId && ap.probability > secondP) {
+                secondP = ap.probability;
+            }
+        }
+        const double margin = winP - secondP;
+
+        const bool lowAmbiguity = !gs.ambiguityScore.has_value() || *gs.ambiguityScore < 0.50;
+        const bool justified = (confidence >= minConfidence) && lowAmbiguity && (winP >= 0.50) && (probs.size() < 2 || margin >= 0.20);
+
+        JustifiedRecommendation rec;
+        rec.groupId = gs.groupId;
+        rec.alternativeId = *gs.winningAlternativeId;
+        rec.alternativeLabel = altIt->interpretation;
+        rec.probability = winP;
+        rec.confidence = confidence;
+        rec.isJustified = justified;
+        rec.rationale = justified ? "Calibrated model preference supported by prompt context."
+                                  : "Candidate score insufficient for auto-recommendation.";
+        return rec;
+    }
+
+    return std::nullopt;
+}
+
+std::optional<AssumptionConfidence> S1TriageAdapter::extractAssumptionConfidence(
+    const SnapshotEvaluationResponse& response,
+    std::string_view assumptionId) {
+    for (const auto& as : response.assumptionScores) {
+        if (as.assumptionId == assumptionId) {
+            AssumptionConfidence ac;
+            ac.assumptionId = as.assumptionId;
+            ac.isScored = as.isScored;
+            ac.unscoredReason = as.unscoredReason;
+            ac.noulCertainty = as.noulCertainty;
+            if (as.isScored && as.uncertaintyScore.has_value()) {
+                ac.uncertaintyScore = *as.uncertaintyScore;
+                ac.confidence = std::max(0.0, std::min(1.0, 1.0 - *as.uncertaintyScore));
+                ac.isEstablished = (*as.uncertaintyScore <= 0.30) && as.noulCertainty;
+            } else {
+                ac.uncertaintyScore = 1.0;
+                ac.confidence = 0.0;
+                ac.isEstablished = false;
+            }
+            return ac;
+        }
+    }
+    return std::nullopt;
+}
+
+std::vector<AssumptionConfidence> S1TriageAdapter::extractAllAssumptionConfidences(
+    const SnapshotEvaluationResponse& response) {
+    std::vector<AssumptionConfidence> results;
+    results.reserve(response.assumptionScores.size());
+    for (const auto& as : response.assumptionScores) {
+        AssumptionConfidence ac;
+        ac.assumptionId = as.assumptionId;
+        ac.isScored = as.isScored;
+        ac.unscoredReason = as.unscoredReason;
+        ac.noulCertainty = as.noulCertainty;
+        if (as.isScored && as.uncertaintyScore.has_value()) {
+            ac.uncertaintyScore = *as.uncertaintyScore;
+            ac.confidence = std::max(0.0, std::min(1.0, 1.0 - *as.uncertaintyScore));
+            ac.isEstablished = (*as.uncertaintyScore <= 0.30) && as.noulCertainty;
+        } else {
+            ac.uncertaintyScore = 1.0;
+            ac.confidence = 0.0;
+            ac.isEstablished = false;
+        }
+        results.push_back(std::move(ac));
+    }
+    return results;
+}
+
 } // namespace roclint::bridge

@@ -1,0 +1,263 @@
+<div id="roclint-inline-concepts">
+  <style>
+    #roclint-inline-concepts { color-scheme: dark; font-family: Inter, 'Segoe UI', sans-serif; }
+    #roclint-inline-concepts [hidden] { display:none !important; }
+    #roclint-inline-concepts .rc-stage { --rc-accent:#345cff; --rc-radius:16px; background:#10131a; color:#f3f5ff; border:1px solid #303744; border-radius:18px; padding:20px; box-sizing:border-box; min-height:615px; display:flex; flex-direction:column; gap:18px; font-size:14px; line-height:1.55; position:relative; }
+    #roclint-inline-concepts .rc-stage * { box-sizing:border-box; }
+    #roclint-inline-concepts .rc-hostbar { display:flex; flex-wrap:wrap; align-items:center; gap:10px; color:#c6cbd6; padding-right:85px; }
+    #roclint-inline-concepts .rc-hostbar strong { font-weight:500; }
+    #roclint-inline-concepts .rc-mono { font-family:'SFMono-Regular',Consolas,monospace; font-size:11px; letter-spacing:.07em; }
+    #roclint-inline-concepts .rc-concept { color:#9da8bf; }
+    #roclint-inline-concepts .rc-context { color:#9da8af; margin:0; max-width:46ch; }
+    #roclint-inline-concepts .rc-workspace { flex:1; display:flex; flex-direction:column; justify-content:flex-end; gap:14px; min-width:0; }
+    #roclint-inline-concepts button { font:inherit; cursor:pointer; }
+    #roclint-inline-concepts button:disabled { cursor:default; opacity:.55; }
+    #roclint-inline-concepts button:focus-visible, #roclint-inline-concepts textarea:focus-visible { outline:2px solid #a8bcff; outline-offset:3px; }
+    #roclint-inline-concepts .rc-composer { background:#1a1e27; border:1px solid #3a4354; border-radius:var(--rc-radius); padding:17px; min-width:0; }
+    #roclint-inline-concepts .rc-prompt { margin:0; font-size:15px; line-height:1.9; overflow-wrap:anywhere; }
+    #roclint-inline-concepts .rc-target { display:inline; padding:0; border:0; background:transparent; color:inherit; text-decoration-line:underline; text-decoration-style:wavy; text-decoration-color:#e9bb72; text-decoration-thickness:1.5px; text-underline-offset:5px; }
+    #roclint-inline-concepts .rc-target-wording { text-decoration-color:#829cff; }
+    #roclint-inline-concepts .rc-tools { display:flex; align-items:center; justify-content:space-between; margin-top:17px; color:#b4bed0; }
+    #roclint-inline-concepts .rc-tool { display:flex; align-items:center; justify-content:center; width:32px; height:32px; border:1px solid #475166; border-radius:50%; background:#2a3242; color:#e9edf8; }
+    #roclint-inline-concepts .rc-attachment { font-size:12px; color:#bec8dc; }
+    #roclint-inline-concepts .rc-edge { display:flex; flex-wrap:wrap; align-items:center; justify-content:flex-end; gap:10px; }
+    #roclint-inline-concepts .rc-pill { display:inline-flex; align-items:center; gap:8px; border:1px solid #5873a5; background:#0b1736; color:#eff4ff; border-radius:10px; min-height:34px; padding:5px 11px; }
+    #roclint-inline-concepts .rc-pill .rc-bird, #roclint-inline-concepts .rc-brand .rc-bird { display:inline-flex; color:#f3f6ff; }
+    #roclint-inline-concepts .rc-pill-label { color:#aebfdf; font-size:12px; }
+    #roclint-inline-concepts .rc-card { align-self:flex-end; width:min(100%,365px); background:#0b1736; color:#f3f5ff; padding:16px; border:1px solid #4a628c; border-radius:var(--rc-radius); box-shadow:0 15px 35px #0005; position:relative; display:flex; flex-direction:column; gap:12px; }
+    #roclint-inline-concepts .rc-card:after { content:''; position:absolute; bottom:-6px; left:38px; width:10px; height:10px; background:#0b1736; border-right:1px solid #4a628c; border-bottom:1px solid #4a628c; transform:rotate(45deg); }
+    #roclint-inline-concepts .rc-card-wide { width:100%; align-self:stretch; }
+    #roclint-inline-concepts .rc-card-wide:after { display:none; }
+    #roclint-inline-concepts .rc-brand { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+    #roclint-inline-concepts .rc-brand .rc-tag { margin-left:auto; color:#efc88f; }
+    #roclint-inline-concepts .rc-brand .rc-tag.blue { color:#a9bbff; }
+    #roclint-inline-concepts .rc-close { border:0; background:none; color:#b3c3df; min-height:28px; min-width:28px; padding:0 4px; }
+    #roclint-inline-concepts h3 { margin:0; font-size:17px; line-height:1.45; font-weight:500; }
+    #roclint-inline-concepts p { margin:0; }
+    #roclint-inline-concepts .rc-subtle { color:#bcc9df; font-size:13px; }
+    #roclint-inline-concepts .rc-actions { display:flex; flex-wrap:wrap; align-items:center; gap:7px; }
+    #roclint-inline-concepts .rc-button { border:1px solid #4c6189; background:#162647; border-radius:8px; padding:7px 11px; color:#edf2ff; min-height:35px; font-size:13px; }
+    #roclint-inline-concepts .rc-button.primary { background:var(--rc-accent); border-color:var(--rc-accent); color:#fff; }
+    #roclint-inline-concepts .rc-button.quiet { border-color:transparent; background:transparent; color:#becce4; }
+    #roclint-inline-concepts .rc-button[aria-pressed="true"] { border-color:#b1c5ff; background:#25416f; }
+    #roclint-inline-concepts .rc-inset { border-left:2px solid #7392e5; padding-left:11px; color:#e4ebfa; }
+    #roclint-inline-concepts .rc-rule { border:0; border-top:1px solid #30466b; margin:0; }
+    #roclint-inline-concepts .rc-menu-row { display:flex; flex-direction:column; gap:4px; }
+    #roclint-inline-concepts .rc-selection { color:#b7dccc; font-size:13px; min-height:20px; }
+    #roclint-inline-concepts .rc-rewrite { display:flex; flex-direction:column; gap:14px; }
+    #roclint-inline-concepts .rc-rewrite-text { color:#ebf1ff; line-height:1.75; overflow-wrap:anywhere; }
+    #roclint-inline-concepts .rc-added { background:#173e39; color:#bbefda; }
+    #roclint-inline-concepts .rc-question-box { background:#132342; border-radius:10px; padding:13px; display:flex; flex-direction:column; gap:10px; }
+    #roclint-inline-concepts .rc-question-box label { color:#c8d5ee; font-size:13px; }
+    #roclint-inline-concepts .rc-question-box textarea { width:100%; resize:vertical; min-height:70px; background:#0b1736; color:#e9efff; border:1px solid #59729a; border-radius:8px; padding:10px; font:inherit; }
+    #roclint-inline-concepts .rc-footnote { display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:8px; color:#aebdd4; font-size:12px; }
+    #roclint-inline-concepts .rc-statebar { display:flex; gap:6px; flex-wrap:wrap; }
+    #roclint-inline-concepts .rc-statebar .rc-button { font-size:12px; }
+    #roclint-inline-concepts .rc-review-source { border-left:2px solid #51617e; padding-left:11px; font-size:13px; color:#b1bfd8; }
+    #roclint-inline-concepts [data-status] { color:#b7dccc; font-size:13px; min-height:19px; }
+    @media(max-width:480px) {
+      #roclint-inline-concepts .rc-stage { padding:12px; min-height:700px; gap:13px; }
+      #roclint-inline-concepts .rc-card { width:100%; padding:13px; }
+      #roclint-inline-concepts .rc-prompt { font-size:14px; }
+      #roclint-inline-concepts .rc-composer { padding:12px; }
+      #roclint-inline-concepts .rc-pill-label { display:none; }
+      #roclint-inline-concepts .rc-hostbar { padding-right:75px; }
+    }
+    @media(pointer:coarse) {
+      #roclint-inline-concepts .rc-button, #roclint-inline-concepts .rc-pill, #roclint-inline-concepts .rc-close { min-height:44px; }
+    }
+    @media(prefers-reduced-motion:no-preference) {
+      #roclint-inline-concepts .rc-card { animation:rc-appear .16s ease-out; }
+      @keyframes rc-appear { from{transform:translateY(4px);opacity:.4} to{transform:translateY(0);opacity:1} }
+    }
+  </style>
+  <div class="viz-carousel viz-dotted-background" aria-label="Roclint prompt companion concepts">
+    <section data-variant="Word-level companion" aria-label="Word-level companion">
+      <div class="rc-stage" data-design="inline" aria-label="Inline Roclint appearance">
+        <div class="rc-hostbar"><i data-lucide="sparkles" aria-hidden="true"></i><strong>Antigravity</strong><span class="rc-mono rc-concept">/ CONCEPT</span></div>
+        <p class="rc-context">Working on <strong>queue.cpp</strong></p>
+        <div class="rc-workspace">
+          <div class="rc-statebar" aria-label="Suggestion type">
+            <button class="rc-button" data-show="clarity" aria-pressed="true">Clarity question</button>
+            <button class="rc-button quiet" data-show="wording" aria-pressed="false">Wording suggestion</button>
+          </div>
+          <div class="rc-card" data-popup="clarity">
+            <div class="rc-brand"><span class="rc-bird"><i data-lucide="bird" aria-hidden="true"></i></span><span class="rc-mono">roclint</span><span class="rc-tag rc-mono">CLARITY</span><button class="rc-close" data-dismiss aria-label="Dismiss clarity question">×</button></div>
+            <h3>What should “faster” mean?</h3>
+            <p class="rc-subtle">Pick the outcome you want to prioritize.</p>
+            <div class="rc-actions"><button class="rc-button" data-answer="Lower enqueue latency">Lower enqueue latency</button><button class="rc-button" data-answer="Higher throughput">Higher throughput</button></div>
+            <p class="rc-selection" data-answer-status aria-live="polite">No assumption made.</p>
+            <div class="rc-actions"><button class="rc-button quiet" data-skip>Skip this question</button><button class="rc-button quiet" data-start-rewrite>Full rewrite</button></div>
+          </div>
+          <div class="rc-card" data-popup="wording" hidden>
+            <div class="rc-brand"><span class="rc-bird"><i data-lucide="bird" aria-hidden="true"></i></span><span class="rc-mono">roclint</span><span class="rc-tag blue rc-mono">WORDING</span><button class="rc-close" data-dismiss aria-label="Dismiss wording suggestion">×</button></div>
+            <h3>State the boundary directly.</h3>
+            <p class="rc-subtle">“Don’t change the tests” can be phrased as a clear preservation rule.</p>
+            <p class="rc-inset">Keep all existing tests unchanged.</p>
+            <div class="rc-actions"><button class="rc-button primary" data-apply>Apply change</button><button class="rc-button quiet" data-ignore>Ignore</button><button class="rc-button quiet" data-start-rewrite>Full rewrite</button></div>
+          </div>
+          <div class="rc-card rc-card-wide" data-local-rewrite hidden>
+            <div class="rc-brand"><span class="rc-bird"><i data-lucide="bird" aria-hidden="true"></i></span><span class="rc-mono">roclint / REWRITE</span><button class="rc-close" data-close-rewrite aria-label="Close full rewrite">×</button></div>
+            <p class="rc-rewrite-text">Make <strong>Queue::push</strong> asynchronous and improve error handling. Preserve its public API, FIFO ordering, and all existing tests. Optimize performance under queue contention.</p>
+            <div class="rc-actions"><button class="rc-button primary" data-insert>Approve &amp; Insert</button><button class="rc-button quiet" data-close-rewrite>Keep draft</button></div>
+          </div>
+          <div class="rc-composer">
+            <p class="rc-prompt" data-composer>Make Queue::push async and improve error handling. Keep the existing public API, preserve FIFO order, and <button class="rc-target rc-target-wording" data-open="wording">don’t change the tests</button>. It should be <button class="rc-target" data-open="clarity">faster</button> when the queue is busy.</p>
+            <div class="rc-tools"><span class="rc-attachment">＋ &nbsp; Add context</span><button class="rc-tool" disabled aria-label="Host Send button, inactive in this concept"><i data-lucide="arrow-up" aria-hidden="true"></i></button></div>
+          </div>
+          <div class="rc-edge"><span data-status aria-live="polite"></span><button class="rc-pill" data-badge aria-label="Open Roclint suggestions"><span class="rc-bird"><i data-lucide="bird" aria-hidden="true"></i></span><span data-count>2</span><span class="rc-pill-label">suggestions</span></button><button class="rc-button quiet" data-undo hidden>Undo change</button></div>
+        </div>
+      </div>
+    </section>
+    <section data-variant="Field-level companion" aria-label="Field-level companion" hidden>
+      <div class="rc-stage" data-design="field" aria-label="Field-level Roclint appearance">
+        <div class="rc-hostbar"><i data-lucide="sparkles" aria-hidden="true"></i><strong>Antigravity</strong><span class="rc-mono rc-concept">/ CONCEPT</span></div>
+        <p class="rc-context">Working on <strong>queue.cpp</strong></p>
+        <div class="rc-workspace">
+          <div class="rc-card" data-popup="clarity">
+            <div class="rc-brand"><span class="rc-bird"><i data-lucide="bird" aria-hidden="true"></i></span><span class="rc-mono">roclint</span><span class="rc-tag rc-mono">ONE DETAIL</span><button class="rc-close" data-dismiss aria-label="Dismiss Roclint card">×</button></div>
+            <h3>What should “faster” prioritize?</h3>
+            <div class="rc-actions"><button class="rc-button" data-answer="Lower enqueue latency">Lower enqueue latency</button><button class="rc-button" data-answer="Higher throughput">Higher throughput</button></div>
+            <p class="rc-selection" data-answer-status aria-live="polite">Your original draft stays in place.</p>
+            <hr class="rc-rule">
+            <div class="rc-actions"><button class="rc-button primary" data-start-rewrite>Rewrite prompt</button><button class="rc-button quiet" data-skip>Skip question</button></div>
+            <p class="rc-footnote">Delivers into Antigravity</p>
+          </div>
+          <div class="rc-card rc-card-wide" data-local-rewrite hidden>
+            <div class="rc-brand"><span class="rc-bird"><i data-lucide="bird" aria-hidden="true"></i></span><span class="rc-mono">roclint / REVIEW</span><button class="rc-close" data-close-rewrite aria-label="Close rewrite review">×</button></div>
+            <p class="rc-rewrite-text">Make <strong>Queue::push</strong> asynchronous and improve error handling. Preserve its public API, FIFO ordering, and all existing tests. Optimize performance under queue contention.</p>
+            <div class="rc-actions"><button class="rc-button primary" data-insert>Approve &amp; Insert</button><button class="rc-button quiet" data-close-rewrite>Keep draft</button></div>
+          </div>
+          <div class="rc-composer">
+            <p class="rc-prompt" data-composer>Make Queue::push async and improve error handling. Keep the existing public API, preserve FIFO order, and don’t change the tests. It should be faster when the queue is busy.</p>
+            <div class="rc-tools"><span class="rc-attachment">＋ &nbsp; Add context</span><button class="rc-tool" disabled aria-label="Host Send button, inactive in this concept"><i data-lucide="arrow-up" aria-hidden="true"></i></button></div>
+          </div>
+          <div class="rc-edge"><span data-status aria-live="polite"></span><button class="rc-pill" data-badge><span class="rc-bird"><i data-lucide="bird" aria-hidden="true"></i></span><span>Check prompt</span></button><button class="rc-button quiet" data-undo hidden>Undo change</button></div>
+        </div>
+      </div>
+    </section>
+    <section data-variant="User-requested full rewrite" aria-label="User-requested full rewrite" hidden>
+      <div class="rc-stage" data-design="review" aria-label="Full rewrite review appearance">
+        <div class="rc-hostbar"><span class="rc-bird"><i data-lucide="bird" aria-hidden="true"></i></span><strong>roclint</strong><span class="rc-mono rc-concept">/ FULL REWRITE</span></div>
+        <div class="rc-workspace">
+          <div class="rc-card rc-card-wide rc-rewrite">
+            <div class="rc-brand"><span class="rc-mono">YOUR DRAFT → REWRITE</span><span class="rc-tag blue rc-mono">YOU REQUESTED</span></div>
+            <p class="rc-review-source">Make Queue::push async and improve error handling. Keep the existing public API, preserve FIFO order, and don’t change the tests. It should be faster when the queue is busy.</p>
+            <div class="rc-question-box" data-review-question>
+              <h3>One optional detail</h3>
+              <label for="roc-performance-answer">What should “faster” mean for this queue?</label>
+              <textarea id="roc-performance-answer" placeholder="For example: lower enqueue latency under contention"></textarea>
+              <div class="rc-actions"><button class="rc-button primary" data-review-answer>Use my answer</button><button class="rc-button quiet" data-review-skip>Skip &amp; rewrite</button></div>
+            </div>
+            <div data-review-result hidden>
+              <p class="rc-rewrite-text" data-result-text>Make Queue::push asynchronous and improve error handling. Preserve the public API, FIFO ordering, and all existing tests. Optimize performance under queue contention.</p>
+              <p class="rc-selection" data-review-note>No performance target assumed.</p>
+            </div>
+            <div class="rc-footnote"><span>Delivers into Antigravity</span><span>Review before inserting</span></div>
+            <div class="rc-actions"><button class="rc-button primary" data-review-insert disabled>Approve &amp; Insert</button><button class="rc-button quiet" data-review-reset>Keep original</button></div>
+          </div>
+          <div class="rc-composer">
+            <p class="rc-prompt" data-composer>Make Queue::push async and improve error handling. Keep the existing public API, preserve FIFO order, and don’t change the tests. It should be faster when the queue is busy.</p>
+            <div class="rc-tools"><span class="rc-attachment">＋ &nbsp; Add context</span><button class="rc-tool" disabled aria-label="Host Send button, inactive in this concept"><i data-lucide="arrow-up" aria-hidden="true"></i></button></div>
+          </div>
+          <p data-status aria-live="polite"></p>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+    (() => {
+      const root = document.getElementById('roclint-inline-concepts');
+      if (!root) return;
+      const original = 'Make Queue::push async and improve error handling. Keep the existing public API, preserve FIFO order, and don’t change the tests. It should be faster when the queue is busy.';
+      const rewrite = 'Make Queue::push asynchronous and improve error handling. Preserve the public API, FIFO ordering, and all existing tests. Optimize performance under queue contention.';
+      root.querySelectorAll('[data-design]').forEach(panel => {
+        const state = {radius:16, accent:'#345cff'};
+        const paint = () => { panel.style.setProperty('--rc-radius', `${state.radius}px`); panel.style.setProperty('--rc-accent',state.accent); };
+        paint();
+        if (globalThis.Tweak) {
+          const tweak = new Tweak({container:panel,onChange:paint});
+          tweak.addSlider(state,'radius',{label:'Corner radius',min:8,max:24,step:2,unit:'px'});
+          tweak.addColorPicker(state,'accent',{label:'Roclint accent'});
+        }
+        const composer = panel.querySelector('[data-composer]');
+        const status = panel.querySelector('[data-status]');
+        const undo = panel.querySelector('[data-undo]');
+        const localRewrite = panel.querySelector('[data-local-rewrite]');
+        const count = panel.querySelector('[data-count]');
+        let performance = '';
+        let savedMarkup = composer.innerHTML;
+        const showPopup = name => {
+          panel.querySelectorAll('[data-popup]').forEach(card => {card.hidden = card.dataset.popup !== name;});
+          if(localRewrite) localRewrite.hidden = true;
+          panel.querySelectorAll('[data-show]').forEach(button => button.setAttribute('aria-pressed',String(button.dataset.show === name)));
+        };
+        const hidePopups = () => panel.querySelectorAll('[data-popup]').forEach(card => {card.hidden = true;});
+        panel.addEventListener('click',event => {
+          const button=event.target.closest('button');
+          if(!button || !panel.contains(button)) return;
+          if(button.dataset.open) showPopup(button.dataset.open);
+          if(button.dataset.show) showPopup(button.dataset.show);
+          if(button.hasAttribute('data-dismiss')) hidePopups();
+          if(button.hasAttribute('data-badge')) showPopup('clarity');
+          if(button.dataset.answer) {
+            performance=button.dataset.answer.toLowerCase();
+            panel.querySelectorAll('[data-answer]').forEach(option => option.setAttribute('aria-pressed',String(option === button)));
+            panel.querySelector('[data-answer-status]').textContent = `Preference: ${button.dataset.answer.toLowerCase()}.`;
+            status.textContent = 'Answer saved. Your draft is unchanged.';
+          }
+          if(button.hasAttribute('data-skip')) {
+            performance='';
+            panel.querySelector('[data-answer-status]').textContent = 'Skipped. Performance goal stays open.';
+            status.textContent='No performance goal assumed.';
+          }
+          if(button.hasAttribute('data-ignore')) { hidePopups(); if(count) count.textContent='1'; status.textContent='Suggestion ignored for this draft.'; }
+          if(button.hasAttribute('data-apply')) {
+            const target=composer.querySelector('[data-open="wording"]');
+            if(target) target.replaceWith(document.createTextNode('keep all existing tests unchanged'));
+            hidePopups(); if(count) count.textContent='1'; if(undo) undo.hidden=false;
+            status.textContent='Wording updated in the preview.';
+          }
+          if(button.hasAttribute('data-start-rewrite')) {
+            hidePopups();
+            if(localRewrite) {
+              localRewrite.querySelector('.rc-rewrite-text').textContent=rewrite + (performance ? ` Prioritize ${performance}.` : '');
+              localRewrite.hidden=false;
+            }
+          }
+          if(button.hasAttribute('data-close-rewrite') && localRewrite) localRewrite.hidden=true;
+          if(button.hasAttribute('data-insert')) {
+            composer.textContent=localRewrite.querySelector('.rc-rewrite-text').textContent; hidePopups(); localRewrite.hidden=true;
+            if(undo) undo.hidden=false; status.textContent='Approved wording inserted in the preview.';
+          }
+          if(button.hasAttribute('data-undo')) {
+            composer.innerHTML=savedMarkup; undo.hidden=true; if(count) count.textContent='2'; status.textContent='Original draft restored.';
+          }
+        });
+        panel.querySelectorAll('[data-open]').forEach(button => {
+          let hover;
+          button.addEventListener('pointerenter',()=>{hover=setTimeout(()=>showPopup(button.dataset.open),180);});
+          button.addEventListener('pointerleave',()=>clearTimeout(hover));
+        });
+        const reviewQuestion=panel.querySelector('[data-review-question]');
+        if(reviewQuestion) {
+          const result=panel.querySelector('[data-review-result]');
+          const resultText=panel.querySelector('[data-result-text]');
+          const insert=panel.querySelector('[data-review-insert]');
+          const answer=panel.querySelector('textarea');
+          const settle = useAnswer => {
+            const text=answer.value.trim();
+            if(useAnswer && !text) {answer.focus();return;}
+            resultText.textContent = rewrite + (useAnswer ? ` Performance goal: ${text}.` : '');
+            panel.querySelector('[data-review-note]').textContent = useAnswer ? 'Your answer is included.' : 'Skipped. No specific performance target assumed.';
+            reviewQuestion.hidden=true; result.hidden=false; insert.disabled=false; status.textContent='Ready for your review.';
+          };
+          panel.querySelector('[data-review-answer]').addEventListener('click',()=>settle(true));
+          panel.querySelector('[data-review-skip]').addEventListener('click',()=>settle(false));
+          insert.addEventListener('click',()=>{composer.textContent=resultText.textContent; status.textContent='Approved wording inserted in the preview.'; insert.disabled=true;});
+          panel.querySelector('[data-review-reset]').addEventListener('click',()=>{composer.textContent=original; reviewQuestion.hidden=false;result.hidden=true;insert.disabled=true;status.textContent='Original draft kept.';});
+        }
+      });
+    })();
+  </script>
+</div>

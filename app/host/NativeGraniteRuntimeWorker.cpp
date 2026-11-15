@@ -37,6 +37,7 @@ core::Error stale() { return core::makeError(core::ErrorCode::StaleVersion, "The
 struct NativeGraniteRuntimeWorker::Call {
     std::chrono::steady_clock::time_point deadline;
     qsizetype streamedBytes{0}; int streamedFrames{0}; // I/O-thread only
+    qint64 streamedReasoningTokens{0}, streamedAnswerTokens{0};
     qint64 streamedTokens{0}; double streamedDecodeMs{0.0}, streamedGenerationMs{0.0};
     std::mutex mutex;
     std::condition_variable changed;
@@ -294,6 +295,7 @@ quint64 NativeGraniteRuntimeWorker::send(const QString& operation, const QJsonOb
     envelope.insert(QStringLiteral("session_id"), context ? context->sessionId : QStringLiteral("runtime"));
     envelope.insert(QStringLiteral("draft_revision_id"), context ? context->revisionId : QStringLiteral("runtime"));
     envelope.insert(QStringLiteral("state_version"), static_cast<qint64>(context ? context->stateVersion : 0));
+    if (context) envelope.insert(QStringLiteral("thinking_enabled"), context->thinkingEnabled);
     envelope.insert(QStringLiteral("intent_id"), context ? context->intentId : QString());
     envelope.insert(QStringLiteral("rewrite_profile_id"), context ? context->profileId : QString());
     const auto profile = context ? core::rewrite::ProfileRegistry::getProfile(ss(context->profileId)) : std::nullopt;
@@ -348,6 +350,7 @@ void NativeGraniteRuntimeWorker::resetSpeedMetrics(quint64 requestId) {
     lastDecodeTokensPerSecond_ = 0.0;
     lastGenerationTokensPerSecond_ = 0.0;
     lastOutputTokens_ = 0;
+    lastReasoningTokens_ = 0; lastAnswerTokens_ = 0; generationPhase_ = QStringLiteral("idle");
     lastDecodeMs_ = 0.0;
     lastGenerationMs_ = 0.0;
     emit speedMetricsChanged();
@@ -365,9 +368,22 @@ bool NativeGraniteRuntimeWorker::updateSpeedMetrics(quint64 requestId, const QJs
         count > manifest().value(QStringLiteral("output_tokens")).toInt() || count < call.streamedTokens ||
         !std::isfinite(decode) || !std::isfinite(elapsed) || decode <= 0 || elapsed <= 0 || decode > elapsed ||
         decode < call.streamedDecodeMs || elapsed < call.streamedGenerationMs) return false;
+    const bool split = metrics.contains("reasoning_tokens") || metrics.contains("answer_tokens") || metrics.contains("phase");
+    const double reasoning = split ? metrics.value("reasoning_tokens").toDouble(-1) : 0;
+    const double answer = split ? metrics.value("answer_tokens").toDouble(-1) : count;
+    const QString phase = split ? metrics.value("phase").toString() : QStringLiteral("answer");
+    if (!std::isfinite(reasoning) || !std::isfinite(answer) || reasoning < 0 || answer < 0 ||
+        std::floor(reasoning) != reasoning || std::floor(answer) != answer || reasoning + answer != count ||
+        reasoning < call.streamedReasoningTokens || answer < call.streamedAnswerTokens ||
+        (phase != QLatin1String("thinking") && phase != QLatin1String("answer")) ||
+        (phase == QLatin1String("thinking") && answer != 0) ||
+        (call.streamedAnswerTokens > 0 && reasoning != call.streamedReasoningTokens)) return false;
     const double decSpeed = count * 1000.0 / decode;
     const double genSpeed = count * 1000.0 / elapsed;
     if (!std::isfinite(decSpeed) || !std::isfinite(genSpeed)) return false;
+    call.streamedReasoningTokens = lastReasoningTokens_ = static_cast<qint64>(reasoning);
+    call.streamedAnswerTokens = lastAnswerTokens_ = static_cast<qint64>(answer);
+    generationPhase_ = phase;
     call.streamedTokens = lastOutputTokens_ = static_cast<qint64>(count);
     call.streamedDecodeMs = lastDecodeMs_ = decode;
     call.streamedGenerationMs = lastGenerationMs_ = elapsed;
@@ -455,8 +471,9 @@ void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
     }
     const auto result = response.value(QStringLiteral("result")).toObject();
     if (op == QLatin1String("hello")) {
-        if (result.value(QStringLiteral("diagnostic_unbounded")).toBool(false)) {
-            fail(QStringLiteral("This helper is running without semantic deadlines for a development investigation. Normal app requests require bounded mode.")); return;
+        if (result.value(QStringLiteral("diagnostic_unbounded")).toBool(false) ||
+            result.value(QStringLiteral("thinking_reference_disabled")).toBool(false)) {
+            fail(QStringLiteral("This helper uses a development investigation override. Normal app requests require the pinned bounded reasoning configuration.")); return;
         }
         const auto operations = result.value(QStringLiteral("operations")).toArray();
         bool compatible = result.value(QStringLiteral("protocol_version")) == QJsonValue(1);
@@ -509,10 +526,12 @@ void NativeGraniteRuntimeWorker::cancelCall(const std::shared_ptr<Call>& call) {
                 fail(QStringLiteral("Native Granite did not stop cancelled work within its deadline.")); killWorker();
             }
         });
-        call->finish(stale());
         static_cast<void>(send(QStringLiteral("cancel"), {{QStringLiteral("target_request_id"), QString::number(id)}}, kHelloMs));
     }
     if (!quiescing_.isEmpty() && !stopping_) { ready_ = false; state(QStringLiteral("CANCELLING"), QStringLiteral("Waiting for cancelled native work to stop.")); }
+    // Publish CANCELLING before waking the caller; its latest-request replay must
+    // never observe an old READY snapshot ahead of this cancellation.
+    call->finish(stale());
     if (cancelled_.size() >= 256) fail(QStringLiteral("Native cancellation history is full. Reload the helper before continuing."));
 }
 
@@ -535,6 +554,7 @@ void NativeGraniteRuntimeWorker::setResidency(const QString& tier) {
 void NativeGraniteRuntimeWorker::submit(const RequestContext& context, const QString& operation, const QString& instructions,
                                   const QString& schema, const std::shared_ptr<Call>& call) {
     if (call->done()) return;
+    if (context.cancellation && context.cancellation->load()) { call->finish(stale()); return; }
     if (std::chrono::steady_clock::now() >= call->deadline) { call->finish(core::makeError(core::ErrorCode::ValidationFailed, "NATIVE_TIMEOUT: Native request expired before dispatch.")); return; }
     if (!ready_ || stopping_ || !hello_) { call->finish(unavailable("Native Granite is not ready.")); return; }
     if (context.groupId.isEmpty() || context.attemptId.isEmpty() || context.sessionId.isEmpty() || context.revisionId.isEmpty() || context.stateVersion > kMaxId) {
@@ -548,7 +568,7 @@ void NativeGraniteRuntimeWorker::submit(const RequestContext& context, const QSt
     }
     for (const auto& id : {context.groupId, context.attemptId, context.sessionId, context.revisionId, context.intentId, context.profileId})
         if (id.toUtf8().size() > 256) { call->finish(core::makeError(core::ErrorCode::PreconditionFailed, "Native request binding exceeded its limit.")); return; }
-    const QJsonObject payload{{QStringLiteral("prompt"), context.prompt}, {QStringLiteral("instructions"), instructions}, {QStringLiteral("schema"), schema}};
+    const QJsonObject payload{{QStringLiteral("prompt"), context.prompt}, {QStringLiteral("instructions"), instructions}, {QStringLiteral("schema"), schema}, {QStringLiteral("thinking_enabled"), context.thinkingEnabled}};
     const auto timeout = std::max(1, static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(call->deadline - std::chrono::steady_clock::now()).count()));
     const auto id = send(operation, payload, timeout, &context, call);
     if (id == 0) { call->finish(unavailable("Native Granite could not accept this request.")); return; }
@@ -558,23 +578,44 @@ void NativeGraniteRuntimeWorker::submit(const RequestContext& context, const QSt
 
 bridge::GraniteTransport NativeGraniteRuntimeWorker::transportFor(const RequestContext& context, const QString& operation, const std::string& schema, quint64 generation, quint64 epoch, int budgetOverride) const {
     const auto mailbox = mailbox_;
-    const auto budget = budgetOverride > 0 ? budgetOverride : operation == QLatin1String("granite_analyze") ? runtime::kGraniteAnalysisTimeoutMs : runtime::kGraniteRewriteTimeoutMs;
+    const auto budget = budgetOverride > 0 ? budgetOverride
+        : operation == QLatin1String("granite_analyze") ? runtime::kGraniteAnalysisTimeoutMs
+        : operation == QLatin1String("granite_word_refinement") ? runtime::kGraniteWordRefinementTimeoutMs
+        : runtime::kGraniteRewriteTimeoutMs;
     return [mailbox, context, operation, schema = QString::fromUtf8(schema.data(), static_cast<qsizetype>(schema.size())), generation, epoch, budget](std::string_view instructions) -> core::Result<std::string> {
         if (!QCoreApplication::instance() || QThread::currentThread() == QCoreApplication::instance()->thread())
             return core::makeError(core::ErrorCode::PreconditionFailed, "Native inference must run off the GUI thread.");
+        if (context.cancellation && context.cancellation->load()) return stale();
         auto call = std::make_shared<Call>();
-        call->deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(budget);
+        call->deadline = std::min(context.deadline,
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(budget));
+        if (std::chrono::steady_clock::now() >= call->deadline)
+            return core::makeError(core::ErrorCode::ValidationFailed, "NATIVE_TIMEOUT: Shared request budget expired.");
         const auto prompt = QString::fromUtf8(instructions.data(), static_cast<qsizetype>(instructions.size()));
         if (!mailbox->post([context, operation, schema, prompt, call, generation, epoch](NativeGraniteRuntimeWorker* runtime) {
             if (runtime->generation_ != generation || runtime->requestEpoch_ != epoch) { call->finish(stale()); return; }
             runtime->submit(context, operation, prompt, schema, call);
         }, call)) return unavailable("Native runtime could not accept this request.");
         std::unique_lock lock(call->mutex);
-        if (!call->changed.wait_until(lock, call->deadline, [&]() { return call->result.has_value(); })) {
-            lock.unlock();
-            call->finish(core::makeError(core::ErrorCode::ValidationFailed, "NATIVE_TIMEOUT: Native request exceeded its monotonic deadline."));
-            mailbox->post([call](NativeGraniteRuntimeWorker* runtime) { runtime->cancelCall(call); });
-            lock.lock();
+        bool cancellationPosted = false;
+        while (!call->result.has_value()) {
+            if (!cancellationPosted && context.cancellation && context.cancellation->load()) {
+                cancellationPosted = true;
+                lock.unlock();
+                if (!mailbox->post([call](NativeGraniteRuntimeWorker* runtime) { runtime->cancelCall(call); }))
+                    call->finish(stale());
+                lock.lock();
+                continue;
+            }
+            if (std::chrono::steady_clock::now() >= call->deadline) {
+                lock.unlock();
+                call->finish(core::makeError(core::ErrorCode::ValidationFailed, "NATIVE_TIMEOUT: Native request exceeded its monotonic deadline."));
+                mailbox->post([call](NativeGraniteRuntimeWorker* runtime) { runtime->cancelCall(call); });
+                lock.lock();
+                break;
+            }
+            call->changed.wait_until(lock, std::min(call->deadline,
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(25)));
         }
         return *call->result;
     };

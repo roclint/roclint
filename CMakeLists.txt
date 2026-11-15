@@ -733,6 +733,8 @@ if(BUILD_TESTING)
 
     if(BUILD_DESKTOP AND Qt6_FOUND)
         find_package(Qt6 6.2 REQUIRED COMPONENTS Test)
+        roclint_add_test(roclint_granite_reasoning_policy tests/bridge/test_granite_reasoning_policy.cpp Qt6::Core)
+        target_include_directories(roclint_granite_reasoning_policy_tests PRIVATE tests app/runtime "${CMAKE_CURRENT_BINARY_DIR}/generated")
         roclint_add_test(roclint_native_granite tests/bridge/test_native_granite_runtime.cpp roclint_host_lib_testing Qt6::Core Qt6::Network Qt6::Concurrent)
         target_compile_definitions(roclint_native_granite_tests PRIVATE
             ROCLINT_GRANITE_SOURCE_MANIFEST="${CMAKE_CURRENT_SOURCE_DIR}/app/runtime/granite-models.json")
@@ -750,6 +752,7 @@ if(BUILD_TESTING)
         add_dependencies(roclint_workspace_inspection_tests roclint_workspace_runtime_files)
         roclint_add_test(roclint_host_context      tests/viewmodel/test_host_context.cpp      roclint_host_lib_testing Qt6::Core Qt6::Gui)
         roclint_add_test(roclint_terminal_adapter  tests/viewmodel/test_terminal_adapter.cpp  roclint_host_lib_testing Qt6::Core)
+        roclint_add_test(roclint_range_injection_policy tests/viewmodel/test_range_injection_policy.cpp roclint_host_lib_testing Qt6::Core)
         roclint_add_test(roclint_dual_mode         tests/viewmodel/test_dual_mode.cpp         roclint_host_lib_testing Qt6::Core Qt6::Gui)
         roclint_add_test(roclint_product_alignment tests/viewmodel/test_product_alignment.cpp roclint_host_lib_testing Qt6::Quick Qt6::Qml Qt6::Test)
         roclint_add_test(roclint_upstream_compatibility tests/viewmodel/test_upstream_compatibility.cpp roclint_host_lib_testing Qt6::Core)
@@ -776,4 +779,104 @@ if(TARGET roclint_host_lib_testing)
             add_test(NAME roclint_process_guardian COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/test_process_guardian.py" --helper "$<TARGET_FILE:roclint_ipc_hardening_tests>")
         endif()
     endif()
+endif()
+
+# -----------------------------------------------------------------------------
+# 4. Retrieval subsystem (R00) — roclint_retrieval library
+# -----------------------------------------------------------------------------
+set(ROCLINT_RETRIEVAL_SOURCES
+    src/retrieval/RetrievalTypes.cpp
+    src/retrieval/TextChunker.cpp
+    src/retrieval/RetrievalIndex.cpp
+    src/retrieval/RetrievalEngine.cpp
+    src/retrieval/EmbeddingWorkerRuntime.cpp
+)
+
+function(roclint_add_retrieval_library name core_target storage_target)
+    add_library(${name} STATIC ${ROCLINT_RETRIEVAL_SOURCES})
+    target_link_libraries(${name} PUBLIC ${core_target} ${storage_target} SQLite3::SQLite3
+                          PRIVATE Threads::Threads)
+    target_include_directories(${name} PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+    )
+    target_compile_features(${name} PUBLIC cxx_std_20)
+    roclint_apply_warnings(${name})
+endfunction()
+
+roclint_add_retrieval_library(roclint_retrieval roclint_core roclint_storage)
+
+if(BUILD_TESTING)
+    roclint_add_retrieval_library(roclint_retrieval_testing roclint_core_testing roclint_storage_testing)
+
+    roclint_add_test(roclint_retrieval_index tests/retrieval/test_retrieval_index.cpp
+                     roclint_retrieval_testing)
+    target_include_directories(roclint_retrieval_index_tests PRIVATE tests)
+    target_link_libraries(roclint_retrieval_index_tests PRIVATE Threads::Threads)
+
+    # Integration test: runs only when Python and model assets are present.
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME roclint_retrieval_integration
+                 COMMAND "${Python3_EXECUTABLE}"
+                         "${CMAKE_CURRENT_SOURCE_DIR}/tests/retrieval/test_retrieval_integration.py")
+        set_tests_properties(roclint_retrieval_integration PROPERTIES
+            TIMEOUT 300
+            ENVIRONMENT "PYTHONUTF8=1;PYTHONNOUSERSITE=1"
+            DISABLED TRUE)   # Disabled by default; requires model assets.
+        message(STATUS "Retrieval integration test registered as DISABLED (needs model assets).")
+    endif()
+
+    # -------------------------------------------------------------------------
+    # Roclint Retrieval Subsystem E2E Test Suite (Tiers 1-4)
+    # -------------------------------------------------------------------------
+    set(ROCLINT_E2E_SOURCES
+        tests/retrieval/e2e/main.cpp
+        tests/retrieval/e2e/test_e2e_tier1_storage.cpp
+        tests/retrieval/e2e/test_e2e_tier1_coverage.cpp
+        tests/retrieval/e2e/test_e2e_tier1_migration.cpp
+        tests/retrieval/e2e/test_e2e_tier1_packaging.cpp
+        tests/retrieval/e2e/test_e2e_tier1_model.cpp
+        tests/retrieval/e2e/test_e2e_tier1_validation.cpp
+        # Placeholder for subsequent tier test source files:
+        # tests/retrieval/e2e/test_tier2_boundaries.cpp
+        # tests/retrieval/e2e/test_tier3_regressions.cpp
+        # tests/retrieval/e2e/test_tier4_workloads.cpp
+    )
+
+    add_executable(roclint_e2e_tests ${ROCLINT_E2E_SOURCES})
+    target_include_directories(roclint_e2e_tests PRIVATE
+        tests
+        tests/retrieval/e2e
+    )
+    target_compile_features(roclint_e2e_tests PRIVATE cxx_std_20)
+    roclint_apply_warnings(roclint_e2e_tests)
+    target_link_libraries(roclint_e2e_tests PRIVATE
+        roclint_retrieval_testing
+        Threads::Threads
+    )
+
+    add_test(NAME roclint_e2e COMMAND roclint_e2e_tests)
+    set_tests_properties(roclint_e2e PROPERTIES TIMEOUT 300)
+    if(TARGET Qt6::Core)
+        set_tests_properties(roclint_e2e PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+    endif()
+    # Fixture stress is separate from production retrieval/real-model evidence.
+    roclint_add_test(roclint_retrieval_fixture_stress tests/retrieval/e2e/adversarial_stress.cpp
+                     roclint_retrieval_testing Threads::Threads)
+    target_include_directories(roclint_retrieval_fixture_stress_tests PRIVATE tests tests/retrieval/e2e)
+    set_tests_properties(roclint_retrieval_fixture_stress PROPERTIES TIMEOUT 120)
+    if(TARGET Qt6::Core)
+        set_tests_properties(roclint_retrieval_fixture_stress PROPERTIES
+            ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
+    endif()
+
+endif()
+
+# Retrieval benchmark tool (no model needed; uses internal mock runtime).
+if(BUILD_DESKTOP OR BUILD_TESTING)
+    add_executable(roclint_retrieval_benchmark tools/retrieval_benchmark.cpp)
+    target_include_directories(roclint_retrieval_benchmark PRIVATE tests)
+    target_link_libraries(roclint_retrieval_benchmark PRIVATE roclint_retrieval Threads::Threads)
+    roclint_apply_warnings(roclint_retrieval_benchmark)
 endif()

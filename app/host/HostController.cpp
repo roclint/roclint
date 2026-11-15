@@ -31,6 +31,7 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <exception>
 #include <filesystem>
 
@@ -113,6 +114,59 @@ bool isMatchingConstraintId(std::string_view a, std::string_view b) noexcept {
     }
 
     return false;
+}
+
+// A narrow, mechanical settled-edit check. It does not interpret taste or technical choices;
+// it only recognizes an exact quoted old/new replacement for a named file with an explicit
+// boundary. Such a request must not acquire an invented confirmation question.
+bool hasExplicitMechanicalEdit(std::string_view prompt) {
+    std::string lower;
+    lower.reserve(prompt.size());
+    for (char c : prompt) lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+
+    const auto quoteValueAfter = [&](std::size_t at, std::string& value) -> bool {
+        while (at < lower.size() && std::isspace(static_cast<unsigned char>(lower[at]))) ++at;
+        if (at >= lower.size() || (lower[at] != '\'' && lower[at] != '"')) return false;
+        const char quote = lower[at++];
+        const auto end = lower.find(quote, at);
+        if (end == std::string::npos) return false;
+        value = lower.substr(at, end - at);
+        return !value.empty();
+    };
+
+    std::string oldValue;
+    std::string newValue;
+    const auto from = lower.find(" from ");
+    if (from == std::string::npos || !quoteValueAfter(from + 6, oldValue)) return false;
+    const auto to = lower.find(" to ", from + 6);
+    if (to == std::string::npos || !quoteValueAfter(to + 4, newValue)) return false;
+    if (oldValue == newValue) return false;
+
+    bool namedFile = false;
+    std::size_t at = 0;
+    while (at < lower.size()) {
+        while (at < lower.size() && std::isspace(static_cast<unsigned char>(lower[at]))) ++at;
+        const auto start = at;
+        while (at < lower.size() && !std::isspace(static_cast<unsigned char>(lower[at]))) ++at;
+        const auto token = lower.substr(start, at - start);
+        const auto dot = token.rfind('.');
+        if (dot != std::string::npos && dot + 1 < token.size()) {
+            std::string ext = token.substr(dot + 1);
+            while (!ext.empty() && !std::isalpha(static_cast<unsigned char>(ext.back()))) ext.pop_back();
+            if (ext.size() >= 1 && ext.size() <= 6 &&
+                std::all_of(ext.begin(), ext.end(), [](unsigned char c) { return std::isalpha(c) != 0; })) {
+                namedFile = true;
+                break;
+            }
+        }
+    }
+    if (!namedFile) return false;
+
+    return lower.find("do not change") != std::string::npos ||
+           lower.find("do not modify") != std::string::npos ||
+           lower.find("without changing") != std::string::npos ||
+           lower.find("without modifying") != std::string::npos ||
+           lower.find("no other text") != std::string::npos;
 }
 
 QString analysisDeadlineReason() {
@@ -257,6 +311,7 @@ HostController::HostController(const QString& dbPathOverride,
         m_juliaPython = settings.value(QStringLiteral("scoring/juliaPython"), m_juliaPython).toString();
         m_juliaDevice = settings.value(QStringLiteral("scoring/juliaDevice"), QString{}).toString();
         m_tokenSpeedMode = settings.value(QStringLiteral("models/tokenSpeedMode"), QStringLiteral("BOTH")).toString();
+        m_thinkingEnabled = settings.value(QStringLiteral("models/thinkingEnabled"), false).toBool();
         m_activeModel = settings.value(QStringLiteral("models/active"), m_activeModel).toString();
         m_modelDirectory = settings.value(QStringLiteral("models/directory")).toString();
         m_nativeDirectory = settings.value(QStringLiteral("models/nativeDirectory"), m_modelsBaseDirectory + QStringLiteral("/s2")).toString();
@@ -276,6 +331,8 @@ HostController::HostController(const QString& dbPathOverride,
         m_nativeDirectory = resolveNativeGraniteDirectory(m_nativeDirectory, m_modelsBaseDirectory);
     }
     initStorage(dbPathOverride);
+    connect(this, &HostController::modelEngineStatusChanged, this,
+            &HostController::startPendingWordRefinement, Qt::QueuedConnection);
 
     connect(m_julia.get(), &JuliaRuntime::stateChanged, this, [this]() {
         m_s1Adapter.setLocalModelReady(m_julia->isReady());
@@ -334,6 +391,8 @@ HostController::HostController(const QString& dbPathOverride,
     connect(m_accessibility.get(), &IAccessibilityBridge::fieldLost, this, &HostController::onFieldLost);
     connect(m_accessibility.get(), &IAccessibilityBridge::injectionFinished, this,
             &HostController::onInjectionFinished);
+    connect(m_accessibility.get(), &IAccessibilityBridge::rangeInjectionFinished, this,
+            &HostController::onRangeInjectionFinished);
     applyAmbientObserving();
     initializeResidencyPolicy();
 }
@@ -507,6 +566,7 @@ void HostController::showCardInternal(bool captureClipboard) {
     if (m_hostState == HostState::Quitting) {
         return;
     }
+    clearWordRefinement();
     m_hostContext = m_hostContextEnabled ? HostContextDetector::captureFrontmost() : HostContextObservation{};
     emit hostContextChanged();
     if (captureClipboard) {
@@ -654,7 +714,7 @@ void HostController::requestQuit() {
 }
 
 void HostController::finishQuitWhenRuntimesStopped() {
-    if (m_hostState == HostState::Quitting && !m_quitSignalSent && !m_julia->isRunning() && !m_native->isRunning() && m_nativeSemanticInFlight == 0) {
+    if (m_hostState == HostState::Quitting && !m_quitSignalSent && !m_julia->isRunning() && !m_native->isRunning() && m_nativeSemanticInFlight == 0 && !m_wordRefinementGenerating) {
         if (m_pendingDraft && !m_storageFault) { flushDraftEdits(); return; }
         if (m_commandRunning || !m_storageCommands.empty() || m_draftWriting || m_draftNotifications > 0 || m_historyRefreshRunning || (m_storage && m_storage->pending())) return;
         if (m_storage && !m_storage->closed()) { m_storage->close([this]() { finishQuitWhenRuntimesStopped(); }); return; }
@@ -935,6 +995,8 @@ AsyncTask<core::Status> HostController::hardBypassOperation(QString text, quint6
 // ----------------------------------------------------------------------------------------------
 
 void HostController::invalidateDownstreamPipeline() {
+    clearWordRefinement();
+    resetClarificationCheck();
     m_selectingInsertionTarget = false;
     ++m_pipelineSerial;
     m_lastAuditResult.reset();
@@ -944,9 +1006,12 @@ void HostController::invalidateDownstreamPipeline() {
     m_reviewTrigger = (m_assistanceMode == AssistanceMode::Strict)
         ? analysis::ReviewTrigger::ExplicitReview
         : analysis::ReviewTrigger::Automatic;
-    if (!m_recommendedOption.isEmpty() || m_recommendedConfidence > 0.0) {
+    if (!m_recommendedOption.isEmpty() || m_recommendedConfidence > 0.0 ||
+        !m_recommendedGroupId.isEmpty() || !m_recommendedAlternativeId.isEmpty()) {
         m_recommendedOption.clear();
         m_recommendedConfidence = 0.0;
+        m_recommendedGroupId.clear();
+        m_recommendedAlternativeId.clear();
         emit recommendedOptionChanged();
     }
     if (m_routedAnalysisGroup && !m_routedAnalysisGroup->terminal) {
@@ -1104,8 +1169,22 @@ std::string HostController::currentTransportName() const {
     return nativeGraniteSelected() ? "local_native_llama_cpp" : bridge::kLoopbackOllamaTransport;
 }
 
+int HostController::analysisGroupBudgetMs() const {
+    if (m_thinkingEnabled && m_analysisGroupTimeoutMs == kAnalysisGroupTimeoutMs && nativeGraniteSelected() && !usesTransportOverride()) {
+        const auto policy = NativeGraniteRuntime::manifest().value("reasoning").toObject();
+        if (policy.value("enabled").toBool())
+            return std::clamp(policy.value("analysis_group_timeout_ms").toInt(kAnalysisGroupTimeoutMs),
+                              kAnalysisGroupTimeoutMs, 120000);
+    }
+    if (m_reviewTrigger == analysis::ReviewTrigger::ExplicitReview &&
+        m_analysisGroupTimeoutMs == kAnalysisGroupTimeoutMs)
+        return 45000;
+    return m_analysisGroupTimeoutMs;
+}
+
 bridge::GraniteTransport HostController::currentTransport(const std::string& outputSchema, const PipelineTicket* ticket,
-    const QString& operation, const QString& prompt, const QString& intentId, const QString& profileId) const {
+    const QString& operation, const QString& prompt, const QString& intentId, const QString& profileId,
+    std::shared_ptr<std::atomic_bool> cancellation) const {
 #ifdef ROCLINT_ENABLE_TEST_MOCKS
     if (m_transportOverride) {
         return m_transportOverride;
@@ -1113,8 +1192,11 @@ bridge::GraniteTransport HostController::currentTransport(const std::string& out
 #endif
     if (nativeGraniteSelected()) {
         if (!ticket || !m_native->isReady()) return {};
-        const NativeGraniteRuntime::RequestContext context{qs(ticket->analysisGroup ? ticket->analysisGroup->id : ticket->attemptId), qs(ticket->attemptId), qs(ticket->sessionId),
-            qs(ticket->revisionId), ticket->stateVersion, prompt, intentId, profileId};
+        NativeGraniteRuntime::RequestContext context{qs(ticket->analysisGroup ? ticket->analysisGroup->id : ticket->attemptId), qs(ticket->attemptId), qs(ticket->sessionId),
+            qs(ticket->revisionId), ticket->stateVersion, prompt, intentId, profileId, std::move(cancellation), m_thinkingEnabled};
+        if (ticket->analysisGroup && !ticket->analysisGroup->deadline.isForever())
+            context.deadline = std::chrono::steady_clock::now() +
+                std::chrono::milliseconds(std::max<qint64>(0, ticket->analysisGroup->deadline.remainingTime()));
         return m_native->transportFor(context, operation.isEmpty() ? QStringLiteral("granite_analyze") : operation, outputSchema);
     }
     if (!m_ollama || m_activeModel.isEmpty()) {
@@ -1164,7 +1246,7 @@ AsyncTask<core::Status> HostController::beginAttempt(PipelineTicket& ticket, con
 #endif
     if (nativeGraniteSelected() && !usesTransportOverride() && std::string(stage) != "julia_scoring" &&
         std::string(stage) != "julia_triage" && std::string(stage) != "test_mock_scoring")
-        ticket.configuration += "; " + ss(m_native->configurationDetail()) + "; residency_policy=GraniteResidencyPolicyV1; residency_preset=" +
+        ticket.configuration += std::string("; thinking_enabled=") + (m_thinkingEnabled ? "true" : "false") + "; " + ss(m_native->configurationDetail()) + "; residency_policy=GraniteResidencyPolicyV1; residency_preset=" +
                                 ss(m_graniteResidencyPreset) + "; residency_tier=" + ss(m_native->residency());
     if (ticket.analysisGroup)
         ticket.configuration += "; request_group_id=" + ticket.analysisGroup->id + "; analysis_group_budget_ms=" + std::to_string(ticket.analysisGroup->budgetMs);
@@ -1320,7 +1402,7 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
     m_discoveryQueued = false;
 
     PipelineTicket ticket = makeTicket();
-    ticket.analysisGroup = m_routedAnalysisGroup ? m_routedAnalysisGroup : std::make_shared<AnalysisGroup>(m_analysisGroupTimeoutMs);
+    ticket.analysisGroup = m_routedAnalysisGroup ? m_routedAnalysisGroup : std::make_shared<AnalysisGroup>(analysisGroupBudgetMs());
     if (ticket.analysisGroup->id.empty()) ticket.analysisGroup->id = newOpaqueId("grp_");
     ticket.analysisGroup->resume();
     if (auto st = (co_await beginAttempt(ticket, "discovery")); !st.ok()) {
@@ -1329,7 +1411,9 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
         co_return st;
     }
 
-    const auto transport = currentTransport(bridge::discoveryResponseSchema(m_revisionState->currentRevision().text()), &ticket, QStringLiteral("granite_analyze"), qs(m_revisionState->currentRevision().text()));
+    const std::size_t maximumQuestions = ticket.analysisGroup->deadline.isForever() ||
+        ticket.analysisGroup->deadline.remainingTime() > 60000 ? 2 : 1;
+    const auto transport = currentTransport(bridge::discoveryResponseSchema(m_revisionState->currentRevision().text(), maximumQuestions), &ticket, QStringLiteral("granite_analyze"), qs(m_revisionState->currentRevision().text()));
     if (runtime != bridge::GraniteRuntimeState::Ready || !transport) {
         std::string reason;
         if (!transport) {
@@ -1353,6 +1437,7 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
     request.promptString = m_revisionState->currentRevision().text();
     request.hostContextCategory = ss(m_hostContext.categoryString());
     request.reviewTrigger = ticket.reviewTrigger;
+    request.maximumQuestions = maximumQuestions;
     if (promptTriageRoutingEnabled()) request.promptTriage = m_promptTriage;
 
     for (const auto& f : m_projectFiles) {
@@ -1367,6 +1452,16 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
     request.isNonTechnicalPrompt = !codeExtRe.match(pText).hasMatch() &&
                                    !codeKeywordRe.match(pText).hasMatch() &&
                                    (pText.count(codeSyntaxRe) < 3);
+
+    // Stage-specific audit transport. It is deliberately separate from the discovery schema so
+    // the audit cannot be mistaken for a second discovery generation.
+    // The native worker exposes the bounded analysis operation for stage audits. The audit's
+    // instruction contract and schema are distinct; only the runtime operation is shared.
+    const auto auditTransport = currentTransport(bridge::goldfishDiscoveryAuditResponseSchema(), &ticket,
+        QStringLiteral("granite_analyze"), qs(request.promptString));
+    const QDeadlineTimer stageDeadline = ticket.analysisGroup
+        ? ticket.analysisGroup->deadline : QDeadlineTimer(QDeadlineTimer::Forever);
+    request.canContinue = [stageDeadline] { return !stageDeadline.hasExpired(); };
 
     setAnalysisStatus(AnalysisStatus::Analyzing, QStringLiteral("Analyzing your prompt."));
     armAnalysisDeadline(ticket);
@@ -1392,11 +1487,85 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
         onDiscoveryFinished(ticket, result);
         finishQuitWhenRuntimesStopped();
     });
-    watcher->setFuture(QtConcurrent::run([adapter, request, transport, groundingInput, grounding]() mutable -> DiscoveryResult {
+    watcher->setFuture(QtConcurrent::run([adapter, request, transport, auditTransport, groundingInput, grounding,
+                                         stageDeadline]() mutable -> DiscoveryResult {
         try {
             *grounding = computeGroundedPromptContext(groundingInput);
             request.groundedCanonicalIntentXml = grounding->xml;
-            return adapter->discoverOptions(request, transport);
+            auto discovered = adapter->discoverOptions(request, transport);
+            if (!discovered.ok()) return discovered;
+
+            auto& response = discovered.value();
+            if (stageDeadline.hasExpired()) {
+                response.discoveryAuditStatus = core::AuditExecutionStatus::Unavailable;
+                response.discoveryAuditOutcome = core::ValidationOutcome::Unresolved;
+                return discovered;
+            }
+
+            bridge::GraniteGoldfishAdapter goldfish;
+            bridge::GoldfishDiscoveryAuditRequest auditRequest;
+            auditRequest.sessionId = request.sessionId;
+            auditRequest.originalPrompt = request.promptString;
+            auditRequest.proposedAnalysis = response.analysis;
+
+            bridge::GraniteGoldfishAdapter::DiscoveryRegeneration regenerate;
+            if (auditTransport) {
+                regenerate = [adapter, request, transport, stageDeadline, expectedKind = response.assistanceKind](
+                    const bridge::GoldfishDiscoveryAuditResult& findings) mutable
+                    -> core::Result<core::analysis::NormalizedAnalysis> {
+                    if (stageDeadline.hasExpired()) {
+                        return makeError(ErrorCode::ProviderUnavailable,
+                                         "The shared discovery deadline expired before regeneration");
+                    }
+                    std::string feedback;
+                    for (const auto& violation : findings.violations) {
+                        feedback += "- " + violation.itemId + ": " + violation.explanation + "\n";
+                        if (feedback.size() > 1536) break;
+                    }
+                    for (const auto& unresolved : findings.unresolved) {
+                        feedback += "- " + unresolved.itemId + ": " + unresolved.explanation + "\n";
+                        if (feedback.size() > 1536) break;
+                    }
+                    auto repairRequest = request;
+                    repairRequest.repairFeedback = std::move(feedback);
+                    auto regenerated = adapter->discoverOptions(repairRequest, transport);
+                    if (!regenerated.ok()) return regenerated.error();
+                    if (regenerated.value().assistanceKind != expectedKind)
+                        return makeError(ErrorCode::ValidationFailed,
+                                         "Discovery repair changed optionality; explicit new review required");
+                    return std::move(regenerated).value().analysis;
+                };
+            }
+
+            const auto budgetMs = stageDeadline.remainingTime() == -1
+                ? std::int64_t{25000} : std::max<std::int64_t>(1, stageDeadline.remainingTime());
+            auto repaired = goldfish.correctDiscoveryWithRepairLoop(auditRequest, auditTransport,
+                                                                    1, budgetMs, regenerate);
+            response.analysis = std::move(repaired.analysis);
+            // The analysis identity must cover the repaired content, not the pre-audit snapshot.
+            analysis::sealSnapshot(response.analysis);
+            response.discoveryAuditStatus = repaired.auditVerdict.executionStatus;
+            response.discoveryAuditOutcome = repaired.auditVerdict.outcome;
+            if (response.analysis.choiceGroups.empty() && response.analysis.missingDecisions.empty() &&
+                response.analysis.conflicts.empty() && response.analysis.assumptions.empty()) {
+                // Pruning must never be reported as proof that the prompt is sufficient. If the
+                // original answer contained a decision, keep it visible as unresolved.
+                if (!auditRequest.proposedAnalysis.choiceGroups.empty()) {
+                    for (const auto& group : auditRequest.proposedAnalysis.choiceGroups) {
+                        core::analysis::MissingDecision missing;
+                        missing.id = core::analysis::mintMissingDecisionId(response.analysis.missingDecisions.size());
+                        missing.question = group.question;
+                        missing.blocking = false;
+                        response.analysis.missingDecisions.push_back(std::move(missing));
+                    }
+                }
+                if (response.discoveryAuditOutcome != core::ValidationOutcome::Pass) {
+                    response.outcome = bridge::DiscoveryOutcome::NeedsClarification;
+                }
+            }
+            // Cover every audit/repair mutation in the identity before the host validates it.
+            analysis::sealSnapshot(response.analysis);
+            return discovered;
         } catch (const std::exception& ex) {
             return makeError(ErrorCode::Internal, std::string("Discovery crashed: ") + ex.what());
         }
@@ -1463,6 +1632,9 @@ AsyncTask<void> HostController::acceptDiscovery(PipelineTicket ticket, bridge::G
         setAnalysisStatus(AnalysisStatus::Failed, QStringLiteral("Analysis failed: the result did not match this prompt."));
         co_return;
     }
+    // Discovery-stage auditing and bounded repair already ran on the worker thread, inside the
+    // same shared deadline as generation. Do not prune here: an unresolved decision must never
+    // disappear after the audit, and a failed audit must not become NoAmbiguity.
     const auto validation = analysis::validateNormalizedAnalysis(response.analysis, frozenText);
     if (validation.status == analysis::AnalysisValidationStatus::Invalid) {
         if (ticket.analysisGroup) ticket.analysisGroup->terminal = true;
@@ -1476,18 +1648,36 @@ AsyncTask<void> HostController::acceptDiscovery(PipelineTicket ticket, bridge::G
     }
     completeAttempt(ticket, storage::AttemptStatus::Succeeded, std::string(), &response.model);
 
+    const bool auditVerified = response.discoveryAuditStatus == core::AuditExecutionStatus::Completed &&
+                               response.discoveryAuditOutcome == core::ValidationOutcome::Pass;
+
+    // A mechanically exact edit (quoted old/new values, named file, explicit boundary) is already
+    // settled. If a verified audit still leaves only a confirmation question, keep the user's
+    // exact instruction instead of manufacturing a decision.
+    if (auditVerified && response.analysis.choiceGroups.empty() && response.analysis.conflicts.empty() &&
+        response.analysis.assumptions.empty() && response.analysis.missingDecisions.size() == 1 &&
+        hasExplicitMechanicalEdit(frozenText)) {
+        response.analysis.missingDecisions.clear();
+        response.outcome = bridge::DiscoveryOutcome::NoAmbiguity;
+        response.assistanceKind = core::analysis::AssistanceKind::None;
+        analysis::sealSnapshot(response.analysis);
+    }
+
+    const QString auditCaveat = auditVerified ? QString()
+        : QStringLiteral(" Roclint couldn't independently verify that no open question remains.");
     if (promptTriageRoutingEnabled()) {
         ticket.analysisGroup->terminal = true;
         const bool noQuestions = response.outcome == bridge::DiscoveryOutcome::NoAmbiguity &&
             response.analysis.choiceGroups.empty() && response.analysis.assumptions.empty() &&
-            response.analysis.missingDecisions.empty() && response.analysis.conflicts.empty();
+            response.analysis.missingDecisions.empty() && response.analysis.conflicts.empty() &&
+            auditVerified;
         if ((co_await applyAnalysis(response.analysis, ticket.attemptId, {}, std::nullopt, m_promptTriage, response.assistanceKind)))
             setAnalysisStatus(AnalysisStatus::Ready, noQuestions
                 ? QStringLiteral("No material clarification was identified. Your original wording is unchanged.")
-                : isManual() ? QStringLiteral("Roclint couldn't offer a reliable suggestion. Review again or keep your original wording.")
+                : isManual() ? QStringLiteral("Roclint couldn't offer a reliable suggestion. Review again or keep your original wording.") + auditCaveat
                 : isOptionalHelp()
-                    ? QStringLiteral("Optional help is available. You can keep your original prompt.")
-                    : QStringLiteral("One detail could change the result. Your original prompt is unchanged."));
+                    ? QStringLiteral("Optional help is available. You can keep your original prompt.") + auditCaveat
+                    : QStringLiteral("One detail could change the result. Your original prompt is unchanged.") + auditCaveat);
         co_return;
     }
 
@@ -1501,6 +1691,7 @@ AsyncTask<void> HostController::acceptDiscovery(PipelineTicket ticket, bridge::G
         case bridge::DiscoveryOutcome::NeedsClarification: message = QStringLiteral("The model needs one more detail from you."); break;
         case bridge::DiscoveryOutcome::OptionsGenerated: message = QStringLiteral("Some wording could be read more than one way."); break;
     }
+    message += auditCaveat;
     if (response.ungroundedEvidenceCount > 0) {
         message += QStringLiteral(" %1 suggestion(s) were set aside because they quoted text that isn't in your prompt.")
                        .arg(response.ungroundedEvidenceCount);
@@ -1603,43 +1794,20 @@ AsyncTask<void> HostController::onJuliaFinishedAsync(PendingJuliaScore pending, 
     const bool ranked = evaluation.isRanked();
     completeAttempt(pending.ticket, ranked ? storage::AttemptStatus::Succeeded : storage::AttemptStatus::Failed,
                     ranked ? std::string() : evaluation.degradedReason);
-    // Dynamic Choice scoring update: compute entropy confidence and winner from group scores
-    if (response && !response->groupScores.empty() && response->groupScores[0].probabilities.has_value()) {
-        const auto& probs = *response->groupScores[0].probabilities;
-        const std::size_t k = probs.size();
-        if (k >= 2) {
-            double entropy = 0.0;
-            double maxP = -1.0;
-            std::string bestAltId;
-            for (const auto& altProb : probs) {
-                if (altProb.probability > 0.0) {
-                    entropy -= altProb.probability * std::log(altProb.probability);
-                }
-                if (altProb.probability > maxP) {
-                    maxP = altProb.probability;
-                    bestAltId = altProb.alternativeId;
-                }
-            }
-            const double maxEntropy = std::log(static_cast<double>(k));
-            const double confidence = maxEntropy > 0.0 ? std::max(0.0, std::min(1.0, 1.0 - (entropy / maxEntropy))) : 1.0;
-
-            QString bestLabel;
-            for (const auto& g : pending.analysis.choiceGroups) {
-                for (const auto& a : g.alternatives) {
-                    if (a.id == bestAltId) {
-                        bestLabel = qs(a.interpretation);
-                        break;
-                    }
-                }
-                if (!bestLabel.isEmpty()) break;
-            }
-
-            if (!bestLabel.isEmpty()) {
-                m_recommendedOption = bestLabel;
-                m_recommendedConfidence = confidence;
-                emit recommendedOptionChanged();
-            }
-        }
+    // One validated recommendation policy. The worker's ambiguity-aware confidence is recomputed
+    // by the same shared adapter function from the sanitized probabilities and the validated
+    // ambiguity score; the host does not invent a second confidence formula.
+    m_recommendedOption.clear();
+    m_recommendedConfidence = 0.0;
+    m_recommendedGroupId.clear();
+    m_recommendedAlternativeId.clear();
+    if (const auto recommendation = bridge::S1TriageAdapter::extractJustifiedRecommendation(pending.analysis, evaluation);
+        recommendation.has_value() && recommendation->isJustified) {
+        m_recommendedOption = qs(recommendation->alternativeLabel);
+        m_recommendedConfidence = recommendation->confidence;
+        m_recommendedGroupId = qs(recommendation->groupId);
+        m_recommendedAlternativeId = qs(recommendation->alternativeId);
+        emit recommendedOptionChanged();
     }
 
     const auto detail = ranked ? QStringLiteral(" Julia scored the supplied decisions locally. Confirm your interpretation explicitly.")
@@ -1891,6 +2059,8 @@ AsyncTask<core::Status> HostController::applyTransition(const char* /*name*/, qu
             co_return makeError(ErrorCode::StaleVersion, "The prompt changed after it was analyzed. Analyze it again.");
         }
         const auto operationWorkspaceEpoch = m_workspaceEpoch;
+        const auto operationPipelineSerial = m_pipelineSerial;
+        const auto operationEditSerial = m_liveEditSerial;
         intent::WorkingIntentState next = m_workingIntent;
         if (auto st = transition(next); !st.ok()) {
             co_return st;
@@ -1910,8 +2080,8 @@ AsyncTask<core::Status> HostController::applyTransition(const char* /*name*/, qu
         } else {
             if (auto status = (co_await m_repository->advanceSessionState(nextState, expectedVersion, nowMs())); !status.ok()) co_return status;
         }
-        const bool stillCurrent = operationWorkspaceEpoch == m_workspaceEpoch;
-        *m_revisionState = std::move(nextState);
+        const bool stillCurrent = operationWorkspaceEpoch == m_workspaceEpoch && operationPipelineSerial == m_pipelineSerial;
+        if (operationEditSerial == m_liveEditSerial) *m_revisionState = std::move(nextState);
         if (!stillCurrent) {
             // The persisted revision state advanced; do not publish the old
             // workspace's working/confirmed intent into the new epoch.
@@ -1936,6 +2106,7 @@ AsyncTask<core::Status> HostController::applyTransition(const char* /*name*/, qu
             emit rewriteProposalChanged();
         }
         refreshActiveItemPresentation();
+        resetClarificationCheck();
         emit interventionChanged();
         emit intentChanged();
         emit stateVersionChanged();
@@ -1959,10 +2130,177 @@ AsyncTask<core::Status> HostController::confirmChoiceOperation(QString alternati
 }
 
 AsyncTask<core::Status> HostController::submitCustomIntentOperation(QString customText, quint64 expectedVersion) {
-    const std::string text = core::normalizeLineEndings(ss(customText));
-    co_return (co_await applyTransition("submitCustomIntent", expectedVersion, [=, this](intent::WorkingIntentState& state) {
-        return intent::InterventionStateMachine::applyCustomText(*m_currentAnalysis, m_currentDecision, state, text);
+    if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
+    if (!m_currentAnalysis || !m_revisionState || m_revisionState->isDraftDirty())
+        co_return makeError(ErrorCode::PreconditionFailed, "Review the current draft before answering a question.");
+    if (m_checkingClarification)
+        co_return makeError(ErrorCode::PreconditionFailed, "Your answer is already being checked.");
+    const auto text = core::normalizeLineEndings(ss(customText));
+    auto trial = m_workingIntent;
+    if (auto status = intent::InterventionStateMachine::applyCustomText(*m_currentAnalysis, m_currentDecision, trial, text);
+        !status.ok()) co_return status;
+    if (text.size() > bridge::kMaxModelStringBytes)
+        co_return makeError(ErrorCode::InvalidInput, "Keep the answer within 4096 UTF-8 bytes.");
+
+    // Deterministic stage audit before the model check. This rejects blank answers and answers
+    // that reverse an explicit prohibition without spending a second model call.
+    bridge::GoldfishClarificationAuditRequest auditRequest;
+    auditRequest.originalPrompt = m_revisionState->currentRevision().text();
+    auditRequest.question = ss(m_activeQuestion);
+    auditRequest.userAnswer = text;
+    for (const auto& alternative : m_activeAlternatives)
+        auditRequest.offeredAlternatives.push_back(ss(alternative.toMap().value(QStringLiteral("label")).toString()));
+    if (m_confirmedIntent)
+        auditRequest.constraints = extractSessionConstraints(auditRequest.originalPrompt, *m_confirmedIntent);
+    bridge::GraniteGoldfishAdapter goldfish;
+    const auto stageAudit = goldfish.auditClarification(auditRequest, nullptr);
+    if (stageAudit.outcome == core::ValidationOutcome::Fail) {
+        m_clarificationFeedback = stageAudit.violations.empty()
+            ? QStringLiteral("This answer contradicts an explicit requirement in the prompt.")
+            : qs(stageAudit.violations.front().explanation);
+        emit clarificationCheckChanged();
+        co_return makeError(ErrorCode::ValidationFailed, ss(m_clarificationFeedback));
+    }
+
+    auto ticket = makeTicket();
+    const auto itemId = *m_currentDecision.activeItemId;
+    const auto transport = currentTransport(bridge::clarificationCheckResponseSchema(), &ticket,
+        QStringLiteral("granite_analyze"), currentRevisionText());
+    if (!transport || m_graniteAdapter->state() != bridge::GraniteRuntimeState::Ready) {
+        m_clarificationFeedback = QStringLiteral("The local model is not ready to check your answer. Retry when it is ready.");
+        emit clarificationCheckChanged();
+        co_return makeError(ErrorCode::ProviderUnavailable, ss(m_clarificationFeedback));
+    }
+    bridge::ClarificationCheckRequest request;
+    request.prompt = m_revisionState->currentRevision().text();
+    request.question = ss(m_activeQuestion);
+    request.answer = text;
+    for (const auto& alternative : m_activeAlternatives)
+        request.alternatives.push_back(ss(alternative.toMap().value(QStringLiteral("label")).toString()));
+    const auto addCustom = [&](const std::string& id, const std::string& question) {
+        const auto answer = m_workingIntent.customResolutions.find(id);
+        if (answer != m_workingIntent.customResolutions.end()) request.previousAnswers.emplace_back(question, answer->second);
+    };
+    for (const auto& group : m_currentAnalysis->choiceGroups) {
+        addCustom(group.id, group.question);
+        const auto chosen = m_workingIntent.confirmedAlternatives.find(group.id);
+        if (chosen == m_workingIntent.confirmedAlternatives.end()) continue;
+        for (const auto& alternative : group.alternatives)
+            if (alternative.id == chosen->second) request.previousAnswers.emplace_back(group.question, alternative.interpretation);
+    }
+    for (const auto& decision : m_currentAnalysis->missingDecisions) addCustom(decision.id, decision.question);
+    for (const auto& conflict : m_currentAnalysis->conflicts) addCustom(conflict.id, conflict.description);
+    for (const auto& assumption : m_currentAnalysis->assumptions) {
+        addCustom(assumption.id, assumption.statement);
+        const auto answer = m_workingIntent.assumptionDecisions.find(assumption.id);
+        if (answer != m_workingIntent.assumptionDecisions.end())
+            request.previousAnswers.emplace_back(assumption.statement, answer->second ? "Yes" : "No");
+    }
+
+    const auto checkSerial = ++m_clarificationCheckSerial;
+    m_checkingClarification = true;
+    m_clarificationFeedback.clear();
+    emit clarificationCheckChanged();
+    if (auto status = co_await beginAttempt(ticket, "clarification_check"); !status.ok()) {
+        if (checkSerial == m_clarificationCheckSerial) resetClarificationCheck();
+        co_return status;
+    }
+    ticket.configuration += "; contract=granite.clarification_check.v1; item=" + itemId +
+        "; answer_sha256=" + core::crypto::Sha256::hexDigest(text);
+    // Construct transport with the persisted attempt ID, rather than the preflight ticket.
+    const auto boundTransport = currentTransport(bridge::clarificationCheckResponseSchema(), &ticket,
+        QStringLiteral("granite_analyze"), qs(request.prompt));
+    if (!boundTransport) {
+        co_await completeAttempt(ticket, storage::AttemptStatus::Failed, "Clarification transport became unavailable");
+        if (checkSerial == m_clarificationCheckSerial) resetClarificationCheck();
+        co_return makeError(ErrorCode::ProviderUnavailable, "The local model could not start checking your answer. Retry.");
+    }
+    using CheckResult = core::Result<bridge::ClarificationCheckResponse>;
+    auto* watcher = new QFutureWatcher<CheckResult>(this);
+    auto adapter = m_graniteAdapter;
+    const bool nativeWork = nativeGraniteSelected() && !usesTransportOverride();
+    ++m_inFlight;
+    if (nativeWork) ++m_nativeSemanticInFlight;
+    connect(watcher, &QFutureWatcherBase::finished, this,
+        [this, watcher, ticket, checkSerial, itemId, customText, nativeWork]() {
+            auto result = watcher->result();
+            watcher->deleteLater();
+            --m_inFlight;
+            if (nativeWork) --m_nativeSemanticInFlight;
+            emit modelEngineStatusChanged();
+            emit intentChanged();
+            queueModelCompletion("finishClarificationCheck", [this, ticket, checkSerial, itemId, customText, result]() {
+                return finishClarificationCheck(ticket, checkSerial, itemId, customText, result);
+            });
+            finishQuitWhenRuntimesStopped();
+        });
+    watcher->setFuture(QtConcurrent::run([adapter, request, boundTransport]() {
+        return adapter->checkClarification(request, boundTransport);
     }));
+    co_return Status::success();
+}
+
+void HostController::resetClarificationCheck() {
+    ++m_clarificationCheckSerial;
+    m_checkingClarification = false;
+    m_clarificationFeedback.clear();
+    emit clarificationCheckChanged();
+}
+
+AsyncTask<void> HostController::finishClarificationCheck(PipelineTicket ticket, quint64 checkSerial,
+    std::string itemId, QString answer, core::Result<bridge::ClarificationCheckResponse> result) {
+    const auto current = [&]() {
+        return checkSerial == m_clarificationCheckSerial && isTicketCurrent(ticket, false) &&
+            m_currentDecision.activeItemId == itemId;
+    };
+    if (!current()) {
+        co_await completeAttempt(ticket, storage::AttemptStatus::DiscardedStale, "The question or draft changed during the answer check");
+        if (checkSerial == m_clarificationCheckSerial) resetClarificationCheck();
+        co_return;
+    }
+    co_await completeAttempt(ticket, result.ok() ? storage::AttemptStatus::Succeeded : storage::AttemptStatus::Failed,
+        result.ok() ? "" : result.error().message);
+    if (!current()) {
+        if (checkSerial == m_clarificationCheckSerial) resetClarificationCheck();
+        co_return;
+    }
+    m_checkingClarification = false;
+    if (!result.ok() || !result.value().accepted) {
+        m_clarificationFeedback = result.ok() ? qs(result.value().feedback) :
+            QStringLiteral("Roclint couldn't check that answer. Your text is kept. Retry, choose an option, or skip the question.");
+        emit clarificationCheckChanged();
+        emit clarificationAnswerChecked(false);
+        co_return;
+    }
+    const auto status = co_await applyTransition("checkedCustomIntent", ticket.stateVersion,
+        [this, answer](intent::WorkingIntentState& state) {
+            auto st = intent::InterventionStateMachine::applyCustomText(*m_currentAnalysis, m_currentDecision, state,
+                core::normalizeLineEndings(ss(answer)));
+            if (!st.ok()) return st;
+            if (m_currentAnalysis && m_currentDecision.activeItemId.has_value()) {
+                const std::string normAnswer = core::normalizeLineEndings(ss(answer));
+                std::string lowerAns;
+                for (char c : normAnswer) lowerAns.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+                for (const auto& grp : m_currentAnalysis->choiceGroups) {
+                    if (grp.id == *m_currentDecision.activeItemId || state.isResolved(grp.id) || state.isSkipped(grp.id)) continue;
+                    for (const auto& alt : grp.alternatives) {
+                        std::string lowerAlt;
+                        for (char c : alt.interpretation) lowerAlt.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+                        if (!lowerAlt.empty() && lowerAns.find(lowerAlt) != std::string::npos) {
+                            state.confirmedAlternatives[grp.id] = alt.id;
+                            break;
+                        }
+                    }
+                }
+            }
+            return st;
+        });
+    if (ticket.serial != m_pipelineSerial || ticket.workspaceEpoch != m_workspaceEpoch || isDraftDirty()) co_return;
+    if (!status.ok()) {
+        m_clarificationFeedback = plainError(status.error());
+        emit clarificationCheckChanged();
+    }
+    emit clarificationAnswerChecked(status.ok());
 }
 
 bool HostController::isDeferralPhrase(const QString& text) {
@@ -1983,9 +2321,19 @@ bool HostController::isDeferralPhrase(const QString& text) {
         QStringLiteral("??"),
         QStringLiteral("..."),
         QStringLiteral("no preference"),
-        QStringLiteral("any")
+        QStringLiteral("any"),
+        QStringLiteral("delegate"),
+        QStringLiteral("default"),
+        QStringLiteral("reasonable default"),
+        QStringLiteral("standard"),
+        QStringLiteral("choose for me"),
+        QStringLiteral("whatever works best"),
+        QStringLiteral("whatever is best"),
+        QStringLiteral("up to you")
     };
-    if (kExact.contains(t) || t.startsWith(QStringLiteral("idk "))) {
+    if (kExact.contains(t) || t.startsWith(QStringLiteral("idk ")) || t.startsWith(QStringLiteral("you decide")) ||
+        t.startsWith(QStringLiteral("you pick")) || t.startsWith(QStringLiteral("up to you")) ||
+        t.startsWith(QStringLiteral("choose for me"))) {
         return true;
     }
     return false;
@@ -2012,27 +2360,38 @@ quint64 HostController::submitClarification(const QString& text, bool isDeferral
         return requestId;
     };
 
-    if (m_recommendedConfidence >= 0.70 &&
-        (!m_activeAlternatives.isEmpty() || m_currentDecision.activeItemKind == intent::ActiveItemKind::ChoiceGroup)) {
+    // If a clear recommendation exists, deferral adopts that choice. The recommendation must be
+    // bound to the currently active decision group and to an alternative still offered there.
+    const bool recommendationMatchesActiveGroup =
+        !m_recommendedGroupId.isEmpty() && m_currentDecision.activeItemId.has_value() &&
+        m_recommendedGroupId == qs(*m_currentDecision.activeItemId);
+    if (!m_activeAlternatives.isEmpty() && m_recommendedConfidence >= 0.70 &&
+        !m_recommendedOption.isEmpty() && recommendationMatchesActiveGroup) {
         QString chosenAltId;
         QString chosenLabel;
         for (const auto& altVar : m_activeAlternatives) {
             const auto map = altVar.toMap();
             const QString id = map.value(QStringLiteral("id")).toString();
+            const bool idMatches = !m_recommendedAlternativeId.isEmpty()
+                ? id == m_recommendedAlternativeId
+                : id.compare(m_recommendedOption, Qt::CaseInsensitive) == 0;
+            if (!idMatches) continue;
             const QString label = map.value(QStringLiteral("label")).toString();
-            if (!m_recommendedOption.isEmpty() &&
-                (id.compare(m_recommendedOption, Qt::CaseInsensitive) == 0 ||
-                 label.compare(m_recommendedOption, Qt::CaseInsensitive) == 0)) {
-                // Multiple matches are not a recommendation for one current alternative.
-                if (!chosenAltId.isEmpty()) { chosenAltId.clear(); chosenLabel.clear(); break; }
-                chosenAltId = id;
-                chosenLabel = label;
-            }
+            if (!chosenAltId.isEmpty()) { chosenAltId.clear(); chosenLabel.clear(); break; }
+            chosenAltId = id;
+            chosenLabel = label;
         }
         if (!chosenAltId.isEmpty()) {
             const QString message = QStringLiteral("Used your delegated choice: %1").arg(chosenLabel);
             return notifyAfter(confirmChoice(chosenAltId, expectedVersion), message, true);
         }
+    }
+
+    // Essential missing fact cannot be delegated; keep question open and provide follow-up
+    if (m_currentDecision.activeItemKind == intent::ActiveItemKind::MissingDecision) {
+        m_clarificationFeedback = QStringLiteral("This essential detail is required to complete the prompt. Enter a specific answer or skip.");
+        emit clarificationCheckChanged();
+        return 0;
     }
 
     // Otherwise, treat same as "Keep my original wording"
@@ -2508,19 +2867,11 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
                     *grounding = computeGroundedPromptContext(groundingInput);
                     request.groundedCanonicalIntentXml = grounding->xml;
                     request.astSnapshotHash = grounding->astSnapshotHash;
-                    auto proposalRes = bridge::GraniteRewriteAdapter::synthesizeRewrite(
-                        request, *adapter, transport, startedAt);
-                    core::ValidationResult auditVerdict;
-                    if (proposalRes.ok() && proposalRes.value().status == rewrite::ProposalStatus::ProposalReady) {
-                        bridge::GraniteGoldfishAdapter goldfishAdapter;
-                        const auto constraints = HostController::extractSessionConstraints(proposalRes.value().originalText, request.confirmedIntent);
-                        bridge::GoldfishAuditRequest auditReq;
-                        auditReq.sessionId = ticketSessionId;
-                        auditReq.originalPrompt = proposalRes.value().originalText;
-                        auditReq.candidateRewrite = proposalRes.value().rewrittenText;
-                        auditReq.constraints = constraints;
-                        auditVerdict = goldfishAdapter.audit(auditReq, auditTransport);
-                    }
+                    request.constraints = HostController::extractSessionConstraints(request.originalText, request.confirmedIntent);
+                    auto repairResult = bridge::GraniteRewriteAdapter::synthesizeRewriteWithRepairLoop(
+                        request, *adapter, transport, auditTransport, startedAt);
+                    auto proposalRes = std::move(repairResult.proposal);
+                    core::ValidationResult auditVerdict = std::move(repairResult.auditVerdict);
                     if (grounding->available && grounding->validated) {
                         const auto post = computeGroundedPromptContext(groundingInput);
                         *evidenceCurrent = post.available && post.validated &&
@@ -3049,6 +3400,423 @@ void HostController::onInjectionFinished(quint64 requestId, InjectionOutcome out
     setLastError(message);
     setAmbientStatus(message);
     emit deliveryFellBack(message);
+}
+
+void HostController::onRangeInjectionFinished(quint64 requestId, InjectionOutcome outcome, const QString& detail) {
+    if (requestId != m_wordRefinementRequestId) {
+        return;
+    }
+    const bool stillSameSuggestion = m_wordRefinementSuggestionId == m_wordRefinementInFlightSuggestionId;
+    m_wordRefinementInFlight = false;
+    if (outcome == InjectionOutcome::Injected) {
+        if (stillSameSuggestion) clearWordRefinement();
+        setAmbientStatus(QStringLiteral("Applied inline refinement."));
+    } else {
+        const QString reason = detail.isEmpty() ? QString::fromUtf8(toString(outcome)) : detail;
+        setAmbientStatus(QStringLiteral("Inline refinement failed: %1").arg(reason));
+    }
+    emit wordRefinementChanged();
+}
+
+quint64 HostController::applyWordRefinement(quint64 expectedVersion, const QString& candidateId) {
+    if (m_wordRefinementInFlight || m_wordRefinementNeedsClarification ||
+        !m_hasWordRefinement || !m_ambientObservation.has_value()) return 0;
+    if (expectedVersion != 0 && expectedVersion != stateVersion()) return 0;
+    const auto& observation = *m_ambientObservation;
+    if (observation.field.fieldToken != m_wordRefinementFieldToken ||
+        observation.field.text != m_wordRefinementFieldText ||
+        m_workspaceEpoch != m_wordRefinementWorkspaceEpoch ||
+        m_pipelineSerial != m_wordRefinementPipelineSerial ||
+        stateVersion() != m_wordRefinementStateVersion) {
+        return 0;
+    }
+
+    const QString chosenId = candidateId.isEmpty() ? m_wordRefinementSelectedCandidateId : candidateId;
+    QVariantMap chosen;
+    bool found = false;
+    for (const auto& item : m_wordRefinementCandidates) {
+        const auto map = item.toMap();
+        if (map.value(QStringLiteral("id")).toString() == chosenId) {
+            chosen = map;
+            found = true;
+            break;
+        }
+    }
+    if (!found) return 0;
+    if (chosen.value(QStringLiteral("requiresClarification")).toBool()) return 0;
+
+    const QString replacement = chosen.value(QStringLiteral("replacement")).toString();
+    const QString originalSpan = chosen.value(QStringLiteral("originalSpan")).toString();
+    if (replacement.isEmpty() || originalSpan != m_wordRefinementOriginal) return 0;
+    if (m_wordRefinementStartOffset < 0 ||
+        m_wordRefinementEndOffset <= m_wordRefinementStartOffset ||
+        m_wordRefinementEndOffset > m_wordRefinementFieldText.size()) return 0;
+    if (m_wordRefinementFieldText.mid(m_wordRefinementStartOffset,
+                                      m_wordRefinementEndOffset - m_wordRefinementStartOffset) != originalSpan) {
+        return 0;
+    }
+
+    // Freeze the selected request before crossing the accessibility boundary. A delayed
+    // completion from this request can no longer clear or overwrite a newer suggestion.
+    m_wordRefinementSelectedCandidateId = chosenId;
+    m_wordRefinementReplacement = replacement;
+    m_wordRefinementExplanation = chosen.value(QStringLiteral("explanation")).toString();
+    m_wordRefinementAssumption = chosen.value(QStringLiteral("assumption")).toString();
+    m_wordRefinementInFlight = true;
+    m_wordRefinementInFlightSuggestionId = m_wordRefinementSuggestionId;
+
+    RangeInjectionRequest req;
+    req.requestId = ++m_wordRefinementRequestId;
+    req.fieldToken = observation.field.fieldToken;
+    req.kind = observation.field.kind;
+    req.startOffset = m_wordRefinementStartOffset;
+    req.endOffset = m_wordRefinementEndOffset;
+    req.originalRangeText = originalSpan;
+    req.replacementText = replacement;
+    req.expectedCurrentText = m_wordRefinementFieldText;
+    emit wordRefinementChanged();
+    m_accessibility->injectRange(req);
+    return req.requestId;
+}
+
+void HostController::selectWordRefinementCandidate(const QString& candidateId) {
+    for (const auto& item : m_wordRefinementCandidates) {
+        const auto map = item.toMap();
+        if (map.value(QStringLiteral("id")).toString() != candidateId) continue;
+        if (map.value(QStringLiteral("requiresClarification")).toBool()) return;
+        m_wordRefinementSelectedCandidateId = candidateId;
+        m_wordRefinementReplacement = map.value(QStringLiteral("replacement")).toString();
+        m_wordRefinementExplanation = map.value(QStringLiteral("explanation")).toString();
+        m_wordRefinementAssumption = map.value(QStringLiteral("assumption")).toString();
+        emit wordRefinementChanged();
+        return;
+    }
+}
+
+void HostController::dismissWordRefinement() {
+    if (!m_wordRefinementKey.isEmpty()) m_wordRefinementDismissedKeys.insert(m_wordRefinementKey);
+    clearWordRefinement();
+}
+
+void HostController::exploreInCompanion() {
+    if (!m_wordRefinementKey.isEmpty()) m_wordRefinementDismissedKeys.insert(m_wordRefinementKey);
+    clearWordRefinement();
+    openFromAmbient();
+}
+
+void HostController::clearWordRefinement() {
+    const bool changed = m_hasWordRefinement || !m_wordRefinementOriginal.isEmpty();
+    ++m_wordRefinementSuggestionId;
+    m_wordRefinementDebounce.stop();
+    m_pendingWordRefinement = {};
+    if (m_wordRefinementCancellation) m_wordRefinementCancellation->store(true);
+    m_hasWordRefinement = false;
+    m_wordRefinementOriginal.clear();
+    m_wordRefinementReplacement.clear();
+    m_wordRefinementExplanation.clear();
+    m_wordRefinementAssumption.clear();
+    m_wordRefinementAlternatives.clear();
+    m_wordRefinementCandidates.clear();
+    m_wordRefinementSelectedCandidateId.clear();
+    m_wordRefinementClarificationQuestion.clear();
+    m_wordRefinementNeedsClarification = false;
+    m_wordRefinementKey.clear();
+    m_wordRefinementStartOffset = -1;
+    m_wordRefinementEndOffset = -1;
+    if (changed) emit wordRefinementChanged();
+}
+
+void HostController::startPendingWordRefinement() {
+    if (m_wordRefinementGenerating || m_wordRefinementInFlight ||
+        m_wordRefinementDebounce.isActive() || !m_pendingWordRefinement ||
+        m_hostState == HostState::Quitting) return;
+    // Copy before invocation: successful dispatch clears the stored function.
+    const auto pending = m_pendingWordRefinement;
+    pending();
+}
+
+void HostController::detectWordRefinements(const ObservedField& field) {
+    if (!isAmbientActive() || isCardVisible() || field.text.isEmpty() || field.kind == FieldKind::Terminal) {
+        clearWordRefinement();
+        return;
+    }
+    if (m_wordRefinementInFlight) return;
+
+    const QString text = field.text;
+    const int caret = (field.caretOffset >= 0 && field.caretOffset <= text.size()) ? field.caretOffset : text.size();
+
+    // Find the word or short phrase preceding or enclosing the caret.
+    auto isWordChar = [](QChar c) {
+        return c.isLetterOrNumber() || c == QLatin1Char('_') || c == QLatin1Char('-');
+    };
+    int wordEnd = caret;
+    while (wordEnd < text.size() && isWordChar(text[wordEnd])) ++wordEnd;
+    int wordStart = caret;
+    while (wordStart > 0 && isWordChar(text[wordStart - 1])) --wordStart;
+    if (wordStart >= wordEnd) {
+        int p = caret;
+        while (p > 0 && text[p - 1].isSpace()) --p;
+        wordEnd = p;
+        wordStart = p;
+        while (wordStart > 0 && isWordChar(text[wordStart - 1])) --wordStart;
+    }
+    if (wordStart >= wordEnd) {
+        clearWordRefinement();
+        return;
+    }
+
+    const QString word = text.mid(wordStart, wordEnd - wordStart);
+    if (word.size() < 3) {
+        clearWordRefinement();
+        return;
+    }
+
+    const QString key = QStringLiteral("%1|%2|%3|%4")
+        .arg(field.fieldToken)
+        .arg(qs(core::crypto::Sha256::hexDigest(ss(text))))
+        .arg(wordStart)
+        .arg(wordEnd);
+    if (m_wordRefinementDismissedKeys.contains(key)) {
+        clearWordRefinement();
+        return;
+    }
+    if (key == m_wordRefinementKey && (m_hasWordRefinement || m_pendingWordRefinement || m_wordRefinementGenerating)) return;
+
+    clearWordRefinement();
+    m_wordRefinementKey = key;
+    m_wordRefinementFieldText = text;
+    m_wordRefinementFieldToken = field.fieldToken;
+    m_wordRefinementStartOffset = wordStart;
+    m_wordRefinementEndOffset = wordEnd;
+    m_wordRefinementOriginal = word;
+    m_wordRefinementAnchorRect = !field.caretRect.isNull() ? field.caretRect : field.fieldRect;
+
+    // Debounce so fast typing does not queue a model request for every intermediate word.
+    const quint64 generation = ++m_wordRefinementSuggestionId;
+    m_wordRefinementDebounce.stop();
+    m_wordRefinementDebounce.setSingleShot(true);
+    m_wordRefinementDebounce.setInterval(550);
+    m_wordRefinementTextHash = core::crypto::Sha256::hexDigest(ss(text));
+    m_wordRefinementWorkspaceEpoch = m_workspaceEpoch;
+    m_wordRefinementPipelineSerial = m_pipelineSerial;
+    m_wordRefinementStateVersion = stateVersion();
+    disconnect(&m_wordRefinementDebounce, &QTimer::timeout, this, nullptr);
+    m_pendingWordRefinement = [this, field, wordStart, wordEnd, word, generation]() {
+        if (generation != m_wordRefinementSuggestionId) return;
+        requestWordRefinement(field, wordStart, wordEnd, word);
+    };
+    connect(&m_wordRefinementDebounce, &QTimer::timeout, this, &HostController::startPendingWordRefinement);
+    m_wordRefinementDebounce.start();
+}
+
+void HostController::requestWordRefinement(const ObservedField& field, int startOffset, int endOffset,
+                                           const QString& selectedText) {
+    if (m_wordRefinementGenerating || m_hostState == HostState::Quitting) return;
+    if (!isAmbientActive() || isCardVisible() || !m_ambientObservation.has_value()) return;
+    if (m_ambientObservation->field.fieldToken != field.fieldToken ||
+        m_ambientObservation->field.text != field.text) return;
+    const auto runtime = m_graniteAdapter->state();
+    if (runtime != bridge::GraniteRuntimeState::Ready && !usesTransportOverride()) return;
+
+    // isReady remains true while BUSY; wait for a READY snapshot so a scoped cancel
+    // acknowledgement or another operation's completion can replay the latest request.
+    if (nativeGraniteSelected() && !usesTransportOverride() &&
+        (!m_native->isReady() || m_native->state() != QLatin1String("READY"))) return;
+
+    PipelineTicket ticket;
+    ticket.sessionId = m_revisionState ? currentSessionId() : std::string("sess_word_companion");
+    ticket.revisionId = m_revisionState
+        ? m_revisionState->currentRevision().revisionId().value()
+        : std::string("rev_word_companion");
+    ticket.stateVersion = stateVersion();
+    ticket.serial = m_pipelineSerial;
+    ticket.workspaceEpoch = m_workspaceEpoch;
+    ticket.reviewTrigger = m_reviewTrigger;
+    ticket.attemptId = newOpaqueId("word_attempt_");
+    const auto cancellation = std::make_shared<std::atomic_bool>(false);
+    ticket.analysisGroup = std::make_shared<AnalysisGroup>(m_thinkingEnabled ? analysisGroupBudgetMs() : m_analysisGroupTimeoutMs);
+    ticket.analysisGroup->id = newOpaqueId("word_group_");
+    const auto wordDeadline = ticket.analysisGroup->deadline;
+
+    bridge::WordRefinementRequest request;
+    request.sessionId = ticket.sessionId;
+    request.revisionId = ticket.revisionId;
+    request.draftText = ss(field.text);
+    request.selectedText = ss(selectedText);
+    request.selectionStart = startOffset;
+    request.selectionEnd = endOffset;
+    request.intervention = bridge::WordIntervention::LocalRefinement;
+
+    // Approved decisions and explicit constraints are supplied only when they belong to this
+    // exact draft. A decision from another prompt must never steer a local replacement.
+    const bool currentAnalysisMatches = m_currentAnalysis && m_revisionState &&
+        m_revisionState->currentRevision().text() == ss(field.text);
+    if (currentAnalysisMatches) {
+        for (const auto& group : m_currentAnalysis->choiceGroups) {
+            const auto chosen = m_workingIntent.confirmedAlternatives.find(group.id);
+            if (chosen == m_workingIntent.confirmedAlternatives.end()) continue;
+            const auto alt = std::find_if(group.alternatives.begin(), group.alternatives.end(),
+                [&](const auto& candidate) { return candidate.id == chosen->second; });
+            if (alt != group.alternatives.end()) {
+                request.approvedDecisions.push_back(group.question + " -> " + alt->interpretation);
+            }
+        }
+    }
+    if (currentAnalysisMatches && m_confirmedIntent) {
+        for (const auto& item : m_confirmedIntent->items) {
+            if (item.kind == intent::IntentResolutionKind::CustomText && !item.customText.empty()) {
+                request.explicitConstraints.push_back(item.customText);
+            }
+        }
+    }
+
+    // Bind keep quotations to actual draft excerpts and already-approved decisions.
+    auto wordSchema = core::json::parse(bridge::wordRefinementResponseSchema(ss(field.text))).value();
+    auto branches = wordSchema.find("oneOf")->asArray();
+    auto fields = *branches[0].find("properties");
+    auto source = *fields.find("source");
+    auto quotes = source.find("enum") ? *source.find("enum") : core::json::Value::array();
+    for (const auto& decision : request.approvedDecisions)
+        if (!decision.empty() && decision.size() <= 160) quotes.push(core::json::Value::string(decision));
+    if (!quotes.asArray().empty()) source.set("enum", std::move(quotes));
+    fields.set("source", std::move(source)); branches[0].set("properties", std::move(fields));
+    auto schemas = core::json::Value::array(); for (auto& branch : branches) schemas.push(std::move(branch));
+    wordSchema.set("oneOf", std::move(schemas));
+    const auto transport = currentTransport(core::json::serialize(wordSchema), &ticket,
+                                            QStringLiteral("granite_word_refinement"), field.text, {}, {}, cancellation);
+    const auto wordAuditTransport = currentTransport(bridge::wordRefinementAuditResponseSchema(), &ticket,
+                                            QStringLiteral("granite_word_refinement"), field.text, {}, {}, cancellation);
+    if (!transport) {
+        setAmbientStatus(QStringLiteral("Inline suggestions need a loaded local model. Analyze in the companion instead."));
+        return;
+    }
+
+
+    const auto groundingInput = groundingInputs(ss(field.text));
+    const quint64 suggestionId = m_wordRefinementSuggestionId;
+    const quint64 workspaceEpoch = m_workspaceEpoch;
+    const quint64 pipelineSerial = m_pipelineSerial;
+    const quint64 boundVersion = m_wordRefinementStateVersion;
+    const std::string textHash = m_wordRefinementTextHash;
+    const std::string sessionId = request.sessionId;
+    const std::string revisionId = request.revisionId;
+
+    m_pendingWordRefinement = {};
+    m_wordRefinementGenerating = true;
+    m_wordRefinementCancellation = cancellation;
+    const bool nativeWork = nativeGraniteSelected() && !usesTransportOverride();
+    ++m_inFlight;
+    if (nativeWork) ++m_nativeSemanticInFlight;
+    using Result = core::Result<bridge::WordRefinementResponse>;
+    auto* watcher = new QFutureWatcher<Result>(this);
+    connect(watcher, &QFutureWatcherBase::finished, this,
+        [this, watcher, suggestionId, boundVersion, sessionId, revisionId, textHash, request,
+         workspaceEpoch, pipelineSerial, nativeWork, cancellation]() {
+            const auto result = watcher->result();
+            watcher->deleteLater();
+            --m_inFlight;
+            if (nativeWork) --m_nativeSemanticInFlight;
+            m_wordRefinementGenerating = false;
+            m_wordRefinementCancellation.reset();
+            finishQuitWhenRuntimesStopped();
+            QTimer::singleShot(0, this, &HostController::startPendingWordRefinement);
+            if (cancellation->load() || suggestionId != m_wordRefinementSuggestionId || workspaceEpoch != m_workspaceEpoch ||
+                pipelineSerial != m_pipelineSerial || stateVersion() != boundVersion ||
+                !m_ambientObservation.has_value() ||
+                m_ambientObservation->field.fieldToken != m_wordRefinementFieldToken ||
+                m_ambientObservation->textHash != textHash || isCardVisible()) {
+                return;
+            }
+            finishWordRefinementRequest(suggestionId, boundVersion, sessionId, revisionId, textHash,
+                                        request, result);
+        });
+    watcher->setFuture(QtConcurrent::run(
+        [transport, wordAuditTransport, request, groundingInput, cancellation, wordDeadline]() mutable -> Result {
+            try {
+                request.astContextXml = computeGroundedPromptContext(groundingInput).xml;
+                if (cancellation->load() || wordDeadline.hasExpired()) return makeError(ErrorCode::PreconditionFailed, "Superseded or expired word request");
+                auto raw = transport(buildWordRefinementPrompt(request));
+                if (cancellation->load() || wordDeadline.hasExpired()) return makeError(ErrorCode::PreconditionFailed, "Superseded or expired word request");
+                if (!raw.ok()) return raw.error();
+                auto proposed = parseWordRefinementResponse(raw.value(), request);
+                if (!proposed.ok() || proposed.value().candidates.empty()) return proposed;
+                if (!wordAuditTransport) return makeError(ErrorCode::PreconditionFailed, "Word audit unavailable");
+                auto audit = wordAuditTransport(buildWordRefinementAuditPrompt(request, proposed.value()));
+                if (cancellation->load() || wordDeadline.hasExpired()) return makeError(ErrorCode::PreconditionFailed, "Superseded or expired word audit");
+                if (!audit.ok()) return audit.error();
+                return auditWordRefinementResponse(audit.value(), request, proposed.value());
+            } catch (const std::exception& ex) {
+                return makeError(ErrorCode::Internal,
+                                 std::string("Word refinement crashed: ") + ex.what());
+            }
+        }));
+}
+
+void HostController::finishWordRefinementRequest(quint64 suggestionId, quint64 stateVersion,
+                                                 std::string /*sessionId*/, std::string /*revisionId*/,
+                                                 const std::string& textHash,
+                                                 const bridge::WordRefinementRequest& request,
+                                                 core::Result<bridge::WordRefinementResponse> result) {
+    if (suggestionId != m_wordRefinementSuggestionId || textHash != m_wordRefinementTextHash ||
+        stateVersion != m_wordRefinementStateVersion) {
+        return;
+    }
+    if (!result.ok()) {
+        // A failed context request is not a prompt to fall back to canned advice. Keep the
+        // companion available for a full analysis instead.
+        clearWordRefinement();
+        setAmbientStatus(QStringLiteral("Couldn't prepare a contextual suggestion. Explore in the companion instead."));
+        emit wordRefinementChanged();
+        return;
+    }
+    const auto response = std::move(result).value();
+    if (response.candidates.empty() && !response.needsClarification) {
+        if (!m_wordRefinementKey.isEmpty()) m_wordRefinementDismissedKeys.insert(m_wordRefinementKey);
+        clearWordRefinement();
+        emit wordRefinementChanged();
+        return;
+    }
+
+    m_wordRefinementCandidates.clear();
+    m_wordRefinementAlternatives.clear();
+    QString firstApplicableId;
+    for (const auto& candidate : response.candidates) {
+        QVariantMap item;
+        item[QStringLiteral("id")] = qs(candidate.id);
+        item[QStringLiteral("originalSpan")] = qs(candidate.originalSpan);
+        item[QStringLiteral("replacement")] = qs(candidate.replacement);
+        item[QStringLiteral("label")] = qs(candidate.replacement);
+        item[QStringLiteral("explanation")] = qs(candidate.explanation);
+        item[QStringLiteral("assumption")] = qs(candidate.assumption);
+        item[QStringLiteral("requiresClarification")] = candidate.requiresClarification;
+        if (!candidate.requiresClarification) {
+            if (firstApplicableId.isEmpty()) firstApplicableId = qs(candidate.id);
+            m_wordRefinementAlternatives.append(qs(candidate.replacement));
+        }
+        m_wordRefinementCandidates.append(item);
+    }
+    m_wordRefinementNeedsClarification = response.needsClarification;
+    m_wordRefinementClarificationQuestion = qs(response.clarificationQuestion);
+    if (firstApplicableId.isEmpty()) {
+        m_wordRefinementNeedsClarification = true;
+        if (m_wordRefinementClarificationQuestion.isEmpty()) {
+            m_wordRefinementClarificationQuestion = QStringLiteral("Tell Roclint what this word should mean here.");
+        }
+    }
+    m_wordRefinementSelectedCandidateId = firstApplicableId;
+    if (!firstApplicableId.isEmpty()) {
+        selectWordRefinementCandidate(firstApplicableId);
+    } else {
+        const auto first = m_wordRefinementCandidates.value(0).toMap();
+        // Show the model's most plausible reading even when it must be clarified before use.
+        m_wordRefinementSelectedCandidateId = first.value(QStringLiteral("id")).toString();
+        m_wordRefinementReplacement = first.value(QStringLiteral("replacement")).toString();
+        m_wordRefinementExplanation = first.value(QStringLiteral("explanation")).toString();
+        m_wordRefinementAssumption = first.value(QStringLiteral("assumption")).toString();
+    }
+    m_wordRefinementOriginal = qs(request.selectedText);
+    m_hasWordRefinement = true;
+    emit wordRefinementChanged();
 }
 
 AsyncTask<core::Status> HostController::discardProposalOperation(quint64 expectedVersion) {
@@ -4199,6 +4967,7 @@ AsyncTask<void> HostController::onNativeRuntimeChanged() {
             });
         }
         if (m_ambientCheckPending) m_ambientDebounce.start();
+        startPendingWordRefinement();
     } else if (state == QLatin1String("LOADING")) {
         m_nativeWarming = true;
         if (m_graniteAdapter->state() != bridge::GraniteRuntimeState::Busy && m_graniteAdapter->state() != bridge::GraniteRuntimeState::Loading) {
@@ -4289,12 +5058,34 @@ qint64 HostController::generationTokens() const {
     return nativeGraniteSelected() && m_native ? m_native->lastOutputTokens() : 0;
 }
 
+qint64 HostController::reasoningTokens() const {
+    return nativeGraniteSelected() && m_native ? m_native->lastReasoningTokens() : 0;
+}
+qint64 HostController::answerTokens() const {
+    return nativeGraniteSelected() && m_native ? m_native->lastAnswerTokens() : 0;
+}
+QString HostController::generationPhase() const {
+    return nativeGraniteSelected() && m_native ? m_native->generationPhase() : QStringLiteral("idle");
+}
+
 double HostController::generationElapsedMs() const {
     return nativeGraniteSelected() && m_native ? m_native->lastGenerationMs() : 0;
 }
 
 double HostController::decodeElapsedMs() const {
     return nativeGraniteSelected() && m_native ? m_native->lastDecodeMs() : 0;
+}
+
+void HostController::setThinkingEnabled(bool enabled) {
+    if (m_thinkingEnabled == enabled || m_hostState == HostState::Quitting) return;
+    m_thinkingEnabled = enabled;
+    ++m_configurationGeneration;
+    m_ambientCheck.reset(); m_ambientDismissed.clear(); m_ambientCheckPending = m_ambientObservation.has_value();
+    invalidateDownstreamPipeline();
+    if (!QCoreApplication::organizationName().isEmpty()) {
+        QSettings settings; settings.setValue(QStringLiteral("models/thinkingEnabled"), enabled);
+    }
+    emit modelEngineStatusChanged();
 }
 
 void HostController::setTokenSpeedMode(const QString& mode) {
@@ -4770,7 +5561,7 @@ void HostController::setAmbientModeEnabled(bool enabled) {
         return;
     }
     m_ambientModeEnabled = enabled;
-    if (!enabled) m_followAmbientDraft = false;
+    if (!enabled) setCaptureSource(CaptureSource::Widget);
     if (!QCoreApplication::organizationName().isEmpty()) {
         QSettings settings;
         settings.setValue(QStringLiteral("ambient/enabled"), enabled);
@@ -4788,6 +5579,7 @@ void HostController::applyAmbientObserving() {
     const bool active = isAmbientActive();
     m_accessibility->setObserving(active);
     if (!active) {
+        clearWordRefinement();
         m_ambientDebounce.stop();
         m_ambientObservation.reset();
         m_ambientCheckPending = false;
@@ -4861,8 +5653,10 @@ void HostController::setAmbientStatus(const QString& status) {
 
 void HostController::onFieldLost() {
     m_ambientDebounce.stop();
+    m_wordRefinementDebounce.stop();
     m_ambientObservation.reset();
     setAmbientBadge(false);
+    clearWordRefinement();
 }
 
 void HostController::followAmbientDraft() {
@@ -4958,6 +5752,7 @@ void HostController::onFieldObserved(const ObservedField& field) {
     }
     prompt = qs(core::normalizeLineEndings(ss(prompt)));
     if (field.kind == FieldKind::GuiEditor && prompt.trimmed().isEmpty()) {
+        clearWordRefinement();
         // An empty composer is still a valid destination for a draft authored in the HUD.
         m_ambientDebounce.stop();
         if (!m_ambientObservation.has_value() || m_ambientObservation->prompt.trimmed().isEmpty() ||
@@ -5005,6 +5800,7 @@ void HostController::onFieldObserved(const ObservedField& field) {
     }
     m_ambientObservation = std::move(observation);
     followAmbientDraft();
+    detectWordRefinements(field);
     setAmbientStatus(QStringLiteral("Watching %1.").arg(field.appDisplayName));
     if (m_captureOpenPending &&
         (field.refreshRequestId == m_captureOpenGeneration || field.refreshRequestId == 0) &&
@@ -5269,7 +6065,7 @@ AsyncTask<core::Status> HostController::openFromAmbientOperation(std::optional<A
                                                              text);
                 if (parsed.ok()) {
                     PipelineTicket ticket = makeTicket();
-                    ticket.analysisGroup = std::make_shared<AnalysisGroup>(m_analysisGroupTimeoutMs);
+                    ticket.analysisGroup = std::make_shared<AnalysisGroup>(analysisGroupBudgetMs());
                     ticket.analysisGroup->id = newOpaqueId("grp_");
                     if (auto st = (co_await beginAttempt(ticket, "discovery")); !st.ok()) {
                         co_return st;
@@ -5325,14 +6121,18 @@ bool HostController::markModelReadyForTesting(const bridge::GraniteModelInfo& in
 bool HostController::waitForIdleForTesting(int timeoutMs) {
     QElapsedTimer timer;
     timer.start();
-    while (m_inFlight > 0 || m_nativeWarming || m_promptTriageLoad.has_value() || storageBusy() || m_historyRefreshRunning || (m_storage && m_storage->pending() > 0)) {
+    int idleTurns = 0;
+    while (timer.elapsed() <= timeoutMs) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
-        if (timer.elapsed() > timeoutMs) {
-            return false;
-        }
+        const bool busy = m_inFlight > 0 || m_nativeWarming || m_promptTriageLoad.has_value() ||
+            storageBusy() || m_historyRefreshRunning || (m_storage && m_storage->pending() > 0);
+        // A QML callLater or queued completion can start work during the pump.
+        // Observe quiescence after dispatch, across two turns, before returning.
+        idleTurns = busy ? 0 : idleTurns + 1;
+        if (idleTurns >= 2) return true;
+        QThread::msleep(1);
     }
-    QCoreApplication::processEvents();
-    return true;
+    return false;
 }
 #endif
 

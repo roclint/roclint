@@ -2,6 +2,7 @@
 #include "HostContext.hpp"
 #include "TerminalAdapter.hpp"
 #include "GuiCapturePolicy.hpp"
+#include "RangeInjectionPolicy.hpp"
 
 #if defined(Q_OS_WIN)
 
@@ -363,6 +364,14 @@ public:
         m_wake.notify_all();
     }
 
+    void injectRange(const RangeInjectionRequest& request) override {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_rangeInjections.push_back(request);
+        }
+        m_wake.notify_all();
+    }
+
 private:
     struct Focused {
         ComPtr<IUIAutomationElement> element;
@@ -394,6 +403,7 @@ private:
         auto nextPoll = std::chrono::steady_clock::now() + kPollInterval;
         while (true) {
             std::deque<InjectionRequest> injections;
+            std::deque<RangeInjectionRequest> rangeInjections;
             bool observingChanged = false;
             bool wantObserving = false;
             bool focusDirty = false;
@@ -403,12 +413,14 @@ private:
                 std::unique_lock<std::mutex> lock(m_mutex);
                 m_wake.wait_until(lock, nextPoll, [this]() {
                     return m_stop || m_observingChanged || m_focusDirty || m_textDirty || !m_injections.empty() ||
+                           !m_rangeInjections.empty() ||
                            (m_wakeRecheckAt.has_value() && std::chrono::steady_clock::now() >= *m_wakeRecheckAt);
                 });
                 if (m_stop) {
                     break;
                 }
                 injections.swap(m_injections);
+                rangeInjections.swap(m_rangeInjections);
                 observingChanged = std::exchange(m_observingChanged, false);
                 wantObserving = m_wantObserving;
                 focusDirty = std::exchange(m_focusDirty, false);
@@ -423,6 +435,10 @@ private:
                 for (const auto& r : injections) {
                     emit injectionFinished(r.requestId, InjectionOutcome::NotSupported,
                                            QStringLiteral("Windows UI Automation isn't available."));
+                }
+                for (const auto& r : rangeInjections) {
+                    emit rangeInjectionFinished(r.requestId, InjectionOutcome::NotSupported,
+                                                QStringLiteral("Windows UI Automation isn't available."));
                 }
                 continue;
             }
@@ -448,6 +464,9 @@ private:
             }
             for (const auto& r : injections) {
                 performInjection(r);
+            }
+            for (const auto& r : rangeInjections) {
+                performRangeInjection(r);
             }
         }
         applyObserving(false);
@@ -942,9 +961,10 @@ private:
         return false;
     }
 
-    bool pasteText(const QString& text, std::initializer_list<WORD> pasteModifiers, const Focused& target) {
+    bool pasteText(const QString& textToPaste, const QString& expectedFinalText,
+                   std::initializer_list<WORD> pasteModifiers, const Focused& target) {
         const auto saved = ClipboardText::read();
-        if (!ClipboardText::write(text.toStdWString(), m_clipboardOwner)) {
+        if (!ClipboardText::write(textToPaste.toStdWString(), m_clipboardOwner)) {
             return false;
         }
         const DWORD clipboardSequence = GetClipboardSequenceNumber();
@@ -962,7 +982,7 @@ private:
                 observedChars = actual.size();
                 observedTrailingLineBreak = actual.endsWith(QLatin1Char('\n'));
             }
-            if (after && !after->isPassword && !after->elevationMismatch && currentDraft(*after) == text) {
+            if (after && !after->isPassword && !after->elevationMismatch && currentDraft(*after) == expectedFinalText) {
                 verified = true; break;
             }
             Sleep(25);
@@ -972,15 +992,25 @@ private:
         }
         if (!verified && qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
             qInfo() << "[Roclint readback] token=" << target.token << "sent=" << sent
-                    << "expected_chars=" << text.size() << "observed_chars=" << observedChars
-                    << "expected_final_lf=" << text.endsWith(QLatin1Char('\n')) << "observed_final_lf=" << observedTrailingLineBreak;
+                    << "expected_chars=" << expectedFinalText.size() << "observed_chars=" << observedChars
+                    << "expected_final_lf=" << expectedFinalText.endsWith(QLatin1Char('\n')) << "observed_final_lf=" << observedTrailingLineBreak;
         return verified;
+    }
+
+    bool pasteText(const QString& text, std::initializer_list<WORD> pasteModifiers, const Focused& target) {
+        return pasteText(text, text, pasteModifiers, target);
     }
 
     void finish(const InjectionRequest& r, InjectionOutcome outcome, const QString& detail) {
         if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
             qInfo() << "[Roclint insertion] token=" << r.fieldToken << "outcome=" << toString(outcome) << "detail=" << detail;
         emit injectionFinished(r.requestId, outcome, detail);
+    }
+
+    void finishRange(const RangeInjectionRequest& r, InjectionOutcome outcome, const QString& detail) {
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
+            qInfo() << "[Roclint range insertion] token=" << r.fieldToken << "outcome=" << toString(outcome) << "detail=" << detail;
+        emit rangeInjectionFinished(r.requestId, outcome, detail);
     }
 
     void performInjection(const InjectionRequest& r) {
@@ -1073,6 +1103,218 @@ private:
         }
     }
 
+    // Bounded read of an automation text range. Returns nullopt when the provider cannot
+    // produce text, so callers can abort instead of treating an empty selection as a match.
+    std::optional<QString> readRangeText(IUIAutomationTextRange* range) {
+        if (range == nullptr) return std::nullopt;
+        BSTR text = nullptr;
+        const HRESULT hr = range->GetText(16384, &text);
+        if (FAILED(hr) || text == nullptr) {
+            if (text) SysFreeString(text);
+            return std::nullopt;
+        }
+        const QString value = QString::fromWCharArray(text, static_cast<int>(SysStringLen(text)));
+        SysFreeString(text);
+        return value;
+    }
+
+    void performRangeInjection(const RangeInjectionRequest& r) {
+        if (r.kind == FieldKind::Terminal) {
+            finishRange(r, InjectionOutcome::NotSupported,
+                        QStringLiteral("Inline word replacement isn't available in terminal buffers. Explore in the companion instead."));
+            return;
+        }
+        const auto saved = m_capturedFields.find(r.fieldToken);
+        if (saved == m_capturedFields.end() || !saved->second.element || saved->second.kind != r.kind) {
+            finishRange(r, InjectionOutcome::FieldChanged, QStringLiteral("The captured input field expired. Focus your prompt and open Roclint again."));
+            return;
+        }
+        const Focused target = saved->second;
+        auto before = readField(target);
+        if (!before.has_value() || before->elevationMismatch || before->isPassword) {
+            finishRange(r, InjectionOutcome::NotSupported, QStringLiteral("That field can't be written to."));
+            return;
+        }
+        if (!RangeInjectionPolicy::preconditionsHold(r.fieldToken, before->fieldToken,
+                                                     r.expectedCurrentText, currentDraft(*before))) {
+            finishRange(r, InjectionOutcome::FieldChanged, QStringLiteral("The text or field changed after Roclint captured it."));
+            return;
+        }
+        if (!RangeInjectionPolicy::offsetsValid(r.expectedCurrentText, r.startOffset, r.endOffset)) {
+            finishRange(r, InjectionOutcome::FieldChanged, QStringLiteral("Invalid text range offsets."));
+            return;
+        }
+        if (!RangeInjectionPolicy::rangeMatches(r.expectedCurrentText, r.startOffset, r.endOffset,
+                                                r.originalRangeText)) {
+            finishRange(r, InjectionOutcome::FieldChanged, QStringLiteral("The target text range changed."));
+            return;
+        }
+
+        const QString newFullText = r.expectedCurrentText.left(r.startOffset) + r.replacementText + r.expectedCurrentText.mid(r.endOffset);
+
+        if (!focusTarget(target)) {
+            finishRange(r, InjectionOutcome::Failed, QStringLiteral("Couldn't focus the captured input field."));
+            return;
+        }
+        const auto focusedBefore = readField(target);
+        if (!focusedBefore || !RangeInjectionPolicy::preconditionsHold(r.fieldToken, focusedBefore->fieldToken,
+                                                                      r.expectedCurrentText, currentDraft(*focusedBefore))) {
+            finishRange(r, InjectionOutcome::FieldChanged, QStringLiteral("The text changed while restoring focus."));
+            return;
+        }
+
+        auto abortIfExternallyChanged = [&]() -> bool {
+            const auto now = readField(target);
+            if (!now || now->elevationMismatch || now->isPassword) {
+                finishRange(r, InjectionOutcome::FieldChanged, QStringLiteral("The field disappeared or became unreadable."));
+                return true;
+            }
+            if (currentDraft(*now) != r.expectedCurrentText) {
+                finishRange(r, InjectionOutcome::FieldChanged,
+                            QStringLiteral("The editor changed while the replacement was being applied. Nothing else was written."));
+                return true;
+            }
+            return false;
+        };
+
+        // ValuePattern approach (Notepad, WordPad, standard edit control)
+        ComPtr<IUIAutomationValuePattern> value;
+        if (!isElectronHost(target.exe) &&
+            SUCCEEDED(target.element->GetCurrentPatternAs(UIA_ValuePatternId, IID_PPV_ARGS(value.GetAddressOf()))) &&
+            value) {
+            BOOL readOnly = TRUE;
+            value->get_CurrentIsReadOnly(&readOnly);
+            if (!readOnly) {
+                BSTR text = SysAllocStringLen(reinterpret_cast<const OLECHAR*>(newFullText.utf16()),
+                                              static_cast<UINT>(newFullText.size()));
+                const HRESULT hr = value->SetValue(text);
+                SysFreeString(text);
+                const auto after = readField(target);
+                if (SUCCEEDED(hr) && after.has_value() && currentDraft(*after) == newFullText) {
+                    finishRange(r, InjectionOutcome::Injected, QString());
+                    return;
+                }
+                if (!after || currentDraft(*after) != r.expectedCurrentText) {
+                    // A failed SetValue may have partially written text. Never paste a snapshot
+                    // over it as a recovery mechanism.
+                    finishRange(r, InjectionOutcome::FieldChanged,
+                                QStringLiteral("The editor changed the text during a write. Review it before retrying."));
+                    return;
+                }
+            }
+        }
+
+        // TextPattern / selection approach (Electron, Monaco, rich text editors)
+        bool selectedRange = false;
+        ComPtr<IUIAutomationTextPattern> textPattern;
+        if (SUCCEEDED(target.element->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(textPattern.GetAddressOf()))) && textPattern) {
+            ComPtr<IUIAutomationTextRange> document;
+            if (SUCCEEDED(textPattern->get_DocumentRange(document.GetAddressOf())) && document) {
+                ComPtr<IUIAutomationTextRange> range;
+                if (SUCCEEDED(document->Clone(range.GetAddressOf())) && range) {
+                    bool movementOk = true;
+                    HRESULT hr = range->MoveEndpointByRange(TextPatternRangeEndpoint_End, range.Get(), TextPatternRangeEndpoint_Start);
+                    movementOk = movementOk && SUCCEEDED(hr);
+                    int moved = 0;
+                    if (movementOk && r.startOffset > 0) {
+                        hr = range->MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, r.startOffset, &moved);
+                        movementOk = movementOk && SUCCEEDED(hr) && moved == r.startOffset;
+                    }
+                    if (movementOk) {
+                        hr = range->MoveEndpointByRange(TextPatternRangeEndpoint_End, range.Get(), TextPatternRangeEndpoint_Start);
+                        movementOk = movementOk && SUCCEEDED(hr);
+                    }
+                    if (movementOk && r.endOffset > r.startOffset) {
+                        moved = 0;
+                        hr = range->MoveEndpointByUnit(TextPatternRangeEndpoint_End, TextUnit_Character,
+                                                       r.endOffset - r.startOffset, &moved);
+                        movementOk = movementOk && SUCCEEDED(hr) && moved == (r.endOffset - r.startOffset);
+                    }
+                    if (movementOk) {
+                        // The range text must match the text the host validated before any write.
+                        const auto actualRangeText = readRangeText(range.Get());
+                        if (!actualRangeText.has_value() || *actualRangeText != r.originalRangeText) {
+                            finishRange(r, InjectionOutcome::FieldChanged,
+                                        QStringLiteral("The editor reports different text at that range. Nothing was written."));
+                            return;
+                        }
+                        if (SUCCEEDED(range->Select())) {
+                            selectedRange = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (selectedRange && textPattern) {
+            // Verify the provider actually selected the expected text before sending a paste.
+            ComPtr<IUIAutomationTextRangeArray> selection;
+            bool exactSelection = false;
+            if (SUCCEEDED(textPattern->GetSelection(selection.GetAddressOf())) && selection) {
+                int count = 0;
+                selection->get_Length(&count);
+                if (count == 1) {
+                    ComPtr<IUIAutomationTextRange> selected;
+                    if (SUCCEEDED(selection->GetElement(0, selected.GetAddressOf())) && selected) {
+                        const auto selectedText = readRangeText(selected.Get());
+                        exactSelection = selectedText.has_value() && *selectedText == r.originalRangeText;
+                    }
+                }
+            }
+            if (!exactSelection) {
+                finishRange(r, InjectionOutcome::FieldChanged,
+                            QStringLiteral("The editor didn't select the expected text. Nothing was written."));
+                return;
+            }
+            const bool pasted = pasteText(r.replacementText, newFullText, {VK_CONTROL}, target);
+            if (pasted) {
+                finishRange(r, InjectionOutcome::Injected, QString());
+                return;
+            }
+        }
+
+        // The full-field fallback is permitted only when the exact preconditions still hold:
+        // the same field is focused, it still contains the frozen pre-write text, and the
+        // range path performed no write at all.
+        if (abortIfExternallyChanged()) return;
+        if (!focusTarget(target)) {
+            finishRange(r, InjectionOutcome::Failed, QStringLiteral("Couldn't bring the app to the front."));
+            return;
+        }
+        if (abortIfExternallyChanged()) return;
+        if (!sendChord({VK_CONTROL}, 'A')) {
+            finishRange(r, InjectionOutcome::Failed, QStringLiteral("Windows refused the selection shortcut."));
+            return;
+        }
+        // Confirm the selection shortcut selected the whole current field before pasting.
+        if (textPattern) {
+            ComPtr<IUIAutomationTextRangeArray> selection;
+            int count = 0;
+            bool selectedWholeField = false;
+            if (SUCCEEDED(textPattern->GetSelection(selection.GetAddressOf())) && selection) {
+                selection->get_Length(&count);
+                if (count == 1) {
+                    ComPtr<IUIAutomationTextRange> selected;
+                    if (SUCCEEDED(selection->GetElement(0, selected.GetAddressOf())) && selected) {
+                        const auto selectedText = readRangeText(selected.Get());
+                        selectedWholeField = selectedText.has_value() && *selectedText == r.expectedCurrentText;
+                    }
+                }
+            }
+            if (!selectedWholeField) {
+                finishRange(r, InjectionOutcome::FieldChanged,
+                            QStringLiteral("The editor didn't select the whole field. Nothing was pasted."));
+                return;
+            }
+        }
+        const bool pasted = pasteText(newFullText, newFullText, {VK_CONTROL}, target);
+        if (pasted) {
+            finishRange(r, InjectionOutcome::Injected, QString());
+        } else {
+            finishRange(r, InjectionOutcome::Failed, QStringLiteral("The editor did not confirm the exact replacement."));
+        }
+    }
+
     std::thread m_thread;
     std::mutex m_mutex;
     std::condition_variable m_wake;
@@ -1084,6 +1326,7 @@ private:
     quint64 m_requestedRefreshId{0};
     std::optional<std::chrono::steady_clock::time_point> m_wakeRecheckAt;
     std::deque<InjectionRequest> m_injections;
+    std::deque<RangeInjectionRequest> m_rangeInjections;
     std::atomic<bool> m_available{false};
 
     // Worker-thread state.

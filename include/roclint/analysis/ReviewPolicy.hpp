@@ -1,10 +1,14 @@
 #pragma once
 
+#include <cstddef>
+
 namespace roclint::core::analysis {
 
 // Product decisions are separate from the classifier's unchanged evidence.
 enum class ReviewTrigger { Automatic, ExplicitReview };
 enum class AssistanceKind { None, Clarification, Creative, Refinement, Decomposition };
+
+inline constexpr std::size_t kMaxOptionalChoiceGroups = 2;
 
 struct ReviewPolicy {
     ReviewTrigger trigger{ReviewTrigger::Automatic};

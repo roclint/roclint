@@ -1,4 +1,5 @@
 #include "roclint/bridge/GraniteAdapter.hpp"
+#include "roclint/bridge/GraniteGoldfishAdapter.hpp"
 #include "roclint/core/Json.hpp"
 #include "roclint/core/crypto/Sha256.hpp"
 #include "support/check.hpp"
@@ -177,8 +178,8 @@ void testDiscoveryPromptEmbedsTextAsEscapedJsonOnly() {
     ROCLINT_CHECK(prompt.find("Say \"hi\"\nthen stop") == std::string::npos);
     ROCLINT_CHECK(prompt.find("CODE_EDITOR") != std::string::npos);
     ROCLINT_CHECK(prompt.find("compact JSON") != std::string::npos);
-    ROCLINT_CHECK(prompt.find("incompatible explicit requirements") != std::string::npos);
-    ROCLINT_CHECK(prompt.find("quotes as data") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("two explicit incompatible instructions") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Quoted examples are data") != std::string::npos);
     for (const char* forbidden : {"D:\\", "C:\\", "/Users/", "scope_lock", "project_files"}) {
         ROCLINT_CHECK(prompt.find(forbidden) == std::string::npos);
     }
@@ -233,33 +234,6 @@ void testRuntimeLifecycle() {
     ROCLINT_CHECK(adapter.lastError() == "model not found");
     ROCLINT_CHECK(adapter.recover());
     ROCLINT_CHECK(adapter.state() == GraniteRuntimeState::Unloaded);
-}
-
-void testDiscoveryExamplesUseValidGroundedPackets() {
-    const auto prompt = buildDiscoveryPrompt({kSession, kRevision, kPrompt, "UNKNOWN"});
-    const std::string inputMarker = "Example prompt_text: ";
-    const std::string responseMarker = "Example response: ";
-    std::size_t position = 0;
-    int count = 0;
-    while ((position = prompt.find(inputMarker, position)) != std::string::npos) {
-        const auto begin = position + inputMarker.size();
-        const auto end = prompt.find('\n', begin);
-        const auto input = json::parse(std::string_view(prompt).substr(begin, end - begin));
-        ROCLINT_CHECK(input.ok() && input.value().isString());
-        const auto responseBegin = prompt.find(responseMarker, end) + responseMarker.size();
-        const auto responseEnd = prompt.find('\n', responseBegin);
-        const auto response = parseDiscoveryResponse(std::string_view(prompt).substr(responseBegin, responseEnd - responseBegin),
-            kSession, kRevision, input.value().asString());
-        ROCLINT_CHECK(response.ok() && response.value().ungroundedEvidenceCount == 0);
-        const auto& analysis = response.value().analysis;
-        if (count == 0 || count == 1 || count == 6) ROCLINT_CHECK(response.value().outcome == DiscoveryOutcome::NoAmbiguity);
-        if (count == 2) ROCLINT_CHECK(analysis.choiceGroups.size() == 2);
-        if (count == 3) ROCLINT_CHECK(analysis.choiceGroups.empty() && analysis.missingDecisions.size() == 1);
-        if (count == 4) ROCLINT_CHECK(analysis.choiceGroups.size() == 1 && analysis.choiceGroups.front().dimension == "visual_direction");
-        if (count == 5) ROCLINT_CHECK(analysis.choiceGroups.empty() && analysis.conflicts.size() == 1);
-        ++count; position = responseEnd;
-    }
-    ROCLINT_CHECK(count == 8);
 }
 
 void makeReady(GraniteAdapter& adapter) {
@@ -362,9 +336,8 @@ void testSelectiveReviewContract() {
         const auto bound = json::parse(boundSchema);
         ROCLINT_CHECK(bound.ok());
         const auto& branch = bound.value().find("oneOf")->asArray()[1];
-        const auto* strings = branch.find("properties")->find("choice_groups")->find("items")->find("properties")
-            ->find("alternatives")->find("items")->find("properties")->find("evidence")->find("items");
-        ROCLINT_CHECK(strings->find("enum") && strings->find("enum")->asArray().size() <= 32);
+        const auto* strings = branch.find("properties")->find("groups")->find("items")->find("properties")->find("source");
+        ROCLINT_CHECK(strings->find("enum") && strings->find("enum")->asArray().size() <= 64);
         for (const auto& quote : strings->find("enum")->asArray())
             ROCLINT_CHECK(analysis::findUniqueSpan(text, quote.asString()).status == analysis::SpanMatchStatus::ExactMatch);
         ROCLINT_CHECK(buildDiscoveryPrompt({kSession, kRevision, text}).find("evidence_quotes") != std::string::npos);
@@ -390,7 +363,9 @@ void testSelectiveReviewContract() {
         const auto kind = properties->find("assistance_kind")->find("const")->asString();
         if (kind == "creative" || kind == "refinement" || kind == "decomposition") {
             ROCLINT_CHECK(properties->find("choice_groups")->find("minItems")->asNumber() == 1);
-            ROCLINT_CHECK(properties->find("choice_groups")->find("maxItems")->asNumber() == 1);
+            const auto* groups = properties->find("choice_groups");
+            ROCLINT_CHECK(groups->find("maxItems")->asNumber() == 2);
+            ROCLINT_CHECK(groups->find("items")->find("properties")->find("alternatives")->find("maxItems")->asNumber() == 2);
             for (const auto* field : {"assumptions", "missing_decisions", "conflicts"})
                 ROCLINT_CHECK(properties->find(field)->find("const")->asArray().empty());
         }
@@ -430,8 +405,72 @@ void testSelectiveReviewContract() {
     ROCLINT_CHECK(!adapter.discoverOptions(req, transport).ok() && calls == 0);
     req.reviewTrigger = analysis::ReviewTrigger::ExplicitReview;
     ROCLINT_CHECK(adapter.discoverOptions(req, transport).ok() && calls == 1);
-    ROCLINT_CHECK(buildDiscoveryPrompt(req).find("explicitly requested deeper review") != std::string::npos);
+    const auto explicitPrompt = buildDiscoveryPrompt(req);
+    ROCLINT_CHECK(explicitPrompt.find("explicitly requested deeper review") != std::string::npos);
+    ROCLINT_CHECK(explicitPrompt.find("s1_classification") == std::string::npos);
+    req.reviewTrigger = analysis::ReviewTrigger::Automatic;
+    ROCLINT_CHECK(buildDiscoveryPrompt(req).find("s1_classification") != std::string::npos);
     ROCLINT_CHECK(req.promptTriage->ambiguityScore == .1);
+}
+
+void testDesignDiscoveryQuotesSpecificPartsOfTheDraft() {
+    const std::string draft = "Make an app that uses small text font aswell it is inspired by a fusion of "
+                              "1990s and 1960s beatles era album degisn like the revolver album";
+    const auto instruction = buildDiscoveryPrompt({kSession, kRevision, draft});
+    for (const auto* canned : {"Example response:", "How expressive should the playful style be?",
+                               "Bold layout with playful visual accents", "Minimal layout with subtle playful details"})
+        ROCLINT_CHECK(instruction.substr(0, instruction.rfind("Request:\n")).find(canned) == std::string::npos);
+    const auto request = json::parse(std::string_view(instruction).substr(instruction.rfind("Request:\n") + 9));
+    ROCLINT_CHECK(request.ok());
+    const auto schema = json::parse(discoveryResponseSchema(draft));
+    ROCLINT_CHECK(schema.ok());
+    const auto& branch = schema.value().find("oneOf")->asArray()[1];
+    const auto* strings = branch.find("properties")->find("groups")->find("items")->find("properties")->find("source");
+    const auto& quotes = strings->find("enum")->asArray();
+    ROCLINT_CHECK(json::serialize(*strings->find("enum")) == json::serialize(*request.value().find("evidence_quotes")));
+    for (const auto* expected : {"small text", "1990s and 1960s", "revolver album"}) {
+        bool found = false;
+        for (const auto& quote : quotes) found = found || quote.asString() == expected;
+        ROCLINT_CHECK(found);
+    }
+}
+
+void testClarificationChecksUseModelDecisionAndPreserveContext() {
+    ClarificationCheckRequest request{"Use small text in the app.", "What size should the text be?", "12 pt"};
+    request.alternatives = {"11 pt", "12 pt"};
+    request.previousAnswers = {{"Which audience?", "Desktop users"}};
+    const auto prompt = buildClarificationCheckPrompt(request);
+    const auto input = json::parse(std::string_view(prompt).substr(prompt.rfind("Request:\n") + 9));
+    ROCLINT_CHECK(input.ok() && input.value().find("user_answer")->asString() == "12 pt");
+    ROCLINT_CHECK(input.value().find("previous_answers")->asArray()[0].find("answer")->asString() == "Desktop users");
+    GraniteAdapter adapter; makeReady(adapter);
+    int calls = 0;
+    const auto accepted = adapter.checkClarification(request, [&](std::string_view instruction) -> Result<std::string> {
+        ++calls;
+        ROCLINT_CHECK(instruction == prompt);
+        return std::string(R"({"meaning":"The answer settles the question.","answers_question":true,"compatible":true,"feedback":""})");
+    });
+    ROCLINT_CHECK(accepted.ok() && accepted.value().accepted && calls == 1);
+    request.answer = "iondwfwoefneiofneionfeio";
+    const auto rejected = adapter.checkClarification(request, [](std::string_view) -> Result<std::string> {
+        return std::string(R"({"meaning":"The answer does not settle the question.","answers_question":false,"compatible":true,"feedback":"What text size did you mean?"})");
+    });
+    ROCLINT_CHECK(rejected.ok() && !rejected.value().accepted && !rejected.value().feedback.empty());
+    for (const auto* invalid : {"{}", R"({"accepted":"true","feedback":""})", R"({"accepted":true})",
+            R"({"meaning":"","answers_question":false,"compatible":true,"feedback":"   "})",
+            R"({"meaning":"Clear answer","answers_question":"true","compatible":true,"feedback":""})",
+            R"({"meaning":"Clear answer","answers_question":true,"compatible":true,"feedback":"Assuming 12 pt"})"})
+        ROCLINT_CHECK(!parseClarificationCheckResponse(invalid).ok());
+    const auto conflicting = parseClarificationCheckResponse(R"({"meaning":"The answer reverses a requirement.","answers_question":true,"compatible":false,"feedback":""})");
+    ROCLINT_CHECK(conflicting.ok() && !conflicting.value().accepted && !conflicting.value().feedback.empty());
+    ROCLINT_CHECK(!adapter.checkClarification(request, [](std::string_view) -> Result<std::string> {
+        return makeError(ErrorCode::ProviderFailed, "Synthetic timeout");
+    }).ok());
+    ROCLINT_CHECK(adapter.state() == GraniteRuntimeState::Ready);
+    request.answer = " ";
+    ROCLINT_CHECK(!adapter.checkClarification(request, [&](std::string_view) -> Result<std::string> {
+        ++calls; return std::string(R"({"meaning":"The answer settles the question.","answers_question":true,"compatible":true,"feedback":""})");
+    }).ok() && calls == 1);
 }
 
 void testPreModelConflictDetection() {
@@ -534,6 +573,200 @@ void testTransportFailureFailsRuntimeButMalformedOutputDoesNot() {
     }
 }
 
+void testContextualWordRefinementContract() {
+    WordRefinementRequest request;
+    request.sessionId = "sess_1";
+    request.revisionId = "rev_1";
+    request.draftText = "Make the dashboard feel faster for people on slow laptops.";
+    request.selectedText = "faster";
+    request.selectionStart = static_cast<int>(request.draftText.find("faster"));
+    request.selectionEnd = request.selectionStart + 6;
+    request.intervention = WordIntervention::Exploration;
+    request.approvedDecisions = {"Performance target -> keep startup under two seconds"};
+    request.explicitConstraints = {"Keep the public API unchanged"};
+    request.astContextXml = "<symbol name=\"refreshDashboard\"/>";
+
+    const auto prompt = buildWordRefinementPrompt(request);
+    ROCLINT_CHECK(prompt.find("granite.word_refinement.v2") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Make the dashboard feel faster") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("surrounding_before") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("surrounding_after") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("approved_decisions") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("keep startup under two seconds") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Keep the public API unchanged") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("refreshDashboard") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("local_refinement") == std::string::npos);
+    ROCLINT_CHECK(prompt.find("exploration") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Do not invent") != std::string::npos);
+
+    const std::string valid = R"({
+      "needs_clarification": false,
+      "clarification_question": "",
+      "candidates": [
+        {"original_span": "faster", "replacement": "snappier on first paint",
+         "explanation": "Optimizes how quickly the first useful view appears.",
+         "assumption": "The complaint is about first paint, not batch jobs.",
+         "requires_clarification": false},
+        {"original_span": "faster", "replacement": "quicker to refresh data",
+         "explanation": "Optimizes refresh latency once the dashboard is open.",
+         "assumption": "", "requires_clarification": false}
+      ]})";
+    auto parsed = parseWordRefinementResponse(valid, request);
+    ROCLINT_CHECK(parsed.ok());
+    ROCLINT_CHECK(parsed.value().candidates.size() == 2);
+    ROCLINT_CHECK(parsed.value().candidates[0].id == "wcand_1");
+    ROCLINT_CHECK(parsed.value().candidates[1].id == "wcand_2");
+    ROCLINT_CHECK(parsed.value().candidates[0].originalSpan == "faster");
+    ROCLINT_CHECK(parsed.value().candidates[0].explanation.find("first useful view") != std::string::npos);
+
+    auto wrongSpan = parseWordRefinementResponse(
+        R"({"needs_clarification":false,"clarification_question":"","candidates":[{"original_span":"quick","replacement":"fast","explanation":"e","assumption":"","requires_clarification":false}]})",
+        request);
+    ROCLINT_CHECK(!wrongSpan.ok());
+
+    auto sameReplacement = parseWordRefinementResponse(
+        R"({"needs_clarification":false,"clarification_question":"","candidates":[{"original_span":"faster","replacement":"faster","explanation":"e","assumption":"","requires_clarification":false}]})",
+        request);
+    ROCLINT_CHECK(!sameReplacement.ok());
+
+    auto missingField = parseWordRefinementResponse(
+        R"({"needs_clarification":false,"clarification_question":"","candidates":[{"original_span":"faster","replacement":"snappier","explanation":"e","requires_clarification":false}]})",
+        request);
+    ROCLINT_CHECK(!missingField.ok());
+
+    auto clarification = parseWordRefinementResponse(
+        R"({"needs_clarification":true,"clarification_question":"Is this about first paint or data refresh?","candidates":[]})",
+        request);
+    ROCLINT_CHECK(clarification.ok());
+    ROCLINT_CHECK(clarification.value().needsClarification);
+    ROCLINT_CHECK(clarification.value().clarificationQuestion.find("first paint") != std::string::npos);
+
+    auto emptyQuestion = parseWordRefinementResponse(
+        R"({"needs_clarification":true,"clarification_question":"","candidates":[]})", request);
+    ROCLINT_CHECK(!emptyQuestion.ok());
+
+    ROCLINT_CHECK(!parseWordRefinementResponse(
+        R"({"needs_clarification":false,"clarification_question":"","candidates":[{"original_span":"faster","replacement":"...","explanation":"...","assumption":"...","requires_clarification":false}]})", request).ok());
+    const std::string noop = R"({"needs_clarification":false,"clarification_question":"","candidates":[]})";
+    ROCLINT_CHECK(parseWordRefinementResponse(noop, request).ok());
+    auto schema = roclint::core::json::parse(wordRefinementResponseSchema());
+    ROCLINT_CHECK(schema.ok());
+    ROCLINT_CHECK(schema.value().find("oneOf")->asArray()[0].find("properties")->find("action")->find("const")->asString() == "keep");
+    const auto boundWord=json::parse(wordRefinementResponseSchema(request.draftText));
+    const auto& quoteList=boundWord.value().find("oneOf")->asArray()[0].find("properties")->find("source")->find("enum")->asArray();
+    for(const auto& quote:quoteList)ROCLINT_CHECK(analysis::findUniqueSpan(request.draftText,quote.asString()).status==analysis::SpanMatchStatus::ExactMatch);
+    ROCLINT_CHECK(prompt.find("Every response must include at least one") == std::string::npos);
+    // Offsets are UTF-16, while the bridge stores UTF-8; emoji takes two units.
+    request.draftText = "\xf0\x9f\x8e\xac Caf\xc3\xa9 feels faster today.";
+    request.selectionStart = 14;
+    request.selectionEnd = 20;
+    ROCLINT_CHECK(parseWordRefinementResponse(valid, request).ok());
+    const auto unicodePrompt = buildWordRefinementPrompt(request);
+    ROCLINT_CHECK(unicodePrompt.find("\"surrounding_after\":\" today.\"") != std::string::npos);
+    request.selectionStart = 1; // Middle of the emoji's surrogate pair must fail closed.
+    request.selectionEnd = 2;
+    request.selectedText = "\xf0\x9f\x8e\xac";
+    ROCLINT_CHECK(!parseWordRefinementResponse(noop, request).ok());
+
+    std::cout << "  [PASS] Contextual word refinement carries context, identity, and strict spans.\n";
+}
+
+void testSourceQuotesAndProposalsAreDistinct() {
+    const std::string draft = "Make a cinematic portrait of a fern.";
+    const auto response = parseDiscoveryResponse(R"({"status":"options_generated","assistance_kind":"creative","choice_groups":[{"dimension":"composition","question":"How should the fern fill the frame?","material":true,"alternatives":[{"label":"A close portrait with a blurred background","why_material":"Isolates the fern","evidence":["cinematic"],"proposed_assumptions":["Use shallow depth of field."]},{"label":"A wide shot showing its environment","why_material":"Shows the setting","evidence":["cinematic"],"proposed_assumptions":[]}]}],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""})", kSession,kRevision,draft);
+    ROCLINT_CHECK(response.ok() && response.value().ungroundedEvidenceCount == 0);
+    const auto& alt = response.value().analysis.choiceGroups[0].alternatives[0];
+    ROCLINT_CHECK(alt.whyMaterial.find("Proposed assumption:") != std::string::npos);
+    ROCLINT_CHECK(alt.canonicalSemanticsJson.find("shallow depth") != std::string::npos);
+    GoldfishDiscoveryAuditRequest auditRequest;
+    auditRequest.originalPrompt = draft;
+    auditRequest.proposedAnalysis = response.value().analysis;
+    const auto auditPrompt = buildGoldfishDiscoveryAuditPrompt(auditRequest);
+    ROCLINT_CHECK(auditPrompt.find("source_quotes") != std::string::npos);
+    ROCLINT_CHECK(auditPrompt.find("Use shallow depth of field") != std::string::npos);
+    ROCLINT_CHECK(draft.substr(alt.evidence[0].startByte, alt.evidence[0].endByte-alt.evidence[0].startByte) == "cinematic");
+    auto schema = json::parse(discoveryResponseSchema(draft,1));
+    const auto& props = *schema.value().find("oneOf")->asArray()[1].find("properties");
+    ROCLINT_CHECK(props.find("groups")->find("maxItems")->asNumber() == 1);
+    ROCLINT_CHECK(props.find("groups")->find("items")->find("properties")->find("question")->find("maxLength")->asNumber() == 200);
+    const auto instruction = buildDiscoveryPrompt({kSession,kRevision,draft});
+    ROCLINT_CHECK(instruction.find("verbatim source quotation") != std::string::npos);
+    GraniteOptionDiscoveryRequest request{kSession,kRevision,"Make demo::Queue::push faster. Do not add logging."};
+    request.groundedCanonicalIntentXml = "<canonical_intents/>";
+    const auto groundedPrompt = buildDiscoveryPrompt(request);
+    ROCLINT_CHECK(groundedPrompt.find("general_constraint") != std::string::npos);
+    ROCLINT_CHECK(groundedPrompt.find("Do not add logging") != std::string::npos);
+}
+
+void testContractRecoveryIsBoundedAndBudgeted() {
+    GraniteAdapter adapter; makeReady(adapter);
+    GraniteOptionDiscoveryRequest request{kSession,kRevision,kPrompt};
+    int calls=0;
+    auto repaired = adapter.discoverOptions(request,[&](std::string_view prompt)->Result<std::string>{
+        ++calls;
+        if(calls==1) return std::string("{bad");
+        ROCLINT_CHECK(prompt.find("previous response was unusable") != std::string_view::npos);
+        return std::string(kTwoGroupResponse);
+    });
+    ROCLINT_CHECK(repaired.ok() && calls==2);
+    calls=0;
+    auto failed = adapter.discoverOptions(request,[&](std::string_view)->Result<std::string>{++calls;return std::string("{bad");});
+    ROCLINT_CHECK(!failed.ok() && calls==2 && adapter.state()==GraniteRuntimeState::Ready);
+    calls=0;
+    request.canContinue=[&]{return calls==0;};
+    auto expired=adapter.discoverOptions(request,[&](std::string_view)->Result<std::string>{++calls;return std::string("{bad");});
+    ROCLINT_CHECK(!expired.ok() && calls==1);
+    calls=0; request.canContinue=[] {return false;};
+    ROCLINT_CHECK(!adapter.discoverOptions(request,[&](std::string_view)->Result<std::string>{++calls;return std::string(kTwoGroupResponse);}).ok());
+    ROCLINT_CHECK(calls==0);
+}
+
+void testWordEditsRequireCompleteDraftAudit() {
+    WordRefinementRequest request;
+    request.draftText="Apply an atmospheric treatment to the image. Keep the logo unchanged.";
+    request.selectedText="atmospheric";request.selectionStart=9;request.selectionEnd=20;
+    request.explicitConstraints={"Keep the logo unchanged."};
+    auto proposed=parseWordRefinementResponse(R"({"needs_clarification":false,"clarification_question":"","candidates":[{"original_span":"atmospheric","replacement":"a clear, airy atmosphere","explanation":"Adds space","assumption":"","requires_clarification":false},{"original_span":"atmospheric","replacement":"airy, softly lit","explanation":"Makes lighting concrete","assumption":"","requires_clarification":false}]})",request);
+    ROCLINT_CHECK(proposed.ok());
+    const auto prompt=buildWordRefinementAuditPrompt(request,proposed.value());
+    ROCLINT_CHECK(prompt.find("Apply an a clear, airy atmosphere treatment") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Apply an airy, softly lit treatment") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Keep the logo unchanged") != std::string::npos);
+    const auto audit=auditWordRefinementResponse(R"({"verdicts":[{"id":"wcand_2","grammar":"Pass","preservation":"Pass","usefulness":"Pass"},{"id":"wcand_1","grammar":"Fail","preservation":"Fail","usefulness":"Fail"}]})",request,proposed.value());
+    ROCLINT_CHECK(audit.ok() && audit.value().candidates.size()==1 && audit.value().candidates[0].id=="wcand_2");
+    const auto falsePass=auditWordRefinementResponse(R"({"verdicts":[{"id":"wcand_1","grammar":"Pass","preservation":"Pass","usefulness":"Pass"},{"id":"wcand_2","grammar":"Pass","preservation":"Pass","usefulness":"Pass"}]})",request,proposed.value());
+    ROCLINT_CHECK(falsePass.ok() && falsePass.value().candidates.size()==1 && falsePass.value().candidates[0].id=="wcand_2");
+    ROCLINT_CHECK(!auditWordRefinementResponse(R"({"verdicts":[{"id":"wcand_1","outcome":"Pass"},{"id":"wcand_2","outcome":"Pass"}]})",request,proposed.value()).ok());
+    for (const auto* bad : {"{}", R"({"verdicts":[{"id":"wcand_1","grammar":"Pass","preservation":"Pass","usefulness":"Pass"}]})",R"({"verdicts":[{"id":"wcand_1","grammar":"Pass","preservation":"Pass","usefulness":"Pass"},{"id":"wcand_1","grammar":"Pass","preservation":"Pass","usefulness":"Pass"}]})",R"({"verdicts":[{"id":"wcand_1","grammar":"Pass","preservation":"Pass","usefulness":"Pass"},{"id":"foreign","grammar":"Pass","preservation":"Pass","usefulness":"Pass"}]})"})
+        ROCLINT_CHECK(!auditWordRefinementResponse(bad,request,proposed.value()).ok());
+    auto unresolved=auditWordRefinementResponse(R"({"verdicts":[{"id":"wcand_1","grammar":"Unresolved","preservation":"Unresolved","usefulness":"Unresolved"},{"id":"wcand_2","grammar":"Fail","preservation":"Fail","usefulness":"Fail"}]})",request,proposed.value());
+    ROCLINT_CHECK(unresolved.ok() && unresolved.value().candidates.empty());
+}
+
+void testCompactWireContractsRetainProvenanceAndSpanSafety() {
+    const auto compact=R"({"kind":"creative","groups":[{"focus":"framing","question":"Which framing?","source":"cinematic","options":[{"text":"A close portrait","effect":"Isolates the subject","assume":"Use shallow focus"},{"text":"A wide environmental shot","effect":"Shows its surroundings","assume":""}]}]})";
+    const auto parsed=parseDiscoveryResponse(compact,kSession,kRevision,"Make a cinematic fern portrait.");
+    ROCLINT_CHECK(parsed.ok() && parsed.value().assistanceKind==analysis::AssistanceKind::Creative);
+    ROCLINT_CHECK(parsed.value().analysis.choiceGroups[0].alternatives[0].canonicalSemanticsJson.find("shallow focus")!=std::string::npos);
+    ROCLINT_CHECK(parseDiscoveryResponse(R"({"kind":"none"})",kSession,kRevision,kPrompt).value().outcome==DiscoveryOutcome::NoAmbiguity);
+    ROCLINT_CHECK(parseDiscoveryResponse(R"({"kind":"question","question":"Which audience?"})",kSession,kRevision,kPrompt).value().analysis.missingDecisions.size()==1);
+    ROCLINT_CHECK(!parseDiscoveryResponse(R"({"kind":"none","status":"options_generated"})",kSession,kRevision,kPrompt).ok());
+    ROCLINT_CHECK(!parseDiscoveryResponse(R"({"kind":"none","error":"failed"})",kSession,kRevision,kPrompt).ok());
+    ROCLINT_CHECK(!parseDiscoveryResponse(R"({"kind":"creative","groups":[]})",kSession,kRevision,kPrompt).ok());
+    WordRefinementRequest request;request.draftText="Make the page faster.";request.selectedText="faster";request.selectionStart=14;request.selectionEnd=20;
+    const auto edit=parseWordRefinementResponse(R"({"action":"replace","options":[{"text":"quicker to load","effect":"Specifies initial loading","assume":""}]})",request);
+    ROCLINT_CHECK(edit.ok() && edit.value().candidates[0].originalSpan=="faster" && edit.value().candidates[0].id=="wcand_1");
+    ROCLINT_CHECK(parseWordRefinementResponse(R"({"action":"ask","question":"Loading or interaction speed?"})",request).value().needsClarification);
+    ROCLINT_CHECK(!parseWordRefinementResponse(R"({"action":"keep"})",request).ok());
+    ROCLINT_CHECK(!parseWordRefinementResponse(R"({"action":"keep","source":"faster","reason":"Understood"})",request).ok());
+    ROCLINT_CHECK(!parseWordRefinementResponse(R"({"action":"keep","source":"under two seconds","reason":"Fixed timing"})",request).ok());
+    request.approvedDecisions={"Startup must finish within two seconds"};
+    ROCLINT_CHECK(parseWordRefinementResponse(R"({"action":"keep","source":"Startup must finish within two seconds","reason":"The approved timing settles the goal"})",request).value().candidates.empty());
+    ROCLINT_CHECK(!parseWordRefinementResponse(R"({"action":"replace","options":[]})",request).ok());
+    request.selectionStart=0; // A valid compact shape cannot bypass the frozen source span.
+    ROCLINT_CHECK(!parseWordRefinementResponse(R"({"action":"ask","question":"Loading or interaction speed?"})",request).ok());
+}
+
 } // namespace
 
 int main() {
@@ -548,14 +781,20 @@ int main() {
     testStatusRules();
     testRequiresRevisionBinding();
     testDiscoveryPromptEmbedsTextAsEscapedJsonOnly();
-    testDiscoveryExamplesUseValidGroundedPackets();
     testExplicitColorBoundsRejectGeneratedReversals();
     testSelectiveReviewContract();
+    testDesignDiscoveryQuotesSpecificPartsOfTheDraft();
+    testClarificationChecksUseModelDecisionAndPreserveContext();
     testRuntimeLifecycle();
     testDiscoverOptionsThroughTransport();
     testAdvisoryClassifierDisagreementPreservesOriginal();
     testPreModelConflictDetection();
     testTransportFailureFailsRuntimeButMalformedOutputDoesNot();
+    testContextualWordRefinementContract();
+    testSourceQuotesAndProposalsAreDistinct();
+    testContractRecoveryIsBoundedAndBudgeted();
+    testWordEditsRequireCompleteDraftAudit();
+    testCompactWireContractsRetainProvenanceAndSpanSafety();
     std::cout << "[Test GraniteAdapter] All tests PASSED.\n";
     return 0;
 }

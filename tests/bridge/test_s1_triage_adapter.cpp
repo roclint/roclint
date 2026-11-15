@@ -319,6 +319,103 @@ void testMalformedCloudScoresAreDowngraded() {
     ROCLINT_CHECK(f.isRanked());
 }
 
+void testCalibratedConfidenceAndJustifiedRecommendation() {
+    // 1. Tied probabilities yield 0 confidence
+    const auto tiedConf = S1TriageAdapter::computeCalibratedConfidence({{"alt_1", 0.5}, {"alt_2", 0.5}});
+    ROCLINT_CHECK(tiedConf == 0.0);
+
+    // 2. Small margin yields low confidence
+    const auto nearTiedConf = S1TriageAdapter::computeCalibratedConfidence({{"alt_1", 0.52}, {"alt_2", 0.48}});
+    ROCLINT_CHECK(nearTiedConf < 0.15);
+
+    // 3. Clear winner with low ambiguity yields high calibrated confidence (>= 0.70)
+    const auto clearConf = S1TriageAdapter::computeCalibratedConfidence({{"alt_1", 0.95}, {"alt_2", 0.05}}, 0.10);
+    ROCLINT_CHECK(clearConf >= 0.70);
+
+    // 4. Same probabilities with high ambiguity is discounted below 0.70
+    const auto ambigConf = S1TriageAdapter::computeCalibratedConfidence({{"alt_1", 0.95}, {"alt_2", 0.05}}, 0.85);
+    ROCLINT_CHECK(ambigConf < clearConf);
+
+    // 5. extractJustifiedRecommendation
+    const auto a = fx::threeGroupAnalysis();
+    SnapshotEvaluationResponse resp = scored(a);
+    // Group 0 scored with clear margin (0.75 vs 0.25) and low ambiguity
+    resp.groupScores[0].ambiguityScore = 0.10;
+    resp.groupScores[0].winningAlternativeId = a.choiceGroups[0].alternatives[0].id;
+    resp.groupScores[0].probabilities = std::vector<AlternativeProbability>{
+        {a.choiceGroups[0].alternatives[0].id, 0.92},
+        {a.choiceGroups[0].alternatives[1].id, 0.08}
+    };
+
+    const auto rec = S1TriageAdapter::extractJustifiedRecommendation(a, resp);
+    ROCLINT_CHECK(rec.has_value());
+    ROCLINT_CHECK(rec->isJustified);
+    ROCLINT_CHECK(rec->alternativeId == a.choiceGroups[0].alternatives[0].id);
+    ROCLINT_CHECK(rec->alternativeLabel == a.choiceGroups[0].alternatives[0].interpretation);
+    ROCLINT_CHECK(rec->confidence >= 0.60);
+    ROCLINT_CHECK(rec->probability == 0.92);
+
+    // If decision has high ambiguity, it is not justified to auto-recommend
+    resp.groupScores[0].ambiguityScore = 0.80;
+    const auto unconfirmedRec = S1TriageAdapter::extractJustifiedRecommendation(a, resp);
+    ROCLINT_CHECK(unconfirmedRec.has_value());
+    ROCLINT_CHECK(!unconfirmedRec->isJustified);
+}
+
+void testAssumptionConfidenceExtraction() {
+    SnapshotEvaluationResponse resp;
+    resp.success = true;
+    resp.analysisSnapshotId = "snap_test";
+    resp.executionStatus = ExecutionStatus::ExecutedModel;
+
+    AssumptionEvaluationScore established;
+    established.assumptionId = "asm_est";
+    established.isScored = true;
+    established.uncertaintyScore = 0.15;
+    established.noulCertainty = true;
+    resp.assumptionScores.push_back(established);
+
+    AssumptionEvaluationScore uncertain;
+    uncertain.assumptionId = "asm_unc";
+    uncertain.isScored = true;
+    uncertain.uncertaintyScore = 0.85;
+    uncertain.noulCertainty = true;
+    resp.assumptionScores.push_back(uncertain);
+
+    AssumptionEvaluationScore unscored;
+    unscored.assumptionId = "asm_unscored";
+    unscored.isScored = false;
+    unscored.unscoredReason = "batch_limit";
+    resp.assumptionScores.push_back(unscored);
+
+    const auto est = S1TriageAdapter::extractAssumptionConfidence(resp, "asm_est");
+    ROCLINT_CHECK(est.has_value());
+    ROCLINT_CHECK(est->isScored);
+    ROCLINT_CHECK(est->isEstablished);
+    ROCLINT_CHECK(std::abs(est->confidence - 0.85) < 0.001);
+
+    const auto unc = S1TriageAdapter::extractAssumptionConfidence(resp, "asm_unc");
+    ROCLINT_CHECK(unc.has_value());
+    ROCLINT_CHECK(unc->isScored);
+    ROCLINT_CHECK(!unc->isEstablished);
+    ROCLINT_CHECK(std::abs(unc->confidence - 0.15) < 0.001);
+
+    const auto uns = S1TriageAdapter::extractAssumptionConfidence(resp, "asm_unscored");
+    ROCLINT_CHECK(uns.has_value());
+    ROCLINT_CHECK(!uns->isScored);
+    ROCLINT_CHECK(!uns->isEstablished);
+    ROCLINT_CHECK(uns->unscoredReason == "batch_limit");
+
+    const auto none = S1TriageAdapter::extractAssumptionConfidence(resp, "nonexistent");
+    ROCLINT_CHECK(!none.has_value());
+
+    const auto all = S1TriageAdapter::extractAllAssumptionConfidences(resp);
+    ROCLINT_CHECK(all.size() == 3);
+    ROCLINT_CHECK(all[0].isEstablished);
+    ROCLINT_CHECK(!all[1].isEstablished);
+    ROCLINT_CHECK(!all[2].isScored);
+}
+
 } // namespace
 
 int main() {
@@ -333,6 +430,8 @@ int main() {
     testFailingCloudScorerDegrades();
     testValidCloudScoresAreKept();
     testMalformedCloudScoresAreDowngraded();
+    testCalibratedConfidenceAndJustifiedRecommendation();
+    testAssumptionConfidenceExtraction();
     std::cout << "[Test S1TriageAdapter] All tests PASSED.\n";
     return 0;
 }

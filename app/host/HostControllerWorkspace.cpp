@@ -31,7 +31,29 @@ struct CodebaseRefreshOutcome {
     storage::CodebaseSnapshotInfo snapshot{};
     QStringList unprocessedPaths{};
     QString error{};
+    QString incompleteMessage{};
 };
+
+QString indexIncompleteMessage(const storage::CodebaseIndexStats& stats,
+                               const storage::CodebaseIndexLimits& limits) {
+    using Reason = storage::CodebaseIndexIncompleteReason;
+    switch (stats.incompleteReason) {
+    case Reason::TimeBudget:
+        return QStringLiteral("Code index incomplete: the %1-second scan limit was reached after checking %2 source files. Choose a smaller project folder and refresh. Grounding is withheld.")
+            .arg(QString::number(std::max(0, limits.scanBudgetMs) / 1000.0, 'g', 3))
+            .arg(static_cast<qulonglong>(stats.filesVisited));
+    case Reason::FileLimit:
+        return QStringLiteral("Code index incomplete: the %1-source-file limit was reached. Choose a smaller project folder and refresh. Grounding is withheld.")
+            .arg(static_cast<qulonglong>(limits.maximumFiles));
+    case Reason::Filesystem:
+        return QStringLiteral("Code index incomplete: some project folders could not be read. Check access and refresh. Grounding is withheld.");
+    case Reason::DirtyFiles:
+        return QStringLiteral("Code index incomplete: changed files still need validation. Refresh the project. Grounding is withheld.");
+    case Reason::None:
+        return QStringLiteral("Code index incomplete: a complete project scan is still required. Refresh the project. Grounding is withheld.");
+    }
+    return {};
+}
 
 constexpr int kCodebasePathsCoalesceMs = 200;
 constexpr int kCodebaseMaximumPendingPaths = 4096;
@@ -48,6 +70,18 @@ QString normalizedPendingPath(const QString& path) {
     return normalized;
 }
 } // namespace
+
+void HostController::setCodebaseRefreshError(const QString& message) {
+    m_codebaseRefreshError = message;
+    setLastError(message);
+}
+
+void HostController::clearCodebaseRefreshError() {
+    // Refresh completion must not erase a newer model, scope or delivery error.
+    if (!m_codebaseRefreshError.isEmpty() && m_lastError == m_codebaseRefreshError &&
+        m_lastErrorCode == QLatin1String("INTERNAL")) clearLastError();
+    m_codebaseRefreshError.clear();
+}
 
 #ifdef ROCLINT_ENABLE_TEST_MOCKS
 namespace {
@@ -114,6 +148,7 @@ QStringList HostController::getProjectFiles(const QString& projectPath) {
     // A different canonical workspace starts a new epoch immediately. Every
     // ticket, proposal and revalidation captured under the previous epoch is
     // now stale, including work already running on a worker thread.
+    clearCodebaseRefreshError();
     ++m_workspaceEpoch;
     // Synchronously drop all derived state (analysis, intent, proposal,
     // acknowledgments, in-memory approval and active grounding). Persisted
@@ -338,11 +373,12 @@ void HostController::startCodebaseRefresh(const QString& projectPath) {
                             ++m_codebaseIncompleteRetries;
                             m_codebaseFullRefreshQueued = true;
                         } else {
-                            setLastError(QStringLiteral("Codebase index refresh incomplete; grounding withheld."));
+                            setCodebaseRefreshError(outcome.incompleteMessage);
                         }
                     } else {
                         m_codebaseIncompleteRetries = 0;
                         m_codebasePathsRetries = 0;
+                        clearCodebaseRefreshError();
                         scheduleGroundingRevalidation();
                     }
                 } else {
@@ -351,7 +387,7 @@ void HostController::startCodebaseRefresh(const QString& projectPath) {
                     m_pendingCodebasePaths.clear();
                     setGroundingUnavailable(QStringLiteral("UNAVAILABLE"));
                     scheduleGroundingRevalidation();
-                    setLastError(QStringLiteral("Codebase index refresh failed: %1")
+                    setCodebaseRefreshError(QStringLiteral("Codebase index refresh failed: %1")
                                      .arg(outcome.error.isEmpty() ? QStringLiteral("unknown error") : outcome.error));
                     maybeRecoverCodebaseWatcher();
                 }
@@ -382,6 +418,7 @@ void HostController::startCodebaseRefresh(const QString& projectPath) {
         }
         outcome.ok = true;
         outcome.incomplete = refreshed.value().incomplete;
+        outcome.incompleteMessage = indexIncompleteMessage(refreshed.value(), limits);
         const auto info = index.snapshotInfo();
         if (info.ok()) outcome.snapshot = info.value();
         return outcome;
@@ -505,11 +542,12 @@ void HostController::startCodebasePathsRefresh(const QString& projectPath, const
                             }
                         } else {
                             m_codebasePathsRetries = 0;
-                            setLastError(QStringLiteral("Codebase index refresh incomplete; grounding withheld."));
+                            setCodebaseRefreshError(outcome.incompleteMessage);
                         }
                     } else {
                         m_codebasePathsRetries = 0;
                         m_codebaseIncompleteRetries = 0;
+                        clearCodebaseRefreshError();
                         scheduleGroundingRevalidation();
                     }
                 } else {
@@ -517,7 +555,7 @@ void HostController::startCodebasePathsRefresh(const QString& projectPath, const
                     // current validation, not a superseded snapshot. Keep any
                     // previous snapshot visible for ordinary requests, but let
                     // revalidation invalidate the exact bound proposal.
-                    setLastError(QStringLiteral("Codebase index refresh failed: %1")
+                    setCodebaseRefreshError(QStringLiteral("Codebase index refresh failed: %1")
                                      .arg(outcome.error.isEmpty() ? QStringLiteral("unknown error") : outcome.error));
                     scheduleGroundingRevalidation();
                     maybeRecoverCodebaseWatcher();
@@ -554,6 +592,7 @@ void HostController::startCodebasePathsRefresh(const QString& projectPath, const
         }
         outcome.ok = true;
         outcome.incomplete = refreshed.value().incomplete;
+        outcome.incompleteMessage = indexIncompleteMessage(refreshed.value(), limits);
         outcome.unprocessedPaths.reserve(static_cast<qsizetype>(refreshed.value().unprocessedPaths.size()));
         for (const auto& path : refreshed.value().unprocessedPaths)
             outcome.unprocessedPaths.append(QString::fromLocal8Bit(path.data(), static_cast<qsizetype>(path.size())));
@@ -912,6 +951,7 @@ void HostController::startCodebaseRefreshForTesting(const QString& projectPath, 
     if (canonical.isEmpty()) return;
     if (canonical != m_projectScanPath) {
         // The test seam models a real workspace selection when the path moves.
+        clearCodebaseRefreshError();
         ++m_workspaceEpoch;
         invalidateDownstreamPipeline();
         resetStalePathRecovery();

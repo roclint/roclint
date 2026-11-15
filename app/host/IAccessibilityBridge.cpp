@@ -7,7 +7,19 @@ namespace roclint::host {
 IAccessibilityBridge::IAccessibilityBridge(QObject* parent) : QObject(parent) {
     qRegisterMetaType<ObservedField>();
     qRegisterMetaType<InjectionRequest>();
+    qRegisterMetaType<RangeInjectionRequest>();
     qRegisterMetaType<InjectionOutcome>();
+}
+
+void IAccessibilityBridge::injectRange(const RangeInjectionRequest& request) {
+    const quint64 id = request.requestId;
+    QMetaObject::invokeMethod(
+        this,
+        [this, id]() {
+            emit rangeInjectionFinished(id, InjectionOutcome::NotSupported,
+                                        QStringLiteral("This editor surface does not support range replacement."));
+        },
+        Qt::QueuedConnection);
 }
 
 const char* toString(AccessibilityAccess access) noexcept {

@@ -27,44 +27,49 @@ namespace {
 }
 
 [[nodiscard]] bool groupsCollide(const ChoiceGroup& a, const ChoiceGroup& b) noexcept {
-    // If the two groups represent distinct, orthogonal dimensions (e.g. speed_strategy vs frontend_architecture),
-    // they represent complementary facets of an open request rather than conflicting textual edits.
-    if (!a.dimension.empty() && !b.dimension.empty() && a.dimension != b.dimension) {
-        for (const auto& altA : a.alternatives) {
-            for (const auto& spanA : altA.evidence) {
-                for (const auto& altB : b.alternatives) {
-                    for (const auto& spanB : altB.evidence) {
-                        if (spanA == spanB) {
-                            continue; // Identical spans across orthogonal dimensions are complementary, not colliding.
-                        }
-                        if (MaterialityPolicyV1::spansOverlap(spanA, spanB)) {
-                            // If one span completely subsumes the other (e.g. whole prompt vs sub-clause),
-                            // orthogonal dimensions are still complementary.
-                            const bool aContainsB = (spanA.startByte <= spanB.startByte && spanA.endByte >= spanB.endByte);
-                            const bool bContainsA = (spanB.startByte <= spanA.startByte && spanB.endByte >= spanA.endByte);
-                            if (!aContainsB && !bContainsA) {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        return false;
-    }
-
+    bool hasOverlap = false;
+    bool hasPartialOverlap = false;
     for (const auto& altA : a.alternatives) {
         for (const auto& spanA : altA.evidence) {
             for (const auto& altB : b.alternatives) {
                 for (const auto& spanB : altB.evidence) {
                     if (MaterialityPolicyV1::spansOverlap(spanA, spanB)) {
-                        return true;
+                        hasOverlap = true;
+                        const bool aContainsB = spanA.startByte <= spanB.startByte && spanA.endByte >= spanB.endByte;
+                        const bool bContainsA = spanB.startByte <= spanA.startByte && spanB.endByte >= spanA.endByte;
+                        hasPartialOverlap |= !aContainsB && !bContainsA;
                     }
                 }
             }
         }
     }
-    return false;
+    if (!hasOverlap) return false;
+    if (hasPartialOverlap) return true;
+
+    // Different wording does not prove different decisions. Two groups may be paraphrases of the
+    // same latency question while sharing a "faster" span. Only an explicit, distinct decision
+    // dimension supplied by the model makes overlapping evidence legitimate exploration.
+    // Missing or identical dimensions stay conservative: overlapping evidence collides.
+    const std::string dimensionA = toLowerString(trimWhitespace(a.dimension));
+    const std::string dimensionB = toLowerString(trimWhitespace(b.dimension));
+    if (!dimensionA.empty() && !dimensionB.empty() && dimensionA != dimensionB) {
+        bool duplicateLabels = false;
+        for (const auto& altA : a.alternatives) {
+            const std::string la = toLowerString(trimWhitespace(altA.interpretation));
+            for (const auto& altB : b.alternatives) {
+                const std::string lb = toLowerString(trimWhitespace(altB.interpretation));
+                if (!la.empty() && la == lb) {
+                    duplicateLabels = true;
+                    break;
+                }
+            }
+            if (duplicateLabels) break;
+        }
+        if (!duplicateLabels) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace

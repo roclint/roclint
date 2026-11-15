@@ -117,6 +117,27 @@ void testCanonicalIntentGroundingInRewritePrompt() {
     ROCLINT_CHECK(groundedPrompt.find(req.groundedCanonicalIntentXml) < groundedPrompt.find("<original_prompt>"));
     ROCLINT_CHECK(groundedPrompt.find("metadata, not additional user requirements") != std::string::npos);
     ROCLINT_CHECK(groundedPrompt.find("Do not encode the task as a JSON object") != std::string::npos);
+    ROCLINT_CHECK(groundedPrompt.find("<source_constraints>") != std::string::npos);
+    ROCLINT_CHECK(groundedPrompt.find("general_constraint") != std::string::npos);
+}
+
+void testOnlySelectedProposedAssumptionsReachRewrite() {
+    roclint::bridge::GraniteRewriteRequest request;
+    request.originalText = "Make a cinematic portrait.";
+    roclint::core::analysis::ChoiceGroup group;
+    group.id = "grp_0"; group.question = "Which framing?";
+    roclint::core::analysis::ChoiceAlternative alternative;
+    alternative.id = "alt_0_0"; alternative.interpretation = "An intimate portrait";
+    alternative.canonicalSemanticsJson = R"({"proposed_assumptions":["Use shallow depth of field"]})";
+    group.alternatives.push_back(alternative);
+    request.analysis.normalized.choiceGroups.push_back(group);
+    const auto unselected = roclint::bridge::buildRewritePrompt(request, ProfileRegistry::defaultProfile());
+    ROCLINT_CHECK(unselected.find("Use shallow depth of field") == std::string::npos);
+    request.confirmedIntent.items.push_back({"grp_0", roclint::core::intent::IntentResolutionKind::SelectedAlternative,
+                                          "alt_0_0", "An intimate portrait", "", ""});
+    const auto selected = roclint::bridge::buildRewritePrompt(request, ProfileRegistry::defaultProfile());
+    ROCLINT_CHECK(selected.find("<selected_proposal>") != std::string::npos);
+    ROCLINT_CHECK(selected.find("Use shallow depth of field") != std::string::npos);
 }
 
 void testFallbackEvidenceCannotCreatePromptMarkup() {
@@ -144,6 +165,7 @@ int main() {
     testNothingIsVerifiedWithoutProof();
     testRewritePromptCarriesOnlyUserContent();
     testCanonicalIntentGroundingInRewritePrompt();
+    testOnlySelectedProposedAssumptionsReachRewrite();
     testFallbackEvidenceCannotCreatePromptMarkup();
     std::cout << "[Test RewriteProfiles] All tests PASSED.\n";
     return 0;

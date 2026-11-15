@@ -21,6 +21,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlExpression>
+#include <QQmlProperty>
 #include <QQuickItem>
 #include <QQuickWindow>
 #include <QSettings>
@@ -50,6 +51,9 @@ const QString kRewritten = QStringLiteral("Refactor the parser. Lower latency pe
 
 void prepare(HostController& c, std::atomic<int>& calls, int delayMs = 0) {
     c.setTransportOverrideForTesting([&calls, delayMs](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
@@ -183,7 +187,12 @@ void testReviewGeometryAndExplicitExpansion() {
         std::string rewritten = "Refactor the parser to be quicker, improve documentation, and tidy tests.";
         if (size.width == 560) for (int i=0; i<80; ++i) rewritten += "\nA long synthetic diff line that wraps across the available review width.";
         c.setTransportOverrideForTesting([&](std::string_view prompt) -> Result<std::string> {
-            if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            if (prompt.find("granite.clarification_check.v1") != std::string_view::npos)
+            return std::string(R"({"meaning":"The answer settles the question.","answers_question":true,"compatible":true,"feedback":""})");
+        if (prompt.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
+        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
                 return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
             }
             ++calls; return prompt.find("<instructions>") == std::string_view::npos ? discovery : fx::rewriteReply(rewritten);
@@ -194,6 +203,7 @@ void testReviewGeometryAndExplicitExpansion() {
         for (int i=0; i<3; ++i) {
             const QString answer = QStringLiteral("Keep this explicitly supplied answer with enough descriptive wording to wrap in a narrow review: choice %1 remains the user's decision.").arg(i);
             ROCLINT_CHECK(c.waitForCommandForTesting(c.submitCustomIntent(answer, c.stateVersion())));
+            ROCLINT_CHECK(c.waitForIdleForTesting(3000));
         }
         ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
         ROCLINT_CHECK(c.waitForIdleForTesting(3000));
@@ -423,6 +433,11 @@ void testCompactHudControlsStayInsideWindow() {
         {"question":"Which docs?","alternatives":[{"label":"README","why_material":"Scope","evidence":["where needed"]},{"label":"All docs","why_material":"Scope","evidence":["where needed"]}]},
         {"question":"Which cleanup?","alternatives":[{"label":"Names","why_material":"Scope","evidence":["clean up the tests"]},{"label":"Dead tests","why_material":"Scope","evidence":["clean up the tests"]}]}]})";
     c.setTransportOverrideForTesting([discovery](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.clarification_check.v1") != std::string_view::npos)
+            return std::string(R"({"meaning":"The answer settles the question.","answers_question":true,"compatible":true,"feedback":""})");
+        if (prompt.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
@@ -432,9 +447,11 @@ void testCompactHudControlsStayInsideWindow() {
     ROCLINT_CHECK(c.markModelReadyForTesting(fx::testModel()));
     ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(QString::fromStdString(fx::kThreeGroupPrompt),0)));
     ROCLINT_CHECK(c.waitForIdleForTesting(3000));
-    for (int i=0; i<3; ++i)
+    for (int i=0; i<3; ++i) {
         ROCLINT_CHECK(c.waitForCommandForTesting(c.submitCustomIntent(
             QStringLiteral("Preserve this explicit semantic decision %1.").arg(i), c.stateVersion())));
+        ROCLINT_CHECK(c.waitForIdleForTesting(3000));
+    }
     ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
     ROCLINT_CHECK(c.waitForIdleForTesting(3000) && c.pendingReviewCount()==3);
     ObservedField field;
@@ -671,6 +688,9 @@ void testReviewRequiresExplicitActivation() {
     ROCLINT_CHECK(controller.waitForStorageForTesting());
     controller.setLegacyDiscoveryForTesting(true);
     controller.setTransportOverrideForTesting([](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
@@ -718,6 +738,9 @@ void testReviewAcknowledgementStorageFailure() {
     HostController c(path); ROCLINT_CHECK(c.waitForStorageForTesting()); c.setAmbientModeEnabled(false);
     c.setLegacyDiscoveryForTesting(true);
     c.setTransportOverrideForTesting([](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
@@ -853,6 +876,61 @@ void testOverBudgetAssumptionsRemainVisibleAndUnconfirmed() {
     ROCLINT_CHECK(!controller.isRewriteEnabled());
     std::cout << "  [PASS] Over-budget material assumptions remain visible, unscored and unconfirmed.\n";
 }
+void testCapturedAndClipboardDraftPresentation() {
+    QSettings().clear();
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    auto* observed = bridge.get();
+    observed->accessValue = AccessibilityAccess::Granted;
+    HostController c(":memory:", std::move(bridge));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    c.setTransportOverrideForTesting([](std::string_view) -> Result<std::string> {
+        return std::string(R"({"status":"no_ambiguity","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[],"clarification_question":""})");
+    });
+    ROCLINT_CHECK(c.markModelReadyForTesting(fx::testModel()));
+    c.setAmbientModeEnabled(true);
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("hostController", &c);
+    engine.load(QUrl("qrc:/shell/FloatingCard.qml"));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    window->setProperty("autoAnalysisDelayMs", 60000);
+    auto* editor = window->findChild<QQuickItem*>("promptInput");
+    auto* heading = window->findChild<QQuickItem*>("promptEditorHeading");
+    auto* preview = window->findChild<QQuickItem*>("draftPreview");
+    auto* draftText = window->findChild<QQuickItem*>("draftPreviewText");
+    auto* edit = window->findChild<QQuickItem*>("editCapturedDraftControl");
+    ROCLINT_CHECK(editor && heading && preview && draftText && edit);
+    ObservedField field;
+    field.fieldToken = 903; field.processId = 444; field.kind = FieldKind::GuiEditor;
+    field.appIdentifier = "Antigravity.exe"; field.appDisplayName = "Antigravity";
+    field.text = "Make Queue::push async and retain error handling.";
+    observed->observe(field);
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.openFromAmbient()));
+    ROCLINT_CHECK(c.waitForIdleForTesting(3000));
+    window->show(); ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
+    window->requestActivate(); QTest::qWait(50);
+    ROCLINT_CHECK(c.isAmbientCapture() && !c.isClarifying() && !c.hasProposal());
+    ROCLINT_CHECK(!window->property("showPromptEditor").toBool() && !editor->isVisible() && !heading->isVisible());
+    ROCLINT_CHECK(preview->isVisible() && draftText->property("text").toString() == field.text);
+    ROCLINT_CHECK(c.deliveryLabel() == "Delivers into Antigravity");
+    edit->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(window, Qt::Key_Space); QTest::qWait(50);
+    ROCLINT_CHECK(window->property("showPromptEditor").toBool() && editor->isVisible() && editor->hasActiveFocus());
+    ROCLINT_CHECK(editor->property("text").toString() == field.text);
+    QTest::keyClick(window, Qt::Key_End); QTest::keyClick(window, Qt::Key_A);
+    const auto localDraft = editor->property("text").toString();
+    ROCLINT_CHECK(localDraft != field.text);
+    field.text += " External change."; observed->observe(field);
+    ROCLINT_CHECK(editor->property("text").toString() == localDraft);
+    c.setAmbientModeEnabled(false); QTest::qWait(20);
+    ROCLINT_CHECK(!c.isAmbientCapture() && !c.isAmbientAttached());
+    ROCLINT_CHECK(c.deliveryLabel() == "Delivers to clipboard" && c.captureTargetName().isEmpty());
+    ROCLINT_CHECK(editor->isVisible() && heading->isVisible() && !preview->isVisible());
+    ROCLINT_CHECK(editor->property("text").toString() == localDraft && observed->injections.empty());
+    std::cout << "  [PASS] Captured draft opens compactly, explicit editing preserves input, disabling capture detaches insertion.\n";
+}
+
 void testLiveCapturedDraftAndCancelRetryInQml() {
     QSettings().clear();
     auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
@@ -901,6 +979,11 @@ void testLiveCapturedDraftAndCancelRetryInQml() {
     observed->observe(field);
     ROCLINT_CHECK(editor->property("text").toString() == field.text);
     ROCLINT_CHECK(controller.currentRevisionText() == frozen && controller.isDraftDirty());
+    auto* editCaptured = findVisual(window->contentItem(), "editCapturedDraftControl");
+    ROCLINT_CHECK(editCaptured && editCaptured->isVisible());
+    editCaptured->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(window, Qt::Key_Space); QTest::qWait(50);
+    ROCLINT_CHECK(window->property("showPromptEditor").toBool() && editor->isVisible());
     editor->forceActiveFocus();
     QTest::keyClick(window, Qt::Key_A);
     const auto localDraft = editor->property("text").toString();
@@ -1076,24 +1159,24 @@ void testTypingDebouncesAnalysisInQml() {
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     QTest::qWait(300); ROCLINT_CHECK(calls == 5 && controller.analysisStatus() == "IDLE");
 
-    // A failed reply is not automatically retried; a fresh edit can start a new check.
+    // A malformed reply gets one bounded repair inside this check. Failure never schedules another check; a fresh edit can.
     controller.setTransportOverrideForTesting([&](std::string_view) -> Result<std::string> { ++calls; return std::string("{bad JSON"); });
     editor->setProperty("text", latest + " New check.");
-    QTRY_COMPARE_WITH_TIMEOUT(calls.load(), 6, 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(calls.load(), 7, 3000);
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.analysisStatus() == "FAILED");
-    QTest::qWait(300); ROCLINT_CHECK(calls == 6);
+    QTest::qWait(300); ROCLINT_CHECK(calls == 7);
     prepare(controller, calls);
     editor->setProperty("text", latest + " Fresh draft.");
-    QTRY_COMPARE_WITH_TIMEOUT(calls.load(), 7, 3000);
+    QTRY_COMPARE_WITH_TIMEOUT(calls.load(), 8, 3000);
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
 
     // Hide and blank drafts cancel pending checks. Showing or restoring text doesn't retry.
     editor->setProperty("text", latest + " Hide before checking."); window->hide();
-    QTest::qWait(300); ROCLINT_CHECK(calls == 7);
-    window->show(); QTest::qWait(200); ROCLINT_CHECK(calls == 7);
-    editor->setProperty("text", ""); QTest::qWait(200); ROCLINT_CHECK(calls == 7);
+    QTest::qWait(300); ROCLINT_CHECK(calls == 8);
+    window->show(); QTest::qWait(200); ROCLINT_CHECK(calls == 8);
+    editor->setProperty("text", ""); QTest::qWait(200); ROCLINT_CHECK(calls == 8);
     QMetaObject::invokeMethod(window, "setEditorText", Q_ARG(QVariant, latest));
-    QTest::qWait(200); ROCLINT_CHECK(calls == 7);
+    QTest::qWait(200); ROCLINT_CHECK(calls == 8);
     ROCLINT_CHECK(window->isVisible() && window->property("isDetailedExpanded").toBool());
     ROCLINT_CHECK(!controller.hasProposal() && !controller.hasApproval() && observed->injections.empty());
     std::cout << "  [PASS] Typing debounces one analysis, waits for storage, rejects stale results and never retries cancelled/failed drafts.\n";
@@ -1191,6 +1274,11 @@ void testExplicitClarificationAndDeferredRewrite() {
     int discoveryCalls = 0, rewriteCalls = 0;
     QString instructions;
     controller.setTransportOverrideForTesting([&](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.clarification_check.v1") != std::string_view::npos)
+            return std::string(R"({"meaning":"The answer settles the question.","answers_question":true,"compatible":true,"feedback":""})");
+        if (prompt.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
@@ -1223,7 +1311,14 @@ void testExplicitClarificationAndDeferredRewrite() {
     ROCLINT_CHECK(skip->isVisible() && skip->isEnabled());
     savePreview(window, QStringLiteral("clarification-options.png"));
     ROCLINT_CHECK(QMetaObject::invokeMethod(skip, "clicked"));
-    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.hasProposal());
+    const bool rewriteIdle = controller.waitForIdleForTesting(3000);
+    if (!rewriteIdle || !controller.hasProposal())
+        std::cerr << "Deferred rewrite diagnostic: idle=" << rewriteIdle
+                  << "; analysis=" << controller.analysisStatus().toStdString()
+                  << "; proposal=" << controller.proposalStatus().toStdString()
+                  << "; rewriteCalls=" << rewriteCalls
+                  << "; error=" << controller.lastError().toStdString() << '\n';
+    ROCLINT_CHECK(rewriteIdle && controller.hasProposal());
     ROCLINT_CHECK(rewriteCalls == 1 && instructions.contains("<open_questions>") && instructions.contains("Which kind of speed matters?"));
     ROCLINT_CHECK(controller.getConfirmedIntentPayload()["items"].toList().isEmpty());
     ROCLINT_CHECK(controller.getConfirmedIntentPayload()["unresolvedItemIds"].toStringList().size() == 2);
@@ -1333,9 +1428,33 @@ void testGenerationMeterUsesMeasuredProgress() {
     engine.load(QUrl("qrc:/shell/FloatingCard.qml"));
     ROCLINT_CHECK(engine.rootObjects().size()==1);
     auto* window=qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    c.setThinkingEnabled(true);
+    {
+        HostController restoredThinking(":memory:");
+        ROCLINT_CHECK(restoredThinking.waitForStorageForTesting());
+        ROCLINT_CHECK(restoredThinking.thinkingEnabled());
+    }
+    c.setThinkingEnabled(false);
     auto* meter=window->findChild<QQuickItem*>("generationMeter");
     ROCLINT_CHECK(meter && !window->findChild<QObject*>("reviewDiagnosticsButton"));
-    meter->setProperty("tokenSpeedMode",QStringLiteral("BOTH"));
+    // This test drives synthetic telemetry. QObject::setProperty leaves QML
+    // bindings active, allowing later host notifications to overwrite its inputs.
+    const auto setMeter=[&](const char* name,const QVariant& value) {
+        ROCLINT_CHECK(QQmlProperty(meter,QString::fromUtf8(name),engine.rootContext()).write(value));
+    };
+    setMeter("preparing",false);
+    setMeter("metricsAvailable",true);
+    setMeter("reasoningTokenCount",64);
+    setMeter("answerTokenCount",0);
+    setMeter("generationPhase",QStringLiteral("thinking"));
+    c.inferenceSpeedChanged(); // A real bound-property notification must not replace this fixture.
+    ROCLINT_CHECK(meter->property("generationPhase").toString()==QStringLiteral("thinking"));
+    auto* splitLabel=meter->findChild<QObject*>("generationTokenSplitLabel");
+    ROCLINT_CHECK(splitLabel && splitLabel->property("text").toString().contains("Thinking 64"));
+    setMeter("reasoningTokenCount",0);
+    setMeter("generationPhase",QStringLiteral("idle"));
+
+    setMeter("tokenSpeedMode",QStringLiteral("BOTH"));
     const auto plainRate=[&]() {
         QTextDocument label; label.setHtml(meter->property("rateText").toString());
         return label.toPlainText();
@@ -1344,11 +1463,11 @@ void testGenerationMeterUsesMeasuredProgress() {
         ROCLINT_CHECK(QMetaObject::invokeMethod(meter,name,Q_ARG(QVariant,QVariant(now))));
     };
     const auto publish=[&](double count, double genMs, double decMs) {
-        meter->setProperty("generationElapsedMs",genMs);
-        meter->setProperty("decodeElapsedMs",decMs);
-        meter->setProperty("generationTokensPerSecond",genMs>0 ? count*1000/genMs : 0);
-        meter->setProperty("decodeTokensPerSecond",decMs>0 ? count*1000/decMs : 0);
-        meter->setProperty("tokenCount",count);
+        setMeter("generationElapsedMs",genMs);
+        setMeter("decodeElapsedMs",decMs);
+        setMeter("generationTokensPerSecond",genMs>0 ? count*1000/genMs : 0);
+        setMeter("decodeTokensPerSecond",decMs>0 ? count*1000/decMs : 0);
+        setMeter("tokenCount",count);
         QTest::qWait(5); // Coalesced controller snapshot.
     };
     window->show(); ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
@@ -1359,7 +1478,7 @@ void testGenerationMeterUsesMeasuredProgress() {
     ROCLINT_CHECK(!idleFirst.isNull() && idleFirst==window->grabWindow().copy(region));
     ROCLINT_CHECK(!meter->property("recentActivity").toBool());
     savePreview(window,QStringLiteral("measured-wave-idle.png"));
-    meter->setProperty("processing",true);
+    setMeter("processing",true);
     ROCLINT_CHECK(plainRate()=="Preparing…" && !meter->property("recentActivity").toBool());
     QTest::qWait(400);
     const auto preparingFirst=window->grabWindow().copy(region);
@@ -1391,39 +1510,39 @@ void testGenerationMeterUsesMeasuredProgress() {
     ROCLINT_CHECK(!meter->property("recentActivity").toBool() && stalled==window->grabWindow().copy(region));
     publish(36,1200,600);
     ROCLINT_CHECK(meter->property("recentActivity").toBool());
-    meter->setProperty("processing",false);
+    setMeter("processing",false);
     ROCLINT_CHECK(plainRate()=="Last · 30.0 gen · 60.0 dec tok/s");
     const double heldUntil=meter->property("holdUntil").toDouble();
     invoke("advance",heldUntil+175);
     ROCLINT_CHECK(meter->property("activityLevel").toDouble()>0 && meter->property("activityLevel").toDouble()<1);
     invoke("advance",heldUntil+351);
     ROCLINT_CHECK(!meter->property("recentActivity").toBool());
-    meter->setProperty("generationTokensPerSecond",0.0);
-    meter->setProperty("tokenSpeedMode",QStringLiteral("GENERATION"));
+    setMeter("generationTokensPerSecond",0.0);
+    setMeter("tokenSpeedMode",QStringLiteral("GENERATION"));
     ROCLINT_CHECK(plainRate()=="Last · — tok/s"); // Decode is never passed off as generation.
-    meter->setProperty("generationTokensPerSecond",30.0);
-    meter->setProperty("decodeTokensPerSecond",0.0);
-    meter->setProperty("tokenSpeedMode",QStringLiteral("DECODE"));
+    setMeter("generationTokensPerSecond",30.0);
+    setMeter("decodeTokensPerSecond",0.0);
+    setMeter("tokenSpeedMode",QStringLiteral("DECODE"));
     ROCLINT_CHECK(plainRate()=="Last · — tok/s (dec)");
-    meter->setProperty("tokenSpeedMode",QStringLiteral("BOTH"));
+    setMeter("tokenSpeedMode",QStringLiteral("BOTH"));
     publish(0,0,0);
     ROCLINT_CHECK(!meter->property("recentActivity").toBool() && meter->property("seenTokens").toDouble()==0);
-    meter->setProperty("processing",true);
+    setMeter("processing",true);
     publish(8,200,150); // New native subrequest, independent counters and clocks.
     ROCLINT_CHECK(plainRate()=="40.0 gen · 53.3 dec tok/s");
-    meter->setProperty("reducedMotion",true);
+    setMeter("reducedMotion",true);
     QTest::qWait(300);
     const QRect waveRegion(region.x(),region.y()+14,region.width(),region.height()-14);
     const auto stillFirst=window->grabWindow().copy(waveRegion);
     publish(12,300,240);
     QTest::qWait(350);
     ROCLINT_CHECK(!meter->property("recentActivity").toBool() && stillFirst==window->grabWindow().copy(waveRegion));
-    meter->setProperty("processing",false);
+    setMeter("processing",false);
     ROCLINT_CHECK(plainRate()=="Last · 40.0 gen · 50.0 dec tok/s");
     savePreview(window,QStringLiteral("measured-wave-reduced-motion.png"));
     publish(0,0,0);
-    meter->setProperty("reducedMotion",false);
-    meter->setProperty("processing",true);
+    setMeter("reducedMotion",false);
+    setMeter("processing",true);
     for(int i=1;i<=6;++i) {
         publish(i*16.0,i*240.0+(i%2)*80.0,i*180.0+(i%2)*50.0);
         const auto artifacts=qEnvironmentVariable("ROCLINT_TEST_ARTIFACT_DIR");
@@ -1443,8 +1562,8 @@ void testGenerationMeterUsesMeasuredProgress() {
         // Hold identical visual age for the size comparison; test actual speed,
         // excluding fade timing, label changes and interpolation in progress.
         const double hold=meter->property("holdUntil").toDouble()+2000;
-        meter->setProperty("holdUntil",hold);
-        meter->setProperty("fadeUntil",hold+350);
+        setMeter("holdUntil",hold);
+        setMeter("fadeUntil",hold+350);
         QTest::qWait(250);
         window->update();
         const auto frame=window->grabWindow();
@@ -1523,12 +1642,37 @@ void testGenerationMeterUsesMeasuredProgress() {
     // Restore the normal arrival tail for the existing completion check.
     publish(0,0,0);
     publish(16,400,320);
-    meter->setProperty("processing",false);
+    setMeter("processing",false);
     QTest::qWait(1100);
     const auto completed=window->grabWindow().copy(region);
     QTest::qWait(350);
     ROCLINT_CHECK(!meter->property("recentActivity").toBool() && completed==window->grabWindow().copy(region));
     savePreview(window,QStringLiteral("measured-wave-complete.png"));
+    setMeter("processing",true);
+    publish(0,0,0);
+    setMeter("reasoningTokenCount",64);
+    setMeter("answerTokenCount",0);
+    setMeter("generationPhase",QStringLiteral("thinking"));
+    publish(64,1000,900);
+    QTest::qWait(600);
+    if (!plainRate().startsWith("Thinking · "))
+        std::cout << "Meter thinking diagnostic: text=" << plainRate().toStdString()
+                  << "; phase=" << meter->property("generationPhase").toString().toStdString()
+                  << "; processing=" << meter->property("processing").toBool()
+                  << "; preparing=" << meter->property("preparing").toBool()
+                  << "; seen=" << meter->property("seenTokens").toDouble() << '\n';
+    ROCLINT_CHECK(plainRate().startsWith("Thinking · "));
+    ROCLINT_CHECK(splitLabel->property("visible").toBool());
+    savePreview(window,QStringLiteral("measured-wave-thinking.png"));
+    setMeter("answerTokenCount",16);
+    setMeter("generationPhase",QStringLiteral("answer"));
+    publish(80,1400,1260);
+    QTest::qWait(600);
+    ROCLINT_CHECK(!plainRate().startsWith("Thinking"));
+    ROCLINT_CHECK(splitLabel->property("text").toString().contains("Answer 16"));
+    savePreview(window,QStringLiteral("measured-wave-answer.png"));
+    setMeter("processing",false);
+
     std::cout << "  [PASS] One rolling wave responds to recent measured speed changes without repeating crests; shared scale, idle, stalls, rate integrity and reduced motion remain correct.\n";
 }
 
@@ -1543,6 +1687,9 @@ void testUserRequestedRewriteFromNewDraft() {
     int discoveries=0, rewrites=0;
     const QString draft="Refactor Reader::open for readability. Preserve behavior and caller-owned handles.";
     controller.setTransportOverrideForTesting([&](std::string_view request) -> Result<std::string> {
+        if (request.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         if (request.find("granite.goldfish_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
@@ -1588,6 +1735,11 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     controller.setAmbientModeEnabled(true);
     int modelCalls = 0;
     controller.setTransportOverrideForTesting([&](std::string_view request) -> Result<std::string> {
+        if (request.find("granite.clarification_check.v1") != std::string_view::npos)
+            return std::string(R"({"meaning":"The answer settles the question.","answers_question":true,"compatible":true,"feedback":""})");
+        if (request.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         if (request.find("granite.goldfish_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
@@ -1613,6 +1765,7 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(controller.analysisStatus() == "READY" && controller.activeItemId() == "mdc_0");
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.submitCustomIntent(QStringLiteral("Prefer lower latency per call."), controller.stateVersion())));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(controller.hasProposal() && controller.pendingReviewCount() > 0 && !controller.canApprove());
@@ -1724,6 +1877,11 @@ void testManualRemainderCanFinishAndGeneratePreview() {
        {"label":"Input validation","why_material":"Input safety","evidence":["safer"]}]}],
       "assumptions":[],"missing_decisions":[{"question":"Which interpretation should be final?","blocking":true}],"conflicts":[],"clarification_question":""})";
     controller.setTransportOverrideForTesting([&](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.clarification_check.v1") != std::string_view::npos)
+            return std::string(R"({"meaning":"The answer settles the question.","answers_question":true,"compatible":true,"feedback":""})");
+        if (prompt.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
+            return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
+        }
         if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
@@ -1774,7 +1932,65 @@ void testManualRemainderCanFinishAndGeneratePreview() {
     std::cout << "  [PASS] The visible manual remainder completes intent and starts one reviewable rewrite.\n";
 }
 
-void testForbiddenColorOptionIsBlockedInUiAndController() {
+void testClarificationFeedbackKeepsRejectedText() {
+    QSettings().clear();
+    HostController controller(":memory:");
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
+    controller.setLegacyDiscoveryForTesting(true);
+    const QString draft = "Build an app with small text and choose a font.";
+    bool accept = false;
+    bool sawPreviousAnswer = false;
+    controller.setTransportOverrideForTesting([&](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.clarification_check.v1") != std::string_view::npos) {
+            if (prompt.find("Which font family?") != std::string_view::npos) {
+                sawPreviousAnswer = prompt.find(R"("answer":"12pt")") != std::string_view::npos;
+            }
+            return accept ? std::string(R"({"meaning":"The answer settles the question.","answers_question":true,"compatible":true,"feedback":""})") :
+                std::string(R"({"meaning":"The answer does not settle the question.","answers_question":false,"compatible":true,"feedback":"What text size did you mean?"})");
+        }
+        return std::string(R"({"status":"options_generated","choice_groups":[
+          {"question":"What text size?","material":true,"alternatives":[
+            {"label":"11pt","why_material":"More compact","evidence":["small text"]},
+            {"label":"12pt","why_material":"More readable","evidence":["small text"]}]},
+          {"question":"Which font family?","material":true,"alternatives":[
+            {"label":"Serif","why_material":"Character shapes","evidence":["choose a font"]},
+            {"label":"Sans-serif","why_material":"Character shapes","evidence":["choose a font"]}]}]})");
+    });
+    ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("hostController", &controller);
+    engine.load(QUrl("qrc:/shell/FloatingCard.qml"));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* window = engine.rootObjects().first();
+    auto* panel = window->findChild<QObject*>("intentReviewPanel");
+    auto* field = window->findChild<QObject*>("customAnswer");
+    auto* feedback = window->findChild<QObject*>("clarificationFeedback");
+    ROCLINT_CHECK(panel && field && feedback);
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(draft, 0)));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.isClarifying());
+    const auto version = controller.stateVersion();
+    const QString nonsense = "iondwfwoefneiofneionfeio";
+    field->setProperty("text", nonsense);
+    ROCLINT_CHECK(QMetaObject::invokeMethod(panel, "handleAnswerSubmit", Q_ARG(QVariant, nonsense)));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    ROCLINT_CHECK(field->property("text").toString() == nonsense);
+    ROCLINT_CHECK(feedback->property("text").toString() == "What text size did you mean?");
+    ROCLINT_CHECK(controller.stateVersion() == version && controller.roundsCompleted() == 0);
+    ROCLINT_CHECK(!controller.hasConfirmedIntent() && !controller.hasProposal());
+    accept = true;
+    field->setProperty("text", "12pt");
+    ROCLINT_CHECK(QMetaObject::invokeMethod(panel, "handleAnswerSubmit", Q_ARG(QVariant, QString("12pt"))));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    ROCLINT_CHECK(field->property("text").toString().isEmpty());
+    ROCLINT_CHECK(controller.activeQuestion() == "Which font family?" && controller.roundsCompleted() == 1);
+    accept = false;
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.submitCustomIntent("serif", controller.stateVersion())));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && sawPreviousAnswer);
+    ROCLINT_CHECK(controller.roundsCompleted() == 1);
+    std::cout << "  [PASS] Rejected answers stay editable beside model feedback; checked answers advance and provide context to the next check.\n";
+}
+
+void testForbiddenColorOptionIsNotOffered() {
     QSettings().clear();
     HostController controller(QStringLiteral(":memory:"));
     ROCLINT_CHECK(controller.waitForStorageForTesting());
@@ -1788,13 +2004,19 @@ void testForbiddenColorOptionIsBlockedInUiAndController() {
     ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(QStringLiteral("The dog will be black but it cant be blue."), 0)));
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
-    ROCLINT_CHECK(controller.activeAlternatives().size() == 2);
-    ROCLINT_CHECK(controller.activeAlternatives()[0].toMap().value("permitted").toBool());
-    ROCLINT_CHECK(!controller.activeAlternatives()[1].toMap().value("permitted").toBool());
-    const auto version = controller.stateVersion();
-    ROCLINT_CHECK(!controller.waitForCommandForTesting(controller.confirmChoice(QStringLiteral("alt_0_1"), version)));
-    ROCLINT_CHECK(controller.stateVersion() == version && controller.roundsCompleted() == 0);
-    ROCLINT_CHECK(controller.lastError().contains(QStringLiteral("color requirement")));
+    ROCLINT_CHECK(controller.isClarifying());
+    ROCLINT_CHECK(controller.analysisForTesting().has_value());
+    const auto& analysis = *controller.analysisForTesting();
+    for (const auto& group : analysis.choiceGroups) {
+        for (const auto& alternative : group.alternatives) {
+            ROCLINT_CHECK(alternative.interpretation.find("Blue") == std::string::npos);
+        }
+    }
+    for (const auto& alternative : controller.activeAlternatives()) {
+        ROCLINT_CHECK(alternative.toMap().value("label").toString() != QStringLiteral("Blue dog"));
+    }
+    ROCLINT_CHECK(!controller.hasConfirmedIntent());
+    ROCLINT_CHECK(!controller.hasProposal());
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("hostController"), &controller);
     engine.load(QUrl(QStringLiteral("qrc:/shell/FloatingCard.qml")));
@@ -1802,15 +2024,7 @@ void testForbiddenColorOptionIsBlockedInUiAndController() {
     ROCLINT_CHECK(window);
     window->show();
     QTest::qWait(25);
-    std::function<QQuickItem*(QQuickItem*)> findForbidden = [&](QQuickItem* item) -> QQuickItem* {
-        if (item->objectName() == "alternative1") return item;
-        for (auto* child : item->childItems()) if (auto* found = findForbidden(child)) return found;
-        return nullptr;
-    };
-    auto* forbidden = findForbidden(window->contentItem());
-    ROCLINT_CHECK(forbidden && !forbidden->isEnabled());
-    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.confirmChoice(QStringLiteral("alt_0_0"), version)));
-    ROCLINT_CHECK(controller.hasConfirmedIntent());
+    ROCLINT_CHECK(window->findChild<QObject*>(QStringLiteral("alternative1")) == nullptr);
 }
 } // namespace
 
@@ -1858,6 +2072,8 @@ void testInspectModeVisualInspector() {
 }
 
 int main(int argc, char* argv[]) {
+    // Keep completed checks visible if a later asynchronous UI check stalls.
+    std::cout << std::unitbuf;
     // Opt in to native platform window/focus verification without changing the CI default.
     if (!qEnvironmentVariableIsSet("ROCLINT_NATIVE_UI_TEST")) {
         qputenv("QT_QPA_PLATFORM", "offscreen");
@@ -1883,61 +2099,74 @@ int main(int argc, char* argv[]) {
         ROCLINT_CHECK(!QTest::currentTestFailed());
         return 0;
     }
+    const QString selectedCase = qEnvironmentVariable("ROCLINT_ALIGNMENT_CASE");
+    int checksExecuted = 0;
+    const auto run = [&](const char* name, auto check) {
+        if (!selectedCase.isEmpty() && selectedCase != QString::fromUtf8(name)) return;
+        ++checksExecuted;
+        std::cout << "  [RUN] " << name << '\n';
+        check();
+        if (QTest::currentTestFailed()) std::cerr << "Qt assertion failed in " << name << '\n';
+        ROCLINT_CHECK(!QTest::currentTestFailed());
+    };
     if (qEnvironmentVariableIsSet("ROCLINT_NATIVE_UI_TEST")) {
-        testCompactHudControlsStayInsideWindow();
-        testCaptureControlsEnableAmbientBadge();
-        testOptionalPresentationFromPersistedV5();
-        testReviewGeometryAndExplicitExpansion();
-        testProductionReviewPresentation();
-        testHudPresentationSurvivesDraftAndDelivery();
-        testTypingDebouncesAnalysisInQml();
-        testAutoAnalysisResumesAfterDelivery();
+        run("testCompactHudControlsStayInsideWindow", testCompactHudControlsStayInsideWindow);
+        run("testCaptureControlsEnableAmbientBadge", testCaptureControlsEnableAmbientBadge);
+        run("testOptionalPresentationFromPersistedV5", testOptionalPresentationFromPersistedV5);
+        run("testReviewGeometryAndExplicitExpansion", testReviewGeometryAndExplicitExpansion);
+        run("testProductionReviewPresentation", testProductionReviewPresentation);
+        run("testHudPresentationSurvivesDraftAndDelivery", testHudPresentationSurvivesDraftAndDelivery);
+        run("testTypingDebouncesAnalysisInQml", testTypingDebouncesAnalysisInQml);
+        run("testAutoAnalysisResumesAfterDelivery", testAutoAnalysisResumesAfterDelivery);
         ROCLINT_CHECK(!QTest::currentTestFailed());
         std::cout << "[Native HUD] Presentation regression PASSED.\n";
         return 0;
     }
     if (qEnvironmentVariableIsSet("ROCLINT_EDIT_DRAFT_REGRESSION_ONLY")) {
-        testEditPromptFromProposalUsesNewHudDraft();
+        run("testEditPromptFromProposalUsesNewHudDraft", testEditPromptFromProposalUsesNewHudDraft);
         return 0;
     }
     if (qEnvironmentVariableIsSet("ROCLINT_GENERATION_METER_ONLY")) {
-        testGenerationMeterUsesMeasuredProgress();
+        run("testGenerationMeterUsesMeasuredProgress", testGenerationMeterUsesMeasuredProgress);
         ROCLINT_CHECK(!QTest::currentTestFailed());
         return 0;
     }
     if (qEnvironmentVariableIsSet("ROCLINT_CLARIFICATION_REGRESSION_ONLY")) {
-        testExplicitClarificationAndDeferredRewrite();
+        run("testExplicitClarificationAndDeferredRewrite", testExplicitClarificationAndDeferredRewrite);
         ROCLINT_CHECK(!QTest::currentTestFailed());
         return 0;
     }
-    testOptionalPresentationFromPersistedV5();
-    testReviewGeometryAndExplicitExpansion();
-    testProductionReviewPresentation();
-    testNativeGlobalShortcutDispatch();
-    testCompactHudControlsStayInsideWindow();
-    testCaptureControlsEnableAmbientBadge();
-    testCaptureAndSettings();
-    testHintChangeRejectsInFlightResult();
-    testModelSwitchDuringInference();
-    testKeyboardWorkflow();
-    testReviewRequiresExplicitActivation();
-    testReviewAcknowledgementStorageFailure();
-    testOverBudgetAssumptionsRemainVisibleAndUnconfirmed();
-    testResidencySettingsKeyboard();
-    testClipboardFallbackDoesNotDismissQmlCard();
-    testGenerationMeterUsesMeasuredProgress();
-    testUserRequestedRewriteFromNewDraft();
-    testManualGraniteRewriteConnectsEditorWithoutLosingReview();
-    testLiveCapturedDraftAndCancelRetryInQml();
-    testHudPresentationSurvivesDraftAndDelivery();
-    testTypingDebouncesAnalysisInQml();
-    testEditPromptFromProposalUsesNewHudDraft();
-    testExplicitClarificationAndDeferredRewrite();
-    testAutoAnalysisResumesAfterDelivery();
-    testManualRemainderCanFinishAndGeneratePreview();
-    testForbiddenColorOptionIsBlockedInUiAndController();
-    testInspectModeVisualInspector();
+    run("testOptionalPresentationFromPersistedV5", testOptionalPresentationFromPersistedV5);
+    run("testReviewGeometryAndExplicitExpansion", testReviewGeometryAndExplicitExpansion);
+    run("testProductionReviewPresentation", testProductionReviewPresentation);
+    run("testNativeGlobalShortcutDispatch", testNativeGlobalShortcutDispatch);
+    run("testCompactHudControlsStayInsideWindow", testCompactHudControlsStayInsideWindow);
+    run("testCaptureControlsEnableAmbientBadge", testCaptureControlsEnableAmbientBadge);
+    run("testCaptureAndSettings", testCaptureAndSettings);
+    run("testHintChangeRejectsInFlightResult", testHintChangeRejectsInFlightResult);
+    run("testModelSwitchDuringInference", testModelSwitchDuringInference);
+    run("testKeyboardWorkflow", testKeyboardWorkflow);
+    run("testReviewRequiresExplicitActivation", testReviewRequiresExplicitActivation);
+    run("testReviewAcknowledgementStorageFailure", testReviewAcknowledgementStorageFailure);
+    run("testOverBudgetAssumptionsRemainVisibleAndUnconfirmed", testOverBudgetAssumptionsRemainVisibleAndUnconfirmed);
+    run("testResidencySettingsKeyboard", testResidencySettingsKeyboard);
+    run("testClipboardFallbackDoesNotDismissQmlCard", testClipboardFallbackDoesNotDismissQmlCard);
+    run("testGenerationMeterUsesMeasuredProgress", testGenerationMeterUsesMeasuredProgress);
+    run("testUserRequestedRewriteFromNewDraft", testUserRequestedRewriteFromNewDraft);
+    run("testManualGraniteRewriteConnectsEditorWithoutLosingReview", testManualGraniteRewriteConnectsEditorWithoutLosingReview);
+    run("testCapturedAndClipboardDraftPresentation", testCapturedAndClipboardDraftPresentation);
+    run("testLiveCapturedDraftAndCancelRetryInQml", testLiveCapturedDraftAndCancelRetryInQml);
+    run("testHudPresentationSurvivesDraftAndDelivery", testHudPresentationSurvivesDraftAndDelivery);
+    run("testTypingDebouncesAnalysisInQml", testTypingDebouncesAnalysisInQml);
+    run("testEditPromptFromProposalUsesNewHudDraft", testEditPromptFromProposalUsesNewHudDraft);
+    run("testExplicitClarificationAndDeferredRewrite", testExplicitClarificationAndDeferredRewrite);
+    run("testAutoAnalysisResumesAfterDelivery", testAutoAnalysisResumesAfterDelivery);
+    run("testManualRemainderCanFinishAndGeneratePreview", testManualRemainderCanFinishAndGeneratePreview);
+    run("testForbiddenColorOptionIsNotOffered", testForbiddenColorOptionIsNotOffered);
+    run("testClarificationFeedbackKeepsRejectedText", testClarificationFeedbackKeepsRejectedText);
+    run("testInspectModeVisualInspector", testInspectModeVisualInspector);
     ROCLINT_CHECK(!QTest::currentTestFailed());
+    ROCLINT_CHECK(checksExecuted > 0);
     std::cout << "[Product Alignment] All tests PASSED.\n";
     return 0;
 }

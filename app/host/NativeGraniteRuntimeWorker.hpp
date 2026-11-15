@@ -9,6 +9,7 @@
 #include <QProcess>
 #include <QString>
 
+#include <atomic>
 #include <memory>
 #include <chrono>
 #include <optional>
@@ -31,6 +32,9 @@ public:
         QString prompt;
         QString intentId;
         QString profileId;
+        std::shared_ptr<std::atomic_bool> cancellation;
+        bool thinkingEnabled{true};
+        std::chrono::steady_clock::time_point deadline{std::chrono::steady_clock::time_point::max()};
     };
     explicit NativeGraniteRuntimeWorker(QObject* parent = nullptr, QString worker = {});
     ~NativeGraniteRuntimeWorker() override;
@@ -51,6 +55,9 @@ public:
     [[nodiscard]] double lastDecodeTokensPerSecond() const noexcept { return lastDecodeTokensPerSecond_; }
     [[nodiscard]] double lastGenerationTokensPerSecond() const noexcept { return lastGenerationTokensPerSecond_; }
     [[nodiscard]] qint64 lastOutputTokens() const noexcept { return lastOutputTokens_; }
+    [[nodiscard]] qint64 lastReasoningTokens() const noexcept { return lastReasoningTokens_; }
+    [[nodiscard]] qint64 lastAnswerTokens() const noexcept { return lastAnswerTokens_; }
+    [[nodiscard]] QString generationPhase() const { return generationPhase_; }
     [[nodiscard]] double lastDecodeMs() const noexcept { return lastDecodeMs_; }
     [[nodiscard]] double lastGenerationMs() const noexcept { return lastGenerationMs_; }
     void load(const QString& directory, const QString& quantization);
@@ -129,6 +136,9 @@ private:
     double lastGenerationTokensPerSecond_{0.0};
     quint64 metricsRequestId_{0};
     qint64 lastOutputTokens_{0};
+    qint64 lastReasoningTokens_{0};
+    qint64 lastAnswerTokens_{0};
+    QString generationPhase_{QStringLiteral("idle")};
     double lastDecodeMs_{0.0};
     double lastGenerationMs_{0.0};
 };

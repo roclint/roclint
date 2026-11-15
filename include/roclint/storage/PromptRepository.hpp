@@ -72,7 +72,7 @@ struct ModelAttemptRecord {
     std::string attemptId{};
     std::string sessionId{};
     std::string revisionId{};
-    std::string stage{};       // "discovery" | "julia_scoring" | "rewrite" | "health"
+    std::string stage{};       // "discovery" | "clarification_check" | "julia_scoring" | "rewrite" | "health"
     AttemptStatus status{AttemptStatus::InProgress};
     std::string transport{};
     std::string modelId{};

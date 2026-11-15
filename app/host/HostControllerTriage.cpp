@@ -73,7 +73,7 @@ AsyncTask<void> HostController::continuePromptTriageLoad() {
         setAnalysisStatus(AnalysisStatus::Failed, QStringLiteral("Update the Julia helper: it does not support S1 prompt classification."));
         co_return;
     }
-    ticket.analysisGroup = std::make_shared<AnalysisGroup>(m_analysisGroupTimeoutMs);
+    ticket.analysisGroup = std::make_shared<AnalysisGroup>(analysisGroupBudgetMs());
     ticket.analysisGroup->id = "grp_" + QUuid::createUuid().toString(QUuid::WithoutBraces).toStdString();
     if (const auto status = (co_await beginAttempt(ticket, "julia_triage")); !status.ok()) {
         setLastError(status.error()); setAnalysisStatus(AnalysisStatus::Failed, qs(status.error().message)); co_return;
