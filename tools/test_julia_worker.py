@@ -554,5 +554,189 @@ class JuliaProtocolTests(unittest.TestCase):
         self.assertEqual(response["request_id"], "2")
 
 
+class ContextualCandidateRankingTests(unittest.TestCase):
+    def test_candidate_ranking_avoids_first_item_fallback_on_ties(self):
+        class TiedEngine:
+            def logits(self, rows):
+                # Return equal logits for all options in all rows
+                return [[0.0 for _ in row["options"]] for row in rows]
+
+        req = {
+            "plan_version": 2,
+            "snapshot_id": "snap_tie_test",
+            "prompt": "Please configure express shipping for this order.",
+            "groups": [{
+                "id": "grp_service",
+                "question": "Which service to configure?",
+                "alternatives": [
+                    {"id": "alt_billing", "label": "Billing Service"},
+                    {"id": "alt_shipping", "label": "Shipping Service"}
+                ]
+            }],
+            "assumptions": []
+        }
+        res = worker.evaluate(TiedEngine(), req)
+        group = res["groups"][0]
+        # Shipping Service matches prompt context ("shipping") and is ordered ahead of Billing,
+        # but lexical overlap is not treated as proof: the tie stays unresolved.
+        self.assertEqual(group["winner"], "alt_shipping")
+        self.assertTrue(group["unresolved_tie"])
+        self.assertFalse(group["justified"])
+        self.assertEqual(group["confidence"], 0.0)
+        # Both options have probabilities summing to 1
+        self.assertAlmostEqual(sum(p["probability"] for p in group["probabilities"]), 1.0)
+
+    def test_deterministic_constraint_filtering_separated_from_scores(self):
+        class ProBillingEngine:
+            def logits(self, rows):
+                # Return logits strongly favoring option 0 (Billing)
+                return [[2.0, -2.0] if row["type"] == "choice" else [0.0, 1.0] for row in rows]
+
+        req = {
+            "plan_version": 2,
+            "snapshot_id": "snap_constraint_test",
+            "prompt": "Update the checkout workflow without modifying Billing in any file.",
+            "groups": [{
+                "id": "grp_service",
+                "question": "Which service to adjust?",
+                "alternatives": [
+                    {"id": "alt_billing", "label": "Billing"},
+                    {"id": "alt_shipping", "label": "Shipping"}
+                ]
+            }],
+            "assumptions": []
+        }
+        res = worker.evaluate(ProBillingEngine(), req)
+        group = res["groups"][0]
+        # Despite model logits favoring Billing, negative constraint forbids it; Shipping must win
+        self.assertEqual(group["winner"], "alt_shipping")
+        winner_p = next(p["probability"] for p in group["probabilities"] if p["id"] == "alt_shipping")
+        violator_p = next(p["probability"] for p in group["probabilities"] if p["id"] == "alt_billing")
+        self.assertGreater(winner_p, violator_p)
+
+    def test_calibrated_confidence_requires_clear_evidence(self):
+        # Pure tie -> 0 confidence
+        conf_tie = worker.calculate_calibrated_confidence([0.5, 0.5])
+        self.assertEqual(conf_tie, 0.0)
+
+        # Small margin (0.52 vs 0.48) -> low confidence
+        conf_small_margin = worker.calculate_calibrated_confidence([0.52, 0.48])
+        self.assertLess(conf_small_margin, 0.15)
+
+        # High separation with low ambiguity -> high calibrated confidence
+        conf_clear = worker.calculate_calibrated_confidence([0.95, 0.05], ambiguity_score=0.1)
+        self.assertGreaterEqual(conf_clear, 0.70)
+
+        # High separation but high ambiguity -> discounted confidence
+        conf_ambiguous = worker.calculate_calibrated_confidence([0.95, 0.05], ambiguity_score=0.85)
+        self.assertLess(conf_ambiguous, conf_clear)
+
+    def test_triage_candidate_scoring_distinguishes_model_and_constraints(self):
+        class ChoiceEngine:
+            def logits(self, rows):
+                # 5 noul heads, then 1 choice head
+                noul_logits = [[0.0, 1.5] for _ in range(len(rows) - 1)]
+                choice_logits = [1.0, 2.0]  # candidate 1 (ScreenPlacement) favored over 0 (FloatingCard)
+                return noul_logits + [choice_logits]
+
+        result = worker.triage(ChoiceEngine(), {
+            "triage_plan_version": 2,
+            "prompt": "Fix card bounds without modifying FloatingCard in any file.",
+            "candidate_choices": ["FloatingCard.qml", "ScreenPlacement.cpp"]
+        })
+        self.assertIn("choice_decision", result)
+        decision = result["choice_decision"]
+        # ScreenPlacement.cpp is compliant and favored by model; FloatingCard.qml is flagged as violator
+        self.assertEqual(decision["recommended_index"], 1)
+        self.assertIn("[Safe Rule-Compliant Override]", decision["recommended_option"])
+        self.assertIn("violator_indices", decision)
+        self.assertEqual(decision["violator_indices"], [0])
+        self.assertIn("model_distribution", decision)
+        # Raw model distribution preserved separately
+        self.assertGreater(decision["model_distribution"][1], decision["model_distribution"][0])
+
+    def test_preservation_wording_is_not_a_prohibition_violation(self):
+        flagged = worker.detect_prohibited_choices(
+            "Refactor the handler without changing the public API.",
+            ["Keep the public API unchanged", "Change the public API to a new shape"])
+        self.assertNotIn(0, flagged)
+        self.assertIn(1, flagged)
+
+    def test_exact_tie_without_strong_context_stays_uncertain(self):
+        class TiedEngine:
+            def logits(self, rows):
+                return [[0.0 for _ in row["options"]] for row in rows]
+
+        result = worker.evaluate(TiedEngine(), {
+            "plan_version": 2,
+            "snapshot_id": "snap_unresolved_tie",
+            "prompt": "Choose a service.",
+            "groups": [{
+                "id": "grp_service",
+                "question": "Which service?",
+                "alternatives": [
+                    {"id": "alt_a", "label": "Alpha"},
+                    {"id": "alt_b", "label": "Beta"}
+                ]
+            }],
+            "assumptions": []
+        })
+        group = result["groups"][0]
+        self.assertTrue(group["unresolved_tie"])
+        self.assertFalse(group["justified"])
+        self.assertEqual(group["confidence"], 0.0)
+
+    def test_high_ambiguity_keeps_recommendation_unjustified(self):
+        class AmbiguousEngine:
+            def logits(self, rows):
+                if rows[0]["type"] == "choice":
+                    return [[2.0, 1.0], [-3.0, 3.0]]
+                return [[0.0, 0.0] for _ in rows]
+
+        result = worker.evaluate(AmbiguousEngine(), {
+            "plan_version": 2,
+            "snapshot_id": "snap_high_ambiguity",
+            "prompt": "Make the dashboard faster.",
+            "groups": [{
+                "id": "grp_speed",
+                "question": "What should faster mean?",
+                "alternatives": [
+                    {"id": "alt_latency", "label": "Lower latency per request"},
+                    {"id": "alt_throughput", "label": "Higher batch throughput"}
+                ]
+            }],
+            "assumptions": []
+        })
+        group = result["groups"][0]
+        self.assertGreater(group["ambiguity"], 0.90)
+        self.assertLess(group["confidence"], 0.30)
+        self.assertFalse(group["justified"])
+
+    def test_all_invalid_candidates_are_not_justified(self):
+        class ConfidentEngine:
+            def logits(self, rows):
+                if rows[0]["type"] == "choice":
+                    return [[4.0, 0.0], [-3.0, 3.0]]
+                return [[0.0, 0.0] for _ in rows]
+
+        result = worker.evaluate(ConfidentEngine(), {
+            "plan_version": 2,
+            "snapshot_id": "snap_all_invalid",
+            "prompt": "Change the UI without modifying the public API.",
+            "groups": [{
+                "id": "grp_api",
+                "question": "How should the public API change?",
+                "alternatives": [
+                    {"id": "alt_change", "label": "Change the public API"},
+                    {"id": "alt_replace", "label": "Replace the public API"}
+                ]
+            }],
+            "assumptions": []
+        })
+        group = result["groups"][0]
+        self.assertEqual(len(group["probabilities"]), 2)
+        self.assertFalse(group["justified"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -27,18 +27,48 @@ namespace {
 }
 
 [[nodiscard]] bool groupsCollide(const ChoiceGroup& a, const ChoiceGroup& b) noexcept {
+    bool hasOverlap = false;
     for (const auto& altA : a.alternatives) {
         for (const auto& spanA : altA.evidence) {
             for (const auto& altB : b.alternatives) {
                 for (const auto& spanB : altB.evidence) {
                     if (MaterialityPolicyV1::spansOverlap(spanA, spanB)) {
-                        return true;
+                        hasOverlap = true;
+                        break;
                     }
                 }
+                if (hasOverlap) break;
             }
+            if (hasOverlap) break;
+        }
+        if (hasOverlap) break;
+    }
+    if (!hasOverlap) return false;
+
+    // Different wording does not prove different decisions. Two groups may be paraphrases of the
+    // same latency question while sharing a "faster" span. Only an explicit, distinct decision
+    // dimension supplied by the model makes overlapping evidence legitimate exploration.
+    // Missing or identical dimensions stay conservative: overlapping evidence collides.
+    const std::string dimensionA = toLowerString(trimWhitespace(a.dimension));
+    const std::string dimensionB = toLowerString(trimWhitespace(b.dimension));
+    if (!dimensionA.empty() && !dimensionB.empty() && dimensionA != dimensionB) {
+        bool duplicateLabels = false;
+        for (const auto& altA : a.alternatives) {
+            const std::string la = toLowerString(trimWhitespace(altA.interpretation));
+            for (const auto& altB : b.alternatives) {
+                const std::string lb = toLowerString(trimWhitespace(altB.interpretation));
+                if (!la.empty() && la == lb) {
+                    duplicateLabels = true;
+                    break;
+                }
+            }
+            if (duplicateLabels) break;
+        }
+        if (!duplicateLabels) {
+            return false;
         }
     }
-    return false;
+    return true;
 }
 
 } // namespace

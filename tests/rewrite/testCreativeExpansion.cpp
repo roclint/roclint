@@ -9,49 +9,37 @@ using namespace roclint::core::rewrite;
 
 namespace {
 
-void testLayer3VisualizationExpansion() {
-    const std::string original = "Make a creative Layer 3 animation, but technically accurate.";
-    const std::string base = "Create a technically accurate Layer 3 packet animation showing IP destination forwarding using glowing particle flows.";
-
-    std::vector<ScopedConstraint> constraints;
-    ScopedConstraint hardL3;
-    hardL3.id = "hard_l3_accuracy";
-    hardL3.origin = Origin::User;
-    hardL3.enforcement = Enforcement::Hard;
-    hardL3.polarity = Polarity::Require;
-    hardL3.aspect = "domain_accuracy";
-    hardL3.rule = "technically accurate Layer 3 forwarding";
-    constraints.push_back(hardL3);
-
-    ScopedConstraint modelParticle;
-    modelParticle.id = "model_particle_flow";
-    modelParticle.origin = Origin::Model;
-    modelParticle.enforcement = Enforcement::Advisory;
-    modelParticle.polarity = Polarity::Require;
-    modelParticle.aspect = "presentation";
-    modelParticle.rule = "use glowing particle flows";
-    constraints.push_back(modelParticle);
-
-    auto alternatives = CreativeExpansionEngine::expand(original, base, constraints);
-
-    ROCLINT_CHECK(alternatives.size() >= 3);
-    ROCLINT_CHECK(alternatives[0].id == "alt_direct");
-    ROCLINT_CHECK(alternatives[0].title == "Direct / Minimal");
-    ROCLINT_CHECK(!alternatives[0].rewrittenText.empty());
-    ROCLINT_CHECK(!alternatives[0].diffText.empty());
-    ROCLINT_CHECK(alternatives[0].auditOutcome == ValidationOutcome::Pass);
-
-    ROCLINT_CHECK(alternatives[1].id == "alt_flow");
-    ROCLINT_CHECK(alternatives[1].title == "Dynamic Flow");
-    ROCLINT_CHECK(!alternatives[1].rewrittenText.empty());
-    ROCLINT_CHECK(alternatives[1].auditOutcome == ValidationOutcome::Unresolved);
-
-    ROCLINT_CHECK(alternatives[2].id == "alt_stack");
-    ROCLINT_CHECK(alternatives[2].title == "Stack & Topology");
-    ROCLINT_CHECK(!alternatives[2].rewrittenText.empty());
-    ROCLINT_CHECK(alternatives[2].auditOutcome == ValidationOutcome::Unresolved);
-
-    std::cout << "  [PASS] Layer 3 creative expansion produces 3 distinct aesthetic branches.\n";
+void testNoCannedCategoryMenus() {
+    // Two substantially different prompts must not select fixed keyword menus. The alternatives
+    // are structural re-expressions of the user's own text, never invented camera or stack advice.
+    const std::vector<std::pair<std::string, std::string>> cases = {
+        {"Make the plant shot feel cinematic.",
+         "Make the plant shot feel cinematic."},
+        {"Make a creative Layer 3 animation, but technically accurate.",
+         "Create a technically accurate Layer 3 packet animation showing IP destination forwarding."},
+    };
+    for (const auto& [original, base] : cases) {
+        auto alternatives = CreativeExpansionEngine::expand(original, base, {});
+        ROCLINT_CHECK(alternatives.size() >= 2);
+        ROCLINT_CHECK(alternatives[0].id == "alt_direct");
+        ROCLINT_CHECK(alternatives[0].title == "Direct / Minimal");
+        ROCLINT_CHECK(alternatives[0].auditOutcome == ValidationOutcome::Pass);
+        ROCLINT_CHECK(alternatives[1].id == "alt_steps");
+        ROCLINT_CHECK(alternatives[1].auditOutcome == ValidationOutcome::Unresolved);
+        for (const auto& alt : alternatives) {
+            ROCLINT_CHECK(!alt.rewrittenText.empty());
+            ROCLINT_CHECK(!alt.diffText.empty());
+            // No keyword-derived technical prescriptions.
+            ROCLINT_CHECK(alt.rewrittenText.find("35mm") == std::string::npos);
+            ROCLINT_CHECK(alt.rewrittenText.find("bokeh") == std::string::npos);
+            ROCLINT_CHECK(alt.rewrittenText.find("PostgreSQL") == std::string::npos);
+            ROCLINT_CHECK(alt.rewrittenText.find("mobile-first") == std::string::npos);
+            ROCLINT_CHECK(alt.rewrittenText.find("100ms") == std::string::npos);
+            ROCLINT_CHECK(alt.rewrittenText.find("Dynamic Flow") == std::string::npos);
+            ROCLINT_CHECK(alt.rewrittenText.find("Stack & Topology") == std::string::npos);
+        }
+    }
+    std::cout << "  [PASS] Creative expansion has no keyword menus or Layer 3 production branch.\n";
 }
 
 void testRefactoringExpansionWithNegativeBoundary() {
@@ -70,14 +58,12 @@ void testRefactoringExpansionWithNegativeBoundary() {
 
     auto alternatives = CreativeExpansionEngine::expand(original, base, constraints);
 
-    ROCLINT_CHECK(alternatives.size() >= 3);
-    ROCLINT_CHECK(alternatives[0].id == "alt_prose");
+    ROCLINT_CHECK(alternatives.size() >= 2);
+    ROCLINT_CHECK(alternatives[0].id == "alt_direct");
     ROCLINT_CHECK(alternatives[1].id == "alt_steps");
-    ROCLINT_CHECK(alternatives[2].id == "alt_conservative");
 
     ROCLINT_CHECK(alternatives[0].auditOutcome == ValidationOutcome::Pass);
     ROCLINT_CHECK(alternatives[1].auditOutcome == ValidationOutcome::Unresolved);
-    ROCLINT_CHECK(alternatives[2].auditOutcome == ValidationOutcome::Unresolved);
 
     for (const auto& alt : alternatives) {
         ROCLINT_CHECK(!alt.rewrittenText.empty());
@@ -109,13 +95,14 @@ void testF05MultipleProhibitionsAndTargetFidelity() {
     logging.enforcement = Enforcement::Hard;
 
     auto alts = CreativeExpansionEngine::expand(original, base, {tests, logging});
-    ROCLINT_CHECK(alts.size() >= 3);
+    ROCLINT_CHECK(alts.size() >= 2);
 
     // Candidate 0 inherits the base audit Pass
     ROCLINT_CHECK(alts[0].auditOutcome == ValidationOutcome::Pass);
     // Un-audited alternatives MUST NOT receive an unearned Pass
-    ROCLINT_CHECK(alts[1].auditOutcome == ValidationOutcome::Unresolved);
-    ROCLINT_CHECK(alts[2].auditOutcome == ValidationOutcome::Unresolved);
+    for (std::size_t i = 1; i < alts.size(); ++i) {
+        ROCLINT_CHECK(alts[i].auditOutcome == ValidationOutcome::Unresolved);
+    }
 
     for (const auto& a : alts) {
         // Target Reader::open must be preserved in every alternative
@@ -134,10 +121,10 @@ void testGeneralPromptExpansion() {
     auto alternatives = CreativeExpansionEngine::expand(original, base, constraints);
 
     ROCLINT_CHECK(!alternatives.empty());
-    ROCLINT_CHECK(alternatives[0].id == "alt_base");
+    ROCLINT_CHECK(alternatives[0].id == "alt_direct");
     ROCLINT_CHECK(alternatives[0].auditOutcome == ValidationOutcome::Pass);
 
-    std::cout << "  [PASS] General prompt produces standard and concise alternatives.\n";
+    std::cout << "  [PASS] General prompt produces a direct alternative without invented requirements.\n";
 }
 
 void testMixedSentenceDecompositionAndFidelity() {
@@ -151,7 +138,7 @@ void testMixedSentenceDecompositionAndFidelity() {
     testProhibition.enforcement = Enforcement::Hard;
 
     auto alts = CreativeExpansionEngine::expand(original, base, {testProhibition});
-    ROCLINT_CHECK(alts.size() >= 3);
+    ROCLINT_CHECK(alts.size() >= 2);
 
     for (const auto& a : alts) {
         // Target Reader::open must be preserved across ALL candidate families
@@ -226,7 +213,7 @@ void testCompoundMixedSentenceDecomposition() {
     ScopedConstraint p3{"api", "do not break public API", Origin::User, Derivation::Direct, Enforcement::Hard, Polarity::Prohibit};
 
     auto alts = CreativeExpansionEngine::expand(orig, base, {p1, p2, p3});
-    ROCLINT_CHECK(alts.size() >= 3);
+    ROCLINT_CHECK(alts.size() >= 2);
 
     for (const auto& a : alts) {
         // Target Reader::open must be preserved
@@ -395,7 +382,7 @@ void testGuardedElaborationAndRequirementPreservation() {
 
 int main() {
     std::cout << "[CreativeExpansionTests] Running tests...\n";
-    testLayer3VisualizationExpansion();
+    testNoCannedCategoryMenus();
     testRefactoringExpansionWithNegativeBoundary();
     testF05MultipleProhibitionsAndTargetFidelity();
     testGeneralPromptExpansion();

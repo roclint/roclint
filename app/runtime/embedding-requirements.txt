@@ -1,0 +1,11 @@
+# Roclint embedding model runtime requirements
+# Pinned for reproducibility; update only after testing.
+#
+# Compatible with Python 3.10, 3.11, 3.12
+# Install: pip install -r embedding-requirements.txt
+
+sentence-transformers>=3.0,<4.0
+torch>=2.0,<3.0
+transformers>=4.40,<5.0
+safetensors>=0.4,<1.0
+numpy>=1.24,<3.0

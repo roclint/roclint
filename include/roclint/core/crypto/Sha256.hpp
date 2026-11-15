@@ -58,4 +58,9 @@ private:
 // Normalizes "sha256:<hex>" / "<hex>" to lowercase bare hex; InvalidInput when malformed.
 [[nodiscard]] Result<std::string> normalizeSha256Digest(std::string_view digest);
 
+// Computes the lowercase hex SHA-256 digest of in-memory data.
+[[nodiscard]] inline std::string sha256Hex(std::string_view data) {
+    return Sha256::hexDigest(data);
+}
+
 } // namespace roclint::core::crypto

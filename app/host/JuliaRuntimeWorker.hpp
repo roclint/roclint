@@ -78,6 +78,23 @@ public:
     [[nodiscard]] double lastChoiceConfidence() const { return lastChoiceConfidence_; }
     [[nodiscard]] QString lastChoicePolarity() const { return lastChoicePolarity_; }
 
+    [[nodiscard]] std::optional<bridge::JustifiedRecommendation> justifiedRecommendation(
+        const core::analysis::NormalizedAnalysis& analysis,
+        const bridge::SnapshotEvaluationResponse& response) const {
+        return bridge::S1TriageAdapter::extractJustifiedRecommendation(analysis, response);
+    }
+
+    [[nodiscard]] std::optional<bridge::AssumptionConfidence> assumptionConfidence(
+        const bridge::SnapshotEvaluationResponse& response,
+        const QString& assumptionId) const {
+        return bridge::S1TriageAdapter::extractAssumptionConfidence(response, assumptionId.toUtf8().toStdString());
+    }
+
+    [[nodiscard]] std::vector<bridge::AssumptionConfidence> allAssumptionConfidences(
+        const bridge::SnapshotEvaluationResponse& response) const {
+        return bridge::S1TriageAdapter::extractAllAssumptionConfidences(response);
+    }
+
 signals:
     void stateChanged();
     void stopped();
@@ -95,6 +112,7 @@ private:
         QJsonObject envelope;
         QString prompt;
         std::chrono::steady_clock::time_point deadline;
+        std::optional<core::analysis::NormalizedAnalysis> analysis;
     };
     struct Launch { QString directory; QString python; bool install; };
     quint64 send(const QString& operation, QJsonObject payload, QString snapshot, int timeoutMs,

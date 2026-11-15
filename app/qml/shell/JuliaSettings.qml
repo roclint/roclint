@@ -214,6 +214,37 @@ ColumnLayout {
                             }
                             Text {
                                 visible: dashboardWindow.hc && hostController.nativeGraniteSelected
+                                text: qsTr("Think before answering")
+                                font.family: dashboardWindow.sansFont
+                                font.pixelSize: 12
+                                font.weight: Font.DemiBold
+                                color: dashboardWindow.fgColor
+                            }
+                            Flow {
+                                visible: dashboardWindow.hc && hostController.nativeGraniteSelected
+                                Layout.fillWidth: true
+                                spacing: 8
+                                ActionButton {
+                                    objectName: "thinkingModeOff"
+                                    label: qsTr("Off")
+                                    selected: dashboardWindow.hc && !hostController.thinkingEnabled
+                                    active: dashboardWindow.hc
+                                    onClicked: hostController.setThinkingEnabled(false)
+                                }
+                                ActionButton {
+                                    objectName: "thinkingModeOn"
+                                    label: qsTr("More thinking")
+                                    selected: dashboardWindow.hc && hostController.thinkingEnabled
+                                    active: dashboardWindow.hc
+                                    onClicked: hostController.setThinkingEnabled(true)
+                                }
+                            }
+                            Body {
+                                visible: dashboardWindow.hc && hostController.nativeGraniteSelected
+                                text: qsTr("Give Roclint extra time to work through a prompt. Experimental: more thinking can take longer and may not improve every suggestion.")
+                            }
+                            Text {
+                                visible: dashboardWindow.hc && hostController.nativeGraniteSelected
                                 text: qsTr("Inference speed metric:")
                                 font.family: dashboardWindow.sansFont
                                 font.pixelSize: 12

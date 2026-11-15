@@ -23,6 +23,12 @@ namespace {
 constexpr int kSchemaVersion = 5;
 constexpr std::size_t kMaximumQueryLimit = 1024;
 
+void markIncomplete(CodebaseIndexStats& stats, CodebaseIndexIncompleteReason reason) {
+    stats.incomplete = true;
+    if (stats.incompleteReason == CodebaseIndexIncompleteReason::None)
+        stats.incompleteReason = reason;
+}
+
 const std::set<std::string> kExcludedDirectories{
     ".git", ".hg", ".svn", ".cache", "build", "dist", "out", "target", "node_modules", "vendor", "deps",
     "CMakeFiles", "__pycache__", "venv"};
@@ -406,6 +412,7 @@ struct CodebaseIndex::Impl {
                     "  signature_key TEXT NOT NULL DEFAULT '', qualifiers TEXT NOT NULL DEFAULT '');"
                     "CREATE INDEX IF NOT EXISTS files_ws_snapshot_idx"
                     "  ON files(root,snapshot_generation,dirty);"
+                    "CREATE INDEX IF NOT EXISTS ast_symbols_file_idx ON ast_symbols(file_id);"
                     "CREATE INDEX IF NOT EXISTS ast_symbols_ws_name_v4_idx"
                     "  ON ast_symbols(workspace_root,name);"
                     "CREATE INDEX IF NOT EXISTS ast_symbols_ws_parent_v4_idx"
@@ -919,13 +926,16 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
     const std::int64_t generation = previousGeneration <= 0 ? 1 : previousGeneration + 1;
     stats.generation = static_cast<std::uint64_t>(generation);
 
-    auto options = std::filesystem::directory_options::skip_permission_denied;
-    std::filesystem::recursive_directory_iterator iterator(root, options), end;
+    // A denied subtree can hide competing symbols. Do not silently skip it or
+    // throw out of the Result API; retain an explicitly incomplete snapshot.
+    const auto options = std::filesystem::directory_options::none;
+    std::filesystem::recursive_directory_iterator iterator(root, options, error), end;
+    if (error) markIncomplete(stats, CodebaseIndexIncompleteReason::Filesystem);
     auto invalidateObservedSource = [&](const std::filesystem::path& path) -> bool {
         const auto relative = std::filesystem::relative(path, root, error);
         if (error || relative.empty() || !isSafeRelativeText(relative.generic_string())) {
             error.clear();
-            stats.incomplete = true;
+            markIncomplete(stats, CodebaseIndexIncompleteReason::Filesystem);
             return true;
         }
         return impl_->invalidateFile(rootText, relative.generic_string());
@@ -934,20 +944,20 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
         if (error) {
             // An unreadable subtree could hide files; never treat unvisited paths
             // as confirmed deletions for this pass.
-            stats.incomplete = true;
+            markIncomplete(stats, CodebaseIndexIncompleteReason::Filesystem);
             error.clear();
             continue;
         }
         if (std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - started).count() >= limits.scanBudgetMs) {
-            stats.incomplete = true;
+            markIncomplete(stats, CodebaseIndexIncompleteReason::TimeBudget);
             break;
         }
         std::error_code statusError;
         const bool symlink = iterator->is_symlink(statusError);
         if (statusError) {
             statusError.clear();
-            stats.incomplete = true;
+            markIncomplete(stats, CodebaseIndexIncompleteReason::Filesystem);
             if (isSourceFile(iterator->path()) && !invalidateObservedSource(iterator->path())) {
                 rollback();
                 return core::makeError(core::ErrorCode::DbError, "Unable to invalidate unavailable file");
@@ -967,7 +977,7 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
         const bool directory = iterator->is_directory(statusError);
         if (statusError) {
             statusError.clear();
-            stats.incomplete = true;
+            markIncomplete(stats, CodebaseIndexIncompleteReason::Filesystem);
             if (isSourceFile(iterator->path()) && !invalidateObservedSource(iterator->path())) {
                 rollback();
                 return core::makeError(core::ErrorCode::DbError, "Unable to invalidate unavailable file");
@@ -989,7 +999,7 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
             if (canonicalError || canonicalDirectory.empty()) {
                 // An unreadable subtree could hide files.
                 canonicalError.clear();
-                stats.incomplete = true;
+                markIncomplete(stats, CodebaseIndexIncompleteReason::Filesystem);
                 iterator.disable_recursion_pending();
             } else if (!isWithinRoot(rootText, canonicalDirectory.generic_string())) {
                 iterator.disable_recursion_pending();
@@ -999,7 +1009,7 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
         const bool regular = iterator->is_regular_file(statusError);
         if (statusError) {
             statusError.clear();
-            stats.incomplete = true;
+            markIncomplete(stats, CodebaseIndexIncompleteReason::Filesystem);
             if (isSourceFile(iterator->path()) && !invalidateObservedSource(iterator->path())) {
                 rollback();
                 return core::makeError(core::ErrorCode::DbError, "Unable to invalidate unreadable file");
@@ -1015,13 +1025,13 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
         }
         if (!isSourceFile(iterator->path())) continue;
         if (stats.filesVisited >= limits.maximumFiles) {
-            stats.incomplete = true;
+            markIncomplete(stats, CodebaseIndexIncompleteReason::FileLimit);
             break;
         }
         ++stats.filesVisited;
         const auto relative = std::filesystem::relative(iterator->path(), root, error);
         if (error || relative.empty() || !isSafeRelativeText(relative.generic_string())) {
-            stats.incomplete = true;
+            markIncomplete(stats, CodebaseIndexIncompleteReason::Filesystem);
             error.clear();
             continue;
         }
@@ -1033,6 +1043,8 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refresh(const WorkspaceContext& 
         }
     }
 
+    // increment(error) can also move the iterator to end, bypassing the body.
+    if (error) markIncomplete(stats, CodebaseIndexIncompleteReason::Filesystem);
     if (!stats.incomplete && !impl_->deleteUnseen(rootText, generation)) {
         rollback();
         return core::makeError(core::ErrorCode::DbError, "Unable to remove stale indexed files");
@@ -1142,7 +1154,8 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refreshPaths(
         const bool overBudget = std::chrono::duration_cast<std::chrono::milliseconds>(
                                     std::chrono::steady_clock::now() - started).count() >= limits.scanBudgetMs;
         if (processed >= limits.maximumFiles || overBudget) {
-            stats.incomplete = true;
+            markIncomplete(stats, processed >= limits.maximumFiles
+                ? CodebaseIndexIncompleteReason::FileLimit : CodebaseIndexIncompleteReason::TimeBudget);
             break;
         }
         const auto& file = requested[index];
@@ -1172,7 +1185,7 @@ core::Result<CodebaseIndexStats> CodebaseIndex::refreshPaths(
         rollback();
         return core::makeError(core::ErrorCode::DbError, "Unable to read code index coverage state");
     }
-    if (dirtyFiles) stats.incomplete = true;
+    if (dirtyFiles) markIncomplete(stats, CodebaseIndexIncompleteReason::DirtyFiles);
     if (!impl_->rebuildFts()) {
         rollback();
         return core::makeError(core::ErrorCode::DbError, "Unable to rebuild the symbol FTS index");

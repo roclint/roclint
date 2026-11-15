@@ -136,6 +136,23 @@ void execSql(const fs::path& path, const std::string& sql) {
     sqlite3_close(db);
 }
 
+bool fileLookupUsesIndex(const fs::path& path, const std::string& sql) {
+    sqlite3* db = openDatabase(path);
+    sqlite3_stmt* statement = nullptr;
+    const auto explain = "EXPLAIN QUERY PLAN " + sql;
+    ROCLINT_CHECK(sqlite3_prepare_v2(db, explain.c_str(), -1, &statement, nullptr) == SQLITE_OK);
+    bool indexed = false;
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        const auto* detail = sqlite3_column_text(statement, 3);
+        const std::string plan = detail ? reinterpret_cast<const char*>(detail) : "";
+        indexed = indexed || (plan.find("SEARCH") != std::string::npos &&
+                              plan.find("ast_symbols_file_idx") != std::string::npos);
+    }
+    sqlite3_finalize(statement);
+    sqlite3_close(db);
+    return indexed;
+}
+
 void createVersion3Database(const fs::path& path, const fs::path& workspace) {
     const auto root = fs::canonical(workspace).generic_string();
     const std::string escapedRoot = root;
@@ -314,6 +331,7 @@ void testIncompleteFullThenPathsStaysIncomplete() {
     const auto incomplete = index.refresh({workspace, {}, true}, noTime);
     ROCLINT_CHECK(incomplete.ok());
     ROCLINT_CHECK(incomplete.value().incomplete);
+    ROCLINT_CHECK(incomplete.value().incompleteReason == storage::CodebaseIndexIncompleteReason::TimeBudget);
     ROCLINT_CHECK(incomplete.value().unprocessedPaths.empty());
     ROCLINT_CHECK(incomplete.value().generation == 2);
     const auto incompleteInfo = index.snapshotInfo();
@@ -650,6 +668,7 @@ void testIncompletePathsRefreshCannotProveUniqueness() {
             {workspace, {}, true}, {"src/a.hpp", "src/b.hpp"}, oneFile);
         ROCLINT_CHECK(partial.ok());
         ROCLINT_CHECK(partial.value().incomplete);
+        ROCLINT_CHECK(partial.value().incompleteReason == storage::CodebaseIndexIncompleteReason::FileLimit);
         ROCLINT_CHECK(partial.value().generation == 2);
         ROCLINT_CHECK(partial.value().unprocessedPaths.size() == 1);
         ROCLINT_CHECK(partial.value().unprocessedPaths.front() == "src/b.hpp");
@@ -765,6 +784,65 @@ void testIncompletePathsRefreshDoesNotProveAbsence() {
     ROCLINT_CHECK(unseen.value().unprocessedPaths.front() == "src/new.hpp");
     ROCLINT_CHECK(queryInt(database,
         "SELECT COUNT(*) FROM files WHERE path='src/new.hpp' AND dirty<>0;") == 1);
+
+    const auto stillDirty = index.refreshPaths({workspace, {}, true}, {"src/visible.hpp"});
+    ROCLINT_CHECK(stillDirty.ok() && stillDirty.value().incomplete);
+    ROCLINT_CHECK(stillDirty.value().incompleteReason == storage::CodebaseIndexIncompleteReason::DirtyFiles);
+}
+
+void testFullScanFileLimitReasonAndExactBoundary() {
+    TempArea area;
+    const auto workspace = area.workspace("file-limit-reason");
+    write(workspace, "one.hpp", "int first();\n");
+    write(workspace, "two.hpp", "int second();\n");
+    storage::CodebaseIndex index(area.database("file-limit-reason"), workspace);
+    storage::CodebaseIndexLimits limits;
+    limits.maximumFiles = 1;
+    const auto stopped = index.refresh({workspace, {}, true}, limits);
+    ROCLINT_CHECK(stopped.ok() && stopped.value().incomplete);
+    ROCLINT_CHECK(stopped.value().filesVisited == 1);
+    ROCLINT_CHECK(stopped.value().incompleteReason == storage::CodebaseIndexIncompleteReason::FileLimit);
+    ROCLINT_CHECK(!index.snapshotInfo().value().complete);
+
+    limits.maximumFiles = 2;
+    const auto complete = index.refresh({workspace, {}, true}, limits);
+    ROCLINT_CHECK(complete.ok() && !complete.value().incomplete);
+    ROCLINT_CHECK(complete.value().incompleteReason == storage::CodebaseIndexIncompleteReason::None);
+    ROCLINT_CHECK(index.snapshotInfo().value().complete);
+}
+
+void testExistingCacheGainsFileLookupIndexWithoutRebuild() {
+    TempArea area;
+    const auto one = area.workspace("first-indexed-project");
+    const auto two = area.workspace("second-indexed-project");
+    const auto database = area.database("shared-file-lookups");
+    write(one, "one.hpp", "int first();\n");
+    write(two, "two.hpp", "int second();\n");
+    {
+        storage::CodebaseIndex index(database);
+        ROCLINT_CHECK(index.refresh({one, {}, true}).ok());
+        ROCLINT_CHECK(index.refresh({two, {}, true}).ok());
+    }
+    const auto symbols = queryInt(database, "SELECT COUNT(*) FROM ast_symbols;");
+    execSql(database, "DROP INDEX ast_symbols_file_idx;");
+    const std::string touch = "UPDATE ast_symbols SET validated_generation=1 WHERE file_id=1;";
+    const std::string remove = "DELETE FROM ast_symbols WHERE file_id=1;";
+    ROCLINT_CHECK(!fileLookupUsesIndex(database, touch));
+    {
+        storage::CodebaseIndex index(database, one);
+        ROCLINT_CHECK(userVersion(database) == 5);
+        ROCLINT_CHECK(queryInt(database, "SELECT COUNT(*) FROM ast_symbols;") == symbols);
+        ROCLINT_CHECK(index.snapshotInfo().value().complete);
+        ROCLINT_CHECK(fileLookupUsesIndex(database, touch));
+        ROCLINT_CHECK(fileLookupUsesIndex(database, remove));
+        const auto refreshed = index.refresh({one, {}, true});
+        ROCLINT_CHECK(refreshed.ok() && !refreshed.value().incomplete);
+        ROCLINT_CHECK(refreshed.value().filesIndexed == 0);
+    }
+    storage::CodebaseIndex other(database, two);
+    ROCLINT_CHECK(other.snapshotInfo().value().complete);
+    const auto found = other.findByName("second", {}, {}, 8, false);
+    ROCLINT_CHECK(found.ok() && found.value().complete && found.value().symbols.size() == 1);
 }
 
 void testV4MigrationDerivesCoverage() {
@@ -868,6 +946,8 @@ int main() {
     testIncompleteFullThenPathsStaysIncomplete();
     testIncompletePathsRefreshCannotProveUniqueness();
     testIncompletePathsRefreshDoesNotProveAbsence();
+    testFullScanFileLimitReasonAndExactBoundary();
+    testExistingCacheGainsFileLookupIndexWithoutRebuild();
     testWorkspaceIsolationAndFailedRebind();
     testValidateFileHash();
     testQueryTruncationAndExactness();

@@ -50,7 +50,7 @@ Window {
     readonly property bool showPromptEditor: !rootWindow.isCompiledPreview && (
         !rootWindow.hc ||
         rootWindow.editingDraft ||
-        (!hostController.isClarifying && !hostController.hasProposal)
+        (!hostController.isAmbientCapture && !hostController.isClarifying && !hostController.hasProposal)
     )
     readonly property bool isCompiledPreview: hc && hostController.hasProposal
     readonly property bool hasAmbiguity: hc && hostController.isClarifying
@@ -217,6 +217,7 @@ Window {
         function onRevisionRestored(text) { rootWindow.setEditorText(text); rootWindow.scopePreamble = ""; }
         function onAmbientDraftUpdated(text) {
             rootWindow.setEditorText(text);
+            if (!hostController.isDraftDirty) rootWindow.editingDraft = false;
             rootWindow.scopePreamble = "";
             rootWindow.queueAutoAnalysis();
         }
@@ -535,6 +536,9 @@ Window {
                             decodeTokensPerSecond: rootWindow.hc ? hostController.decodeTokensPerSecond : 0
                             tokenSpeedMode: rootWindow.hc ? hostController.tokenSpeedMode : "BOTH"
                             tokenCount: rootWindow.hc ? hostController.generationTokens : 0
+                            reasoningTokenCount: rootWindow.hc ? hostController.reasoningTokens : 0
+                            answerTokenCount: rootWindow.hc ? hostController.answerTokens : 0
+                            generationPhase: rootWindow.hc ? hostController.generationPhase : "idle"
                             generationElapsedMs: rootWindow.hc ? hostController.generationElapsedMs : 0
                             decodeElapsedMs: rootWindow.hc ? hostController.decodeElapsedMs : 0
                             processing: rootWindow.visible && rootWindow.hc && (rootWindow.generationPending || hostController.isInferring)
@@ -711,7 +715,8 @@ Window {
 
                         RowLayout {
                             Layout.fillWidth: true
-                            visible: !rootWindow.hasAmbiguity && !rootWindow.isCompiledPreview
+                            objectName: "promptEditorHeading"
+                            visible: rootWindow.showPromptEditor && !rootWindow.hasAmbiguity
                             Text {
                                 Layout.fillWidth: true; Layout.minimumWidth: 0
                                 text: rootWindow.hc && hostController.isAnalyzing ? qsTr("Finding the right words…") : qsTr("What are you working on?")
@@ -827,6 +832,7 @@ Window {
                             }
                         }
                         Rectangle {
+                            objectName: "draftPreview"
                             visible: !rootWindow.showPromptEditor && !rootWindow.isCompiledPreview
                             Layout.fillWidth: true; Layout.minimumWidth: 0
                             implicitHeight: sourceColumn.implicitHeight + 22
@@ -840,11 +846,18 @@ Window {
                                     Text { text: qsTr("YOUR DRAFT"); font.family: rootWindow.monoFont; font.pixelSize: 10; color: rootWindow.mutedTextColor }
                                     Item { Layout.fillWidth: true }
                                     HudButton {
-                                        label: qsTr("Edit"); iconName: "pencil-simple"; compact: true; quiet: true
-                                        onClicked: { rootWindow.editingDraft = true; if (rootWindow.hc) hostController.pauseAmbientFollowing(); promptInput.forceActiveFocus(); }
+                                        objectName: "editCapturedDraftControl"
+                                        label: qsTr("Edit draft"); iconName: "pencil-simple"; compact: true; quiet: true
+                                        onClicked: {
+                                            if (rootWindow.isAmbientMode && !rootWindow.isDetailedExpanded) rootWindow.toggleDetailedExpanded();
+                                            rootWindow.editingDraft = true;
+                                            if (rootWindow.hc) hostController.pauseAmbientFollowing();
+                                            Qt.callLater(function() { promptInput.forceActiveFocus(); });
+                                        }
                                     }
                                 }
                                 Text {
+                                    objectName: "draftPreviewText"
                                     Layout.fillWidth: true; Layout.minimumWidth: 0
                                     text: promptInput.text; textFormat: Text.PlainText
                                     font.family: rootWindow.sansFont; font.pixelSize: 13
@@ -1422,6 +1435,7 @@ Window {
                     }
                 }
             }
+
         }
     }
 }

@@ -32,6 +32,9 @@ struct GraniteStreamProgress {
     int outputTokens;
     double decodeMs;
     double generationMs;
+    int reasoningTokens{0};
+    int answerTokens{0};
+    bool thinking{false};
 };
 
 // Model state belongs only to the inference thread. status() reads atomic state;
@@ -42,7 +45,8 @@ public:
     // seams. Normal host requests leave both empty and use the pinned manifest.
     GraniteEngine(QString directory, const QString& quantization,
                   std::optional<double> temperatureOverride = std::nullopt,
-                  std::optional<int> gpuLayersOverride = std::nullopt);
+                  std::optional<int> gpuLayersOverride = std::nullopt,
+                  bool thinkingReferenceDisabled = false);
     ~GraniteEngine();
     GraniteEngine(const GraniteEngine&) = delete;
     GraniteEngine& operator=(const GraniteEngine&) = delete;

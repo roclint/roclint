@@ -166,6 +166,7 @@
     "docs/plans",
     "docs/research",
     "handoffs",
+    "handoffs/DeepSeek",
     "handoffs/Jesse",
     "handoffs/Kirby",
     "include",
@@ -177,6 +178,7 @@
     "include/roclint/core/prompt_state",
     "include/roclint/core/schema",
     "include/roclint/intent",
+    "include/roclint/retrieval",
     "include/roclint/review",
     "include/roclint/rewrite",
     "include/roclint/storage",
@@ -202,6 +204,7 @@
     "src/core/crypto",
     "src/core/prompt_state",
     "src/intent",
+    "src/retrieval",
     "src/review",
     "src/rewrite",
     "src/storage",
@@ -211,11 +214,27 @@
     "tests/core",
     "tests/core/prompt_state",
     "tests/intent",
+    "tests/retrieval",
+    "tests/retrieval/e2e",
     "tests/review",
     "tests/rewrite",
     "tests/storage",
     "tests/support",
     "tests/viewmodel",
     "tools"
+  ],
+  "additional_module_reviews": [
+    {
+      "date": "2026-11-13",
+      "paths": [
+        "handoffs/DeepSeek",
+        "include/roclint/retrieval",
+        "src/retrieval",
+        "tests/retrieval",
+        "tests/retrieval/e2e"
+      ],
+      "scope": "Retrieval public interfaces and implementation remain in a separate core/storage/SQLite library; mocks and fixture stress remain test-only. DeepSeek handoff directory contains documentation. Original upstream/specification hashes are unchanged.",
+      "evidence": "docs/audit/retrieval_refresh_recovery_2026-11-13.md; docs/audit/word_companion_review_remediation_2026-11-13.md"
+    }
   ]
 }

@@ -41,6 +41,20 @@ public:
     QString lastRecommendedOption() const { return cache_.recommendation; }
     double lastChoiceConfidence() const { return cache_.confidence; }
     QString lastChoicePolarity() const { return cache_.polarity; }
+    [[nodiscard]] std::optional<bridge::JustifiedRecommendation> justifiedRecommendation(
+        const core::analysis::NormalizedAnalysis& analysis,
+        const bridge::SnapshotEvaluationResponse& response) const {
+        return bridge::S1TriageAdapter::extractJustifiedRecommendation(analysis, response);
+    }
+    [[nodiscard]] std::optional<bridge::AssumptionConfidence> assumptionConfidence(
+        const bridge::SnapshotEvaluationResponse& response,
+        const QString& assumptionId) const {
+        return bridge::S1TriageAdapter::extractAssumptionConfidence(response, assumptionId.toUtf8().toStdString());
+    }
+    [[nodiscard]] std::vector<bridge::AssumptionConfidence> allAssumptionConfidences(
+        const bridge::SnapshotEvaluationResponse& response) const {
+        return bridge::S1TriageAdapter::extractAllAssumptionConfidences(response);
+    }
     void load(const QString& directory, const QString& python, bool install = false);
     void stop();
     void setJuliaDevice(const QString& device);

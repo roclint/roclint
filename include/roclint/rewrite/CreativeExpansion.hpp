@@ -11,7 +11,7 @@ namespace roclint::core::rewrite {
 
 struct CreativeAlternative {
     std::string id{};               // e.g. "alt_direct", "alt_flow", "alt_stack"
-    std::string title{};            // "Direct / Minimal", "Flow & Dynamics", "Stack & Topology"
+    std::string title{};            // Structural label, for example "Direct / Minimal" or "Step-by-Step"
     std::string styleDescriptor{};  // Short explanation of aesthetic/structural intent
     std::string rewrittenText{};    // Proposal text for this alternative
     std::string diffText{};         // Unified/accessible diff against original prompt

@@ -918,6 +918,10 @@ std::vector<CanonicalIntent> AstGroundingEngine::groundIntents(const std::vector
 
     for (std::size_t intentIndex = 0; intentIndex < grounded.size(); ++intentIndex) {
         auto& intent = grounded[intentIndex];
+        if (intent.targetKind == IntentTargetKind::GeneralConstraint) {
+            intent.grounding.reset();
+            continue;
+        }
         if (intent.grounding.has_value()) continue;
 
         const auto target = parseTarget(intent.target);
@@ -1224,6 +1228,7 @@ std::string AstGroundingEngine::computeAstSnapshotHash(const std::vector<Canonic
                                                        std::string_view workspaceIdentity) {
     std::vector<const AstGroundingEvidence*> verified;
     for (const auto& intent : grounded) {
+        if (intent.targetKind == IntentTargetKind::GeneralConstraint) continue;
         if (intent.grounding.has_value() && intent.grounding->status == GroundingStatus::Verified)
             verified.push_back(&*intent.grounding);
     }
@@ -1264,7 +1269,8 @@ PromptRenderResult AstGroundingEngine::renderPromptContext(
 
     std::vector<const CanonicalIntent*> ordered;
     ordered.reserve(intents.size());
-    for (const auto& intent : intents) ordered.push_back(&intent);
+    for (const auto& intent : intents)
+        if (intent.targetKind == IntentTargetKind::CodeEntity) ordered.push_back(&intent);
     std::stable_sort(ordered.begin(), ordered.end(), [](const CanonicalIntent* left,
                                                         const CanonicalIntent* right) {
         return renderPriority(*left) < renderPriority(*right);

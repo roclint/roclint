@@ -283,6 +283,86 @@ def entropy_confidence(probabilities):
     return max(0.0, min(1.0, 1.0 - (entropy / max_entropy)))
 
 
+def compute_context_alignment(prompt_text, candidate_text):
+    """Returns a bounded lexical-overlap score.
+
+    This is not semantic understanding. It may only break an exact probability tie when the
+    lexical evidence is strong; it never overrides a genuine model preference.
+    """
+    if not prompt_text or not candidate_text:
+        return 0.0
+    p_lower = prompt_text.lower()
+    c_lower = candidate_text.lower()
+    if c_lower in p_lower:
+        return 1.0
+    stop_words = {'any', 'the', 'a', 'an', 'in', 'on', 'of', 'to', 'for', 'and', 'or', 'is', 'it', 'this', 'that', 'with', 'from', 'be', 'by'}
+    c_words = [w for w in re.split(r'\W+', c_lower) if len(w) > 2 and w not in stop_words]
+    if not c_words:
+        return 0.5
+    matches = sum(1 for w in c_words if w in p_lower)
+    return matches / len(c_words)
+
+
+def choose_ranked_candidate(probabilities, context_scores):
+    """Chooses the protocol winner and reports whether the evidence remains an unresolved tie."""
+    if not probabilities:
+        return 0, True
+    best = max(range(len(probabilities)), key=probabilities.__getitem__)
+    tied = [i for i, p in enumerate(probabilities) if abs(p - probabilities[best]) <= 1e-9]
+    if len(tied) == 1:
+        return best, False
+    # Lexical overlap may order an exact tie, but it is not semantic evidence: the result is
+    # still reported as an unresolved tie so no recommendation is auto-adopted.
+    context_best = max(tied, key=lambda i: context_scores[i])
+    remaining = [context_scores[i] for i in tied if i != context_best]
+    context_second = max(remaining) if remaining else 0.0
+    if context_scores[context_best] > context_second:
+        return context_best, True
+    return best, True
+
+
+def calculate_calibrated_confidence(probabilities, winner_index=None, ambiguity_score=None):
+    """Calculates calibrated confidence for candidate ranking.
+
+    A simple first-item fallback, raw entropy value, or high softmax score alone
+    is insufficient evidence that a candidate is best. Calibrated confidence
+    requires both high winning probability and clear separation (margin) over
+    alternatives, discounted by decision ambiguity.
+    """
+    if not probabilities:
+        return 0.0
+    k = len(probabilities)
+    if k <= 1:
+        return 1.0
+    if winner_index is None:
+        winner_index = max(range(k), key=probabilities.__getitem__)
+
+    p_winner = probabilities[winner_index]
+    sorted_probs = sorted(probabilities, reverse=True)
+    p_top = sorted_probs[0]
+    p_second = sorted_probs[1] if k > 1 else 0.0
+    margin = max(0.0, p_top - p_second)
+
+    # Entropy factor across all candidates
+    entropy = -sum(p * math.log(p) for p in probabilities if p > 0.0)
+    max_entropy = math.log(k)
+    entropy_conf = max(0.0, min(1.0, 1.0 - (entropy / max_entropy))) if max_entropy > 0 else 1.0
+
+    # Combined model confidence: margin represents net advantage over runner up
+    model_conf = 0.70 * margin + 0.30 * entropy_conf
+    model_conf = min(1.0, max(0.0, model_conf * math.sqrt(max(0.0, p_winner))))
+
+    # Discount by ambiguity head evidence if provided:
+    # Decisions with ambiguity <= 0.30 are clear (no penalty); above 0.30, penalty scales with ambiguity.
+    if ambiguity_score is not None and math.isfinite(ambiguity_score):
+        ambig_penalty = max(0.0, (ambiguity_score - 0.30) / 0.70) if ambiguity_score > 0.30 else 0.0
+        confidence = model_conf * (1.0 - 0.80 * min(1.0, ambig_penalty))
+    else:
+        confidence = model_conf
+
+    return round(max(0.0, min(1.0, confidence)), 4)
+
+
 def detect_prohibited_choices(prompt_text, choices):
     """Detects if prompt has negative prohibitions and flags choices that violate them."""
     p_lower = prompt_text.lower()
@@ -303,6 +383,11 @@ def detect_prohibited_choices(prompt_text, choices):
         return []
 
     stop_words = {'any', 'the', 'a', 'an', 'in', 'on', 'of', 'to', 'for', 'and', 'or', 'css', 'file', 'files'}
+    preservation_markers = (
+        'keep', 'keeps', 'keeping', 'preserve', 'preserves', 'preserving', 'leave', 'leaves',
+        'maintain', 'maintains', 'retain', 'retains', 'unchanged', 'untouched', 'intact',
+        'without changing', 'without modifying', 'without altering'
+    )
     violators = []
     for idx, choice in enumerate(choices):
         c_lower = choice.lower()
@@ -310,9 +395,16 @@ def detect_prohibited_choices(prompt_text, choices):
         for snip in prohibited_snippets:
             words = [w for w in re.split(r'\W+', snip) if len(w) > 2 and w not in stop_words]
             if ('custom propert' in snip or ':root' in snip) and (':root' in c_lower or 'custom propert' in c_lower or '--' in c_lower):
+                # Naming the protected mechanism while explicitly preserving it is compliant.
+                if any(marker in c_lower for marker in preservation_markers):
+                    continue
                 violates = True; break
-            overlap = [w for w in words if w in c_lower]
+            overlap = [w for w in words if re.search(r'(?<![a-z0-9_])' + re.escape(w) + r'(?![a-z0-9_])', c_lower)]
             if len(words) > 0 and len(overlap) >= (1 if len(words) <= 2 else len(words) // 2):
+                # "Keep the public API unchanged" preserves the named boundary; shared words alone
+                # do not prove a violation. Only a change verb makes the overlap actionable.
+                if any(marker in c_lower for marker in preservation_markers):
+                    continue
                 violates = True; break
         if violates:
             violators.append(idx)
@@ -368,9 +460,12 @@ def triage(engine, request):
 
     has_choice = candidate_choices is not None
     if has_choice:
+        choice_q = request.get("choice_question") or request.get("candidate_question")
+        if not choice_q:
+            choice_q = "Which candidate option or wording best satisfies the user's intent and context?"
         rows.append({
             "state": state_payload,
-            "question": "Which file or action is the intended target for this request?",
+            "question": choice_q,
             "options": list(candidate_choices),
             "type": "choice"
         })
@@ -439,11 +534,14 @@ def triage(engine, request):
 
     if has_choice:
         choice_values = logits[-1]
-        choice_probs = softmax([v / _TRIAGE_TEMPERATURE for v in choice_values])
+        raw_model_probs = softmax([v / _TRIAGE_TEMPERATURE for v in choice_values])
         eff_conflict = max(atomic_scores.get("RULE_CONFLICT", 0.0), negative_roadblock, security_roadblock)
         violator_indices = detect_prohibited_choices(prompt_text, candidate_choices) if eff_conflict >= 0.70 else []
 
         labeled_choices = list(candidate_choices)
+        context_scores = [compute_context_alignment(prompt_text, c) for c in candidate_choices]
+
+        tie_unresolved = False
         if violator_indices and len(violator_indices) < len(candidate_choices):
             compliant_indices = [i for i in range(len(candidate_choices)) if i not in violator_indices]
             for idx in violator_indices:
@@ -451,28 +549,42 @@ def triage(engine, request):
             for idx in compliant_indices:
                 labeled_choices[idx] = f"[Safe Rule-Compliant Override] {candidate_choices[idx]}"
 
-            best_idx = compliant_indices[0]
-            new_probs = [0.0] * len(choice_probs)
+            # Best compliant candidate selected by model score; lexical overlap only resolves an
+            # exact tie when its evidence is strong.
+            compliant_probs = [raw_model_probs[i] for i in compliant_indices]
+            local_best, tie_unresolved = choose_ranked_candidate(
+                compliant_probs, [context_scores[i] for i in compliant_indices])
+            best_idx = compliant_indices[local_best]
+
+            # Preserve relative model preference among compliant candidates while penalizing violators
             compliant_share = 0.85
             violator_share = 0.15
+            comp_model_sum = sum(raw_model_probs[i] for i in compliant_indices)
+            viol_model_sum = sum(raw_model_probs[i] for i in violator_indices)
+            new_probs = [0.0] * len(candidate_choices)
             for idx in compliant_indices:
-                new_probs[idx] = compliant_share / len(compliant_indices)
+                new_probs[idx] = compliant_share * (raw_model_probs[idx] / comp_model_sum) if comp_model_sum > 0 else compliant_share / len(compliant_indices)
             for idx in violator_indices:
-                new_probs[idx] = violator_share / len(violator_indices)
+                new_probs[idx] = violator_share * (raw_model_probs[idx] / viol_model_sum) if viol_model_sum > 0 else violator_share / len(violator_indices)
             choice_probs = new_probs
-            confidence = entropy_confidence(choice_probs)
             result["choice_polarity"] = "RULE_CONFLICT_ADJUSTED"
         else:
-            best_idx = max(range(len(choice_probs)), key=lambda i: choice_probs[i])
-            confidence = entropy_confidence(choice_probs)
+            best_idx, tie_unresolved = choose_ranked_candidate(raw_model_probs, context_scores)
+            choice_probs = list(raw_model_probs)
+
+        confidence = 0.0 if tie_unresolved else calculate_calibrated_confidence(choice_probs, best_idx)
 
         result["choice_decision"] = {
             "recommended_option": labeled_choices[best_idx],
             "recommended_index": best_idx,
             "probability": choice_probs[best_idx],
             "confidence": confidence,
+            "unresolved_tie": tie_unresolved,
             "distribution": choice_probs,
-            "labeled_choices": labeled_choices
+            "model_distribution": raw_model_probs,
+            "labeled_choices": labeled_choices,
+            "violator_indices": violator_indices,
+            "compliant_indices": [i for i in range(len(candidate_choices)) if i not in violator_indices]
         }
 
     if hasattr(engine, "roclint_runtime"):
@@ -525,7 +637,12 @@ def evaluate(engine, request):
         question = group.get("question")
         if not bounded_text(question):
             raise ValueError("A choice group needs a bounded question")
-        rows.append({"state": state, "question": question, "options": labels, "type": "choice"})
+        scoring_question = (
+            f"Considering user intent and prompt context, which option best resolves: {question}"
+            if not ("intent" in question.lower() or "best resolves" in question.lower() or "best aligns" in question.lower())
+            else question
+        )
+        rows.append({"state": state, "question": scoring_question, "options": labels, "type": "choice"})
         rendered = "; ".join(labels)
         rows.append({"state": state, "question": f"Is the following decision materially ambiguous in the user's request? {question} Interpretations: {rendered}",
                      "options": ["The user's request clearly resolves this decision to one interpretation.",
@@ -551,15 +668,72 @@ def evaluate(engine, request):
         raise ValueError("Julia returned the wrong number of decisions")
     scores = []
     for index, group in enumerate(groups):
-        probabilities = softmax(logits[index * 2])
+        raw_choice_probs = softmax([v / _TRIAGE_TEMPERATURE for v in logits[index * 2]])
         ambiguity = softmax(logits[index * 2 + 1])
-        if len(probabilities) != len(group["alternatives"]) or len(ambiguity) != 2:
+        if len(raw_choice_probs) != len(group["alternatives"]) or len(ambiguity) != 2:
             raise ValueError("Julia returned a malformed decision")
-        winner = max(range(len(probabilities)), key=probabilities.__getitem__)
-        scores.append({"group_id": group["id"], "winner": group["alternatives"][winner]["id"],
-                       "probabilities": [{"id": item["id"], "probability": probability}
-                                         for item, probability in zip(group["alternatives"], probabilities)],
-                       "ambiguity": ambiguity[1], "noul_certainty": max(ambiguity) >= 0.70})
+
+        labels = [item.get("label") for item in group["alternatives"]]
+        violator_indices = detect_prohibited_choices(state, labels)
+        compliant_indices = [i for i in range(len(labels)) if i not in violator_indices]
+        context_scores = [compute_context_alignment(state, l) for l in labels]
+
+        tie_unresolved = False
+        if violator_indices and compliant_indices:
+            compliant_share = 0.85
+            violator_share = 0.15
+            comp_sum = sum(raw_choice_probs[i] for i in compliant_indices)
+            viol_sum = sum(raw_choice_probs[i] for i in violator_indices)
+            preference_probs = [0.0] * len(labels)
+            for idx in compliant_indices:
+                preference_probs[idx] = compliant_share * (raw_choice_probs[idx] / comp_sum) if comp_sum > 0 else compliant_share / len(compliant_indices)
+            for idx in violator_indices:
+                preference_probs[idx] = violator_share * (raw_choice_probs[idx] / viol_sum) if viol_sum > 0 else violator_share / len(violator_indices)
+            local_best, tie_unresolved = choose_ranked_candidate(
+                [preference_probs[i] for i in compliant_indices],
+                [context_scores[i] for i in compliant_indices])
+            winner = compliant_indices[local_best]
+        else:
+            preference_probs = list(raw_choice_probs)
+            winner, tie_unresolved = choose_ranked_candidate(preference_probs, context_scores)
+
+        # Ensure winner has highest probability for protocol/adapter validation
+        max_p = max(preference_probs)
+        if preference_probs[winner] < max_p:
+            winner, tie_unresolved = choose_ranked_candidate(preference_probs, context_scores)
+
+        # Reliable ambiguity detection: cross-corroborate ambiguity head with choice margin
+        head_ambiguity = ambiguity[1]
+        sorted_p = sorted(preference_probs, reverse=True)
+        margin = sorted_p[0] - sorted_p[1] if len(sorted_p) > 1 else 1.0
+        margin_ambiguity = max(0.0, 1.0 - margin)
+        if head_ambiguity >= 0.50:
+            reliable_ambiguity = max(head_ambiguity, 0.5 * head_ambiguity + 0.5 * margin_ambiguity)
+        else:
+            reliable_ambiguity = 0.70 * head_ambiguity + 0.30 * margin_ambiguity
+        reliable_ambiguity = round(max(0.0, min(1.0, reliable_ambiguity)), 4)
+
+        # Calibrated confidence. An exact tie without strong lexical evidence stays uncertain.
+        confidence = 0.0 if tie_unresolved else calculate_calibrated_confidence(preference_probs, winner, reliable_ambiguity)
+        noul_certainty = max(ambiguity) >= 0.70
+
+        scores.append({
+            "group_id": group["id"],
+            "winner": group["alternatives"][winner]["id"],
+            "probabilities": [{"id": item["id"], "probability": probability}
+                              for item, probability in zip(group["alternatives"], preference_probs)],
+            "ambiguity": reliable_ambiguity,
+            "noul_certainty": noul_certainty,
+            "confidence": confidence,
+            "unresolved_tie": tie_unresolved,
+            "justified": (
+                not tie_unresolved and
+                winner not in violator_indices and
+                confidence >= 0.70 and
+                reliable_ambiguity < 0.50 and
+                margin >= 0.20
+            )
+        })
     checks = []
     for index, assumption in enumerate(assumptions):
         probabilities = softmax(logits[len(groups) * 2 + index])

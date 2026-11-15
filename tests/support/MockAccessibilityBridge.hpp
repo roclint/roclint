@@ -23,7 +23,9 @@ public:
     bool echoOnRefresh{true};
     std::optional<host::ObservedField> lastObserved;
     std::vector<host::InjectionRequest> injections;
+    std::vector<host::RangeInjectionRequest> rangeInjections;
     host::InjectionOutcome nextOutcome{host::InjectionOutcome::Injected};
+    host::InjectionOutcome nextRangeOutcome{host::InjectionOutcome::Injected};
 
     [[nodiscard]] host::AccessibilityAccess access() const override { return accessValue; }
 
@@ -49,6 +51,19 @@ public:
                 emit injectionFinished(id, outcome,
                                        outcome == host::InjectionOutcome::Injected ? QString()
                                                                                    : QStringLiteral("mock refusal"));
+            },
+            Qt::QueuedConnection);
+    }
+
+    void injectRange(const host::RangeInjectionRequest& request) override {
+        rangeInjections.push_back(request);
+        const auto outcome = nextRangeOutcome;
+        const quint64 id = request.requestId;
+        QMetaObject::invokeMethod(
+            this,
+            [this, id, outcome]() {
+                emit rangeInjectionFinished(id, outcome,
+                    outcome == host::InjectionOutcome::Injected ? QString() : QStringLiteral("mock range refusal"));
             },
             Qt::QueuedConnection);
     }

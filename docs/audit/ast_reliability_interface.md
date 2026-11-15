@@ -89,6 +89,20 @@ Schema version is now 5. Retain `workspaces.generation`,
 Add `files.snapshot_generation`, `files.dirty` (default 0) and
 `workspaces.coverage_complete` (default 0).
 
+November 14 diagnostics: `CodebaseIndexStats::incompleteReason` records the first
+observed cause (`None`, `TimeBudget`, `FileLimit`, `Filesystem`, `DirtyFiles`).
+It is per-pass diagnostic metadata, not persisted evidence and not a substitute
+for the snapshot completeness flags. Directory enumeration uses the error-code
+API, does not silently skip denied subtrees, and checks terminal iterator errors.
+The host uses the reason and actual bounds to explain incomplete scans. A
+complete refresh or workspace change clears only the warning owned by the
+indexing subsystem; a newer unrelated error remains visible. Defaults remain
+5,000 source files, a 2-second scan budget and 2 MiB per source file.
+Schema-v5 caches also gain the idempotent `ast_symbols_file_idx(file_id)` index
+on open. File revalidation/deletion must use that lookup index rather than
+scanning symbols from every cached workspace for each source file. Adding it
+does not discard evidence or alter generation/coverage claims.
+
 - Full refresh: allocate a new generation; only visited files get the new
   `snapshot_generation`/`validated_generation`; a complete pass deletes unseen files, an incomplete
   pass leaves them at older generation and does not expose them.

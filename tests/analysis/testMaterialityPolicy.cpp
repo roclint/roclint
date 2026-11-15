@@ -204,6 +204,94 @@ void testCrossGroupSpanOverlap() {
     ROCLINT_CHECK(overall.groupResults[1].reasonCode == ReasonCode::UnsafeSpanOverlap);
 }
 
+void testExplicitDimensionsDistinguishExploration() {
+    // Composition and lighting are different decision dimensions even though both quote the same
+    // motivating word. Different question wording alone is not sufficient evidence.
+    {
+        const std::string prompt = "Make the scene cinematic";
+        NormalizedAnalysis analysis;
+        analysis.id = "analysis_dimensions";
+        analysis.baseRevisionId = "rev_dimensions";
+
+        ChoiceGroup composition;
+        composition.id = "grp_composition";
+        composition.dimension = "composition and framing";
+        composition.question = "How should the shot be framed?";
+        composition.alternatives.push_back({"alt_comp_1", "Rule-of-thirds wide shot",
+                                            "Establishes the space", "", {SourceSpan{15, 24}}});
+        composition.alternatives.push_back({"alt_comp_2", "Tight portrait framing",
+                                            "Emphasizes the subject", "", {SourceSpan{15, 24}}});
+
+        ChoiceGroup lighting;
+        lighting.id = "grp_lighting";
+        lighting.dimension = "lighting and contrast";
+        lighting.question = "What light should shape the scene?";
+        lighting.alternatives.push_back({"alt_light_1", "Soft window light",
+                                         "Natural and quiet", "", {SourceSpan{15, 24}}});
+        lighting.alternatives.push_back({"alt_light_2", "Hard directional key light",
+                                         "Dramatic separation", "", {SourceSpan{15, 24}}});
+
+        analysis.choiceGroups = {composition, lighting};
+        auto overall = MaterialityPolicyV1::evaluatePrompt(analysis, prompt);
+        ROCLINT_CHECK(!overall.hasCrossGroupOverlap);
+        ROCLINT_CHECK(overall.overallVerdict == PolicyVerdict::EligibleForChoice);
+    }
+
+    // Two phrasings of the same response-time decision are duplicates, not exploration.
+    {
+        const std::string prompt = "Make the search faster";
+        NormalizedAnalysis analysis;
+        analysis.id = "analysis_same_dimension";
+        analysis.baseRevisionId = "rev_same_dimension";
+
+        ChoiceGroup first;
+        first.id = "grp_latency_a";
+        first.dimension = "response latency";
+        first.question = "What response time should be required?";
+        first.alternatives.push_back({"alt_a_1", "Under 100ms", "Tighter target", "", {SourceSpan{16, 22}}});
+        first.alternatives.push_back({"alt_a_2", "Under 500ms", "Looser target", "", {SourceSpan{16, 22}}});
+
+        ChoiceGroup second;
+        second.id = "grp_latency_b";
+        second.dimension = "response latency";
+        second.question = "Which latency target matters here?";
+        second.alternatives.push_back({"alt_b_1", "Sub-second", "Absolute threshold", "", {SourceSpan{16, 22}}});
+        second.alternatives.push_back({"alt_b_2", "A few seconds", "Coarser threshold", "", {SourceSpan{16, 22}}});
+
+        analysis.choiceGroups = {first, second};
+        auto overall = MaterialityPolicyV1::evaluatePrompt(analysis, prompt);
+        ROCLINT_CHECK(overall.hasCrossGroupOverlap);
+        ROCLINT_CHECK(overall.overallVerdict == PolicyVerdict::NeedsManualReview);
+        ROCLINT_CHECK(overall.primaryReasonCode == ReasonCode::UnsafeSpanOverlap);
+    }
+
+    // Missing dimensions stay conservative even when the questions are worded differently.
+    {
+        const std::string prompt = "Make the search faster";
+        NormalizedAnalysis analysis;
+        analysis.id = "analysis_missing_dimension";
+        analysis.baseRevisionId = "rev_missing_dimension";
+
+        ChoiceGroup first;
+        first.id = "grp_missing_a";
+        first.question = "What should get faster?";
+        first.alternatives.push_back({"alt_ma_1", "The request path", "Lower latency", "", {SourceSpan{16, 22}}});
+        first.alternatives.push_back({"alt_ma_2", "The whole page", "Faster rendering", "", {SourceSpan{16, 22}}});
+
+        ChoiceGroup second;
+        second.id = "grp_missing_b";
+        second.question = "Which delay is the problem?";
+        second.alternatives.push_back({"alt_mb_1", "Time to first result", "Perceived speed", "", {SourceSpan{16, 22}}});
+        second.alternatives.push_back({"alt_mb_2", "Time to complete", "Total duration", "", {SourceSpan{16, 22}}});
+
+        analysis.choiceGroups = {first, second};
+        auto overall = MaterialityPolicyV1::evaluatePrompt(analysis, prompt);
+        ROCLINT_CHECK(overall.hasCrossGroupOverlap);
+    }
+
+    ROCLINT_CHECK(std::string(MaterialityPolicyV1::kPolicyVersion) == "materiality_policy_v2");
+}
+
 void testDirectConflictPresence() {
     const std::string prompt = "Implement stateless authentication with sticky server sessions";
 
@@ -347,6 +435,7 @@ int main() {
     testMaterialityGrounding();
     testUtf8SpanBoundaryValidation();
     testCrossGroupSpanOverlap();
+    testExplicitDimensionsDistinguishExploration();
     testDirectConflictPresence();
     testAssumptionBudgetCap();
     testLocalIsolation();

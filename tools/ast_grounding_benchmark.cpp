@@ -34,7 +34,8 @@ int main(int argc, char** argv) {
                   << " files_recovered=" << complete.filesRecovered
                   << " symbols=" << complete.symbolsIndexed
                   << " index_ms=" << complete.elapsedMs
-                  << " incomplete=" << complete.incomplete << "\n";
+                  << " incomplete=" << complete.incomplete
+                  << " incomplete_reason=" << static_cast<int>(complete.incompleteReason) << "\n";
         // The default 2 s scan budget can stop a cold pass on a large tree.
         // Retry with the same bounded budget; unchanged files are hash-skipped
         // instead of re-parsed. Report the complete operation, not just the
@@ -54,7 +55,8 @@ int main(int argc, char** argv) {
                   << " complete_passes=" << indexPasses
                   << " complete_files_visited=" << complete.filesVisited
                   << " complete_symbols_indexed=" << indexedSymbols
-                  << " complete_incomplete=" << complete.incomplete << "\n";
+                  << " complete_incomplete=" << complete.incomplete
+                  << " incomplete_reason=" << static_cast<int>(complete.incompleteReason) << "\n";
 
         const auto unchanged = index.refresh(workspace);
         if (!unchanged.ok()) {

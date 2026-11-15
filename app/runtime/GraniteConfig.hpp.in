@@ -1,12 +1,10 @@
 #pragma once
 
 namespace roclint::runtime {
-// C04/master architecture operation budgets, shared by host and owned helper.
-#if defined(__APPLE__)
-inline constexpr int kGraniteAnalysisTimeoutMs = 18000;
-#else
-inline constexpr int kGraniteAnalysisTimeoutMs = 12000;
-#endif
+// Bounded-thinking operation deadlines, shared by the host and owned helper.
+inline constexpr int kGraniteAnalysisTimeoutMs = 45000;
 inline constexpr int kGraniteRewriteTimeoutMs = 60000;
+// Inline thinking and final JSON share one deadline and remain cancellable on edits.
+inline constexpr int kGraniteWordRefinementTimeoutMs = 45000;
 inline constexpr const char* kGraniteManifestJson = R"ROCLINT_MANIFEST(@ROCLINT_GRANITE_MANIFEST_JSON@)ROCLINT_MANIFEST";
 }

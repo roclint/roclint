@@ -169,14 +169,21 @@ int main(int argc, char* argv[]) {
     }
 
     QQmlApplicationEngine engine;
+    QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app,
+                     [](const QList<QQmlError>& warnings) {
+        for (const auto& warning : warnings) {
+            std::cerr << "[Roclint Host] QML: " << warning.toString().toStdString() << "\n";
+        }
+    });
     engine.rootContext()->setContextProperty(QStringLiteral("hostController"), controller.get());
 
     const QUrl cardUrl(QStringLiteral("qrc:/shell/FloatingCard.qml"));
     const QUrl dashboardUrl(QStringLiteral("qrc:/shell/DashboardWindow.qml"));
     const QUrl badgeUrl(QStringLiteral("qrc:/shell/AmbientBadge.qml"));
+    const QUrl companionUrl(QStringLiteral("qrc:/shell/WordCompanion.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
-                     &app, [cardUrl, dashboardUrl, badgeUrl, controller = controller.get(), autoShow, autoShowDashboard, dryRun, screenshotPath, dashboardScreenshotPath, dashboardScroll, customWidth, customHeight, dashboardTab, pinCard, dashboardMaximized, targetScope, workspacePath, targetFile, resolveChoice, openFileDropdown, autoEnhance, initialPrompt](QObject* obj, const QUrl& objUrl) {
-        if (!obj && (cardUrl == objUrl || dashboardUrl == objUrl || badgeUrl == objUrl)) {
+                     &app, [cardUrl, dashboardUrl, badgeUrl, companionUrl, controller = controller.get(), autoShow, autoShowDashboard, dryRun, screenshotPath, dashboardScreenshotPath, dashboardScroll, customWidth, customHeight, dashboardTab, pinCard, dashboardMaximized, targetScope, workspacePath, targetFile, resolveChoice, openFileDropdown, autoEnhance, initialPrompt](QObject* obj, const QUrl& objUrl) {
+        if (!obj && (cardUrl == objUrl || dashboardUrl == objUrl || badgeUrl == objUrl || companionUrl == objUrl)) {
             std::cerr << "[Roclint Host] Error: Failed to load QML root object from " << objUrl.toString().toStdString() << std::endl;
             QCoreApplication::exit(-1);
             return;
@@ -385,14 +392,32 @@ int main(int argc, char* argv[]) {
                     }
                 }
             });
+        } else if (objUrl == companionUrl) {
+            // The QML flags include WindowDoesNotAcceptFocus. Show without activating so the
+            // destination editor keeps focus and the frozen target remains valid.
+            QObject::connect(controller, &roclint::host::HostController::wordRefinementChanged,
+                             window, [window, controller]() {
+                if (!controller->hasWordRefinement()) {
+                    if (window->isVisible()) window->hide();
+                    return;
+                }
+                const QRect anchor = controller->wordRefinementAnchorRect();
+                const auto placement = roclint::host::ScreenPlacement::determineAnchorPosition(
+                    anchor, window->width(), window->height());
+                window->setPosition(placement.x, placement.y);
+                if (!window->isVisible()) {
+                    window->show();
+                }
+            });
         }
     });
 
     engine.load(cardUrl);
     engine.load(dashboardUrl);
     engine.load(badgeUrl);
+    engine.load(companionUrl);
 
-    if (engine.rootObjects().size() != 3) {
+    if (engine.rootObjects().size() != 4) {
         std::cerr << "[Roclint Host] Error: One or more required QML screens failed to load" << std::endl;
         if (!dryRun) QMessageBox::critical(nullptr, QStringLiteral("Roclint"),
             QStringLiteral("Roclint couldn't load its interface. Reinstall the complete application folder, including its Qt runtime."));

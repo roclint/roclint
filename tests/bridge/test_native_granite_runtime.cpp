@@ -8,6 +8,7 @@
 #include "roclint/bridge/GraniteRewriteAdapter.hpp"
 #include "support/check.hpp"
 #include "support/wording_fixtures.hpp"
+#include "support/MockAccessibilityBridge.hpp"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -59,9 +60,10 @@ int fixture(const QString& mode) {
             }
             if (mode == QLatin1String("no_hello")) continue;
             result = {{QStringLiteral("protocol_version"), 1}, {QStringLiteral("operations"), QJsonArray{QStringLiteral("load"),
-                QStringLiteral("warm"), QStringLiteral("granite_analyze"), QStringLiteral("granite_rewrite"), QStringLiteral("runtime_status"),
+                QStringLiteral("warm"), QStringLiteral("granite_analyze"), QStringLiteral("granite_rewrite"), QStringLiteral("granite_word_refinement"), QStringLiteral("runtime_status"),
                 QStringLiteral("cancel"), QStringLiteral("set_residency"), QStringLiteral("shutdown")}}};
             result.insert(QStringLiteral("diagnostic_unbounded"), mode == QLatin1String("unbounded"));
+            result.insert(QStringLiteral("thinking_reference_disabled"), mode == QLatin1String("thinking_reference"));
         } else if (op == QLatin1String("load") || op == QLatin1String("warm") || op == QLatin1String("set_residency")) {
             if (mode == QLatin1String("crash_load")) std::_Exit(2);
             const auto requested = op == QLatin1String("set_residency") ? payload.value(QStringLiteral("tier")).toString() : QStringLiteral("HOT");
@@ -80,6 +82,17 @@ int fixture(const QString& mode) {
             if (mode == QLatin1String("bad_hash")) response.insert(QStringLiteral("input_hash"), QString(64, QLatin1Char('0')));
             if (mode == QLatin1String("bad_version")) response.insert(QStringLiteral("protocol_version"), 2);
             result = {{QStringLiteral("text"), QStringLiteral("{\"status\":\"no_ambiguity\"}")}};
+            if (mode == QLatin1String("thinking_binding")) result.insert("text", payload.value("thinking_enabled").toBool() ? "thinking=true" : "thinking=false");
+            if (mode == QLatin1String("bad_thinking_binding")) response.insert("thinking_enabled", !response.value("thinking_enabled").toBool());
+        } else if (op == QLatin1String("granite_word_refinement")) {
+            if (!response.value("request_group_id").toString().startsWith("word_group_")) return 3;
+            const auto instruction = payload.value("instructions").toString();
+            if (instruction.startsWith("<instructions>\nInstruction contract: granite.goldfish_word_audit.v2")) {
+                if (!instruction.contains("Make the dashboard feel quicker to load.")) return 4;
+                result.insert("text", R"({"verdicts":[{"id":"wcand_1","grammar":"Pass","preservation":"Pass","usefulness":"Pass"}]})");
+            } else {
+                result.insert("text", R"({"needs_clarification":false,"clarification_question":"","candidates":[{"original_span":"faster","replacement":"quicker to load","explanation":"Specifies initial loading","assumption":"","requires_clarification":false}]})");
+            }
         } else if (op == QLatin1String("cancel")) result = {{QStringLiteral("cancelled"), true}};
         else if (op == QLatin1String("shutdown")) {
             if (mode == QLatin1String("hang_shutdown")) QThread::msleep(5000);
@@ -87,7 +100,7 @@ int fixture(const QString& mode) {
         }
         response.insert(QStringLiteral("result"), result);
         if (op == QLatin1String("granite_analyze") &&
-            (mode == QLatin1String("stream") || mode == QLatin1String("stream_metrics") || mode.startsWith("metrics_") || mode == QLatin1String("invalid_metrics") || mode == QLatin1String("bad_stream") || mode == QLatin1String("unbound_stream"))) {
+            (mode == QLatin1String("stream") || mode == QLatin1String("stream_metrics") || mode == QLatin1String("stream_reasoning") || mode.startsWith("metrics_") || mode == QLatin1String("invalid_metrics") || mode == QLatin1String("bad_stream") || mode == QLatin1String("unbound_stream"))) {
             auto partial = response;
             partial.remove(QStringLiteral("result"));
             partial.insert(QStringLiteral("type"), QStringLiteral("partial_result"));
@@ -96,18 +109,31 @@ int fixture(const QString& mode) {
             if (mode == QLatin1String("unbound_stream")) partial = {{"type", "partial_result"}, {"request_id", response.value("request_id")}, {"chunk", "token"}};
             if (mode == QLatin1String("stream_metrics")) QThread::msleep(100);
             for (int i = 0; i < 65; ++i) {
-                if (mode == QLatin1String("stream_metrics") || mode.startsWith("metrics_") || mode == QLatin1String("invalid_metrics")) {
+                if (mode == QLatin1String("stream_metrics") || mode == QLatin1String("stream_reasoning") || mode.startsWith("metrics_") || mode == QLatin1String("invalid_metrics")) {
                     partial.insert("output_tokens", mode == QLatin1String("invalid_metrics") ? 999999 : (i+1)*4);
                     partial.insert("decode_ms", mode == QLatin1String("invalid_metrics") ? -1 : (i+1)*20);
                     partial.insert("generation_ms", (i+1)*25);
                     if (mode == "metrics_bad_partial" && i == 10) partial.insert("output_tokens", 1);
                     if (mode == "metrics_bad_partial" && i == 11) partial.insert("decode_ms", (i+1)*30);
                 }
+                if (mode == QLatin1String("stream_reasoning")) {
+                    const int total = (i+1)*4;
+                    partial.insert("reasoning_tokens", std::min(total,64));
+                    partial.insert("answer_tokens", std::max(0,total-64));
+                    partial.insert("phase", total <= 64 ? "thinking" : "answer");
+                    partial.insert("chunk", total <= 64 ? "" : "token");
+                }
                 std::cout << QJsonDocument(partial).toJson(QJsonDocument::Compact).toStdString() << '\n' << std::flush;
                 if (mode == QLatin1String("stream_metrics")) QThread::msleep(2);
             }
-            if (mode == QLatin1String("stream_metrics") || mode.startsWith("metrics_")) {
+            if (mode == QLatin1String("stream_metrics") || mode == QLatin1String("stream_reasoning") || mode.startsWith("metrics_")) {
                 result.insert("output_tokens",260); result.insert("decode_ms",1300); result.insert("generation_ms",1625);
+                if (mode == QLatin1String("stream_reasoning")) {
+                    result.insert("reasoning_tokens",64); result.insert("answer_tokens",196); result.insert("phase","answer");
+                }
+                if (mode == "metrics_bad_partition") {
+                    result.insert("reasoning_tokens",64); result.insert("answer_tokens",197); result.insert("phase","answer");
+                }
                 if (mode == "metrics_bad_final_count") result.insert("output_tokens",999999);
                 if (mode == "metrics_fractional_final") result.insert("output_tokens",260.5);
                 if (mode == "metrics_backward_final") result.insert("output_tokens",256);
@@ -276,6 +302,28 @@ void controllerResidencyTests() {
     }
 }
 
+void nativeWordCompanionAuditTest() {
+    QTemporaryDir settingsDirectory;
+    QCoreApplication::setOrganizationName("RoclintNativeWordTests");
+    QCoreApplication::setApplicationName("isolated");
+    QSettings::setPath(QSettings::IniFormat,QSettings::UserScope,settingsDirectory.path());
+    QSettings settings;settings.setValue("models/nativeDirectory","word_context");
+    auto bridge=std::make_unique<roclint::test::MockAccessibilityBridge>();auto* observed=bridge.get();
+    roclint::host::HostController host(":memory:",std::move(bridge));
+    ROCLINT_CHECK(host.waitForStorageForTesting());
+    ROCLINT_CHECK(host.setNativeWorkerForTesting(QCoreApplication::applicationFilePath()));
+    host.warmSelectedModel();waitUntil([&] {return host.modelRuntimeState()=="READY";});
+    host.setAmbientModeEnabled(true);
+    roclint::host::ObservedField field;field.fieldToken=98765;field.appIdentifier="Code.exe";
+    field.kind=roclint::host::FieldKind::GuiEditor;field.text="Make the dashboard feel faster.";
+    field.caretOffset=field.text.indexOf("faster")+6;field.fieldRect=QRect(60,120,620,120);
+    observed->observe(field);
+    waitUntil([&] {return host.hasWordRefinement();});
+    ROCLINT_CHECK(host.wordRefinementReplacement()=="quicker to load" && observed->rangeInjections.empty());
+    bool quit=false;QObject::connect(&host,&roclint::host::HostController::quitRequested,[&] {quit=true;});
+    host.requestQuit();waitUntil([&] {return quit;});
+}
+
 void protocolTests() {
     QFile sourceManifest(QString::fromUtf8(ROCLINT_GRANITE_SOURCE_MANIFEST));
     ROCLINT_CHECK(sourceManifest.open(QIODevice::ReadOnly));
@@ -305,6 +353,13 @@ void protocolTests() {
     auto future = generate(runtime);
     waitUntil([&]() { return future.isFinished(); });
     ROCLINT_CHECK(future.result().ok());
+    auto expiredContext=context();
+    expiredContext.deadline=std::chrono::steady_clock::now()+std::chrono::milliseconds(20);
+    const auto sharedBudget=runtime.transportFor(expiredContext,QStringLiteral("granite_analyze"),"{}");
+    QThread::msleep(25);
+    auto expiredBudgetCall=QtConcurrent::run([sharedBudget] {return sharedBudget("Bound instructions.");});
+    waitUntil([&] {return expiredBudgetCall.isFinished();});
+    ROCLINT_CHECK(!expiredBudgetCall.result().ok() && expiredBudgetCall.result().error().message.find("Shared request budget expired")!=std::string::npos);
     int chunks = 0;
     QObject::connect(&runtime, &NativeGraniteRuntime::partialResultReceived, [&](quint64, const QString& chunk) {
         ROCLINT_CHECK(chunk == "token"); ++chunks;
@@ -325,6 +380,19 @@ void protocolTests() {
     ROCLINT_CHECK(future.result().ok() && runtime.lastOutputTokens()==260 && runtime.lastTokensPerSecond()==160);
     ROCLINT_CHECK(runtime.lastGenerationTokensPerSecond()==160 && runtime.lastDecodeTokensPerSecond()==200);
     ROCLINT_CHECK(runtime.lastGenerationMs()==1625 && runtime.lastDecodeMs()==1300);
+    bool sawThinking = false;
+    const auto thinkingMetrics = QObject::connect(&runtime, &NativeGraniteRuntime::speedMetricsChanged, [&]() {
+        if (runtime.generationPhase() == QLatin1String("thinking")) {
+            sawThinking = true;
+            ROCLINT_CHECK(runtime.lastReasoningTokens() == runtime.lastOutputTokens() && runtime.lastAnswerTokens() == 0);
+        }
+    });
+    const int beforeThinkingChunks = chunks;
+    load(QStringLiteral("stream_reasoning")); future=generate(runtime);
+    waitUntil([&]() { return future.isFinished() && runtime.state()=="READY" && chunks==beforeThinkingChunks+49; });
+    ROCLINT_CHECK(sawThinking && future.result().ok());
+    ROCLINT_CHECK(runtime.lastReasoningTokens()==64 && runtime.lastAnswerTokens()==196 && runtime.lastOutputTokens()==260);
+    QObject::disconnect(thinkingMetrics);
     load(QStringLiteral("metrics_bad_partial"));
     qint64 previousCount = 0;
     const auto telemetryGuard = QObject::connect(&runtime, &NativeGraniteRuntime::speedMetricsChanged, [&]() {
@@ -341,7 +409,7 @@ void protocolTests() {
     ROCLINT_CHECK(future.result().ok() && runtime.lastOutputTokens()==260 && runtime.lastTokensPerSecond()==160);
     QObject::disconnect(telemetryGuard);
     for (const auto* mode : {"metrics_bad_final_count", "metrics_fractional_final", "metrics_backward_final",
-            "metrics_zero_time_final", "metrics_missing_generation", "metrics_decode_exceeds_generation", "metrics_backward_time"}) {
+            "metrics_zero_time_final", "metrics_missing_generation", "metrics_decode_exceeds_generation", "metrics_backward_time", "metrics_bad_partition"}) {
         load(QString::fromLatin1(mode));
         const int completedChunks = chunks + 65;
         future=generate(runtime);
@@ -373,7 +441,7 @@ void protocolTests() {
     waitUntil([&]() { return runtime.isReady() && runtime.residency() == QLatin1String("HOT"); });
     ROCLINT_CHECK(runtime.generationForTesting() == generation); // Reuse the owned helper/mapping; no unnecessary restart.
 
-    for (const auto& mode : {"bad_context", "bad_hash", "bad_version", "malformed", "oversize", "bad_utf8", "bad_stream", "unbound_stream"}) {
+    for (const auto& mode : {"bad_context", "bad_hash", "bad_version", "bad_thinking_binding", "malformed", "oversize", "bad_utf8", "bad_stream", "unbound_stream"}) {
         load(QString::fromLatin1(mode));
         future = generate(runtime);
         waitUntil([&]() { return future.isFinished() && runtime.state() == QLatin1String("FAILED"); });
@@ -387,8 +455,36 @@ void protocolTests() {
     runtime.load(QStringLiteral("unbounded"), QStringLiteral("Q4_K_M"));
     waitUntil([&]() { return runtime.generationForTesting() > failedGeneration && runtime.state() == QLatin1String("FAILED"); });
     ROCLINT_CHECK(!runtime.isReady() && runtime.detail().contains(QStringLiteral("development investigation")));
+    failedGeneration = runtime.generationForTesting();
+    runtime.load(QStringLiteral("thinking_reference"), QStringLiteral("Q4_K_M"));
+    waitUntil([&]() { return runtime.generationForTesting() > failedGeneration && runtime.state() == QLatin1String("FAILED"); });
+    ROCLINT_CHECK(!runtime.isReady());
     load(QStringLiteral("duplicate")); future = generate(runtime);
     waitUntil([&]() { return runtime.state() == QLatin1String("FAILED") && future.isFinished(); });
+
+    load(QStringLiteral("thinking_binding"));
+    auto noThinkingContext = context(); noThinkingContext.thinkingEnabled = false;
+    const auto noThinking = runtime.transportFor(noThinkingContext, QStringLiteral("granite_analyze"), "{}");
+    auto noThinkingFuture = QtConcurrent::run([noThinking]() { return noThinking("instructions"); });
+    waitUntil([&]() { return noThinkingFuture.isFinished() && runtime.state() == "READY"; });
+    ROCLINT_CHECK(noThinkingFuture.result().ok() && noThinkingFuture.result().value() == "thinking=false");
+    // Cancelling one inline operation must not invalidate an unrelated frozen transport.
+    load(QStringLiteral("late"));
+    auto scopedContext = context();
+    scopedContext.cancellation = std::make_shared<std::atomic_bool>(false);
+    auto scoped = runtime.transportFor(scopedContext, QStringLiteral("granite_analyze"), "{}");
+    auto independent = runtime.transportFor(context(), QStringLiteral("granite_analyze"), "{}");
+    auto scopedFuture = QtConcurrent::run([scoped]() { return scoped("superseded inline request"); });
+    waitUntil([&]() { return runtime.state() == QLatin1String("BUSY"); });
+    scopedContext.cancellation->store(true);
+    waitUntil([&]() { return scopedFuture.isFinished(); });
+    ROCLINT_CHECK(!scopedFuture.result().ok() && scopedFuture.result().error().code == roclint::core::ErrorCode::StaleVersion);
+    waitUntil([&]() { return runtime.isReady() && runtime.state() == QLatin1String("READY"); });
+    auto independentFuture = QtConcurrent::run([independent]() { return independent("unrelated instructions"); });
+    waitUntil([&]() { return independentFuture.isFinished(); });
+    if (!independentFuture.result().ok()) std::cerr << "Scoped cancellation independent error: " << independentFuture.result().error().message << " state=" << runtime.state().toStdString() << " detail=" << runtime.detail().toStdString() << "\n";
+    ROCLINT_CHECK(independentFuture.result().ok());
+    waitUntil([&]() { return runtime.isReady(); });
 
     load(QStringLiteral("late"));
     auto unusedTransport = runtime.transportFor(context(), QStringLiteral("granite_analyze"), "{}");
@@ -507,13 +603,16 @@ void speedMetricsClearOnStopTests() {
     runtime.load(QStringLiteral("stream_metrics"), QStringLiteral("Q4_K_M"));
     waitUntil([&]() { return runtime.isReady(); });
     auto future = generate(runtime);
-    waitUntil([&]() { return future.isFinished(); });
+    // Completion is published on the I/O thread before the GUI mailbox applies
+    // its final telemetry snapshot. Assert against that snapshot after draining it.
+    waitUntil([&]() { return future.isFinished() && runtime.state()=="READY" && runtime.lastOutputTokens()==260; });
     ROCLINT_CHECK(future.result().ok());
     ROCLINT_CHECK(runtime.lastTokensPerSecond()==160 && runtime.lastOutputTokens()==260);
     runtime.stop();
     waitUntil([&]() { return !runtime.isRunning(); });
     ROCLINT_CHECK(runtime.lastTokensPerSecond() == 0.0);
     ROCLINT_CHECK(runtime.lastOutputTokens() == 0);
+    ROCLINT_CHECK(runtime.lastReasoningTokens() == 0 && runtime.lastAnswerTokens() == 0);
     ROCLINT_CHECK(runtime.lastDecodeMs() == 0.0);
     ROCLINT_CHECK(runtime.lastGenerationMs() == 0.0);
     std::cout << "  [PASS] Speed metrics cleared to zero after stop().\n";
@@ -646,7 +745,7 @@ int main(int argc, char** argv) {
     if ((argc >= 6 && argc <= 8) && std::string_view(argv[1]) == "--live-host-pipeline") return liveHostPipeline(argc, argv);
     if (argc == 5 && std::string_view(argv[1]) == "--model-dir") return fixture(QString::fromLocal8Bit(argv[2]));
     grammarTests(); prefixCacheTests(); residencyPolicyTests(); protocolTests(); installerTests(); controllerResidencyTests();
-    acceleratorNameTests(); speedMetricsClearOnStopTests(); decodeThreadLockSanityTest();
+    acceleratorNameTests(); speedMetricsClearOnStopTests(); decodeThreadLockSanityTest(); nativeWordCompanionAuditTest();
     std::cout << "Native protocol, cancellation, recovery, residency, atomic model installation and calibration tests passed.\n";
     return 0;
 }

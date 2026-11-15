@@ -143,7 +143,7 @@ QJsonArray contracts(const QJsonObject& fixtures) {
         roclint::bridge::GraniteOptionDiscoveryRequest request{kSession, kRevision, ss(fixture.value(QStringLiteral("prompt")).toString()), "UNKNOWN"};
         fixture.insert(QStringLiteral("op"), QStringLiteral("granite_analyze"));
         fixture.insert(QStringLiteral("instructions"), qs(roclint::bridge::buildDiscoveryPrompt(request)));
-        fixture.insert(QStringLiteral("schema"), qs(roclint::bridge::discoveryResponseSchema()));
+        fixture.insert(QStringLiteral("schema"), qs(roclint::bridge::discoveryResponseSchema(request.promptString)));
         fixture.insert(QStringLiteral("intent_id"), QString()); fixture.insert(QStringLiteral("rewrite_profile_id"), QString());
         output.append(fixture);
     }

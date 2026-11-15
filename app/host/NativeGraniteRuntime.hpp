@@ -26,6 +26,9 @@ public:
     double lastDecodeTokensPerSecond() const { return cache_.decodeSpeed; }
     double lastGenerationTokensPerSecond() const { return cache_.generationSpeed; }
     qint64 lastOutputTokens() const { return cache_.tokens; }
+    qint64 lastReasoningTokens() const { return cache_.reasoningTokens; }
+    qint64 lastAnswerTokens() const { return cache_.answerTokens; }
+    QString generationPhase() const { return cache_.phase; }
     double lastDecodeMs() const { return cache_.decode; }
     double lastGenerationMs() const { return cache_.generationMs; }
     void load(const QString& directory, const QString& quantization);
@@ -45,7 +48,7 @@ private:
     struct Snapshot {
         bool ready{false}, running{false}; QString state{"UNLOADED"}, detail{"Native Granite is not loaded."}, residency{"UNLOADED"}, quantization, configuration;
         bridge::GraniteModelInfo model; quint64 generation{0}, requestEpoch{0};
-        double speed{0}, decode{0}, generationMs{0}, decodeSpeed{0}, generationSpeed{0}; qint64 tokens{0};
+        double speed{0}, decode{0}, generationMs{0}, decodeSpeed{0}, generationSpeed{0}; qint64 tokens{0}, reasoningTokens{0}, answerTokens{0}; QString phase{"idle"};
     };
     void post(std::function<void(NativeGraniteRuntimeWorker*)> command);
     void apply(Snapshot snapshot, quint64 epoch);

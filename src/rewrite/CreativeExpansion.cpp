@@ -341,12 +341,9 @@ std::vector<CreativeAlternative> CreativeExpansionEngine::expand(
         }
     }
 
-    const std::string lowerOrig = toLowerAscii(originalPrompt);
-    const std::string lowerBase = toLowerAscii(baseRewrittenText);
-
-    // Helper to join multiple prohibitions cleanly
+    // Alternatives are structural re-expressions of the user's own text. They never add
+    // technology, thresholds, camera settings, or design requirements that the user did not state.
     auto formatProhibitions = [](const std::vector<std::string>& probs) -> std::string {
-        if (probs.empty()) return {};
         std::string res;
         for (size_t i = 0; i < probs.size(); ++i) {
             if (i > 0) res += "; ";
@@ -355,10 +352,8 @@ std::vector<CreativeAlternative> CreativeExpansionEngine::expand(
         return res;
     };
 
-    // Helper to split base string into positive requirement clauses and prohibitions
     auto decomp = decomposeMixedSentences(baseStr, prohibitions);
     std::vector<std::string> positiveSentences = decomp.positiveClauses;
-
     for (const auto& prob : decomp.prohibitionClauses) {
         bool alreadyPresent = false;
         auto probTokens = extractProhibitionTargetTokens(prob);
@@ -373,311 +368,140 @@ std::vector<CreativeAlternative> CreativeExpansionEngine::expand(
                 break;
             }
         }
-        if (!alreadyPresent) {
-            prohibitions.push_back(prob);
+        if (!alreadyPresent) prohibitions.push_back(prob);
+    }
+
+    auto addAlternative = [&](const std::string& id, const std::string& title,
+                              const std::string& descriptor, const std::string& text,
+                              ValidationOutcome outcome) {
+        if (text.empty() || text == baseStr) return;
+        const bool duplicate = std::any_of(alternatives.begin(), alternatives.end(),
+            [&](const CreativeAlternative& existing) { return existing.rewrittenText == text; });
+        if (duplicate) return;
+        alternatives.push_back(CreativeAlternative{
+            .id = id,
+            .title = title,
+            .styleDescriptor = descriptor,
+            .rewrittenText = text,
+            .diffText = RewriteValidator::computeAccessibleDiff(originalStr, text),
+            .auditOutcome = outcome
+        });
+    };
+
+    CreativeAlternative altDirect{
+        .id = "alt_direct",
+        .title = "Direct / Minimal",
+        .styleDescriptor = "Keeps the verified rewrite unchanged",
+        .rewrittenText = baseStr,
+        .diffText = RewriteValidator::computeAccessibleDiff(originalStr, baseStr),
+        .auditOutcome = ValidationOutcome::Pass
+    };
+    alternatives.push_back(std::move(altDirect));
+
+    // Structural step-by-step: each step is a sentence the user already wrote (from the verified
+    // rewrite when available, otherwise from their original prompt). No new requirements.
+    std::vector<std::string> stepSource = positiveSentences;
+    if (stepSource.empty()) {
+        stepSource = decomposeMixedSentences(originalStr, prohibitions).positiveClauses;
+    }
+    std::string stepText;
+    int stepNum = 1;
+    for (const auto& sentence : stepSource) {
+        const std::string clause = cleanClause(sentence);
+        if (clause.empty()) continue;
+        stepText += std::to_string(stepNum++) + ". " + clause;
+        if (stepText.back() != '.') stepText += '.';
+        stepText += '\n';
+    }
+    if (stepText.empty()) {
+        stepText = "1. " + std::string(originalPrompt);
+        if (stepText.back() != '.') stepText += '.';
+        stepText += '\n';
+    }
+    if (!prohibitions.empty()) {
+        stepText += std::to_string(stepNum) + ". Leave " + formatProhibitions(prohibitions) + " untouched.";
+    }
+    addAlternative("alt_steps", "Step-by-Step", "Separates the user's clauses into numbered steps",
+                   stepText, ValidationOutcome::Unresolved);
+
+    // Concise: drop only generic elaboration wording while preserving every substantive term and
+    // prohibition. If the shorter form cannot preserve them, no concise alternative is offered.
+    static const std::vector<std::string_view> kElaborationPrefixes = {
+        " explaining the change", " explaining ", " for ordinary users", " for upgrading users", " to improve "
+    };
+    std::unordered_set<std::string> requiredSubstantiveTerms;
+    for (const auto& w : extractRequirementSubstantiveWords(originalPrompt)) {
+        requiredSubstantiveTerms.insert(w);
+    }
+    for (const auto& c : constraints) {
+        if (c.polarity == Polarity::Require) {
+            for (const auto& w : extractRequirementSubstantiveWords(c.rule)) {
+                requiredSubstantiveTerms.insert(w);
+            }
         }
     }
 
-    const bool isVisualOrAnimation =
-        containsCaseInsensitive(lowerOrig, "animat") ||
-        containsCaseInsensitive(lowerOrig, "visualiz") ||
-        containsCaseInsensitive(lowerOrig, "particle") ||
-        containsCaseInsensitive(lowerOrig, "graphic") ||
-        containsCaseInsensitive(lowerOrig, "layer 3") ||
-        containsCaseInsensitive(lowerOrig, "dashboard") ||
-        containsCaseInsensitive(lowerOrig, "render") ||
-        containsCaseInsensitive(lowerBase, "particle") ||
-        containsCaseInsensitive(lowerBase, "glowing");
-
-    const bool isRefactoring =
-        containsCaseInsensitive(lowerOrig, "refactor") ||
-        containsCaseInsensitive(lowerOrig, "optimize") ||
-        containsCaseInsensitive(lowerOrig, "faster") ||
-        containsCaseInsensitive(lowerOrig, "latency") ||
-        containsCaseInsensitive(lowerOrig, "speed") ||
-        containsCaseInsensitive(lowerOrig, "auth") ||
-        containsCaseInsensitive(lowerOrig, "readab");
-
-    if (isVisualOrAnimation) {
-        // Variation 1: Direct / Minimalist (Base rewrite, grounded and audited)
-        std::string directText = baseStr;
-        CreativeAlternative altDirect{
-            .id = "alt_direct",
-            .title = "Direct / Minimal",
-            .styleDescriptor = "Leaves visual styling open for downstream implementation",
-            .rewrittenText = directText,
-            .diffText = RewriteValidator::computeAccessibleDiff(originalStr, directText),
-            .auditOutcome = ValidationOutcome::Pass // Base candidate was verified during synthesize
-        };
-        alternatives.push_back(std::move(altDirect));
-
-        // Check if glowing or particles are prohibited
-        bool glowingProhibited = false;
-        for (const auto& p : prohibitions) {
-            std::string lp = toLowerAscii(p);
-            if (lp.find("glow") != std::string::npos || lp.find("particle") != std::string::npos) {
-                glowingProhibited = true;
-                break;
+    const auto originalDecomp = decomposeMixedSentences(originalStr, prohibitions);
+    const auto& positiveSource = (!originalDecomp.positiveClauses.empty())
+        ? originalDecomp.positiveClauses : positiveSentences;
+    std::string concisePositive;
+    for (const auto& source : positiveSource) {
+        std::string s = source;
+        for (const auto& elab : kElaborationPrefixes) {
+            auto pos = s.find(elab);
+            if (pos == std::string::npos || pos < 10) continue;
+            std::string_view tail = std::string_view(s).substr(pos);
+            bool tailHasSubstantiveReq = false;
+            for (const auto& tw : extractRequirementSubstantiveWords(tail)) {
+                if (requiredSubstantiveTerms.contains(tw)) { tailHasSubstantiveReq = true; break; }
             }
+            if (tailHasSubstantiveReq) continue;
+            s = cleanClause(s.substr(0, pos));
+            break;
         }
+        if (s.empty()) continue;
+        if (!concisePositive.empty()) concisePositive += ' ';
+        concisePositive += s;
+        if (concisePositive.back() != '.') concisePositive += '.';
+    }
+    std::string conciseText = concisePositive;
+    for (const auto& prob : prohibitions) {
+        if (containsCaseInsensitive(conciseText, prob)) continue;
+        if (!conciseText.empty() && conciseText.back() != '.') conciseText += '.';
+        if (!conciseText.empty()) conciseText += ' ';
+        conciseText += prob;
+        if (!conciseText.empty() && conciseText.back() != '.') conciseText += '.';
+    }
 
-        // Variation 2: Dynamic Flow (Alternative styling; unreviewed until selected)
-        std::string flowText;
-        if (!glowingProhibited && (containsCaseInsensitive(lowerOrig, "particle") || containsCaseInsensitive(lowerOrig, "flow"))) {
-            flowText = baseStr + " Emphasize dynamic motion and continuous flow lines.";
-        } else {
-            flowText = baseStr + " Emphasize clear visual trajectory and dynamic motion along connected nodes.";
+    bool concisePreservesProhibitions = true;
+    for (const auto& prob : prohibitions) {
+        for (const auto& tok : extractProhibitionTargetTokens(prob)) {
+            if (!containsCaseInsensitive(conciseText, tok)) { concisePreservesProhibitions = false; break; }
         }
-        CreativeAlternative altFlow{
-            .id = "alt_flow",
-            .title = "Dynamic Flow",
-            .styleDescriptor = "Expressive flow dynamics and trajectory highlighting",
-            .rewrittenText = flowText,
-            .diffText = RewriteValidator::computeAccessibleDiff(originalStr, flowText),
-            .auditOutcome = ValidationOutcome::Unresolved // F05: unreviewed candidate does not carry unearned Pass
-        };
-        alternatives.push_back(std::move(altFlow));
-
-        // Variation 3: Structured Topology & Stack (Architectural clarity; unreviewed until selected)
-        std::string stackText = baseStr + " Maintain strict structural hierarchy, high contrast, and verifiable precision.";
-        CreativeAlternative altStack{
-            .id = "alt_stack",
-            .title = "Stack & Topology",
-            .styleDescriptor = "Structured topological hierarchy and encapsulation layers",
-            .rewrittenText = stackText,
-            .diffText = RewriteValidator::computeAccessibleDiff(originalStr, stackText),
-            .auditOutcome = ValidationOutcome::Unresolved // F05: unreviewed candidate does not carry unearned Pass
-        };
-        alternatives.push_back(std::move(altStack));
-    } else if (isRefactoring) {
-        // Variation 1: Focused Prose (Base rewrite, grounded and audited)
-        std::string proseText = baseStr;
-        CreativeAlternative altProse{
-            .id = "alt_prose",
-            .title = "Focused Prose",
-            .styleDescriptor = "Concise and idiomatic specification in clear prose",
-            .rewrittenText = proseText,
-            .diffText = RewriteValidator::computeAccessibleDiff(originalStr, proseText),
-            .auditOutcome = ValidationOutcome::Pass // Base candidate was verified during synthesize
-        };
-        alternatives.push_back(std::move(altProse));
-
-        // Variation 2: Step-by-Step Breakdown (F05: preserves target, positive invariants, and ALL prohibitions)
-        std::string stepText;
-        int stepNum = 1;
-        if (!positiveSentences.empty()) {
-            for (const auto& s : positiveSentences) {
-                stepText += std::to_string(stepNum++) + ". " + s;
-                if (stepText.back() != '.') stepText += ".";
-                stepText += "\n";
+        if (!concisePreservesProhibitions) break;
+    }
+    bool concisePreservesPositiveReqs = true;
+    for (const auto& c : constraints) {
+        if (c.polarity != Polarity::Require || c.enforcement != Enforcement::Hard || c.origin != Origin::User) continue;
+        for (const auto& w : extractRequirementSubstantiveWords(c.rule)) {
+            if (!containsCaseInsensitive(conciseText, w)) { concisePreservesPositiveReqs = false; break; }
+        }
+        if (!concisePreservesPositiveReqs) break;
+    }
+    if (concisePreservesPositiveReqs) {
+        // Compare against the user's original requirements, not against generic elaboration in
+        // the base rewrite. The base may contain helpful wording that concision is allowed to drop.
+        for (const auto& posClause : originalDecomp.positiveClauses) {
+            for (const auto& w : extractRequirementSubstantiveWords(posClause)) {
+                if (!containsCaseInsensitive(conciseText, w)) { concisePreservesPositiveReqs = false; break; }
             }
-        } else {
-            auto origDecomp = decomposeMixedSentences(originalPrompt, prohibitions);
-            if (!origDecomp.positiveClauses.empty()) {
-                for (const auto& s : origDecomp.positiveClauses) {
-                    stepText += std::to_string(stepNum++) + ". " + s;
-                    if (stepText.back() != '.') stepText += ".";
-                    stepText += "\n";
-                }
-            } else {
-                stepText = "1. " + std::string(originalPrompt);
-                if (stepText.back() != '.') stepText += ".";
-                stepText += "\n";
-                stepNum = 2;
-            }
+            if (!concisePreservesPositiveReqs) break;
         }
-
-        if (!prohibitions.empty()) {
-            stepText += std::to_string(stepNum) + ". Leave forbidden areas strictly untouched: " + formatProhibitions(prohibitions) + ".";
-        } else {
-            stepText += std::to_string(stepNum) + ". Preserve all existing invariants, error conditions, and validation routines unchanged.";
-        }
-
-        CreativeAlternative altSteps{
-            .id = "alt_steps",
-            .title = "Step-by-Step",
-            .styleDescriptor = "Structured numbered steps separating changes from invariants",
-            .rewrittenText = stepText,
-            .diffText = RewriteValidator::computeAccessibleDiff(originalStr, stepText),
-            .auditOutcome = ValidationOutcome::Unresolved // F05: unreviewed candidate does not carry unearned Pass
-        };
-        alternatives.push_back(std::move(altSteps));
-
-        // Variation 3: Conservative & Minimal (F05: preserves target and ALL prohibitions)
-        std::string consText;
-        if (!positiveSentences.empty()) {
-            consText = "Perform a minimal refactoring: ";
-            for (size_t i = 0; i < positiveSentences.size(); ++i) {
-                if (i > 0) consText += " ";
-                consText += positiveSentences[i];
-                if (consText.back() != '.') consText += ".";
-            }
-        } else {
-            auto origDecomp = decomposeMixedSentences(originalPrompt, prohibitions);
-            if (!origDecomp.positiveClauses.empty()) {
-                consText = "Perform a minimal refactoring: ";
-                for (size_t i = 0; i < origDecomp.positiveClauses.size(); ++i) {
-                    if (i > 0) consText += " ";
-                    consText += origDecomp.positiveClauses[i];
-                    if (consText.back() != '.') consText += ".";
-                }
-            } else {
-                consText = "Perform a minimal refactoring: " + std::string(originalPrompt);
-                if (consText.back() != '.') consText += ".";
-            }
-        }
-
-        if (!prohibitions.empty()) {
-            consText += " Leave " + formatProhibitions(prohibitions) + " strictly untouched and unchanged.";
-        } else {
-            consText += " Preserve all existing behavior unchanged.";
-        }
-
-        CreativeAlternative altCons{
-            .id = "alt_conservative",
-            .title = "Conservative & Minimal",
-            .styleDescriptor = "Surgical patch minimizing diff footprint and blast radius",
-            .rewrittenText = consText,
-            .diffText = RewriteValidator::computeAccessibleDiff(originalStr, consText),
-            .auditOutcome = ValidationOutcome::Unresolved // F05: unreviewed candidate does not carry unearned Pass
-        };
-        alternatives.push_back(std::move(altCons));
-    } else {
-        // Default: Base proposal as primary, plus concise alternative
-        CreativeAlternative altBase{
-            .id = "alt_base",
-            .title = "Standard",
-            .styleDescriptor = "Direct rewrite synthesized from prompt analysis",
-            .rewrittenText = baseStr,
-            .diffText = RewriteValidator::computeAccessibleDiff(originalStr, baseStr),
-            .auditOutcome = ValidationOutcome::Pass
-        };
-        alternatives.push_back(std::move(altBase));
-
-        auto origDecomp = decomposeMixedSentences(originalPrompt, prohibitions);
-        static const std::vector<std::string_view> kElaborationPrefixes = {
-            " explaining the change", " explaining ", " for ordinary users", " for upgrading users", " to improve "
-        };
-
-        // Collect substantive requirement terms from originalPrompt and Require constraints
-        std::unordered_set<std::string> requiredSubstantiveTerms;
-        for (const auto& w : extractRequirementSubstantiveWords(originalPrompt)) {
-            requiredSubstantiveTerms.insert(w);
-        }
-        for (const auto& c : constraints) {
-            if (c.polarity == Polarity::Require) {
-                for (const auto& w : extractRequirementSubstantiveWords(c.rule)) {
-                    requiredSubstantiveTerms.insert(w);
-                }
-            }
-        }
-
-        const auto& positiveSource = (!positiveSentences.empty()) ? positiveSentences : origDecomp.positiveClauses;
-        std::string concisePositive;
-
-        for (size_t i = 0; i < positiveSource.size(); ++i) {
-            std::string s = positiveSource[i];
-            if (i < origDecomp.positiveClauses.size() && origDecomp.positiveClauses[i].size() < s.size()) {
-                s = origDecomp.positiveClauses[i];
-            }
-            for (const auto& elab : kElaborationPrefixes) {
-                auto pos = s.find(elab);
-                if (pos != std::string::npos && pos >= 10) {
-                    // Guarded elaboration truncation:
-                    // Check whether the tail string after the prefix contains substantive requirement words
-                    // from originalPrompt or Require constraints.
-                    std::string_view tail = std::string_view(s).substr(pos);
-                    auto tailWords = extractRequirementSubstantiveWords(tail);
-                    bool tailHasSubstantiveReq = false;
-                    for (const auto& tw : tailWords) {
-                        if (requiredSubstantiveTerms.contains(tw)) {
-                            tailHasSubstantiveReq = true;
-                            break;
-                        }
-                    }
-                    if (tailHasSubstantiveReq) {
-                        // Guarded: tail contains substantive requirements, do not truncate at this prefix
-                        continue;
-                    }
-
-                    s = cleanClause(s.substr(0, pos));
-                    break;
-                }
-            }
-            if (!s.empty()) {
-                if (!concisePositive.empty()) concisePositive += " ";
-                concisePositive += s;
-                if (concisePositive.back() != '.') {
-                    concisePositive += ".";
-                }
-            }
-        }
-
-        std::string conciseText = concisePositive;
-        for (const auto& prob : prohibitions) {
-            if (!containsCaseInsensitive(conciseText, prob)) {
-                if (!conciseText.empty() && conciseText.back() != '.') conciseText += ".";
-                if (!conciseText.empty()) conciseText += " ";
-                conciseText += prob;
-                if (!conciseText.empty() && conciseText.back() != '.') conciseText += ".";
-            }
-        }
-
-        bool concisePreservesProhibitions = true;
-        for (const auto& prob : prohibitions) {
-            auto targetTokens = extractProhibitionTargetTokens(prob);
-            for (const auto& tok : targetTokens) {
-                if (!containsCaseInsensitive(conciseText, tok)) {
-                    concisePreservesProhibitions = false;
-                    break;
-                }
-            }
-            if (!concisePreservesProhibitions) break;
-        }
-
-        bool concisePreservesPositiveReqs = true;
-        for (const auto& c : constraints) {
-            if (c.polarity == Polarity::Require && c.enforcement == Enforcement::Hard && c.origin == Origin::User) {
-                auto subWords = extractRequirementSubstantiveWords(c.rule);
-                for (const auto& w : subWords) {
-                    if (!containsCaseInsensitive(conciseText, w)) {
-                        concisePreservesPositiveReqs = false;
-                        break;
-                    }
-                }
-                if (!concisePreservesPositiveReqs) {
-                    break;
-                }
-            }
-        }
-
-        if (concisePreservesPositiveReqs) {
-            for (const auto& posClause : origDecomp.positiveClauses) {
-                auto words = extractRequirementSubstantiveWords(posClause);
-                for (const auto& w : words) {
-                    if (!containsCaseInsensitive(conciseText, w)) {
-                        concisePreservesPositiveReqs = false;
-                        break;
-                    }
-                }
-                if (!concisePreservesPositiveReqs) {
-                    break;
-                }
-            }
-        }
-
-        if (!conciseText.empty() && conciseText != baseStr && conciseText.size() < baseStr.size() &&
-            concisePreservesProhibitions && concisePreservesPositiveReqs) {
-            CreativeAlternative altConcise{
-                .id = "alt_concise",
-                .title = "Concise",
-                .styleDescriptor = "Shortened direct directive",
-                .rewrittenText = conciseText,
-                .diffText = RewriteValidator::computeAccessibleDiff(originalStr, conciseText),
-                .auditOutcome = ValidationOutcome::Unresolved
-            };
-            alternatives.push_back(std::move(altConcise));
-        }
+    }
+    if (!conciseText.empty() && conciseText.size() < baseStr.size() &&
+        concisePreservesProhibitions && concisePreservesPositiveReqs) {
+        addAlternative("alt_concise", "Concise", "Shorter wording built only from the user's own clauses",
+                       conciseText, ValidationOutcome::Unresolved);
     }
 
     // Validate candidates against reconciler and meaning preservation

@@ -84,8 +84,13 @@ FocusScope {
             if (name === "acknowledgeConstraint" && !succeeded) rootWindow.reviewRefresh++;
             if (!rootWindow.pendingDecisions[requestId]) return;
             delete rootWindow.pendingDecisions[requestId];
+            if (name === "submitCustomIntent") return;
             if (succeeded) customAnswer.text = "";
             rootWindow.maybeSuggestRewrite(succeeded);
+        }
+        function onClarificationAnswerChecked(accepted) {
+            if (accepted) customAnswer.text = "";
+            rootWindow.maybeSuggestRewrite(accepted);
         }
         function onInterventionChanged() {
             if (rootWindow.manualResolution)
@@ -163,7 +168,7 @@ FocusScope {
     }
 
     function handleAnswerSubmit(text) {
-        if (!rootWindow.hc) return;
+        if (!rootWindow.hc || hostController.isCheckingClarification) return;
         rootWindow.afterDecision(hostController.submitClarification(text, isDeferral(text), hostController.stateVersion));
     }
 
@@ -332,6 +337,7 @@ FocusScope {
                 }
             }
         }
+
             // Clarification panel
             Rectangle {
                 id: clarifyPanel
@@ -478,6 +484,7 @@ FocusScope {
                         visible: rootWindow.hc && (rootWindow.manualResolution || hostController.activeItemKind !== "ASSUMPTION")
                         TextField {
                             id: customAnswer
+                            readOnly: rootWindow.hc && hostController.isCheckingClarification
                             implicitHeight: 42
                             objectName: "customAnswer"
                             Accessible.name: qsTr("Your clarification")
@@ -511,12 +518,24 @@ FocusScope {
                             }
                         }
                         ActionButton {
-                            label: qsTr("Use this answer")
-                            active: customAnswer.text.trim().length > 0
+                            label: rootWindow.hc && hostController.isCheckingClarification ? qsTr("Checking answer…") : qsTr("Use this answer")
+                            active: customAnswer.text.trim().length > 0 && !(rootWindow.hc && hostController.isCheckingClarification)
                             onClicked: {
                                 handleAnswerSubmit(customAnswer.text);
                             }
                         }
+                    }
+
+                    Text {
+                        objectName: "clarificationFeedback"
+                        textFormat: Text.PlainText
+                        Layout.fillWidth: true
+                        visible: text.length > 0
+                        text: rootWindow.hc ? hostController.clarificationFeedback : ""
+                        wrapMode: Text.WordWrap
+                        font.family: rootWindow.sansFont
+                        font.pixelSize: 14
+                        color: rootWindow.warnColor
                     }
 
                     RowLayout {
