@@ -378,7 +378,10 @@ not the production escaping. The assertion was changed to expect
   profile. Agent 5/coordinator should route the review operation to an
   appropriate bounded profile (the rewrite profile or a dedicated review
   profile) without changing weights, sampling, temperature, top-p, seed, or
-  thinking defaults. No manifest or runtime file was edited by Agent 3.
+  thinking defaults. Current manifest fields only name analysis and rewrite
+  contracts; if the coordinator's contract registry enumerates review
+  contracts, register `granite.comprehension_review.v1` there. No manifest or
+  runtime file was edited by Agent 3.
 - Host: map `ComprehensionReviewStatus` to the UI state machine, bind the result
   to the current revision/proposal, route `requiresUserDecision` findings to
   the interview, and require `reviewAuthorizesApply` plus the existing approval
