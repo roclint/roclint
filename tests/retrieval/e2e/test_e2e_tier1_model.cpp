@@ -22,28 +22,33 @@
 
 namespace {
 
-[[nodiscard]] std::filesystem::path findManifestPath() {
-    std::filesystem::path p = "app/runtime/embedding-models.json";
-    if (std::filesystem::exists(p)) return p;
-    p = "D:/Stardust/roclint/app/runtime/embedding-models.json";
-    if (std::filesystem::exists(p)) return p;
-    return "app/runtime/embedding-models.json";
+std::filesystem::path findManifestPath() { return "app/runtime/embedding-models.json"; }
+std::filesystem::path findSetupScriptPath() { return "tools/setup_embedding_model.py"; }
+std::filesystem::path findWorkerScriptPath() { return "app/runtime/embedding_worker.py"; }
+
+#ifdef _WIN32
+constexpr auto kNullOutput = " > NUL 2>&1";
+#else
+constexpr auto kNullOutput = " > /dev/null 2>&1";
+#endif
+
+std::string pythonExecutable() {
+#ifdef ROCLINT_TEST_PYTHON
+    return ROCLINT_TEST_PYTHON;
+#elif defined(_WIN32)
+    return "python";
+#else
+    return "python3";
+#endif
 }
 
-[[nodiscard]] std::filesystem::path findSetupScriptPath() {
-    std::filesystem::path p = "tools/setup_embedding_model.py";
-    if (std::filesystem::exists(p)) return p;
-    p = "D:/Stardust/roclint/tools/setup_embedding_model.py";
-    if (std::filesystem::exists(p)) return p;
-    return "tools/setup_embedding_model.py";
-}
-
-[[nodiscard]] std::filesystem::path findWorkerScriptPath() {
-    std::filesystem::path p = "app/runtime/embedding_worker.py";
-    if (std::filesystem::exists(p)) return p;
-    p = "D:/Stardust/roclint/app/runtime/embedding_worker.py";
-    if (std::filesystem::exists(p)) return p;
-    return "app/runtime/embedding_worker.py";
+int runPython(const std::filesystem::path& script, const std::string& arguments = {}) {
+    const auto command = "\"" + pythonExecutable() + "\" \"" + script.string() + "\"" + arguments + kNullOutput;
+#ifdef _WIN32
+    return std::system(("\"" + command + "\"").c_str());
+#else
+    return std::system(command.c_str());
+#endif
 }
 
 [[nodiscard]] std::string readFileAsString(const std::filesystem::path& path) {
@@ -125,8 +130,7 @@ E2E_TEST(Tier1_ModelTrustAndWorker, F14_01_SetupScriptExists, roclint::e2e::Test
 
 E2E_TEST(Tier1_ModelTrustAndWorker, F14_02_SetupScriptHelpOptionRuns, roclint::e2e::TestTier::Tier1, "F14") {
     auto script = findSetupScriptPath();
-    std::string cmd = "python \"" + script.string() + "\" --help > nul 2>&1";
-    int exitCode = std::system(cmd.c_str());
+    const int exitCode = runPython(script, " --help");
     E2E_CHECK_EQ(exitCode, 0);
 }
 
@@ -134,9 +138,7 @@ E2E_TEST(Tier1_ModelTrustAndWorker, F14_03_SetupScriptVerifyFailsOnEmptyDir, roc
     roclint::e2e::TempWorkspace emptyWs("f14_03_empty");
     auto script = findSetupScriptPath();
 
-    std::string cmd = "python \"" + script.string() + "\" --verify --dir \"" +
-                      emptyWs.root().string() + "\" > nul 2>&1";
-    int exitCode = std::system(cmd.c_str());
+    const int exitCode = runPython(script, " --verify --dir \"" + emptyWs.root().string() + "\"");
     // Verification of an empty dir without model weights must return non-zero exit code
     E2E_CHECK_NE(exitCode, 0);
 }
@@ -167,8 +169,7 @@ E2E_TEST(Tier1_ModelTrustAndWorker, F14_05_SetupScriptSha256FunctionComputesHash
         "assert len(digest) == 64\n";
 
     auto testRunner = ws.writeFile("run_hash_test.py", pyCode);
-    std::string cmd = "python \"" + testRunner.string() + "\" > nul 2>&1";
-    int exitCode = std::system(cmd.c_str());
+    const int exitCode = runPython(testRunner);
     E2E_CHECK_EQ(exitCode, 0);
 }
 
@@ -187,7 +188,7 @@ E2E_TEST(Tier1_ModelTrustAndWorker, F15_02_WorkerRejectsWrongModelId, roclint::e
     roclint::e2e::MockWorkerScriptFixture script(roclint::e2e::MockWorkerBehavior::WrongModelId);
 
     roclint::retrieval::EmbeddingWorkerConfig cfg;
-    cfg.pythonExecutable = "python";
+    cfg.pythonExecutable = pythonExecutable();
     cfg.workerScriptPath = script.scriptPath();
     cfg.startupTimeoutMs = 5000;
 
@@ -202,7 +203,7 @@ E2E_TEST(Tier1_ModelTrustAndWorker, F15_03_WorkerRejectsMissingPooling, roclint:
     roclint::e2e::MockWorkerScriptFixture script(roclint::e2e::MockWorkerBehavior::MissingPooling);
 
     roclint::retrieval::EmbeddingWorkerConfig cfg;
-    cfg.pythonExecutable = "python";
+    cfg.pythonExecutable = pythonExecutable();
     cfg.workerScriptPath = script.scriptPath();
     cfg.startupTimeoutMs = 5000;
 
@@ -217,7 +218,7 @@ E2E_TEST(Tier1_ModelTrustAndWorker, F15_04_WorkerRejectsContradictoryPooling, ro
     roclint::e2e::MockWorkerScriptFixture script(roclint::e2e::MockWorkerBehavior::ContradictoryPooling);
 
     roclint::retrieval::EmbeddingWorkerConfig cfg;
-    cfg.pythonExecutable = "python";
+    cfg.pythonExecutable = pythonExecutable();
     cfg.workerScriptPath = script.scriptPath();
     cfg.startupTimeoutMs = 5000;
 
@@ -232,7 +233,7 @@ E2E_TEST(Tier1_ModelTrustAndWorker, F15_05_WorkerRejectsWrongDimensions, roclint
     roclint::e2e::MockWorkerScriptFixture script(roclint::e2e::MockWorkerBehavior::WrongDimensions);
 
     roclint::retrieval::EmbeddingWorkerConfig cfg;
-    cfg.pythonExecutable = "python";
+    cfg.pythonExecutable = pythonExecutable();
     cfg.workerScriptPath = script.scriptPath();
     cfg.startupTimeoutMs = 5000;
 
@@ -250,7 +251,7 @@ E2E_TEST(Tier1_ModelTrustAndWorker, F16_01_WorkerRespondsToPingRequest, roclint:
     roclint::e2e::MockWorkerScriptFixture script(roclint::e2e::MockWorkerBehavior::NormalEcho);
 
     roclint::retrieval::EmbeddingWorkerConfig cfg;
-    cfg.pythonExecutable = "python";
+    cfg.pythonExecutable = pythonExecutable();
     cfg.workerScriptPath = script.scriptPath();
     cfg.startupTimeoutMs = 5000;
 
@@ -291,7 +292,7 @@ E2E_TEST(Tier1_ModelTrustAndWorker, F16_02_WorkerEmbedsTextsCorrectly, roclint::
     );
 
     roclint::retrieval::EmbeddingWorkerConfig cfg;
-    cfg.pythonExecutable = "python";
+    cfg.pythonExecutable = pythonExecutable();
     cfg.workerScriptPath = scriptPath;
     cfg.startupTimeoutMs = 5000;
 
@@ -311,7 +312,7 @@ E2E_TEST(Tier1_ModelTrustAndWorker, F16_03_WorkerDetectsCrashOnPing, roclint::e2
     roclint::e2e::MockWorkerScriptFixture script(roclint::e2e::MockWorkerBehavior::CrashOnPing);
 
     roclint::retrieval::EmbeddingWorkerConfig cfg;
-    cfg.pythonExecutable = "python";
+    cfg.pythonExecutable = pythonExecutable();
     cfg.workerScriptPath = script.scriptPath();
     cfg.startupTimeoutMs = 3000;
 
@@ -326,7 +327,7 @@ E2E_TEST(Tier1_ModelTrustAndWorker, F16_04_WorkerHandlesMalformedJson, roclint::
     roclint::e2e::MockWorkerScriptFixture script(roclint::e2e::MockWorkerBehavior::MalformedJson);
 
     roclint::retrieval::EmbeddingWorkerConfig cfg;
-    cfg.pythonExecutable = "python";
+    cfg.pythonExecutable = pythonExecutable();
     cfg.workerScriptPath = script.scriptPath();
     cfg.startupTimeoutMs = 3000;
 
@@ -341,7 +342,7 @@ E2E_TEST(Tier1_ModelTrustAndWorker, F16_05_WorkerTimeoutEnforcement, roclint::e2
     roclint::e2e::MockWorkerScriptFixture script(roclint::e2e::MockWorkerBehavior::HangingProcess);
 
     roclint::retrieval::EmbeddingWorkerConfig cfg;
-    cfg.pythonExecutable = "python";
+    cfg.pythonExecutable = pythonExecutable();
     cfg.workerScriptPath = script.scriptPath();
     cfg.startupTimeoutMs = 300; // 300 ms strict deadline
 

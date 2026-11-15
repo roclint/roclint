@@ -749,13 +749,23 @@ if(BUILD_TESTING)
         roclint_add_test(roclint_ast_stale_recovery tests/viewmodel/test_ast_stale_recovery.cpp roclint_host_lib_testing Qt6::Core Qt6::Gui)
         roclint_add_test(roclint_codebase_watcher tests/viewmodel/test_codebase_watcher.cpp roclint_host_lib_testing Qt6::Core)
         roclint_add_test(roclint_workspace_inspection tests/viewmodel/test_workspace_inspection.cpp roclint_host_lib_testing Qt6::Core)
-        add_dependencies(roclint_workspace_inspection_tests roclint_workspace_runtime_files)
         roclint_add_test(roclint_host_context      tests/viewmodel/test_host_context.cpp      roclint_host_lib_testing Qt6::Core Qt6::Gui)
         roclint_add_test(roclint_terminal_adapter  tests/viewmodel/test_terminal_adapter.cpp  roclint_host_lib_testing Qt6::Core)
         roclint_add_test(roclint_range_injection_policy tests/viewmodel/test_range_injection_policy.cpp roclint_host_lib_testing Qt6::Core)
         roclint_add_test(roclint_dual_mode         tests/viewmodel/test_dual_mode.cpp         roclint_host_lib_testing Qt6::Core Qt6::Gui)
         roclint_add_test(roclint_product_alignment tests/viewmodel/test_product_alignment.cpp roclint_host_lib_testing Qt6::Quick Qt6::Qml Qt6::Test)
         roclint_add_test(roclint_upstream_compatibility tests/viewmodel/test_upstream_compatibility.cpp roclint_host_lib_testing Qt6::Core)
+        # Tests load these helpers beside the executable. On macOS that
+        # directory is separate from the desktop app bundle.
+        add_custom_target(roclint_test_runtime_files
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:roclint_workspace_inspection_tests>/runtime"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "$<TARGET_FILE:roclint_workspace_helper>"
+                "${CMAKE_CURRENT_SOURCE_DIR}/app/runtime/julia_worker.py"
+                "$<TARGET_FILE_DIR:roclint_workspace_inspection_tests>/runtime/"
+            DEPENDS roclint_workspace_helper VERBATIM)
+        add_dependencies(roclint_workspace_inspection_tests roclint_test_runtime_files)
+        add_dependencies(roclint_upstream_compatibility_tests roclint_test_runtime_files)
         target_sources(roclint_product_alignment_tests PRIVATE app/qml/shell/qml.qrc)
         if(WIN32)
             # A developer output folder can contain an older partial Qt deployment.
@@ -856,7 +866,10 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME roclint_e2e COMMAND roclint_e2e_tests)
-    set_tests_properties(roclint_e2e PROPERTIES TIMEOUT 300)
+    set_tests_properties(roclint_e2e PROPERTIES TIMEOUT 300 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    if(Python3_Interpreter_FOUND)
+        target_compile_definitions(roclint_e2e_tests PRIVATE ROCLINT_TEST_PYTHON="${Python3_EXECUTABLE}")
+    endif()
     if(TARGET Qt6::Core)
         set_tests_properties(roclint_e2e PROPERTIES
             ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Core>")
