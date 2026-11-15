@@ -15,7 +15,9 @@ adapter:
   adapter's configured `ConstraintReconciler`)
 
 Baseline: `d5c8101e42b45d5d3b0796c97f01024214fd5d57`.
-Implementation commit: `77586d5` on `topic/goldfish-2026-11-15`.
+Implementation commits on `topic/goldfish-2026-11-15`:
+`77586d5` (adapter and initial tests) and `f49a68a` (comprehension-gap and
+`source:N` coverage). The report itself is a separate documentation commit.
 The contract header is coordinator-owned, remains untracked in this worktree,
 and is deliberately not committed by Agent 3. It is required at
 `include/roclint/review/ComprehensionReview.hpp` for this code to compile.
@@ -348,7 +350,9 @@ not the production escaping. The assertion was changed to expect
 - The parser ignores extra JSON fields; it does not run a full JSON Schema
   validator.
 - Duplicate constraint ids cause the deterministic precheck to skip that id
-  rather than mis-cite one occurrence.
+  rather than mis-cite one occurrence. Constraints with an empty id are also
+  skipped by the deterministic precheck because the reconciler cannot identify
+  them unambiguously; the semantic reviewer can still report them.
 - No verified live-model quality claim is made. A schema-valid review can still
   be wrong.
 
