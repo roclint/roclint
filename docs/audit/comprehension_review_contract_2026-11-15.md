@@ -239,12 +239,13 @@ ready while containing a required finding; the authorization gate rejects it.
 ## Epistemic limits
 
 This is a fresh-context call, not an independent reviewer. It uses the same
-model family as the drafter, so shared blind spots remain possible. The
-rationale appended to every result says a completed review can still be wrong
-and that agreement is not proof of intent. Findings are specific and
-source-linked, but they are not proof of user intent. The review prompt and
-source text can still contain prompt injection; the prompt marks all sections
-as data, which reduces but does not eliminate that risk.
+model family as the drafter, so shared blind spots remain possible. Every
+completed result, and every unavailable or malformed result, appends a caution
+saying a completed review can still be wrong and that agreement is not proof of
+intent. Findings are specific and source-linked, but they are not proof of user
+intent. The review prompt and source text can still contain prompt injection;
+the prompt marks all sections as data, which reduces but does not eliminate that
+risk.
 
 ## Tests and evidence
 
