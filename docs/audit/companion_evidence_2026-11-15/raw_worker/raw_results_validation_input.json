@@ -1,0 +1,8 @@
+{
+  "runs": [
+    {
+      "quantization": "Q8_0",
+      "cases": []
+    }
+  ]
+}

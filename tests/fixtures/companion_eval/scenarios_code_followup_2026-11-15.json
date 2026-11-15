@@ -1,0 +1,31 @@
+{
+  "schema": "roclint.companion_eval.scenarios.v1",
+  "created": "2026-11-15",
+  "notes": [
+    "Follow-up to the primary code row. The primary run's getProjectFiles idle check returned in 255 ms and did not establish index readiness.",
+    "This scenario explicitly waits for HostController::codebaseIndexReadyForTesting and records groundingStatus/groundedEvidence, so it can separate a text-level rewrite from real AST-grounded evidence."
+  ],
+  "scenarios": [
+    {
+      "id": "code_ast_signature_indexed",
+      "class": "unseen",
+      "surface": "codebase_grounded_followup",
+      "prompt": "Change p95LatencyMs in include/metrics.hpp to compute the percentile from a t-digest sketch instead of sorting every sample. Keep the function signature and the public API unchanged.",
+      "project_directory": "tests/fixtures/companion_eval/code_project",
+      "answers": [
+        {
+          "type": "custom",
+          "text": "Use one t-digest with 100 centroids per function, keep the exact p95LatencyMs signature, and do not change the public header's other declarations."
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "criteria": {
+        "index_ready": "The host reports codebaseIndexReadyForTesting()==true before analysis.",
+        "target_identified": "The result names p95LatencyMs and include/metrics.hpp.",
+        "preservation": "The function signature and the rest of the public API are explicitly preserved.",
+        "grounded_evidence": "groundedEvidence or groundingStatus shows a real indexed symbol, not only prompt text."
+      }
+    }
+  ]
+}

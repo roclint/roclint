@@ -1,0 +1,155 @@
+{
+  "generated_at_utc": "2026-11-15T20:51:34.544077+00:00",
+  "worktree": "D:\\Stardust\\roclint-wt-eval",
+  "branch": "topic/eval-2026-11-15",
+  "head": "d5c8101e42b45d5d3b0796c97f01024214fd5d57",
+  "dirty": true,
+  "main_checkout": {
+    "path": "D:/Stardust/roclint",
+    "head": "d5c8101e42b45d5d3b0796c97f01024214fd5d57",
+    "branch": "feat/roc-hud-refresh"
+  },
+  "platform": "Windows-11-10.0.26300-SP0",
+  "processor": "AMD64 Family 25 Model 116 Stepping 1, AuthenticAMD",
+  "logical_cpus": 16,
+  "python_system": "3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]",
+  "julia_python": {
+    "version": "3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]",
+    "executable": "D:\\Stardust\\roclint\\build\\runtime\\julia-python\\Scripts\\python.exe",
+    "torch": "2.13.0+cu130",
+    "transformers": "5.0.0",
+    "safetensors": "0.8.0"
+  },
+  "gpu": {
+    "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "driver": "617.14",
+    "memory_total_mib": 8188,
+    "memory_used_mib": 2302,
+    "utilization_pct": 0,
+    "error": ""
+  },
+  "binaries": {
+    "probe": {
+      "path": "D:\\Stardust\\roclint-wt-eval\\build-eval-probe\\Release\\companion_probe.exe",
+      "sha256": "b70c582ba1a469a44f3973768fe609ca58e83f6e2aeebdacc30009d2afdf2334"
+    },
+    "native_worker": {
+      "path": "D:\\Stardust\\roclint\\build\\Release\\roclint_granite_worker.exe",
+      "sha256": "eb22f436c5384bfd6d8fde8e2f16ba0ff7398cf6f8a8ad3b1ade9486ac73c574",
+      "mtime": "2026-11-15T06:07:36.913732+00:00"
+    },
+    "native_test_exe": {
+      "path": "D:\\Stardust\\roclint\\build\\Release\\roclint_native_granite_tests.exe",
+      "sha256": "bfca8df434e678e02cc144a06b0f6800882477f0b69ee63d8452e44dd3851e76"
+    },
+    "contracts_exe": {
+      "path": "D:\\Stardust\\roclint\\build\\Release\\roclint_granite_contracts.exe",
+      "sha256": "bc83fe6399d4217e7bb11ac85d97d885cafe3de176317d315b3675949814a8fe"
+    }
+  },
+  "models": {
+    "granite_directory": "D:\\Stardust\\roclint\\models\\granite-4.2-3b",
+    "granite_manifest_sha256": "6315e8bf06b81496253bf544966e3176a981a499dc9c939b5dd4a782adf7d651",
+    "julia_directory": "D:\\Stardust\\roclint\\models\\julia-1",
+    "julia_manifest_sha256": "7c02feb8726aa7b89fbe3163079ff249c48956e5d0878fce101c50e9c6c05139",
+    "runtime_config_sha256": "9defca254609be0ef09b1fe3356a034a57ced1357c36869e882cd253f9d4b0f7"
+  },
+  "runtime_config": {
+    "analysis_instruction_contract": "granite.discovery.selective.v11",
+    "backend": "vulkan",
+    "candidates": [
+      {
+        "filename": "granite-4.2-3b-Q4_K_M.gguf",
+        "quantization": "Q4_K_M",
+        "sha256": "e0406663965846ae22a403456eb826ccce5f450840491f71952f18a7cb78e7d5",
+        "size_bytes": 2244011552
+      },
+      {
+        "filename": "granite-4.2-3b-Q5_K_M.gguf",
+        "quantization": "Q5_K_M",
+        "sha256": "982e797413f842329266a00c2a85ce540bb5c1b65ac4646276bfb9d2886c5efe",
+        "size_bytes": 2613634592
+      },
+      {
+        "filename": "granite-4.2-3b-Q8_0.gguf",
+        "quantization": "Q8_0",
+        "sha256": "fbe986738041418e26de9e123ba740cb654931f85bf572a71bd01f9e6b85e53d",
+        "size_bytes": 3892651552
+      }
+    ],
+    "clarification_instruction_contract": "granite.clarification_check.v1",
+    "configuration_id": "granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality",
+    "context_tokens": 8192,
+    "cpu_threads": 4,
+    "default_quantization": "Q8_0",
+    "gpu_layers": 99,
+    "grammar_transform": "json_gbnf_space_empty_v1",
+    "input_tokens": 6144,
+    "manifest_version": 1,
+    "model_family": "ibm-granite/granite-4.2-3b-GGUF",
+    "model_license": "Apache-2.0",
+    "model_revision": "c40945d71cd90f249a56985e8155551a9188dc30",
+    "output_format": "compact_json",
+    "output_tokens": 2048,
+    "profiles": {
+      "CPU": {
+        "backend": "cpu",
+        "configuration_id": "granite.cpu.mmap.ctx8192.threads4.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality",
+        "gpu_layers": 0
+      },
+      "METAL": {
+        "backend": "metal",
+        "configuration_id": "granite.metal.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality",
+        "gpu_layers": 99
+      },
+      "VULKAN": {
+        "backend": "vulkan",
+        "configuration_id": "granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality",
+        "gpu_layers": 99
+      }
+    },
+    "reasoning": {
+      "analysis_group_timeout_ms": 90000,
+      "enabled": true,
+      "policy_version": 1,
+      "profiles": {
+        "analysis": {
+          "answer_tokens": 512,
+          "reasoning_tokens": 384
+        },
+        "audit": {
+          "answer_tokens": 512,
+          "reasoning_tokens": 128
+        },
+        "rewrite": {
+          "answer_tokens": 1535,
+          "reasoning_tokens": 512
+        },
+        "word": {
+          "answer_tokens": 256,
+          "reasoning_tokens": 384
+        }
+      }
+    },
+    "rewrite_instruction_contract": "granite.rewrite.format.v9",
+    "runtime_repository": "https://github.com/ggml-org/llama.cpp.git",
+    "runtime_revision": "da2ee1e7a640445fc562fe5529598cee1917e0f5",
+    "sampling": {
+      "grammar_strategy": "llama_common_rejection_v1",
+      "seed": 42,
+      "temperature": 1.0,
+      "top_p": 0.95
+    },
+    "sampling_reference": "https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md",
+    "template_policy": "embedded GGUF Jinja template; bounded private reasoning followed by schema-constrained JSON; input special tokens treated as text"
+  },
+  "settings": {
+    "backend": "native-granite:Q8_0",
+    "thinking": false,
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "seed": 42,
+    "julia_python": "D:\\Stardust\\roclint\\build\\runtime\\julia-python\\Scripts\\python.exe",
+    "julia_worker": "D:\\Stardust\\roclint\\build\\Release\\runtime\\julia_worker.py"
+  }
+}

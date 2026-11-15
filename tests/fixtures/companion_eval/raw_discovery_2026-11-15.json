@@ -1,0 +1,42 @@
+{
+  "fixture_version": 1,
+  "analysis": [
+    {
+      "id": "raw_music_app_typography",
+      "prompt": "I'm building a music app. I want compact typography, a fusion of 1990s and 1960s/Revolver-era references, and easy browsing.",
+      "expectation": "Record the raw discovery JSON: source quotation, typography-relevant options and effects, and whether reference-specific claims are marked unverified."
+    },
+    {
+      "id": "raw_unseen_typography_cookbook",
+      "prompt": "Style the recipe app's typography to feel like a 1970s cookbook but stay legible on phones.",
+      "expectation": "Record the raw discovery JSON and whether the options address type choice, size, hierarchy or mobile legibility."
+    },
+    {
+      "id": "raw_cinematic_photo",
+      "prompt": "Make the product photo look cinematic.",
+      "expectation": "Record the raw discovery JSON and whether the options concern lighting, depth, lens, grading or mood rather than unrelated product details."
+    },
+    {
+      "id": "raw_code_ast_signature",
+      "prompt": "Change p95LatencyMs in include/metrics.hpp to compute the percentile from a t-digest sketch instead of sorting every sample. Keep the function signature and the public API unchanged.",
+      "expectation": "Record the raw discovery JSON. Helper-only: no codebase index or AST grounding is supplied; the host stage carries that evidence."
+    },
+    {
+      "id": "raw_performance_dashboard",
+      "prompt": "Make the dashboard faster on slow laptops.",
+      "expectation": "Record the raw discovery JSON and whether the options distinguish a measurable performance scope."
+    },
+    {
+      "id": "raw_clear_500ms",
+      "prompt": "Make the search API respond within 500 milliseconds for 95% of requests without changing the response schema.",
+      "expectation": "Raw diagnostic only: production automatic routing already asked an unnecessary question; this records what the model proposes when called directly. It is not a user-path result."
+    }
+  ],
+  "rewrite": {
+    "id": "raw_literal_constraints",
+    "prompt": "Refactor parseItems for lower latency per request. Preserve its public API. Do not modify tests.",
+    "preparation": "Synthetic literal-only analysis for contract generation; the raw driver filters these rewrite cases out and does not claim a rewrite measurement.",
+    "profiles": ["GENERIC@1", "ANTHROPIC_STRUCTURED@1", "OPENAI_STRUCTURED@1", "LOCAL_COMPACT@1"]
+  },
+  "review_scope": "Helper-only raw production-prompt discovery against the pinned native worker. This is not the host interview, not Julia routing, not a codebase-grounding run and not an editorial quality judgment. Raw outputs are retained verbatim; parsed labels in the host stage are authoritative for user-visible behavior. The rewrite contracts are generated only to satisfy the frozen corpus shape and are not executed."
+}
