@@ -1557,6 +1557,13 @@ struct ParsedComprehensionResponse {
                                "A not-ready comprehension review must provide at least one "
                                "actionable finding");
     }
+    if (ready.value() && findings.empty() && requirements.value().empty() &&
+        assumptions.value().empty() && unresolved.value().empty()) {
+        return core::makeError(core::ErrorCode::InvalidInput,
+                               "A ready review with no findings must state at least one "
+                               "interpreted requirement, assumption, or unresolved decision; "
+                               "a bare Pass is not a comprehension review");
+    }
 
     ParsedComprehensionResponse response;
     response.result.status = ComprehensionReviewStatus::Completed;

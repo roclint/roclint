@@ -1395,6 +1395,10 @@ void testComprehensionFailsClosed() {
     expectComprehensionFailure(req, comprehensionResponse({}, false),
                                ComprehensionReviewStatus::Malformed, 1);
 
+    // A bare ready response with no interpretation is a generic Pass, not a review.
+    expectComprehensionFailure(req, comprehensionResponse({}, true, "ok", {}, {}, {}, "ok"),
+                               ComprehensionReviewStatus::Malformed, 1);
+
     std::string missingAssumptions = valid;
     const std::string field = "\"inferred_assumptions\":[],";
     const auto fieldAt = missingAssumptions.find(field);
