@@ -1142,7 +1142,11 @@ void testComprehensionFindingKindsCoverDriftOmissionAndPreservation() {
                        "Restore the exact headline text."),
          reviewFinding("f5", "readiness", "required",
                        "The target platform for the cover is missing.", "candidate", "album cover",
-                       true, "Ask which platform the cover is for.")},
+                       true, "Ask which platform the cover is for."),
+         reviewFinding("f6", "comprehension", "advisory",
+                       "The opening does not state what artifact is being produced.", "source:1",
+                       "warm, minimal album cover", false,
+                       "State that the artifact is an album cover.")},
         false, "A neon club flyer with a changed headline.", {"warm palette"}, {},
         {"Which platform the cover is for?"},
         "The candidate drifts from the jazz direction and changes the headline.");
@@ -1150,12 +1154,13 @@ void testComprehensionFindingKindsCoverDriftOmissionAndPreservation() {
     auto parsed = parseComprehensionReviewResponse(json, req);
     ROCLINT_CHECK(parsed.ok());
     const auto& result = parsed.value();
-    ROCLINT_CHECK(result.findings.size() == 5);
+    ROCLINT_CHECK(result.findings.size() == 6);
     ROCLINT_CHECK(result.findings[0].kind == ReviewFindingKind::MeaningDrift);
     ROCLINT_CHECK(result.findings[1].kind == ReviewFindingKind::Omission);
     ROCLINT_CHECK(result.findings[2].kind == ReviewFindingKind::UnsupportedAssumption);
     ROCLINT_CHECK(result.findings[3].kind == ReviewFindingKind::NegativeConstraint);
     ROCLINT_CHECK(result.findings[4].kind == ReviewFindingKind::Readiness);
+    ROCLINT_CHECK(result.findings[5].kind == ReviewFindingKind::ComprehensionGap);
     ROCLINT_CHECK(result.findings[2].requiresUserDecision);
     ROCLINT_CHECK(result.findings[4].requiresUserDecision);
     ROCLINT_CHECK(result.findings[3].severity == ReviewFindingSeverity::Blocking);
@@ -1166,6 +1171,7 @@ void testComprehensionFindingKindsCoverDriftOmissionAndPreservation() {
     ROCLINT_CHECK(std::string(toString(result.findings[2].kind)) == "unsupported_assumption");
     ROCLINT_CHECK(std::string(toString(result.findings[3].kind)) == "negative_constraint");
     ROCLINT_CHECK(std::string(toString(result.findings[4].kind)) == "readiness");
+    ROCLINT_CHECK(std::string(toString(result.findings[5].kind)) == "comprehension");
 }
 
 void testComprehensionReadinessIsTaskRelative() {
