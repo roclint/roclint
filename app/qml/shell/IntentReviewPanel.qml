@@ -117,6 +117,20 @@ FocusScope {
     property string currentTheme: "dark"
     readonly property var themes: ["dark", "light", "acid", "amber"]
     RocTheme { id: rocPalette; mode: rootWindow.currentTheme }
+    CompanionContract { id: companionContract }
+
+    // The new host surface is guarded: before D03 lands, these stay false and
+    // the established clarification controls below remain the active route.
+    readonly property bool interviewSurfaceActive: hc && companionContract.intentSurfaceAvailable &&
+                                                   (companionContract.hasIntentBrief || companionContract.isInterviewActive)
+    readonly property bool reviewContractActive: hc && companionContract.reviewSurfaceAvailable
+    readonly property string comprehensionReviewState: reviewContractActive ? companionContract.comprehensionState : ""
+    function focusInterview() {
+        if (!rootWindow.interviewSurfaceActive) return;
+        interviewSurface.forceActiveFocus(Qt.TabFocusReason);
+        interviewSurface.focusQuestion();
+        rootWindow.revealReviewItem(interviewSurface);
+    }
     readonly property color bgColor: rocPalette.background
     readonly property color fgColor: rocPalette.foreground
     readonly property color borderColor: rocPalette.border
@@ -338,6 +352,23 @@ FocusScope {
             }
         }
 
+            // Companion interview: the substantial expansion of the word/draft
+            // surface. Hidden on hosts without the intent contract, where the
+            // legacy clarification panel below remains authoritative.
+            CompanionInterview {
+                id: interviewSurface
+                objectName: "interviewSurface"
+                visible: rootWindow.interviewSurfaceActive
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                currentTheme: rootWindow.currentTheme
+                reducedMotion: rootWindow.reducedMotion
+                onRewriteRequested: rootWindow.rewriteRequested()
+                onKeepOriginalRequested: if (rootWindow.hc)
+                    hostController.keepOriginalPrompt(hostController.stateVersion)
+                onEditDraftRequested: rootWindow.editDraftRequested()
+            }
+
             // Clarification panel
             Rectangle {
                 id: clarifyPanel
@@ -345,7 +376,8 @@ FocusScope {
                 activeFocusOnTab: visible
                 Accessible.role: Accessible.Grouping
                 Accessible.name: rootWindow.hc ? hostController.activeQuestion : ""
-                visible: rootWindow.hc && (hostController.isClarifying || rootWindow.manualResolution)
+                visible: rootWindow.hc && (hostController.isClarifying || rootWindow.manualResolution) &&
+                         !rootWindow.interviewSurfaceActive
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
                 implicitHeight: clarifyColumn.implicitHeight + 24
@@ -709,6 +741,32 @@ FocusScope {
                         font.pixelSize: 14
                         color: rootWindow.mutedTextColor
                     }
+                    // Independent comprehension review. Present only on hosts
+                    // that expose the review contract; the card itself states
+                    // not_run/running/stale/failed rather than implying apply.
+                    ComprehensionReview {
+                        id: comprehensionCard
+                        objectName: "comprehensionCard"
+                        visible: rootWindow.reviewContractActive && reviewPanel.status === "READY_FOR_REVIEW"
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        currentTheme: rootWindow.currentTheme
+                        reducedMotion: rootWindow.reducedMotion
+                        proposalAvailable: reviewPanel.status === "READY_FOR_REVIEW"
+                        onApplyRequested: {
+                            if (rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy)
+                                hostController.approveAndCopyRewrite(hostController.stateVersion);
+                        }
+                        onReturnToInterviewRequested: {
+                            // Explicitly expand the interview again; a stale HUD
+                            // may have been reopened without it.
+                            companionContract.openInterview();
+                            rootWindow.focusInterview();
+                        }
+                        onKeepOriginalRequested: {
+                            if (rootWindow.hc) hostController.keepOriginalPrompt(hostController.stateVersion);
+                        }
+                    }
                     Repeater {
                         id: constraintRepeater
                         model: {
@@ -839,6 +897,35 @@ FocusScope {
                         }
                     }
 
+                    Rectangle {
+                        objectName: "comprehensionGateBanner"
+                        visible: rootWindow.reviewContractActive && reviewPanel.status === "READY_FOR_REVIEW" &&
+                                 rootWindow.comprehensionReviewState !== "ready"
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        implicitHeight: gateBannerLabel.implicitHeight + 12
+                        radius: 6
+                        color: "transparent"
+                        border.color: rocPalette.warning
+                        border.width: 1
+                        Text {
+                            id: gateBannerLabel
+                            x: 7; y: 6
+                            width: Math.max(0, parent.width - 14)
+                            textFormat: Text.PlainText
+                            text: rootWindow.comprehensionReviewState === "stale"
+                                  ? qsTr("NOT APPLICABLE · this reread belongs to an earlier draft. Reread the current rewrite.")
+                                  : rootWindow.comprehensionReviewState === "running"
+                                    ? qsTr("NOT APPLICABLE YET · the independent reread is running.")
+                                    : rootWindow.comprehensionReviewState === "failed"
+                                      ? qsTr("NOT APPLICABLE · the independent reread failed. The proposal was not approved.")
+                                      : qsTr("NOT APPLICABLE YET · this rewrite has not been independently reread.")
+                            wrapMode: Text.WordWrap
+                            font.family: rootWindow.sansFont
+                            font.pixelSize: 11
+                            color: rocPalette.warning
+                        }
+                    }
                     Text {
                         visible: reviewPanel.status === "READY_FOR_REVIEW" && !rootWindow.showChanges
                         Layout.fillWidth: true; Layout.minimumWidth: 0
@@ -846,6 +933,8 @@ FocusScope {
                         textFormat: Text.PlainText; wrapMode: Text.WordWrap
                         font.family: rootWindow.sansFont; font.pixelSize: 15; lineHeight: 1.3
                         color: rootWindow.fgColor
+                        opacity: rootWindow.reviewContractActive &&
+                                 rootWindow.comprehensionReviewState !== "ready" ? 0.72 : 1.0
                     }
                     ActionButton {
                         visible: reviewPanel.status === "READY_FOR_REVIEW"

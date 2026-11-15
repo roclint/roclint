@@ -19,11 +19,13 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlExpression>
 #include <QQmlProperty>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QScreen>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -128,6 +130,630 @@ void seedOptionalReview(HostController& c) {
     ROCLINT_CHECK(repo->insertAnalysisSnapshot(snapshot.value(), 4).waitForTesting().ok());
     ROCLINT_CHECK(c.waitForCommandForTesting(c.restoreSession(QString::fromStdString(session), c.stateVersion())));
     ROCLINT_CHECK(c.isOptionalHelp() && c.isClarifying() && c.finalSnapshotForTesting()->payloadVersion == 5);
+}
+
+// ---------------------------------------------------------------------------
+// Companion / interview / comprehension-review interaction fixtures.
+//
+// TEST-ONLY SEAM: CompanionMockController.qml mirrors the frozen Host/UI v1
+// names and records invocations. Production QML binds the real hostController;
+// these helpers exist only because the host implementation lives in Agent 2's
+// worktree. The legacy-guard case additionally loads the real HostController.
+// ---------------------------------------------------------------------------
+QObject* createCompanionTestDouble(QQmlEngine& engine, const QString& fileName) {
+    QString path = QFINDTESTDATA(fileName);
+    if (path.isEmpty() || !QFileInfo::exists(path)) {
+        // Fallback for generators that pass a source-relative __FILE__: the
+        // test binary runs from <worktree>/build/<config>.
+        path = QDir(QCoreApplication::applicationDirPath())
+                   .absoluteFilePath(QStringLiteral("../../tests/viewmodel/") + fileName);
+    }
+    ROCLINT_CHECK(QFileInfo::exists(path));
+    QQmlComponent component(&engine, QUrl::fromLocalFile(path));
+    if (component.isError()) {
+        for (const auto& error : component.errors())
+            std::cerr << "  [mock] " << error.toString().toStdString() << '\n';
+    }
+    ROCLINT_CHECK(!component.isError());
+    QObject* object = component.create();
+    ROCLINT_CHECK(object != nullptr);
+    return object;
+}
+
+QQuickItem* requireVisual(QQuickWindow* window, const QString& objectName) {
+    auto* item = window->findChild<QQuickItem*>(objectName);
+    // Repeater/list delegates may be parented only in the visual item tree.
+    if (!item) item = findVisual(window->contentItem(), objectName);
+    if (!item) std::cerr << "  [missing] " << objectName.toStdString() << '\n';
+    ROCLINT_CHECK(item != nullptr);
+    return item;
+}
+
+QString visualText(QQuickWindow* window, const QString& objectName) {
+    return requireVisual(window, objectName)->property("text").toString();
+}
+
+QPoint visualCenter(QQuickItem* item) {
+    return item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0)).toPoint();
+}
+
+void clickVisual(QQuickWindow* window, QQuickItem* item) {
+    ROCLINT_CHECK(item != nullptr);
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, visualCenter(item));
+}
+
+void activateWithKeyboard(QQuickWindow* window, QQuickItem* item) {
+    ROCLINT_CHECK(item != nullptr);
+    window->requestActivate();
+    item->forceActiveFocus(Qt::TabFocusReason);
+    QTest::qWait(20);
+    QTest::keyClick(window, Qt::Key_Space);
+}
+
+QString lastMockCall(QObject* mock) {
+    QVariant result;
+    ROCLINT_CHECK(QMetaObject::invokeMethod(mock, "lastCallKind", Q_RETURN_ARG(QVariant, result)));
+    return result.toString();
+}
+QVariantMap lastMockDetail(QObject* mock) {
+    QVariant result;
+    ROCLINT_CHECK(QMetaObject::invokeMethod(mock, "lastCallDetail", Q_RETURN_ARG(QVariant, result)));
+    return result.toMap();
+}
+
+QVariantMap wordCandidate(const QString& id, const QString& label, const QString& replacement,
+                          const QString& explanation, const QString& assumption = {},
+                          bool requiresClarification = false) {
+    return QVariantMap{{"id", id}, {"label", label}, {"replacement", replacement},
+                       {"explanation", explanation}, {"assumption", assumption},
+                       {"requiresClarification", requiresClarification}};
+}
+
+QVariantMap briefItem(const QString& id, const QString& kind, const QString& text, const QString& status,
+                      const QString& excerpt = {}, const QString& rawAnswer = {},
+                      bool consequential = false, const QString& sourceRef = {},
+                      const QString& analysisItemId = {}) {
+    return QVariantMap{{"id", id}, {"kind", kind}, {"text", text},
+                       {"sourceExcerpt", excerpt}, {"sourceRef", sourceRef},
+                       {"rawAnswer", rawAnswer}, {"status", status},
+                       {"consequential", consequential}, {"analysisItemId", analysisItemId}};
+}
+
+QVariantMap interviewChoice(const QString& id, const QString& label, const QString& consequence) {
+    return QVariantMap{{"id", id}, {"label", label}, {"consequence", consequence}};
+}
+
+QVariantMap reviewFinding(const QString& id, const QString& severity, const QString& kind,
+                          const QString& summary, const QString& excerpt, bool requiresDecision,
+                          const QString& repair = {}, const QString& sourceRef = {}) {
+    return QVariantMap{{"id", id}, {"severity", severity}, {"kind", kind}, {"summary", summary},
+                       {"sourceRef", sourceRef}, {"sourceExcerpt", excerpt},
+                       {"requiresUserDecision", requiresDecision}, {"proposedRepair", repair}};
+}
+
+void configureWordFixture(QObject* mock) {
+    mock->setProperty("hasWordRefinement", true);
+    mock->setProperty("wordRefinementOriginal", QStringLiteral("faster"));
+    mock->setProperty("wordRefinementReplacement", QStringLiteral("with lower enqueue latency"));
+    mock->setProperty("wordRefinementExplanation",
+                      QStringLiteral("Names the latency you care about instead of general speed."));
+    mock->setProperty("wordRefinementAssumption", QStringLiteral("the queue is the bottleneck"));
+    mock->setProperty("wordRefinementSelectedCandidateId", QStringLiteral("latency"));
+    mock->setProperty("wordRefinementCandidates", QVariantList{
+        wordCandidate(QStringLiteral("latency"), QStringLiteral("Lower latency"),
+                      QStringLiteral("with lower enqueue latency"),
+                      QStringLiteral("Names the latency you care about instead of general speed."),
+                      QStringLiteral("the queue is the bottleneck")),
+        wordCandidate(QStringLiteral("throughput"), QStringLiteral("Higher throughput"),
+                      QStringLiteral("with higher batch throughput"),
+                      QStringLiteral("Optimizes batches rather than a single request.")),
+        wordCandidate(QStringLiteral("vague"), QStringLiteral("Faster overall"),
+                      QStringLiteral("faster"),
+                      QStringLiteral("Keeps the vague word and leaves the target open."),
+                      QString(), true)});
+    mock->setProperty("wordRefinementNeedsClarification", false);
+    mock->setProperty("wordRefinementClarificationQuestion", QString());
+    mock->setProperty("wordRefinementApplying", false);
+}
+
+QVariantList interviewBriefItems(bool includeAnswer) {
+    QVariantList items{
+        briefItem(QStringLiteral("src_browse"), QStringLiteral("source_requirement"),
+                  QStringLiteral("easy browsing"), QStringLiteral("confirmed"),
+                  QStringLiteral("easy browsing"), QString(), true, QStringLiteral("draft")),
+        briefItem(QStringLiteral("dec_type"), QStringLiteral("preference"),
+                  QStringLiteral("Typography should feel like 1960s record sleeves, not 1990s grunge."),
+                  QStringLiteral("confirmed"),
+                  QStringLiteral("a fusion of 1990s and 1960s Beatles/Revolver-era references"),
+                  QStringLiteral("1960s sleeve type, not 90s grunge"), true, QStringLiteral("draft")),
+        briefItem(QStringLiteral("assume_mobile"), QStringLiteral("proposed_assumption"),
+                  QStringLiteral("The app is mobile-first."), QStringLiteral("proposed"),
+                  QString(), QString(), false),
+        briefItem(QStringLiteral("open_nav"), QStringLiteral("open_choice"),
+                  QStringLiteral("Should browsing be infinite scroll or paged?"), QStringLiteral("open"),
+                  QString(), QString(), true),
+        briefItem(QStringLiteral("old_type"), QStringLiteral("superseded_decision"),
+                  QStringLiteral("Use 1990s grunge type."), QStringLiteral("superseded"),
+                  QString(), QStringLiteral("90s grunge"), false),
+        briefItem(QStringLiteral("ev_queue"), QStringLiteral("evidence"),
+                  QStringLiteral("queue.cpp:88"), QStringLiteral("confirmed"),
+                  QStringLiteral("push() is the contended call"), QString(), false,
+                  QStringLiteral("queue.cpp:88"))};
+    if (includeAnswer) {
+        items.append(briefItem(QStringLiteral("dec_answer"), QStringLiteral("confirmed_decision"),
+                               QStringLiteral("Sleeve lettering with a clean sans body"), QStringLiteral("confirmed"),
+                               QStringLiteral("fusion of 1990s and 1960s references"),
+                               QStringLiteral("Sleeve lettering with a clean sans body"), true,
+                               QStringLiteral("draft")));
+    }
+    return items;
+}
+
+void configureInterviewFixture(QObject* mock) {
+    configureWordFixture(mock);
+    mock->setProperty("hasIntentBrief", true);
+    mock->setProperty("intentBriefSummary", QStringLiteral("1960s sleeve typography, easy browsing, no album trivia."));
+    mock->setProperty("intentBriefItems", interviewBriefItems(false));
+    mock->setProperty("intentOpenChoiceIds", QStringList{QStringLiteral("open_nav")});
+    mock->setProperty("isInterviewActive", true);
+    mock->setProperty("canExploreInterview", true);
+    mock->setProperty("interviewTurnsCompleted", 2);
+    mock->setProperty("interviewQuestion", QStringLiteral("Which typography direction should lead?"));
+    mock->setProperty("interviewConsequence",
+                      QStringLiteral("Sleeve lettering keeps the 1960s reference readable; grunge makes it read as 1990s."));
+    mock->setProperty("interviewChoices", QVariantList{
+        interviewChoice(QStringLiteral("sleeve"), QStringLiteral("1960s sleeve lettering"),
+                        QStringLiteral("Bold display type for headings with a clean sans body, so browsing stays easy.")),
+        interviewChoice(QStringLiteral("grunge"), QStringLiteral("1990s grunge type"),
+                        QStringLiteral("Distressed display type; stronger 1990s reference, harder to read at small sizes.")),
+        interviewChoice(QStringLiteral("blend"), QStringLiteral("Blend both eras"),
+                        QStringLiteral("Sleeve structure with a restrained grunge texture; both references stay visible."))});
+    mock->setProperty("isInterviewBusy", false);
+    mock->setProperty("interviewFeedback", QString());
+    mock->setProperty("comprehensionReviewState", QStringLiteral("not_run"));
+    mock->setProperty("comprehensionInterpretation", QString());
+    mock->setProperty("comprehensionFindings", QVariantList{});
+    mock->setProperty("canApplyReviewedOutput", false);
+}
+
+QQuickWindow* createCompanionHarness(QQmlEngine& engine, const QString& typeName,
+                                     int width, int height, QStringList* warnings = nullptr,
+                                     bool fillHeight = true) {
+    if (warnings) {
+        QObject::connect(&engine, &QQmlEngine::warnings, &engine,
+                         [warnings](const QList<QQmlError>& list) {
+            for (const auto& error : list) warnings->append(error.description());
+        });
+    }
+    QQmlComponent component(&engine);
+    const QString child = fillHeight
+        ? QStringLiteral("%1 { objectName: \"componentUnderTest\"; anchors.fill: parent }").arg(typeName)
+        : QStringLiteral("%1 { objectName: \"componentUnderTest\"; width: parent.width; height: implicitHeight }").arg(typeName);
+    const QString source = QStringLiteral(
+        "import QtQuick\n"
+        "Window {\n"
+        "    width: %1; height: %2; visible: true; color: \"#09132E\"\n"
+        "    %3\n"
+        "}\n").arg(width).arg(height).arg(child);
+    component.setData(source.toUtf8(), QUrl(QStringLiteral("qrc:/shell/__companion_test_harness.qml")));
+    if (component.isError()) {
+        for (const auto& error : component.errors())
+            std::cerr << "  [harness] " << error.toString().toStdString() << '\n';
+    }
+    ROCLINT_CHECK(!component.isError());
+    auto* window = qobject_cast<QQuickWindow*>(component.create());
+    ROCLINT_CHECK(window != nullptr);
+    window->show();
+    (void)QTest::qWaitForWindowExposed(window);
+    QTest::qWait(60);
+    return window;
+}
+
+void assertNoBindingFailures(const QStringList& warnings) {
+    for (const auto& warning : warnings) {
+        const bool bindingFailure = warning.contains(QStringLiteral("is not defined")) ||
+                                    warning.contains(QStringLiteral("Unable to assign")) ||
+                                    warning.contains(QStringLiteral("TypeError")) ||
+                                    warning.contains(QStringLiteral("Cannot read property"));
+        if (bindingFailure)
+            std::cerr << "  [qml warning] " << warning.toStdString() << '\n';
+        ROCLINT_CHECK(!bindingFailure);
+    }
+}
+
+void testCompanionWordSurfaceCompactAndActionable() {
+    QQmlApplicationEngine engine;
+    QStringList warnings;
+    auto* mock = createCompanionTestDouble(engine, QStringLiteral("CompanionMockController.qml"));
+    configureWordFixture(mock);
+    engine.rootContext()->setContextProperty(QStringLiteral("hostController"), mock);
+    QObject::connect(&engine, &QQmlEngine::warnings, &engine,
+                     [&warnings](const QList<QQmlError>& list) {
+        for (const auto& error : list) {
+            warnings.append(error.description());
+            std::cerr << "  [qml warning] " << error.url().toString().toStdString()
+                      << ":" << error.line() << " " << error.description().toStdString() << '\n';
+        }
+    });
+    engine.load(QUrl(QStringLiteral("qrc:/shell/WordCompanion.qml")));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+    ROCLINT_CHECK(window != nullptr);
+    ROCLINT_CHECK(window->flags().testFlag(Qt::WindowDoesNotAcceptFocus));
+    window->show();
+    ROCLINT_CHECK(QTest::qWaitForWindowExposed(window) || window->isVisible());
+    QTest::qWait(120);
+
+    // Compact and readable: the popup must not cover the composer.
+    ROCLINT_CHECK(window->width() <= 400);
+    ROCLINT_CHECK(window->height() <= 420);
+    ROCLINT_CHECK(window->property("contractInterviewAvailable").toBool());
+    ROCLINT_CHECK(window->property("contractReviewAvailable").toBool());
+    ROCLINT_CHECK(visualText(window, "wordCompanionOriginalLabel") == QStringLiteral("faster"));
+    ROCLINT_CHECK(visualText(window, "wordCompanionStatusLabel") == QStringLiteral("READY"));
+    ROCLINT_CHECK(visualText(window, "wordCompanionExplanationLabel").contains(QStringLiteral("latency")));
+    ROCLINT_CHECK(visualText(window, "wordCompanionAssumptionLabel").contains(QStringLiteral("queue")));
+    ROCLINT_CHECK(visualText(window, "wordCompanionCandidateConsequence_1").contains(QStringLiteral("batch")));
+    ROCLINT_CHECK(requireVisual(window, "wordCompanionCandidate_2")->isVisible());
+    savePreview(window, QStringLiteral("word_companion_ready.png"));
+
+    auto* apply = requireVisual(window, "wordCompanionApplyControl");
+    ROCLINT_CHECK(apply->isVisible());
+    ROCLINT_CHECK(apply->property("enabled").toBool());
+    clickVisual(window, apply);
+    QTest::qWait(50);
+    ROCLINT_CHECK(lastMockCall(mock) == QStringLiteral("applyWord"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("candidateId")).toString() == QStringLiteral("latency"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("version")).toInt() == 11);
+
+    clickVisual(window, requireVisual(window, "wordCompanionExploreControl"));
+    QTest::qWait(50);
+    ROCLINT_CHECK(lastMockCall(mock) == QStringLiteral("openInterview"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("version")).toInt() == 11);
+
+    clickVisual(window, requireVisual(window, "wordCompanionKeepOriginalControl"));
+    QTest::qWait(50);
+    ROCLINT_CHECK(lastMockCall(mock) == QStringLiteral("dismissWord"));
+
+    // A clarifying candidate can be inspected but cannot be applied.
+    mock->setProperty("wordRefinementReplacement", QString());
+    mock->setProperty("wordRefinementExplanation", QString());
+    mock->setProperty("wordRefinementSelectedCandidateId", QStringLiteral("vague"));
+    mock->setProperty("wordRefinementNeedsClarification", true);
+    mock->setProperty("wordRefinementClarificationQuestion",
+                      QStringLiteral("Faster for which operation: enqueue, lookup, or batch?"));
+    QTest::qWait(80);
+    ROCLINT_CHECK(visualText(window, "wordCompanionStatusLabel") == QStringLiteral("ONE DETAIL"));
+    ROCLINT_CHECK(!requireVisual(window, "wordCompanionApplyControl")->isVisible());
+    ROCLINT_CHECK(visualText(window, "wordCompanionClarificationLabel").contains(QStringLiteral("enqueue")));
+    ROCLINT_CHECK(requireVisual(window, "wordCompanionExploreControl")->property("text").toString().contains(
+        QStringLiteral("answer"), Qt::CaseInsensitive));
+    savePreview(window, QStringLiteral("word_companion_clarification.png"));
+
+    // Long replacement + several alternatives must scroll inside the popup
+    // instead of growing over the editor.
+    mock->setProperty("wordRefinementNeedsClarification", false);
+    mock->setProperty("wordRefinementSelectedCandidateId", QStringLiteral("latency"));
+    mock->setProperty("wordRefinementReplacement",
+                      QStringLiteral("with measurably lower enqueue latency under contention while keeping batch throughput unchanged"));
+    QVariantList many = mock->property("wordRefinementCandidates").toList();
+    for (int i = 0; i < 4; ++i) {
+        many.append(wordCandidate(QStringLiteral("extra_%1").arg(i), QStringLiteral("Reading %1").arg(i + 1),
+                                  QStringLiteral("with a longer alternative wording number %1 that still describes a real consequence").arg(i + 1),
+                                  QStringLiteral("Explains the practical effect of this reading without inventing a new fact.")));
+    }
+    mock->setProperty("wordRefinementCandidates", many);
+    QTest::qWait(120);
+    ROCLINT_CHECK(window->width() <= 400);
+    const int screenHeight = window->screen() ? window->screen()->availableGeometry().height() : 640;
+    ROCLINT_CHECK(window->height() <= std::max(220, std::min(560, qRound(screenHeight * 0.62))));
+    auto* body = requireVisual(window, "wordCompanionBody");
+    ROCLINT_CHECK(body->property("contentHeight").toReal() > body->height());
+    QTest::mouseMove(window, QPoint(3, 3));
+    QTest::qWait(450);
+    savePreview(window, QStringLiteral("word_companion_long_narrow.png"));
+    assertNoBindingFailures(warnings);
+}
+
+void testCompanionInterviewContextCorrectionsAndBusy() {
+    QQmlEngine engine;
+    QStringList warnings;
+    auto* mock = createCompanionTestDouble(engine, QStringLiteral("CompanionMockController.qml"));
+    configureInterviewFixture(mock);
+    engine.rootContext()->setContextProperty(QStringLiteral("hostController"), mock);
+    auto* window = createCompanionHarness(engine, QStringLiteral("CompanionInterview"), 780, 880, &warnings);
+
+    // Expansion carries the phrase and the confirmed/open history.
+    ROCLINT_CHECK(visualText(window, "interviewQuestionLabel").contains(QStringLiteral("typography")));
+    ROCLINT_CHECK(visualText(window, "interviewConsequenceLabel").contains(QStringLiteral("1960s")));
+    ROCLINT_CHECK(visualText(window, "interviewTurnsLabel").contains(QStringLiteral("2")));
+    ROCLINT_CHECK(visualText(window, "interviewDraftExcerpt").contains(QStringLiteral("faster")));
+    ROCLINT_CHECK(visualText(window, "interviewChoiceConsequence_0").contains(QStringLiteral("browsing")));
+    ROCLINT_CHECK(visualText(window, "interviewItemText_dec_type").contains(QStringLiteral("sleeves")));
+    ROCLINT_CHECK(requireVisual(window, "interviewItemStatus_dec_type")->property("text").toString()
+                  == QStringLiteral("CONFIRMED"));
+    ROCLINT_CHECK(requireVisual(window, "interviewProposed_assume_mobile")->isVisible());
+    ROCLINT_CHECK(visualText(window, "interviewItemStatus_assume_mobile").contains(QStringLiteral("NOT CONFIRMED")));
+    ROCLINT_CHECK(requireVisual(window, "interviewOpen_open_nav")->isVisible());
+    ROCLINT_CHECK(visualText(window, "interviewCountsLabel").contains(QStringLiteral("1 confirmed")));
+    ROCLINT_CHECK(requireVisual(window, "interviewSkipNote")->property("text").toString()
+                  .contains(QStringLiteral("does not confirm")));
+    savePreview(window, QStringLiteral("interview_question.png"));
+
+    // Busy is distinct from answered: controls are unavailable and the status
+    // says the host is thinking, not that an answer was accepted.
+    mock->setProperty("isInterviewBusy", true);
+    QTest::qWait(80);
+    ROCLINT_CHECK(requireVisual(window, "interviewBusyLabel")->isVisible());
+    ROCLINT_CHECK(!requireVisual(window, "interviewChoice_0")->isVisible());
+    ROCLINT_CHECK(!requireVisual(window, "interviewCustomAnswer")->property("enabled").toBool());
+    mock->setProperty("isInterviewBusy", false);
+    QTest::qWait(80);
+
+    // Keyboard activation of a choice submits the authoritative label.
+    auto* choice = requireVisual(window, "interviewChoice_0");
+    activateWithKeyboard(window, choice);
+    ROCLINT_CHECK(lastMockCall(mock) == QStringLiteral("submitInterview"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("disposition")).toString() == QStringLiteral("answer"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("text")).toString()
+                  == QStringLiteral("1960s sleeve lettering"));
+
+    // Custom answer.
+    auto* custom = requireVisual(window, "interviewCustomAnswer");
+    window->requestActivate();
+    custom->forceActiveFocus(Qt::TabFocusReason);
+    custom->setProperty("text", QStringLiteral("Sleeve lettering with a clean sans body"));
+    QTest::qWait(30);
+    QTest::keyClick(window, Qt::Key_Return);
+    QTest::qWait(50);
+    ROCLINT_CHECK(lastMockCall(mock) == QStringLiteral("submitInterview"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("disposition")).toString() == QStringLiteral("custom"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("text")).toString()
+                  == QStringLiteral("Sleeve lettering with a clean sans body"));
+
+    // Explicit uncertainty and skip are separate dispositions.
+    activateWithKeyboard(window, requireVisual(window, "interviewUnknownControl"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("disposition")).toString() == QStringLiteral("unknown"));
+    activateWithKeyboard(window, requireVisual(window, "interviewSkipControl"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("disposition")).toString() == QStringLiteral("skip"));
+
+    // Host advances the interview: the saved state is visibly distinct.
+    mock->setProperty("interviewTurnsCompleted", 3);
+    mock->setProperty("interviewQuestion", QStringLiteral("Should browsing use infinite scroll or pages?"));
+    mock->setProperty("interviewConsequence",
+                      QStringLiteral("Paged browsing makes the record-sleeve index easier to scan; infinite scroll keeps one long wall."));
+    mock->setProperty("interviewChoices", QVariantList{
+        interviewChoice(QStringLiteral("pages"), QStringLiteral("Paged browsing"),
+                        QStringLiteral("Adds a clear index and keeps the sequence deliberate.")),
+        interviewChoice(QStringLiteral("infinite"), QStringLiteral("Infinite scroll"),
+                        QStringLiteral("Keeps one continuous wall of sleeves; harder to revisit a specific item."))});
+    mock->setProperty("intentBriefItems", interviewBriefItems(true));
+    QTest::qWait(100);
+    ROCLINT_CHECK(visualText(window, "interviewTurnsLabel").contains(QStringLiteral("3")));
+    ROCLINT_CHECK(requireVisual(window, "interviewSavedLabel")->isVisible());
+    ROCLINT_CHECK(visualText(window, "interviewQuestionLabel").contains(QStringLiteral("browsing")));
+    ROCLINT_CHECK(visualText(window, "interviewItemText_dec_answer").contains(QStringLiteral("Sleeve")));
+    savePreview(window, QStringLiteral("interview_understanding.png"));
+
+    // Correcting a preference supersedes through the contract invokable.
+    auto* change = requireVisual(window, "interviewChangeControl_dec_type");
+    activateWithKeyboard(window, change);
+    QTest::qWait(60);
+    auto* field = requireVisual(window, "interviewChangeField_dec_type");
+    ROCLINT_CHECK(field->isVisible());
+    field->forceActiveFocus(Qt::TabFocusReason);
+    QTest::qWait(30);
+    QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
+    const QString replacement = QStringLiteral("1960s sleeve lettering only; no grunge texture.");
+    for (const QChar ch : replacement)
+        QTest::keyClick(window, ch.toLatin1());
+    QTest::qWait(40);
+    activateWithKeyboard(window, requireVisual(window, "interviewSaveChange_dec_type"));
+    QTest::qWait(60);
+    ROCLINT_CHECK(lastMockCall(mock) == QStringLiteral("changeDecision"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("itemId")).toString() == QStringLiteral("dec_type"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("text")).toString()
+                  == QStringLiteral("1960s sleeve lettering only; no grunge texture."));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("version")).toInt() == 11);
+
+    // Return to the word-level surface keeps the interview state mounted.
+    activateWithKeyboard(window, requireVisual(window, "interviewWordViewControl"));
+    QTest::qWait(50);
+    ROCLINT_CHECK(requireVisual(window, "interviewWordView")->isVisible());
+    ROCLINT_CHECK(requireVisual(window, "interviewWordApplyControl")->isVisible());
+    activateWithKeyboard(window, requireVisual(window, "interviewBackToInterviewControl"));
+    QTest::qWait(50);
+    ROCLINT_CHECK(!requireVisual(window, "interviewWordView")->isVisible());
+    ROCLINT_CHECK(visualText(window, "interviewQuestionLabel").contains(QStringLiteral("browsing")));
+
+    // Re-entry: closing and reopening the surface rebuilds the QML from the
+    // controller's state; the interview does not restart or lose decisions.
+    window->hide();
+    window->deleteLater();
+    QTest::qWait(60);
+    window = createCompanionHarness(engine, QStringLiteral("CompanionInterview"), 780, 880);
+    ROCLINT_CHECK(visualText(window, "interviewQuestionLabel").contains(QStringLiteral("browsing")));
+    ROCLINT_CHECK(visualText(window, "interviewTurnsLabel").contains(QStringLiteral("3")));
+    ROCLINT_CHECK(visualText(window, "interviewItemText_dec_answer").contains(QStringLiteral("Sleeve")));
+    ROCLINT_CHECK(visualText(window, "interviewItemText_dec_type").contains(QStringLiteral("sleeves")));
+
+    // Narrow window: wrapping stays inside the surface.
+    window->resize(360, 920);
+    QTest::qWait(120);
+    ROCLINT_CHECK(requireVisual(window, "interviewQuestionLabel")->width() <= 340);
+    ROCLINT_CHECK(requireVisual(window, "interviewChoice_0")->width() <= 340);
+    ROCLINT_CHECK(requireVisual(window, "interviewCustomAnswer")->width() > 0);
+    savePreview(window, QStringLiteral("interview_narrow_360.png"));
+    assertNoBindingFailures(warnings);
+}
+
+void testComprehensionReviewStatesAndApplyGate() {
+    QQmlEngine engine;
+    QStringList warnings;
+    auto* mock = createCompanionTestDouble(engine, QStringLiteral("CompanionMockController.qml"));
+    configureInterviewFixture(mock);
+    mock->setProperty("comprehensionReviewState", QStringLiteral("not_run"));
+    mock->setProperty("canApplyReviewedOutput", false);
+    engine.rootContext()->setContextProperty(QStringLiteral("hostController"), mock);
+    auto* window = createCompanionHarness(engine, QStringLiteral("ComprehensionReview"), 780, 620, &warnings, false);
+    auto* review = requireVisual(window, "componentUnderTest");
+    QSignalSpy applySpy(review, SIGNAL(applyRequested()));
+    QSignalSpy returnSpy(review, SIGNAL(returnToInterviewRequested()));
+
+    // Unreviewed text must not look or act applicable.
+    ROCLINT_CHECK(visualText(window, "comprehensionStateBadge") == QStringLiteral("NOT RUN"));
+    ROCLINT_CHECK(visualText(window, "comprehensionApplyReason").contains(QStringLiteral("not been independently reread")));
+    ROCLINT_CHECK(!requireVisual(window, "comprehensionApplyControl")->property("enabled").toBool());
+    savePreview(window, QStringLiteral("review_not_run.png"));
+
+    // Defensive: even a mistaken host flag cannot enable apply mid-reread.
+    mock->setProperty("comprehensionReviewState", QStringLiteral("running"));
+    mock->setProperty("canApplyReviewedOutput", true);
+    QTest::qWait(80);
+    ROCLINT_CHECK(visualText(window, "comprehensionStateBadge") == QStringLiteral("REREADING"));
+    ROCLINT_CHECK(!requireVisual(window, "comprehensionApplyControl")->property("enabled").toBool());
+
+    // Stale review can never be applied.
+    mock->setProperty("comprehensionReviewState", QStringLiteral("stale"));
+    mock->setProperty("canApplyReviewedOutput", true);
+    QTest::qWait(80);
+    ROCLINT_CHECK(visualText(window, "comprehensionStateBadge") == QStringLiteral("STALE"));
+    ROCLINT_CHECK(visualText(window, "comprehensionStateHeadline").contains(QStringLiteral("out of date")));
+    ROCLINT_CHECK(visualText(window, "comprehensionApplyReason").contains(QStringLiteral("earlier draft")));
+    ROCLINT_CHECK(!requireVisual(window, "comprehensionApplyControl")->property("enabled").toBool());
+    window->resize(780, 260);
+    QTest::qWait(100);
+    savePreview(window, QStringLiteral("review_stale.png"));
+    window->resize(780, 700);
+    QTest::qWait(100);
+
+    mock->setProperty("comprehensionReviewState", QStringLiteral("failed"));
+    QTest::qWait(80);
+    ROCLINT_CHECK(visualText(window, "comprehensionStateBadge") == QStringLiteral("FAILED"));
+    ROCLINT_CHECK(!requireVisual(window, "comprehensionApplyControl")->property("enabled").toBool());
+
+    // Ready with unresolved findings: still locked, and blocking findings
+    // cannot be acknowledged into applicability.
+    mock->setProperty("comprehensionReviewState", QStringLiteral("ready"));
+    mock->setProperty("canApplyReviewedOutput", false);
+    mock->setProperty("comprehensionInterpretation",
+                      QStringLiteral("A music app that borrows 1960s sleeve typography while keeping browsing simple."));
+    mock->setProperty("comprehensionFindings", QVariantList{
+        reviewFinding(QStringLiteral("f1"), QStringLiteral("blocking"), QStringLiteral("negative_constraint"),
+                      QStringLiteral("The rewrite drops the no-new-dependencies constraint."),
+                      QStringLiteral("Avoid adding new dependencies"), true,
+                      QStringLiteral("Restore the constraint verbatim."), QStringLiteral("draft")),
+        reviewFinding(QStringLiteral("f2"), QStringLiteral("required"), QStringLiteral("comprehension"),
+                      QStringLiteral("Browsing is still ambiguous: scroll or pages?"),
+                      QStringLiteral("easy browsing"), true,
+                      QStringLiteral("Ask which browsing pattern to keep."), QStringLiteral("draft")),
+        reviewFinding(QStringLiteral("f3"), QStringLiteral("advisory"), QStringLiteral("meaning_drift"),
+                      QStringLiteral("The tone may read more minimal than the draft."),
+                      QString(), false)});
+    QTest::qWait(120);
+    ROCLINT_CHECK(visualText(window, "comprehensionStateBadge") == QStringLiteral("READY"));
+    ROCLINT_CHECK(requireVisual(window, "comprehensionFinding_f1")->isVisible());
+    ROCLINT_CHECK(visualText(window, "comprehensionFindingSeverity_0") == QStringLiteral("BLOCKING"));
+    ROCLINT_CHECK(visualText(window, "comprehensionFindingExcerpt_0").contains(QStringLiteral("Avoid adding new dependencies")));
+    ROCLINT_CHECK(visualText(window, "comprehensionInterpretation").contains(QStringLiteral("sleeve")));
+    ROCLINT_CHECK(!requireVisual(window, "comprehensionFindingAcknowledge_0")->isVisible());
+    ROCLINT_CHECK(!requireVisual(window, "comprehensionApplyControl")->property("enabled").toBool());
+    ROCLINT_CHECK(visualText(window, "comprehensionApplyReason").contains(QStringLiteral("finding")));
+    savePreview(window, QStringLiteral("review_ready_findings.png"));
+
+    // Keyboard resolution returns the unresolved choice to the interview.
+    activateWithKeyboard(window, requireVisual(window, "comprehensionFindingReturn_0"));
+    QTest::qWait(50);
+    ROCLINT_CHECK(lastMockCall(mock) == QStringLiteral("resolveFinding"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("id")).toString() == QStringLiteral("f1"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("resolution")).toString()
+                  == QStringLiteral("return_to_interview"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("version")).toInt() == 11);
+    ROCLINT_CHECK(returnSpy.count() == 1);
+    activateWithKeyboard(window, requireVisual(window, "comprehensionFindingAcknowledge_1"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("resolution")).toString() == QStringLiteral("acknowledge"));
+
+    // Host unlocks only after decisions; then apply fires the explicit signal.
+    mock->setProperty("comprehensionFindings", QVariantList{
+        reviewFinding(QStringLiteral("f3"), QStringLiteral("advisory"), QStringLiteral("meaning_drift"),
+                      QStringLiteral("The tone may read more minimal than the draft."), QString(), false)});
+    mock->setProperty("canApplyReviewedOutput", true);
+    QTest::qWait(100);
+    auto* apply = requireVisual(window, "comprehensionApplyControl");
+    ROCLINT_CHECK(apply->property("enabled").toBool());
+    ROCLINT_CHECK(visualText(window, "comprehensionApplyReason").isEmpty());
+    activateWithKeyboard(window, apply);
+    QTest::qWait(50);
+    ROCLINT_CHECK(applySpy.count() == 1);
+    assertNoBindingFailures(warnings);
+}
+
+void testCompanionContractGuardsPreContractHost() {
+    // A host with only the baseline word surface must not bind missing fields.
+    {
+        QQmlApplicationEngine engine;
+        QStringList warnings;
+        QSettings().setValue(QStringLiteral("appearance/reducedMotion"), true);
+        auto* mock = createCompanionTestDouble(engine, QStringLiteral("CompanionWordOnlyMock.qml"));
+        mock->setProperty("hasWordRefinement", true);
+        mock->setProperty("wordRefinementOriginal", QStringLiteral("stuff"));
+        mock->setProperty("wordRefinementReplacement", QStringLiteral("the parser settings"));
+        mock->setProperty("wordRefinementExplanation", QStringLiteral("Names the parser rather than a vague word."));
+        mock->setProperty("wordRefinementCandidates", QVariantList{
+            wordCandidate(QStringLiteral("parser"), QStringLiteral("Parser settings"),
+                          QStringLiteral("the parser settings"),
+                          QStringLiteral("Names the parser rather than a vague word."))});
+        mock->setProperty("wordRefinementSelectedCandidateId", QStringLiteral("parser"));
+        engine.rootContext()->setContextProperty(QStringLiteral("hostController"), mock);
+        QObject::connect(&engine, &QQmlEngine::warnings, &engine,
+                         [&warnings](const QList<QQmlError>& list) {
+            for (const auto& error : list) {
+            warnings.append(error.description());
+            std::cerr << "  [qml warning] " << error.url().toString().toStdString()
+                      << ":" << error.line() << " " << error.description().toStdString() << '\n';
+        }
+        });
+        engine.load(QUrl(QStringLiteral("qrc:/shell/WordCompanion.qml")));
+        ROCLINT_CHECK(engine.rootObjects().size() == 1);
+        auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+        ROCLINT_CHECK(window != nullptr);
+        window->show();
+        (void)QTest::qWaitForWindowExposed(window);
+        QTest::qWait(100);
+        ROCLINT_CHECK(!window->property("contractInterviewAvailable").toBool());
+        ROCLINT_CHECK(!window->property("contractReviewAvailable").toBool());
+        ROCLINT_CHECK(window->property("reducedMotion").toBool());
+        QSettings().remove(QStringLiteral("appearance/reducedMotion"));
+        clickVisual(window, requireVisual(window, "wordCompanionExploreControl"));
+        QTest::qWait(50);
+        ROCLINT_CHECK(lastMockCall(mock) == QStringLiteral("explore"));
+        assertNoBindingFailures(warnings);
+    }
+
+    // The real baseline HostController has the same shape. Loading the popup
+    // against it proves the guarded bindings against actual meta-properties.
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    bridge->accessValue = AccessibilityAccess::Granted;
+    HostController controller(QStringLiteral(":memory:"), std::move(bridge));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
+    QQmlApplicationEngine engine;
+    QStringList warnings;
+    QObject::connect(&engine, &QQmlEngine::warnings, &engine,
+                     [&warnings](const QList<QQmlError>& list) {
+        for (const auto& error : list) {
+            warnings.append(error.description());
+            std::cerr << "  [qml warning] " << error.url().toString().toStdString()
+                      << ":" << error.line() << " " << error.description().toStdString() << '\n';
+        }
+    });
+    engine.rootContext()->setContextProperty(QStringLiteral("hostController"), &controller);
+    engine.load(QUrl(QStringLiteral("qrc:/shell/WordCompanion.qml")));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+    ROCLINT_CHECK(window != nullptr);
+    ROCLINT_CHECK(!window->property("contractInterviewAvailable").toBool());
+    ROCLINT_CHECK(!window->property("contractReviewAvailable").toBool());
+    assertNoBindingFailures(warnings);
 }
 
 void testOptionalPresentationFromPersistedV5() {
@@ -2117,6 +2743,14 @@ int main(int argc, char* argv[]) {
         ROCLINT_CHECK(!QTest::currentTestFailed());
         return 0;
     }
+    if (qEnvironmentVariableIsSet("ROCLINT_COMPANION_UI_ONLY")) {
+        run("testCompanionWordSurfaceCompactAndActionable", testCompanionWordSurfaceCompactAndActionable);
+        run("testCompanionInterviewContextCorrectionsAndBusy", testCompanionInterviewContextCorrectionsAndBusy);
+        run("testComprehensionReviewStatesAndApplyGate", testComprehensionReviewStatesAndApplyGate);
+        run("testCompanionContractGuardsPreContractHost", testCompanionContractGuardsPreContractHost);
+        ROCLINT_CHECK(!QTest::currentTestFailed());
+        return 0;
+    }
     if (qEnvironmentVariableIsSet("ROCLINT_CLARIFICATION_REGRESSION_ONLY")) {
         run("testExplicitClarificationAndDeferredRewrite", testExplicitClarificationAndDeferredRewrite);
         ROCLINT_CHECK(!QTest::currentTestFailed());
@@ -2133,6 +2767,10 @@ int main(int argc, char* argv[]) {
     run("testModelSwitchDuringInference", testModelSwitchDuringInference);
     run("testKeyboardWorkflow", testKeyboardWorkflow);
     run("testReviewRequiresExplicitActivation", testReviewRequiresExplicitActivation);
+    run("testCompanionWordSurfaceCompactAndActionable", testCompanionWordSurfaceCompactAndActionable);
+    run("testCompanionInterviewContextCorrectionsAndBusy", testCompanionInterviewContextCorrectionsAndBusy);
+    run("testComprehensionReviewStatesAndApplyGate", testComprehensionReviewStatesAndApplyGate);
+    run("testCompanionContractGuardsPreContractHost", testCompanionContractGuardsPreContractHost);
     run("testReviewAcknowledgementStorageFailure", testReviewAcknowledgementStorageFailure);
     run("testOverBudgetAssumptionsRemainVisibleAndUnconfirmed", testOverBudgetAssumptionsRemainVisibleAndUnconfirmed);
     run("testResidencySettingsKeyboard", testResidencySettingsKeyboard);

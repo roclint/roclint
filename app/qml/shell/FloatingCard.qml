@@ -56,6 +56,11 @@ Window {
     readonly property bool hasAmbiguity: hc && hostController.isClarifying
     readonly property bool needsManualAnswer: hc && hostController.isManual && hostController.interventionReason === "CLARIFICATION_BUDGET_EXCEEDED"
     readonly property real ambiguityScore: hc ? hostController.ambiguityScore : 0.0
+    // Host/UI v1: a substantial proposal is applicable only after a current,
+    // completed independent reread. When the contract is absent this stays true
+    // so the pre-contract approval path is unchanged.
+    readonly property bool reviewContractAvailable: hc && typeof hostController.canApplyReviewedOutput !== "undefined"
+    readonly property bool reviewedOutputApplicable: !reviewContractAvailable || hostController.canApplyReviewedOutput
 
     readonly property var presentation: {
         const neutral = rootWindow.fgColor;
@@ -64,7 +69,8 @@ Window {
         if (hostController.isAnalyzing) return {badge: "CHECKING", tone: neutral, label: qsTr("Cancel analysis"), action: "CANCEL"};
         if (hostController.proposalStatus === "GENERATING") return {badge: "WRITING", tone: neutral, label: qsTr("Writing…"), action: "NONE"};
         if (hostController.hasProposal && hostController.proposalStatus === "READY_FOR_REVIEW") {
-            if (!hostController.canApprove) return {badge: "REVIEW", tone: neutral, label: qsTr("Review rewrite"), action: "REVIEW_REWRITE"};
+            if (!hostController.canApprove || !rootWindow.reviewedOutputApplicable)
+                return {badge: "REVIEW", tone: neutral, label: qsTr("Review rewrite"), action: "REVIEW_REWRITE"};
             const connected = hostController.isAmbientCapture || hostController.isAmbientAttached;
             return {badge: "REVIEW", tone: neutral,
                 label: connected ? qsTr("Approve & Insert") : qsTr("Approve & Copy"),

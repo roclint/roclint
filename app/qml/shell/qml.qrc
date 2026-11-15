@@ -13,6 +13,9 @@
         <file>HudMouseArea.qml</file>
         <file>HudScrollBar.qml</file>
         <file>RocTheme.qml</file>
+        <file>CompanionContract.qml</file>
+        <file>CompanionInterview.qml</file>
+        <file>ComprehensionReview.qml</file>
         <file>GenerationMeter.qml</file>
         <file>RocButton.qml</file>
         <file>assets/roc-mark.png</file>

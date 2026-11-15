@@ -1,44 +1,104 @@
+pragma ComponentBehavior: Bound
+import QtCore
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 
-// Lightweight, editor-anchored companion. It is a separate non-activating window so the
-// destination editor keeps focus; all suggestions stay bound to the host's frozen span.
+// Compact, editor-anchored word companion. It is a separate non-activating
+// window so the destination editor keeps focus; the host freezes the target
+// span and positions this window from wordRefinementAnchorRect.
+//
+// The popup never invents alternatives: every row comes from
+// hostController.wordRefinementCandidates. Apply is only reachable for a real
+// local replacement that does not require a clarification answer. Keyboard
+// access to the interactive interview is the explicit Explore route (the HUD
+// is an activating window); this popup intentionally cannot steal keys from
+// the editor.
 Window {
     id: companion
     title: qsTr("Roclint word companion")
-    width: 360
-    height: contentColumn.implicitHeight + 24
+    readonly property bool hc: typeof hostController !== "undefined" && hostController !== null
+    readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
+    readonly property string monoFont: "Consolas"
+
+    CompanionContract { id: contract }
+    RocTheme { id: rocTheme }
+    FontLoader { id: interFont; source: "assets/InterVariable.ttf" }
+    Settings { id: appearance; category: "appearance"; property bool reducedMotion: false }
+    readonly property alias reducedMotion: appearance.reducedMotion
+
+    readonly property string sansFont: interFont.name.length
+                                        ? interFont.name
+                                        : (isMac ? "Helvetica Neue" : "Segoe UI")
+    readonly property color errorColor: "#EEA4AF"
+    readonly property int preferredWidth: {
+        const available = companion.screen ? companion.screen.width : 376;
+        return Math.max(232, Math.min(376, available - 16));
+    }
+    readonly property int maxPopupHeight: {
+        const available = companion.screen ? companion.screen.height : 640;
+        return Math.max(220, Math.min(560, Math.round(available * 0.62)));
+    }
+    readonly property string stateLabel: {
+        if (!contract.hasWordRefinement) return qsTr("STANDBY");
+        if (contract.wordApplying) return qsTr("APPLYING");
+        if (contract.wordNeedsClarification) return qsTr("ONE DETAIL");
+        if (contract.wordWorking) return qsTr("WORKING");
+        return qsTr("READY");
+    }
+    readonly property color stateTone: {
+        if (contract.wordNeedsClarification) return rocTheme.warning;
+        if (contract.wordApplying || contract.wordWorking) return rocTheme.focus;
+        return rocTheme.success;
+    }
+    readonly property bool showAlternatives: contract.wordCandidates.length > 1
+    readonly property bool showReplacement: contract.wordReplacement.length > 0
+    readonly property int selectedCandidateIndex: {
+        for (let i = 0; i < contract.wordCandidates.length; ++i) {
+            if (contract.wordCandidates[i] && contract.wordCandidates[i].id === contract.wordSelectedCandidateId)
+                return i;
+        }
+        return -1;
+    }
+
+    // Explicit entry points keep the mouse and test paths identical.
+    function applySelected() {
+        if (contract.wordCanApply) contract.applyWord(contract.wordSelectedCandidateId);
+    }
+    function explore() { contract.openInterview(); }
+    function dismiss() { contract.dismissWord(); }
+    function selectCandidate(candidateId) { contract.selectWordCandidate(candidateId); }
+    // Kept for hosts/tests that only know the pre-contract word surface.
+    readonly property bool contractInterviewAvailable: contract.interviewInvokable
+    readonly property bool contractReviewAvailable: contract.reviewSurfaceAvailable
+
+    width: preferredWidth
+    height: Math.min(panelColumn.implicitHeight + 26, maxPopupHeight)
+    minimumWidth: 232
+    minimumHeight: 132
     visible: false
-    // Never take focus from the destination editor. Mouse clicks still work, and the captured
-    // field token remains the stable binding for one-click replacement.
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
     color: "transparent"
 
-    readonly property bool hc: typeof hostController !== "undefined" && hostController !== null
-    readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
-    readonly property string monoFont: isMac ? "Menlo" : "Consolas"
-    readonly property string sansFont: isMac ? "Helvetica Neue" : "Segoe UI"
-
-    RocTheme { id: palette }
-
     Rectangle {
+        id: panel
         anchors.fill: parent
-        radius: 10
-        color: palette.background
-        border.color: palette.focus
+        radius: 12
+        color: rocTheme.surface
+        border.color: rocTheme.focus
         border.width: 1
 
         Rectangle {
             anchors.fill: parent
             anchors.leftMargin: 2
-            anchors.topMargin: 2
-            radius: 10
+            anchors.topMargin: 3
+            radius: 12
             color: "#66000000"
             z: -1
         }
 
         ColumnLayout {
-            id: contentColumn
+            id: panelColumn
             anchors.fill: parent
             anchors.margins: 12
             spacing: 8
@@ -49,212 +109,492 @@ Window {
                 Image {
                     source: "assets/roc-mark.png"
                     sourceSize.width: 40; sourceSize.height: 34
-                    Layout.preferredWidth: 18
-                    Layout.preferredHeight: 15
+                    Layout.preferredWidth: 18; Layout.preferredHeight: 15
                     fillMode: Image.PreserveAspectFit
                     smooth: false
+                    Accessible.ignored: true
                 }
                 Text {
                     text: qsTr("WORD COMPANION")
                     font.family: companion.monoFont
-                    font.pixelSize: 10
+                    font.pixelSize: 9
                     font.bold: true
-                    color: palette.success
+                    color: rocTheme.muted
+                }
+                Rectangle {
+                    implicitWidth: statusText.implicitWidth + 10
+                    implicitHeight: 16
+                    radius: 3
+                    color: "transparent"
+                    border.color: companion.stateTone
+                    border.width: 1
+                    Text {
+                        id: statusText
+                        objectName: "wordCompanionStatusLabel"
+                        anchors.centerIn: parent
+                        text: companion.stateLabel
+                        font.family: companion.monoFont
+                        font.pixelSize: 8
+                        font.bold: true
+                        color: companion.stateTone
+                    }
                 }
                 Item { Layout.fillWidth: true }
                 Rectangle {
                     objectName: "wordCompanionDismissControl"
                     implicitWidth: 22; implicitHeight: 22
                     radius: 4
-                    color: dismissMouse.containsMouse ? palette.hover : "transparent"
+                    color: dismissMouse.containsMouse ? rocTheme.hover : "transparent"
+                    Accessible.role: Accessible.Button
+                    Accessible.name: qsTr("Keep original wording and close")
                     Text {
                         anchors.centerIn: parent
                         text: "×"
                         font.pixelSize: 15
-                        color: palette.muted
+                        color: rocTheme.muted
                     }
                     MouseArea {
                         id: dismissMouse
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: if (companion.hc) hostController.dismissWordRefinement()
+                        onClicked: companion.dismiss()
                     }
                 }
             }
 
             Rectangle {
                 Layout.fillWidth: true
-                visible: companion.hc && hostController.wordRefinementReplacement.length > 0
-                implicitHeight: previewRow.implicitHeight + 12
-                radius: 6
-                color: palette.inset
-                border.color: palette.border
-                border.width: 1
+                implicitHeight: 1
+                color: rocTheme.border
+            }
 
-                RowLayout {
-                    id: previewRow
-                    anchors.fill: parent
-                    anchors.margins: 6
-                    spacing: 6
-                    Text {
-                        text: companion.hc ? hostController.wordRefinementOriginal : ""
-                        font.family: companion.monoFont
-                        font.pixelSize: 12
-                        font.strikeout: true
-                        color: palette.warning
-                    }
-                    Text {
-                        text: "→"
-                        font.family: companion.monoFont
-                        font.pixelSize: 12
-                        color: palette.foreground
-                    }
-                    Text {
+            Flickable {
+                id: bodyScroll
+                objectName: "wordCompanionBody"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredHeight: Math.min(bodyColumn.implicitHeight, 288)
+                implicitHeight: Math.min(bodyColumn.implicitHeight, 288)
+                Layout.minimumHeight: 0
+                contentWidth: width
+                contentHeight: bodyColumn.implicitHeight
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: HudScrollBar {}
+
+                ColumnLayout {
+                    id: bodyColumn
+                    width: Math.max(0, bodyScroll.width - 12)
+                    spacing: 8
+
+                    ColumnLayout {
                         Layout.fillWidth: true
-                        text: companion.hc ? hostController.wordRefinementReplacement : ""
-                        font.family: companion.monoFont
-                        font.pixelSize: 12
-                        font.bold: true
-                        color: palette.success
-                        wrapMode: Text.WordWrap
+                        spacing: 2
+                        Text {
+                            text: qsTr("IN YOUR DRAFT")
+                            font.family: companion.monoFont
+                            font.pixelSize: 8
+                            color: rocTheme.muted
+                        }
+                        Text {
+                            id: originalLabel
+                            objectName: "wordCompanionOriginalLabel"
+                            Layout.fillWidth: true
+                            textFormat: Text.PlainText
+                            text: contract.wordSurfaceAvailable ? contract.wordOriginal : ""
+                            wrapMode: Text.WordWrap
+                            maximumLineCount: 4
+                            elide: Text.ElideRight
+                            font.family: companion.sansFont
+                            font.pixelSize: 14
+                            font.italic: true
+                            color: rocTheme.foreground
+                        }
                     }
-                }
-            }
 
-            Text {
-                Layout.fillWidth: true
-                visible: text.length > 0
-                text: companion.hc ? hostController.wordRefinementExplanation : ""
-                font.family: companion.sansFont
-                font.pixelSize: 11
-                color: palette.muted
-                wrapMode: Text.WordWrap
-            }
-
-            Text {
-                Layout.fillWidth: true
-                visible: text.length > 0
-                text: companion.hc && hostController.wordRefinementAssumption.length > 0
-                      ? qsTr("Assumes: ") + hostController.wordRefinementAssumption : ""
-                font.family: companion.sansFont
-                font.pixelSize: 10
-                color: palette.warning
-                wrapMode: Text.WordWrap
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                visible: companion.hc && hostController.wordRefinementCandidates.length > 1
-                spacing: 3
-                Text {
-                    text: qsTr("Other readings:")
-                    font.family: companion.monoFont
-                    font.pixelSize: 9
-                    color: palette.muted
-                }
-                Flow {
-                    Layout.fillWidth: true
-                    spacing: 5
-                    Repeater {
-                        model: companion.hc ? hostController.wordRefinementCandidates : []
-                        delegate: Rectangle {
-                            id: candidateChip
-                            required property var modelData
-                            required property int index
-                            objectName: "wordCompanionCandidate_" + index
-                            readonly property bool selected: companion.hc &&
-                                hostController.wordRefinementSelectedCandidateId === modelData.id
-                            implicitWidth: chipText.implicitWidth + 12
-                            implicitHeight: 22
-                            radius: 4
-                            color: selected ? palette.hover : palette.inset
-                            border.color: selected ? palette.focus : palette.border
-                            border.width: 1
-                            opacity: modelData.requiresClarification ? 0.55 : 1.0
+                    Rectangle {
+                        Layout.fillWidth: true
+                        visible: companion.showReplacement
+                        implicitHeight: proposalColumn.implicitHeight + 16
+                        radius: 8
+                        color: rocTheme.inset
+                        border.color: rocTheme.border
+                        border.width: 1
+                        ColumnLayout {
+                            id: proposalColumn
+                            x: 8; y: 8
+                            width: Math.max(0, parent.width - 16)
+                            spacing: 4
                             Text {
-                                id: chipText
-                                anchors.centerIn: parent
-                                text: modelData.label
+                                text: qsTr("PROPOSED IN PLACE")
+                                font.family: companion.monoFont
+                                font.pixelSize: 8
+                                color: rocTheme.muted
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
+                                spacing: 6
+                                Text {
+                                    Layout.maximumWidth: Math.max(64, proposalColumn.width * 0.42)
+                                    textFormat: Text.PlainText
+                                    text: contract.wordOriginal
+                                    wrapMode: Text.WordWrap
+                                    maximumLineCount: 3
+                                    elide: Text.ElideRight
+                                    font.family: companion.sansFont
+                                    font.pixelSize: 11
+                                    font.strikeout: true
+                                    color: rocTheme.warning
+                                }
+                                Text {
+                                    text: "→"
+                                    font.family: companion.monoFont
+                                    font.pixelSize: 11
+                                    color: rocTheme.muted
+                                }
+                                Text {
+                                    objectName: "wordCompanionReplacementLabel"
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    textFormat: Text.PlainText
+                                    text: contract.wordReplacement
+                                    wrapMode: Text.WordWrap
+                                    maximumLineCount: 4
+                                    elide: Text.ElideRight
+                                    font.family: companion.sansFont
+                                    font.pixelSize: 15
+                                    font.bold: true
+                                    color: rocTheme.success
+                                    Accessible.name: qsTr("Replacement: %1").arg(contract.wordReplacement)
+                                }
+                            }
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        visible: contract.wordSurfaceAvailable && !companion.showReplacement &&
+                                 !contract.wordNeedsClarification
+                        spacing: 5
+                        Row {
+                            spacing: 6
+                            PulseDots {
+                                running: contract.wordApplying || contract.wordWorking
+                                reduceMotion: appearance.reducedMotion
+                            }
+                            Text {
+                                objectName: "wordCompanionBusyLabel"
+                                text: contract.wordApplying
+                                      ? qsTr("Applying to your draft…")
+                                      : qsTr("Preparing a local wording suggestion…")
+                                font.family: companion.sansFont
+                                font.pixelSize: 12
+                                color: rocTheme.muted
+                            }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: qsTr("No suggestion is shown until there is a real replacement.")
+                            wrapMode: Text.WordWrap
+                            font.family: companion.sansFont
+                            font.pixelSize: 10
+                            color: rocTheme.muted
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        visible: contract.wordExplanation.length > 0
+                        spacing: 3
+                        Text {
+                            text: qsTr("WHAT CHANGES")
+                            font.family: companion.monoFont
+                            font.pixelSize: 8
+                            color: rocTheme.muted
+                        }
+                        Text {
+                            objectName: "wordCompanionExplanationLabel"
+                            Layout.fillWidth: true
+                            textFormat: Text.PlainText
+                            text: contract.wordExplanation
+                            wrapMode: Text.WordWrap
+                            font.family: companion.sansFont
+                            font.pixelSize: 13
+                            color: rocTheme.foreground
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        visible: contract.wordAssumption.length > 0
+                        implicitHeight: assumptionColumn.implicitHeight + 12
+                        radius: 6
+                        color: "transparent"
+                        border.color: rocTheme.warning
+                        border.width: 1
+                        ColumnLayout {
+                            id: assumptionColumn
+                            x: 7; y: 6
+                            width: Math.max(0, parent.width - 14)
+                            spacing: 2
+                            Text {
+                                text: qsTr("PROPOSED ASSUMPTION · NOT CONFIRMED")
+                                font.family: companion.monoFont
+                                font.pixelSize: 8
+                                color: rocTheme.warning
+                            }
+                            Text {
+                                objectName: "wordCompanionAssumptionLabel"
+                                Layout.fillWidth: true
+                                textFormat: Text.PlainText
+                                text: contract.wordAssumption
+                                wrapMode: Text.WordWrap
+                                font.family: companion.sansFont
+                                font.pixelSize: 11
+                                color: rocTheme.warning
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        visible: contract.wordNeedsClarification
+                        implicitHeight: clarifyColumn.implicitHeight + 14
+                        radius: 8
+                        color: rocTheme.inset
+                        border.color: rocTheme.warning
+                        border.width: 1
+                        ColumnLayout {
+                            id: clarifyColumn
+                            x: 8; y: 7
+                            width: Math.max(0, parent.width - 16)
+                            spacing: 4
+                            Text {
+                                text: qsTr("ONE DETAIL NEEDED")
+                                font.family: companion.monoFont
+                                font.pixelSize: 8
+                                font.bold: true
+                                color: rocTheme.warning
+                            }
+                            Text {
+                                objectName: "wordCompanionClarificationLabel"
+                                Layout.fillWidth: true
+                                textFormat: Text.PlainText
+                                text: contract.wordClarificationQuestion
+                                wrapMode: Text.WordWrap
+                                font.family: companion.sansFont
+                                font.pixelSize: 12
+                                color: rocTheme.foreground
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: qsTr("Explore to answer it without losing this wording.")
+                                wrapMode: Text.WordWrap
                                 font.family: companion.sansFont
                                 font.pixelSize: 10
-                                color: palette.foreground
+                                color: rocTheme.muted
                             }
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                enabled: !modelData.requiresClarification
-                                onClicked: if (companion.hc)
-                                    hostController.selectWordRefinementCandidate(modelData.id)
+                        }
+                    }
+
+                    ColumnLayout {
+                        objectName: "wordCompanionCandidates"
+                        Layout.fillWidth: true
+                        visible: companion.showAlternatives
+                        spacing: 4
+                        Text {
+                            text: qsTr("OTHER READINGS · CHOOSE ONE")
+                            font.family: companion.monoFont
+                            font.pixelSize: 8
+                            color: rocTheme.muted
+                        }
+                        Repeater {
+                            id: candidateRepeater
+                            model: companion.showAlternatives ? contract.wordCandidates : []
+                            delegate: Rectangle {
+                                id: candidateRow
+                                required property var modelData
+                                required property int index
+                                objectName: "wordCompanionCandidate_" + index
+                                readonly property bool selected: modelData.id === contract.wordSelectedCandidateId
+                                readonly property string explanation: modelData.explanation !== undefined
+                                                                      ? String(modelData.explanation) : ""
+                                readonly property string assumption: modelData.assumption !== undefined
+                                                                     ? String(modelData.assumption) : ""
+                                readonly property string replacement: modelData.replacement !== undefined
+                                                                      ? String(modelData.replacement) : ""
+                                Layout.fillWidth: true
+                                implicitHeight: candidateColumn.implicitHeight + 14
+                                radius: 6
+                                color: selected ? rocTheme.hover : "transparent"
+                                border.color: selected ? rocTheme.focus : rocTheme.border
+                                border.width: 1
+                                opacity: modelData.requiresClarification === true ? 0.62 : 1.0
+                                activeFocusOnTab: false
+                                Accessible.role: Accessible.Button
+                                Accessible.name: replacement + (explanation.length ? ". " + explanation : "") +
+                                                 (modelData.requiresClarification === true
+                                                  ? ". " + qsTr("Needs a clarifying question before it can be applied.")
+                                                  : "")
+                                MouseArea {
+                                    anchors.fill: parent
+                                    cursorShape: modelData.requiresClarification === true
+                                                 ? Qt.ArrowCursor : Qt.PointingHandCursor
+                                    enabled: !contract.wordApplying && modelData.requiresClarification !== true
+                                    onClicked: companion.selectCandidate(modelData.id)
+                                }
+                                ColumnLayout {
+                                    id: candidateColumn
+                                    x: 7; y: 6
+                                    width: Math.max(0, parent.width - 14)
+                                    spacing: 2
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Layout.minimumWidth: 0
+                                        spacing: 5
+                                        Text {
+                                            objectName: "wordCompanionCandidateLabel_" + index
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            textFormat: Text.PlainText
+                                            text: replacement
+                                            wrapMode: Text.WordWrap
+                                            font.family: companion.sansFont
+                                            font.pixelSize: 13
+                                            font.bold: true
+                                            color: candidateRow.selected ? rocTheme.foreground : rocTheme.muted
+                                        }
+                                    }
+                                    Flow {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        visible: candidateRow.selected || modelData.requiresClarification === true
+                                        Text {
+                                            visible: candidateRow.selected
+                                            text: qsTr("SELECTED")
+                                            font.family: companion.monoFont
+                                            font.pixelSize: 7
+                                            color: rocTheme.focus
+                                        }
+                                        Text {
+                                            visible: modelData.requiresClarification === true
+                                            text: qsTr("NEEDS A QUESTION")
+                                            font.family: companion.monoFont
+                                            font.pixelSize: 7
+                                            color: rocTheme.warning
+                                        }
+                                    }
+                                    Text {
+                                        objectName: "wordCompanionCandidateConsequence_" + index
+                                        Layout.fillWidth: true
+                                        visible: candidateRow.explanation.length > 0
+                                        textFormat: Text.PlainText
+                                        text: candidateRow.explanation
+                                        wrapMode: Text.WordWrap
+                                        font.family: companion.sansFont
+                                        font.pixelSize: 11
+                                        color: rocTheme.muted
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        visible: candidateRow.assumption.length > 0
+                                        textFormat: Text.PlainText
+                                        text: qsTr("Assumes: ") + candidateRow.assumption
+                                        wrapMode: Text.WordWrap
+                                        font.family: companion.sansFont
+                                        font.pixelSize: 10
+                                        color: rocTheme.warning
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
 
-            Text {
+            Rectangle {
                 Layout.fillWidth: true
-                visible: companion.hc && hostController.wordRefinementNeedsClarification
-                text: companion.hc ? hostController.wordRefinementClarificationQuestion : ""
-                font.family: companion.sansFont
-                font.pixelSize: 11
-                color: palette.warning
-                wrapMode: Text.WordWrap
+                implicitHeight: 1
+                color: rocTheme.border
             }
 
-            RowLayout {
+            Flow {
                 Layout.fillWidth: true
                 spacing: 6
-                Rectangle {
+                RocButton {
                     objectName: "wordCompanionApplyControl"
-                    visible: companion.hc && !hostController.wordRefinementNeedsClarification &&
-                             !hostController.wordRefinementApplying
-                    implicitWidth: applyText.implicitWidth + 16
-                    implicitHeight: 24
-                    radius: 4
-                    color: palette.accent
-                    Text {
-                        id: applyText
-                        anchors.centerIn: parent
-                        text: qsTr("Apply")
-                        font.family: companion.monoFont
-                        font.pixelSize: 10
-                        font.bold: true
-                        color: "#FFFFFF"
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: if (companion.hc)
-                            hostController.applyWordRefinement(hostController.stateVersion,
-                                hostController.wordRefinementSelectedCandidateId)
-                    }
+                    visible: contract.wordSurfaceAvailable && companion.showReplacement &&
+                             !contract.wordNeedsClarification
+                    label: contract.wordApplying ? qsTr("Applying…") : qsTr("Apply")
+                    primary: true
+                    compact: true
+                    currentTheme: "dark"
+                    reduceMotion: appearance.reducedMotion
+                    active: contract.wordCanApply
+                    Accessible.name: qsTr("Apply this wording")
+                    onClicked: companion.applySelected()
                 }
-                Rectangle {
+                RocButton {
                     objectName: "wordCompanionExploreControl"
-                    implicitWidth: exploreText.implicitWidth + 16
-                    implicitHeight: 24
-                    radius: 4
-                    color: exploreMouse.containsMouse ? palette.hover : "transparent"
-                    border.color: palette.border
-                    border.width: 1
-                    Text {
-                        id: exploreText
-                        anchors.centerIn: parent
-                        text: qsTr("Explore")
-                        font.family: companion.monoFont
-                        font.pixelSize: 10
-                        color: palette.foreground
-                    }
-                    MouseArea {
-                        id: exploreMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: if (companion.hc) hostController.exploreInCompanion()
-                    }
+                    label: contract.wordNeedsClarification ? qsTr("Explore & answer") : qsTr("Explore")
+                    primary: contract.wordNeedsClarification
+                    compact: true
+                    currentTheme: "dark"
+                    reduceMotion: appearance.reducedMotion
+                    active: contract.wordSurfaceAvailable &&
+                            (!contract.intentSurfaceAvailable || contract.canExploreInterview)
+                    Accessible.name: qsTr("Open the companion interview with this draft")
+                    onClicked: companion.explore()
                 }
-                Item { Layout.fillWidth: true }
+                RocButton {
+                    objectName: "wordCompanionKeepOriginalControl"
+                    label: qsTr("Keep original")
+                    compact: true
+                    quiet: true
+                    currentTheme: "dark"
+                    reduceMotion: appearance.reducedMotion
+                    active: contract.wordSurfaceAvailable
+                    Accessible.name: qsTr("Keep original wording")
+                    onClicked: companion.dismiss()
+                }
+            }
+
+            Text {
+                objectName: "wordCompanionHint"
+                Layout.fillWidth: true
+                text: qsTr("Your editor keeps focus here. Explore opens keyboard controls.")
+                wrapMode: Text.WordWrap
+                font.family: companion.monoFont
+                font.pixelSize: 8
+                color: rocTheme.muted
+            }
+        }
+    }
+
+    component PulseDots: Row {
+        id: dots
+        property bool running: false
+        property bool reduceMotion: false
+        spacing: 3
+        Repeater {
+            model: 3
+            Rectangle {
+                required property int index
+                id: pixel
+                width: 5; height: 5
+                radius: 1
+                color: rocTheme.focus
+                property real pulseOpacity: 0.35
+                opacity: pulseOpacity
+                SequentialAnimation {
+                    running: dots.running && !dots.reduceMotion
+                    loops: Animation.Infinite
+                    PauseAnimation { duration: 140 * pixel.index }
+                    NumberAnimation { target: pixel; property: "pulseOpacity"; to: 1.0; duration: 260 }
+                    NumberAnimation { target: pixel; property: "pulseOpacity"; to: 0.35; duration: 280 }
+                }
             }
         }
     }
