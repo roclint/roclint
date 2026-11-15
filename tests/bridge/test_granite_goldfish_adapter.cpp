@@ -1,11 +1,14 @@
 #include "roclint/bridge/GraniteGoldfishAdapter.hpp"
 #include "roclint/bridge/GraniteRewriteAdapter.hpp"
 #include "roclint/bridge/GraniteAdapter.hpp"
+#include "roclint/core/Json.hpp"
+#include "roclint/review/ComprehensionReview.hpp"
 #include "support/check.hpp"
 #include "support/fixtures.hpp"
 
 #include <iostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace roclint::core;
@@ -936,6 +939,609 @@ void testClarificationAuditStageAppropriate() {
     std::cout << "  [PASS] Clarification audit stage-appropriate passed.\n";
 }
 
+ComprehensionReviewRequest comprehensionFixture() {
+    ComprehensionReviewRequest req;
+    req.originalPrompt =
+        "Design a warm, minimal album cover for a 1960s-inspired jazz record. "
+        "Keep the title text exactly as written.";
+    req.candidatePrompt =
+        "Create a warm, minimal album cover for a 1960s-inspired jazz record with a square cover. "
+        "Keep the title text exactly as written.";
+    req.confirmedDecisions = {"Use a warm sepia palette", "Keep the title text exactly as written"};
+    req.sourceExcerpts = {"warm, minimal album cover", "Keep the title text exactly as written"};
+    req.taskKind = "creative";
+    req.sessionId = "sess_review_fixture";
+    req.revisionId = "rev_review_fixture";
+
+    ScopedConstraint preserve;
+    preserve.id = "c_title";
+    preserve.rule = "Keep the title text exactly as written";
+    preserve.origin = Origin::User;
+    preserve.derivation = Derivation::Direct;
+    preserve.enforcement = Enforcement::Hard;
+    preserve.polarity = Polarity::Prohibit;
+    preserve.aspect = "typography";
+    preserve.authorityRef = "user";
+    req.constraints = {preserve};
+    return req;
+}
+
+json::Value reviewFinding(std::string id, std::string kind, std::string severity,
+                          std::string summary, std::string sourceRef,
+                          std::string sourceExcerpt, bool requiresUserDecision,
+                          std::string proposedRepair) {
+    json::Value finding = json::Value::object();
+    finding.set("id", json::Value::string(std::move(id)));
+    finding.set("kind", json::Value::string(std::move(kind)));
+    finding.set("severity", json::Value::string(std::move(severity)));
+    finding.set("summary", json::Value::string(std::move(summary)));
+    finding.set("source_ref", json::Value::string(std::move(sourceRef)));
+    finding.set("source_excerpt", json::Value::string(std::move(sourceExcerpt)));
+    finding.set("requires_user_decision", json::Value::boolean(requiresUserDecision));
+    finding.set("proposed_repair", json::Value::string(std::move(proposedRepair)));
+    return finding;
+}
+
+std::string comprehensionResponse(
+    std::vector<json::Value> findings, bool ready,
+    std::string outcome = "A prompt that matches the confirmed intent.",
+    std::vector<std::string> requirements = std::vector<std::string>{"follow the confirmed intent"},
+    std::vector<std::string> assumptions = std::vector<std::string>{},
+    std::vector<std::string> unresolved = std::vector<std::string>{},
+    std::string rationale =
+        "The candidate carries the confirmed decisions and preservation constraints.") {
+    auto stringArray = [](const std::vector<std::string>& values) {
+        json::Value array = json::Value::array();
+        for (const auto& value : values) array.push(json::Value::string(value));
+        return array;
+    };
+
+    json::Value root = json::Value::object();
+    root.set("interpreted_outcome", json::Value::string(std::move(outcome)));
+    root.set("interpreted_requirements", stringArray(requirements));
+    root.set("inferred_assumptions", stringArray(assumptions));
+    root.set("unresolved_decisions", stringArray(unresolved));
+    root.set("ready_for_task", json::Value::boolean(ready));
+    json::Value findingArray = json::Value::array();
+    for (auto& finding : findings) findingArray.push(std::move(finding));
+    root.set("findings", std::move(findingArray));
+    root.set("rationale", json::Value::string(std::move(rationale)));
+    return json::serialize(root);
+}
+
+void expectComprehensionFailure(const ComprehensionReviewRequest& request,
+                                std::string_view output,
+                                ComprehensionReviewStatus expectedStatus,
+                                int expectedCalls) {
+    int calls = 0;
+    ComprehensionReviewTransport transport = [&](std::string_view) -> Result<std::string> {
+        ++calls;
+        return std::string(output);
+    };
+    const auto result = reviewComprehension(request, transport);
+    ROCLINT_CHECK(result.status == expectedStatus);
+    ROCLINT_CHECK(!result.readyForTask);
+    ROCLINT_CHECK(!reviewAuthorizesApply(result));
+    ROCLINT_CHECK(calls == expectedCalls);
+}
+
+void testComprehensionPromptIsFreshAndEvidenceBound() {
+    auto req = comprehensionFixture();
+    req.sessionId = "sess_DRAFTING_RATIONALE_MARKER";
+    req.revisionId = "rev_HIDDEN_REASONING_MARKER";
+
+    const std::string prompt = buildComprehensionReviewPrompt(req);
+    ROCLINT_CHECK(prompt.find("Instruction contract: granite.comprehension_review.v1") !=
+                  std::string::npos);
+    ROCLINT_CHECK(prompt.find(req.candidatePrompt) != std::string::npos);
+    ROCLINT_CHECK(prompt.find(req.originalPrompt) != std::string::npos);
+    ROCLINT_CHECK(prompt.find("<decision ref=\"decision:1\">Use a warm sepia palette</decision>") !=
+                  std::string::npos);
+    ROCLINT_CHECK(prompt.find(
+                      "<decision ref=\"decision:2\">Keep the title text exactly as written</decision>") !=
+                  std::string::npos);
+    ROCLINT_CHECK(prompt.find("<constraint ref=\"constraint:c_title\"") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Rule: Keep the title text exactly as written") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("<evidence ref=\"source:1\">warm, minimal album cover</evidence>") !=
+                  std::string::npos);
+    ROCLINT_CHECK(prompt.find("<task_kind>creative</task_kind>") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("source_ref must be exactly one of") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Do not require file paths") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Do not claim that this review establishes intent") !=
+                  std::string::npos);
+
+    // Drafting-only identity and hidden rationale are not forwarded to the fresh reviewer.
+    ROCLINT_CHECK(prompt.find("DRAFTING_RATIONALE_MARKER") == std::string::npos);
+    ROCLINT_CHECK(prompt.find("HIDDEN_REASONING_MARKER") == std::string::npos);
+
+    // The candidate is presented before the original so it is interpreted on its own first.
+    const auto candidateAt = prompt.find("<candidate_prompt>");
+    const auto originalAt = prompt.find("<original_prompt>");
+    ROCLINT_CHECK(candidateAt != std::string::npos);
+    ROCLINT_CHECK(originalAt != std::string::npos);
+    ROCLINT_CHECK(candidateAt < originalAt);
+
+    // Source-linked constraint provenance travels with the rule.
+    ROCLINT_CHECK(prompt.find("origin=\"User\"") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("enforcement=\"Hard\"") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("polarity=\"Prohibit\"") != std::string::npos);
+}
+
+void testComprehensionParserBindsInterpretationAndFindings() {
+    const auto req = comprehensionFixture();
+
+    const auto schema = json::parse(comprehensionReviewResponseSchema());
+    ROCLINT_CHECK(schema.ok());
+    const auto* schemaProperties = schema.value().find("properties");
+    ROCLINT_CHECK(schemaProperties != nullptr && schemaProperties->isObject());
+    ROCLINT_CHECK(schemaProperties->find("interpreted_outcome") != nullptr);
+    ROCLINT_CHECK(schemaProperties->find("inferred_assumptions") != nullptr);
+    ROCLINT_CHECK(schemaProperties->find("findings") != nullptr);
+    ROCLINT_CHECK(schemaProperties->find("rationale") != nullptr);
+
+    const std::string json = comprehensionResponse(
+        {reviewFinding("f1", "omission", "required",
+                       "The candidate drops the confirmed sepia palette direction.",
+                       "decision:1", "Use a warm sepia palette", false,
+                       "Restore the warm sepia palette in the candidate.")},
+        true, "A warm, minimal jazz album cover with a preserved headline.",
+        {"warm palette", "legible title"}, {"The cover will be square"},
+        {"Which jazz era should dominate the typography?"},
+        "The candidate preserves the headline but drops the confirmed palette.");
+
+    auto parsed = parseComprehensionReviewResponse(json, req);
+    ROCLINT_CHECK(parsed.ok());
+    const auto& result = parsed.value();
+    ROCLINT_CHECK(result.status == ComprehensionReviewStatus::Completed);
+    ROCLINT_CHECK(result.interpretedOutcome ==
+                  "A warm, minimal jazz album cover with a preserved headline.");
+    ROCLINT_CHECK(result.interpretedRequirements.size() == 2);
+    ROCLINT_CHECK(result.interpretedRequirements[0] == "warm palette");
+    ROCLINT_CHECK(result.interpretedRequirements[1] == "legible title");
+    ROCLINT_CHECK(result.findings.size() == 1);
+    const auto& finding = result.findings.front();
+    ROCLINT_CHECK(finding.id == "f1");
+    ROCLINT_CHECK(finding.kind == ReviewFindingKind::Omission);
+    ROCLINT_CHECK(finding.severity == ReviewFindingSeverity::Required);
+    ROCLINT_CHECK(finding.summary == "The candidate drops the confirmed sepia palette direction.");
+    ROCLINT_CHECK(finding.sourceRef == "decision:1");
+    ROCLINT_CHECK(finding.sourceExcerpt == "Use a warm sepia palette");
+    ROCLINT_CHECK(!finding.requiresUserDecision);
+    ROCLINT_CHECK(finding.proposedRepair == "Restore the warm sepia palette in the candidate.");
+    ROCLINT_CHECK(result.readyForTask);
+    // readyForTask alone is insufficient: a required finding blocks authorization.
+    ROCLINT_CHECK(!reviewAuthorizesApply(result));
+    ROCLINT_CHECK(result.rationale.find("Reviewer's inferred assumptions:") != std::string::npos);
+    ROCLINT_CHECK(result.rationale.find("The cover will be square") != std::string::npos);
+    ROCLINT_CHECK(result.rationale.find("Which jazz era should dominate the typography?") !=
+                  std::string::npos);
+    ROCLINT_CHECK(result.rationale.find("not proof of intent") != std::string::npos);
+
+    ROCLINT_CHECK(std::string(toString(ReviewFindingKind::MeaningDrift)) == "meaning_drift");
+    ROCLINT_CHECK(std::string(toString(ReviewFindingSeverity::Blocking)) == "blocking");
+    ROCLINT_CHECK(std::string(toString(ComprehensionReviewStatus::Completed)) == "completed");
+}
+
+void testComprehensionFindingKindsCoverDriftOmissionAndPreservation() {
+    const auto req = comprehensionFixture();
+    const std::string json = comprehensionResponse(
+        {reviewFinding("f1", "meaning_drift", "required",
+                       "The candidate turns the warm jazz cover into a neon club flyer.",
+                       "original",
+                       "Design a warm, minimal album cover for a 1960s-inspired jazz record.", false,
+                       "Restore the warm, minimal jazz direction."),
+         reviewFinding("f2", "omission", "required", "The confirmed sepia palette is absent.",
+                       "decision:1", "Use a warm sepia palette", false,
+                       "Carry the sepia palette into the candidate."),
+         reviewFinding("f3", "unsupported_assumption", "advisory",
+                       "The candidate assumes a square cover without confirmation.", "candidate",
+                       "square cover", true, "Ask whether the cover should be square."),
+         reviewFinding("f4", "negative_constraint", "blocking",
+                       "The candidate replaces the confirmed headline.", "constraint:c_title",
+                       "Keep the title text exactly as written", false,
+                       "Restore the exact headline text."),
+         reviewFinding("f5", "readiness", "required",
+                       "The target platform for the cover is missing.", "candidate", "album cover",
+                       true, "Ask which platform the cover is for.")},
+        false, "A neon club flyer with a changed headline.", {"warm palette"}, {},
+        {"Which platform the cover is for?"},
+        "The candidate drifts from the jazz direction and changes the headline.");
+
+    auto parsed = parseComprehensionReviewResponse(json, req);
+    ROCLINT_CHECK(parsed.ok());
+    const auto& result = parsed.value();
+    ROCLINT_CHECK(result.findings.size() == 5);
+    ROCLINT_CHECK(result.findings[0].kind == ReviewFindingKind::MeaningDrift);
+    ROCLINT_CHECK(result.findings[1].kind == ReviewFindingKind::Omission);
+    ROCLINT_CHECK(result.findings[2].kind == ReviewFindingKind::UnsupportedAssumption);
+    ROCLINT_CHECK(result.findings[3].kind == ReviewFindingKind::NegativeConstraint);
+    ROCLINT_CHECK(result.findings[4].kind == ReviewFindingKind::Readiness);
+    ROCLINT_CHECK(result.findings[2].requiresUserDecision);
+    ROCLINT_CHECK(result.findings[4].requiresUserDecision);
+    ROCLINT_CHECK(result.findings[3].severity == ReviewFindingSeverity::Blocking);
+    ROCLINT_CHECK(!result.readyForTask);
+    ROCLINT_CHECK(!reviewAuthorizesApply(result));
+    ROCLINT_CHECK(std::string(toString(result.findings[0].kind)) == "meaning_drift");
+    ROCLINT_CHECK(std::string(toString(result.findings[1].kind)) == "omission");
+    ROCLINT_CHECK(std::string(toString(result.findings[2].kind)) == "unsupported_assumption");
+    ROCLINT_CHECK(std::string(toString(result.findings[3].kind)) == "negative_constraint");
+    ROCLINT_CHECK(std::string(toString(result.findings[4].kind)) == "readiness");
+}
+
+void testComprehensionReadinessIsTaskRelative() {
+    auto creative = comprehensionFixture();
+    creative.taskKind = "creative";
+    creative.candidatePrompt =
+        "Create a warm, minimal album cover for a 1960s-inspired jazz record with a legible title.";
+    creative.confirmedDecisions = {"Use a warm sepia palette"};
+    creative.sourceExcerpts = {"warm, minimal album cover"};
+    creative.constraints.clear();
+
+    const std::string creativePrompt = buildComprehensionReviewPrompt(creative);
+    ROCLINT_CHECK(creativePrompt.find("<task_kind>creative</task_kind>") != std::string::npos);
+    ROCLINT_CHECK(creativePrompt.find("Do not require file paths") != std::string::npos);
+    auto creativeReview =
+        parseComprehensionReviewResponse(comprehensionResponse({}, true), creative);
+    ROCLINT_CHECK(creativeReview.ok());
+    ROCLINT_CHECK(creativeReview.value().readyForTask);
+    ROCLINT_CHECK(reviewAuthorizesApply(creativeReview.value()));
+
+    ComprehensionReviewRequest code;
+    code.originalPrompt = "Refactor src/parser.cpp. Preserve Parser::parse and the public API.";
+    code.candidatePrompt = "Refactor the parser for clarity.";
+    code.confirmedDecisions = {"Preserve the public API"};
+    code.sourceExcerpts = {"Parser::parse"};
+    code.taskKind = "code";
+    ScopedConstraint api;
+    api.id = "c_api";
+    api.rule = "Preserve the public API";
+    api.origin = Origin::User;
+    api.derivation = Derivation::Direct;
+    api.enforcement = Enforcement::Hard;
+    api.polarity = Polarity::Prohibit;
+    code.constraints = {api};
+
+    const std::string codePrompt = buildComprehensionReviewPrompt(code);
+    ROCLINT_CHECK(codePrompt.find("<task_kind>code</task_kind>") != std::string::npos);
+    ROCLINT_CHECK(codePrompt.find("AST targets") != std::string::npos);
+    ROCLINT_CHECK(codePrompt.find("Parser::parse") != std::string::npos);
+
+    auto codeReview = parseComprehensionReviewResponse(
+        comprehensionResponse(
+            {reviewFinding("f1", "omission", "blocking",
+                           "The candidate omits the explicit Parser::parse target.", "original",
+                           "Parser::parse", false,
+                           "Name Parser::parse and state that it is preserved.")},
+            false, "A generic parser refactor without an explicit target.",
+            {"preserve the public API"}),
+        code);
+    ROCLINT_CHECK(codeReview.ok());
+    ROCLINT_CHECK(!codeReview.value().readyForTask);
+    ROCLINT_CHECK(!reviewAuthorizesApply(codeReview.value()));
+    ROCLINT_CHECK(codeReview.value().findings.size() == 1);
+    ROCLINT_CHECK(codeReview.value().findings[0].sourceExcerpt == "Parser::parse");
+}
+
+void testComprehensionConfirmedDecisionProvenance() {
+    auto req = comprehensionFixture();
+    req.confirmedDecisions = {"Use the custom direction: deep forest green and brushed brass"};
+    const std::string prompt = buildComprehensionReviewPrompt(req);
+    ROCLINT_CHECK(prompt.find("<decision ref=\"decision:1\">Use the custom direction: deep "
+                              "forest green and brushed brass</decision>") != std::string::npos);
+
+    auto parsed = parseComprehensionReviewResponse(
+        comprehensionResponse(
+            {reviewFinding("f1", "meaning_drift", "required",
+                           "The candidate ignores the custom forest-green direction.", "decision:1",
+                           "deep forest green and brushed brass", false,
+                           "Carry the custom color direction into the candidate.")},
+            false),
+        req);
+    ROCLINT_CHECK(parsed.ok());
+    ROCLINT_CHECK(parsed.value().findings.size() == 1);
+    ROCLINT_CHECK(parsed.value().findings[0].sourceRef == "decision:1");
+    ROCLINT_CHECK(parsed.value().findings[0].sourceExcerpt ==
+                  "deep forest green and brushed brass");
+}
+
+void testComprehensionDeterministicPreservationPrecheck() {
+    ComprehensionReviewRequest req;
+    req.originalPrompt = "Refactor the auth handler but do not touch token validation logic.";
+    req.candidatePrompt =
+        "Refactor the auth handler and modify the token validation logic for speed.";
+    req.confirmedDecisions = {"Do not touch token validation logic"};
+    req.sourceExcerpts = {"do not touch token validation logic"};
+    req.taskKind = "code";
+
+    ScopedConstraint preserve;
+    preserve.id = "c_token";
+    preserve.rule = "do not touch token validation logic";
+    preserve.origin = Origin::User;
+    preserve.derivation = Derivation::Direct;
+    preserve.enforcement = Enforcement::Hard;
+    preserve.polarity = Polarity::Prohibit;
+    preserve.aspect = "security";
+    req.constraints = {preserve};
+
+    int calls = 0;
+    const auto result = reviewComprehension(
+        req, [&](std::string_view) -> Result<std::string> {
+            ++calls;
+            return comprehensionResponse({}, true);
+        });
+
+    ROCLINT_CHECK(calls == 1);
+    ROCLINT_CHECK(result.status == ComprehensionReviewStatus::Completed);
+    ROCLINT_CHECK(result.findings.size() == 1);
+    ROCLINT_CHECK(result.findings[0].kind == ReviewFindingKind::NegativeConstraint);
+    ROCLINT_CHECK(result.findings[0].severity == ReviewFindingSeverity::Blocking);
+    ROCLINT_CHECK(result.findings[0].sourceRef == "constraint:c_token");
+    ROCLINT_CHECK(result.findings[0].sourceExcerpt == "do not touch token validation logic");
+    ROCLINT_CHECK(!result.findings[0].requiresUserDecision);
+    ROCLINT_CHECK(!result.readyForTask);
+    ROCLINT_CHECK(!reviewAuthorizesApply(result));
+    ROCLINT_CHECK(result.rationale.find("Deterministic prechecks added") != std::string::npos);
+}
+
+void testComprehensionMemberUsesConfiguredReconciler() {
+    ComprehensionReviewRequest req;
+    req.originalPrompt = "Refactor the parser but keep the public API.";
+    req.candidatePrompt = "Refactor the parser and change the public API.";
+    req.confirmedDecisions = {"Keep the public API"};
+    req.sourceExcerpts = {"keep the public API"};
+    req.taskKind = "code";
+
+    ScopedConstraint preserve;
+    preserve.id = "c_api";
+    preserve.rule = "keep the public API";
+    preserve.origin = Origin::User;
+    preserve.derivation = Derivation::Direct;
+    preserve.enforcement = Enforcement::Hard;
+    preserve.polarity = Polarity::Prohibit;
+    preserve.appliesWhen = "review_api_active";
+    req.constraints = {preserve};
+
+    ConstraintReconciler reconciler;
+    reconciler.registerPredicate("review_api_active", [](std::string_view) {
+        return ApplicabilityStatus::Active;
+    });
+    GraniteGoldfishAdapter adapter(reconciler);
+    int calls = 0;
+    const auto result = adapter.reviewComprehension(
+        req, [&](std::string_view) -> Result<std::string> {
+            ++calls;
+            return comprehensionResponse({}, true);
+        });
+
+    ROCLINT_CHECK(calls == 1);
+    ROCLINT_CHECK(result.status == ComprehensionReviewStatus::Completed);
+    ROCLINT_CHECK(result.findings.size() == 1);
+    ROCLINT_CHECK(result.findings[0].severity == ReviewFindingSeverity::Blocking);
+    ROCLINT_CHECK(result.findings[0].sourceRef == "constraint:c_api");
+    ROCLINT_CHECK(!reviewAuthorizesApply(result));
+}
+
+void testComprehensionFailsClosed() {
+    const auto req = comprehensionFixture();
+    const std::string valid = comprehensionResponse({}, true);
+
+    {
+        auto bad = req;
+        bad.candidatePrompt = "   ";
+        expectComprehensionFailure(bad, valid, ComprehensionReviewStatus::Rejected, 0);
+    }
+    {
+        auto bad = req;
+        bad.originalPrompt.clear();
+        expectComprehensionFailure(bad, valid, ComprehensionReviewStatus::Rejected, 0);
+    }
+    {
+        auto bad = req;
+        bad.confirmedDecisions = {""};
+        expectComprehensionFailure(bad, valid, ComprehensionReviewStatus::Rejected, 0);
+    }
+    {
+        auto bad = req;
+        bad.sourceExcerpts = {""};
+        expectComprehensionFailure(bad, valid, ComprehensionReviewStatus::Rejected, 0);
+    }
+
+    expectComprehensionFailure(req, "{not valid json}", ComprehensionReviewStatus::Malformed, 1);
+    expectComprehensionFailure(req, valid.substr(0, valid.size() - 1),
+                               ComprehensionReviewStatus::Malformed, 1);
+
+    auto unknownSeverity = comprehensionResponse(
+        {reviewFinding("f1", "readiness", "critical", "An unknown severity.", "candidate",
+                       "album cover", false, "Ask the user.")},
+        true);
+    expectComprehensionFailure(req, unknownSeverity, ComprehensionReviewStatus::Malformed, 1);
+
+    auto unknownKind = comprehensionResponse(
+        {reviewFinding("f1", "vibes", "required", "An unknown kind.", "candidate", "album cover",
+                       false, "Ask the user.")},
+        false);
+    expectComprehensionFailure(req, unknownKind, ComprehensionReviewStatus::Malformed, 1);
+
+    auto duplicateIds = comprehensionResponse(
+        {reviewFinding("f1", "omission", "required", "First finding.", "decision:1",
+                       "Use a warm sepia palette", false, "Restore the palette."),
+         reviewFinding("f1", "meaning_drift", "required", "Second finding.", "original",
+                       "Design a warm, minimal album cover for a 1960s-inspired jazz record.",
+                       false, "Restore the direction.")},
+        false);
+    expectComprehensionFailure(req, duplicateIds, ComprehensionReviewStatus::Malformed, 1);
+
+    expectComprehensionFailure(req, comprehensionResponse({}, true, ""),
+                               ComprehensionReviewStatus::Malformed, 1);
+
+    auto fabricatedQuote = comprehensionResponse(
+        {reviewFinding("f1", "omission", "required", "The candidate omits a sentence.", "original",
+                       "This sentence is not in the original.", false, "Restore the sentence.")},
+        false);
+    expectComprehensionFailure(req, fabricatedQuote, ComprehensionReviewStatus::Malformed, 1);
+
+    auto unknownRef = comprehensionResponse(
+        {reviewFinding("f1", "omission", "required", "The candidate omits a sentence.", "nowhere",
+                       "album cover", false, "Restore the sentence.")},
+        false);
+    expectComprehensionFailure(req, unknownRef, ComprehensionReviewStatus::Malformed, 1);
+
+    expectComprehensionFailure(req, comprehensionResponse({}, false),
+                               ComprehensionReviewStatus::Malformed, 1);
+
+    std::string missingAssumptions = valid;
+    const std::string field = "\"inferred_assumptions\":[],";
+    const auto fieldAt = missingAssumptions.find(field);
+    ROCLINT_CHECK(fieldAt != std::string::npos);
+    missingAssumptions.erase(fieldAt, field.size());
+    expectComprehensionFailure(req, missingAssumptions, ComprehensionReviewStatus::Malformed, 1);
+
+    const std::string oversized(70 * 1024, 'x');
+    expectComprehensionFailure(req, oversized, ComprehensionReviewStatus::Malformed, 1);
+
+    int calls = 0;
+    const auto unavailable = reviewComprehension(
+        req, [&](std::string_view) -> Result<std::string> {
+            ++calls;
+            return makeError(ErrorCode::ProviderUnavailable, "offline");
+        });
+    ROCLINT_CHECK(calls == 1);
+    ROCLINT_CHECK(unavailable.status == ComprehensionReviewStatus::Unavailable);
+    ROCLINT_CHECK(!unavailable.readyForTask);
+    ROCLINT_CHECK(!reviewAuthorizesApply(unavailable));
+
+    const auto noTransport = reviewComprehension(req);
+    ROCLINT_CHECK(noTransport.status == ComprehensionReviewStatus::Unavailable);
+    ROCLINT_CHECK(!reviewAuthorizesApply(noTransport));
+}
+
+void testComprehensionUserDecisionBlocksApply() {
+    const auto req = comprehensionFixture();
+    auto parsed = parseComprehensionReviewResponse(
+        comprehensionResponse(
+            {reviewFinding("f1", "readiness", "advisory",
+                           "Two palettes are compatible; the choice is consequential.",
+                           "decision:1", "Use a warm sepia palette", true,
+                           "Ask the user to choose between sepia and neutral gray.")},
+            true),
+        req);
+    ROCLINT_CHECK(parsed.ok());
+    ROCLINT_CHECK(parsed.value().readyForTask);
+    ROCLINT_CHECK(parsed.value().findings.size() == 1);
+    ROCLINT_CHECK(parsed.value().findings[0].requiresUserDecision);
+    // The consequential choice must return to the interview even though readiness is true.
+    ROCLINT_CHECK(!reviewAuthorizesApply(parsed.value()));
+
+    auto advisoryOnly = parseComprehensionReviewResponse(
+        comprehensionResponse(
+            {reviewFinding("f1", "readiness", "advisory",
+                           "A caption could improve the cover but is not required.", "candidate",
+                           "square cover", false, "Consider adding a short caption.")},
+            true),
+        req);
+    ROCLINT_CHECK(advisoryOnly.ok());
+    ROCLINT_CHECK(advisoryOnly.value().readyForTask);
+    ROCLINT_CHECK(reviewAuthorizesApply(advisoryOnly.value()));
+
+    auto completedButBlocked = advisoryOnly.value();
+    completedButBlocked.findings[0].severity = ReviewFindingSeverity::Blocking;
+    completedButBlocked.findings[0].requiresUserDecision = false;
+    ROCLINT_CHECK(!reviewAuthorizesApply(completedButBlocked));
+
+    auto noInterpretation = advisoryOnly.value();
+    noInterpretation.interpretedOutcome.clear();
+    ROCLINT_CHECK(!reviewAuthorizesApply(noInterpretation));
+
+    auto unavailable = advisoryOnly.value();
+    unavailable.status = ComprehensionReviewStatus::Unavailable;
+    ROCLINT_CHECK(!reviewAuthorizesApply(unavailable));
+}
+
+void testComprehensionReviewIsSingleBoundedCall() {
+    const auto req = comprehensionFixture();
+    int calls = 0;
+    const auto result = reviewComprehension(
+        req, [&](std::string_view prompt) -> Result<std::string> {
+            ++calls;
+            ROCLINT_CHECK(prompt.find("<candidate_prompt>") != std::string::npos);
+            ROCLINT_CHECK(prompt.find("<original_prompt>") != std::string::npos);
+            return comprehensionResponse({}, true);
+        });
+    ROCLINT_CHECK(calls == 1);
+    ROCLINT_CHECK(result.status == ComprehensionReviewStatus::Completed);
+    ROCLINT_CHECK(result.findings.empty());
+    ROCLINT_CHECK(reviewAuthorizesApply(result));
+
+    calls = 0;
+    const auto malformed = reviewComprehension(
+        req, [&](std::string_view) -> Result<std::string> {
+            ++calls;
+            return std::string(R"({"interpreted_outcome":"x"})");
+        });
+    ROCLINT_CHECK(calls == 1);
+    ROCLINT_CHECK(malformed.status == ComprehensionReviewStatus::Malformed);
+    ROCLINT_CHECK(!reviewAuthorizesApply(malformed));
+
+    calls = 0;
+    const auto unavailable = reviewComprehension(
+        req, [&](std::string_view) -> Result<std::string> {
+            ++calls;
+            return makeError(ErrorCode::ProviderUnavailable, "offline");
+        });
+    ROCLINT_CHECK(calls == 1);
+    ROCLINT_CHECK(unavailable.status == ComprehensionReviewStatus::Unavailable);
+}
+
+void testComprehensionUnicodeAndEscapedEvidencePreserved() {
+    ComprehensionReviewRequest req;
+    req.originalPrompt =
+        "Réécris le titre « Café — naïve » sans changer l'apostrophe. "
+        "Use <keep intact> & preserve \"quotes\".";
+    req.candidatePrompt = "Réécris le titre « Café — naïve » en gardant l'apostrophe.";
+    req.confirmedDecisions = {"Conserve « Café — naïve » exactement"};
+    req.sourceExcerpts = {"Café — naïve"};
+    req.taskKind = "general";
+
+    ScopedConstraint title;
+    title.id = "c_unicode";
+    title.rule = "Conserve « Café — naïve » exactement";
+    title.origin = Origin::User;
+    title.derivation = Derivation::Direct;
+    title.enforcement = Enforcement::Hard;
+    title.polarity = Polarity::Prohibit;
+    req.constraints = {title};
+
+    const std::string prompt = buildComprehensionReviewPrompt(req);
+    ROCLINT_CHECK(prompt.find("Réécris le titre « Café — naïve » sans changer l&apos;apostrophe.") !=
+                  std::string::npos);
+    ROCLINT_CHECK(prompt.find("Conserve « Café — naïve » exactement") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Café — naïve") != std::string::npos);
+    ROCLINT_CHECK(prompt.find(
+                      "Use &lt;keep intact&gt; &amp; preserve &quot;quotes&quot;.") !=
+                  std::string::npos);
+
+    const auto unicodeFinding =
+        reviewFinding("f1", "negative_constraint", "blocking",
+                      "The candidate changes the protected accented title.", "constraint:c_unicode",
+                      "Conserve « Café — naïve » exactement", false,
+                      "Restore the exact accented title.");
+    auto parsedUnicode = parseComprehensionReviewResponse(
+        comprehensionResponse({unicodeFinding}, false, "A drifted title."), req);
+    ROCLINT_CHECK(parsedUnicode.ok());
+    ROCLINT_CHECK(parsedUnicode.value().findings[0].sourceExcerpt ==
+                  "Conserve « Café — naïve » exactement");
+
+    const auto escapedFinding = reviewFinding(
+        "f1", "omission", "required", "The candidate omits the literal keep-intact marker.",
+        "original", "Use &lt;keep intact&gt; &amp; preserve &quot;quotes&quot;", false,
+        "Restore the exact marker.");
+    auto parsedEscaped = parseComprehensionReviewResponse(
+        comprehensionResponse({escapedFinding}, false, "A drifted marker."), req);
+    ROCLINT_CHECK(parsedEscaped.ok());
+    ROCLINT_CHECK(parsedEscaped.value().findings[0].sourceExcerpt ==
+                  "Use <keep intact> & preserve \"quotes\"");
+}
+
 } // namespace
 
 int main() {
@@ -955,6 +1561,18 @@ int main() {
     testDiscoveryAuditParsersAreStrict();
     testRepairLoopStopsRepeatedRegeneration();
     testClarificationAuditStageAppropriate();
+    testComprehensionPromptIsFreshAndEvidenceBound();
+    testComprehensionParserBindsInterpretationAndFindings();
+    testComprehensionFindingKindsCoverDriftOmissionAndPreservation();
+    testComprehensionReadinessIsTaskRelative();
+    testComprehensionConfirmedDecisionProvenance();
+    testComprehensionDeterministicPreservationPrecheck();
+    testComprehensionMemberUsesConfiguredReconciler();
+    testComprehensionFailsClosed();
+    testComprehensionUserDecisionBlocksApply();
+    testComprehensionReviewIsSingleBoundedCall();
+    testComprehensionUnicodeAndEscapedEvidencePreserved();
+    std::cout << "  [PASS] Comprehension review contract cases passed.\n";
     std::cout << "[PASS] All granite goldfish adapter tests passed successfully.\n";
     return 0;
 }
