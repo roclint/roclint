@@ -117,6 +117,7 @@ bool stressTempWorkspace_DeepNesting() {
         STRESS_ASSERT(!std::filesystem::exists(root), "Deep nested tree must be completely deleted");
     }
 
+#if defined(_WIN32)
     std::cout << "  [RUN] TempWorkspace: Exceeding Windows MAX_PATH boundary condition (35 levels > 260 chars)..." << std::endl;
     {
         TempWorkspace ws("overflow_ws");
@@ -140,11 +141,13 @@ bool stressTempWorkspace_DeepNesting() {
         STRESS_ASSERT(!std::filesystem::exists(root), "Workspace root must still clean up partial directories");
     }
 
+#endif
     std::cout << "  [PASS] TempWorkspace: Deep nesting tests passed." << std::endl;
     return true;
 }
 
 bool stressTempWorkspace_LockedFileRetry() {
+#if defined(_WIN32)
     std::cout << "  [RUN] TempWorkspace: Windows file lock retry behavior..." << std::endl;
     auto rootPath = std::filesystem::path();
     {
@@ -177,6 +180,17 @@ bool stressTempWorkspace_LockedFileRetry() {
     STRESS_ASSERT(!std::filesystem::exists(rootPath), "Workspace should be cleaned up on destruction");
 
     std::cout << "  [PASS] TempWorkspace: Windows file lock retry behavior passed." << std::endl;
+#else
+    TempWorkspace ws("open_file");
+    const auto file = ws.writeFile("open.txt", "open data");
+    std::ifstream input(file);
+    STRESS_ASSERT(input.is_open(), "File should be open");
+    ws.removeFile("open.txt");
+    STRESS_ASSERT(!std::filesystem::exists(file), "POSIX unlink should remove the path while the file is open");
+    std::string text;
+    std::getline(input, text);
+    STRESS_ASSERT(text == "open data", "The open stream should still read the unlinked file");
+#endif
     return true;
 }
 

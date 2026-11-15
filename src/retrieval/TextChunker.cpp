@@ -29,16 +29,6 @@ bool isCppExtension(const std::filesystem::path& p) {
     return kCppExts.count(ext) > 0;
 }
 
-bool isDocExtension(const std::filesystem::path& p) {
-    static const std::set<std::string> kDocExts{
-        ".md", ".markdown", ".rst", ".txt", ".adoc"
-    };
-    auto ext = p.extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(),
-                   [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
-    return kDocExts.count(ext) > 0;
-}
-
 // Count UTF-8 newlines up to byte offset (for approximate line numbers).
 std::uint32_t lineAtOffset(std::string_view text, std::uint32_t offset) {
     std::uint32_t line = 1;

@@ -33,9 +33,6 @@ namespace roclint::retrieval {
 namespace {
 
 using Clock = std::chrono::steady_clock;
-double elapsedMs(Clock::time_point t0) {
-    return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-}
 
 // Generate a monotonically increasing request ID.
 std::string nextRequestId() {
