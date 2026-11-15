@@ -16,8 +16,9 @@ adapter:
 
 Baseline: `d5c8101e42b45d5d3b0796c97f01024214fd5d57`.
 Implementation commits on `topic/goldfish-2026-11-15`:
-`77586d5` (adapter and initial tests) and `f49a68a` (comprehension-gap and
-`source:N` coverage). The report itself is a separate documentation commit.
+`77586d5` (adapter and initial tests), `f49a68a` (comprehension-gap and
+`source:N` coverage), and `fb9107a` (reject bare ready responses without an
+interpretation). The report itself is a separate documentation commit.
 The contract header is coordinator-owned, remains untracked in this worktree,
 and is deliberately not committed by Agent 3. It is required at
 `include/roclint/review/ComprehensionReview.hpp` for this code to compile.
@@ -149,12 +150,20 @@ returns the lowercase wire values used by the host/QML contract
 | Empty `source_excerpt` | `Malformed` |
 | `source_excerpt` is not a verbatim substring of the cited source | `Malformed` |
 | `ready_for_task=false` with no findings | `Malformed` |
+| `ready_for_task=true`, no findings, and no requirement/assumption/unresolved decision | `Malformed` (bare Pass) |
 | Precheck/model finding id collision | `Malformed` |
 
 A model may return a Markdown JSON fence; the existing strict envelope helper
 unwraps only a whole, unambiguous fence and the JSON parser still validates the
 entire body. Truncation, trailing content, duplicate keys, invalid UTF-8, and
 oversized input fail.
+
+A ready review with no findings must state at least one interpreted requirement,
+assumption, or unresolved decision. This prevents a bare `{"ready_for_task":
+true,"findings":[]}` response from authorizing application without an actual
+interpretation. The check is structural, not a quality judgment; a specific but
+wrong interpretation can still pass the parser and be rejected only by a human
+or a later review.
 
 Source excerpts are byte-exact after trimming surrounding whitespace. If the
 model quotes the XML-escaped form shown in the prompt (`&lt;`, `&amp;`,
@@ -259,9 +268,9 @@ They cover fresh-prompt exclusion, candidate/original/decision/constraint/
 evidence inclusion, interpretation parsing, all finding kinds, creative-vs-code
 readiness, custom confirmed wording, deterministic preservation, configured
 predicates, malformed/empty/truncated/unknown/duplicate/transport failures,
-oversized output, fabricated quotations, unknown source refs, user-decision
-routing, the authorization gate, single-call bounding, and Unicode/XML-escaped
-evidence.
+oversized output, fabricated quotations, unknown source refs, bare Passes
+without an interpretation, user-decision routing, the authorization gate,
+single-call bounding, and Unicode/XML-escaped evidence.
 
 Commands (native Granite OFF, per D00):
 
@@ -289,7 +298,7 @@ Results:
 - Configure: exit 0. (CMake noted that `CMAKE_BUILD_TYPE` is unused by this
   multi-config project; no failure.)
 - Focused build: exit 0, warning-as-error gate passed.
-- Focused CTest: `1/1` passed, three consecutive runs; 0.36 s total on the final
+- Focused CTest: `1/1` passed, three consecutive runs; 0.12 s total on the final
   repeat run.
 - Direct executable: exit 0. It printed
   `[PASS] Comprehension review contract cases passed.` and
@@ -297,7 +306,7 @@ Results:
 - Regression build `roclint_host_controller_tests`: exit 0. Third-party
   tree-sitter C sources emitted pre-existing C4018/C4244/C4267 warnings; no
   error from this change.
-- Existing host controller CTest: `1/1` passed, 30.08 s.
+- Existing host controller CTest: `1/1` passed, 29.12 s.
 - `git diff --check`: clean.
 
 Raw logs:
