@@ -17,9 +17,10 @@ The PNGs in this directory are **headless QML renders** captured with
 **QML test double** that mirrors the frozen Host/UI v1 names
 (`tests/viewmodel/CompanionMockController.qml`); they are not full-app
 screenshots. The two `*_real_controller.png` files are different evidence: they
-load the production QML against the actual integrated `HostController` with a
-scripted model transport. The real host was also loaded against
-`WordCompanion.qml` to prove the guarded pre-contract and current paths.
+load the production QML against the actual integrated `HostController`. The
+interview uses a scripted model transport and the review uses a test-injected
+review result; neither is a live model run. The real host was also loaded
+against `WordCompanion.qml` to prove the guarded pre-contract and current paths.
 
 No installed application was started, replaced or terminated. No live model
 was loaded and no GPU work was performed.
@@ -38,7 +39,7 @@ was loaded and no GPU work was performed.
 | `review_stale.png` | Stale reread: no Apply, direct Keep original and Reread current |
 | `review_ready_findings.png` | Ready reread with blocking/required/advisory findings, excerpts, repair text and per-finding decisions; Apply still locked while two decisions remain |
 | `companion_interview_real_controller.png` | Real `HostController` + scripted model transport; adaptive interview QML renders the question, choices, source phrase and custom/skip controls |
-| `review_real_controller.png` | Real `HostController` + `FloatingCard.qml`; independent reread READY, interpretation, zero findings, Apply reviewed rewrite and Keep original |
+| `review_real_controller.png` | Real `HostController` + `FloatingCard.qml` with a **test-injected** review result (host/QML binding is real; not a live model review); independent reread READY, interpretation, zero findings, Apply reviewed rewrite and Keep original |
 
 ## Implemented
 
