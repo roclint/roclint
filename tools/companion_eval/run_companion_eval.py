@@ -31,14 +31,25 @@ import time
 
 WORKTREE = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = WORKTREE / "docs/audit/companion_evidence_2026-11-15"
-TEST_EXE = Path("D:/Stardust/roclint/build/Release/roclint_native_granite_tests.exe")
-CONTRACTS_EXE = Path("D:/Stardust/roclint/build/Release/roclint_granite_contracts.exe")
-WORKER = Path("D:/Stardust/roclint/build/Release/roclint_granite_worker.exe")
-JULIA_DIR = Path("D:/Stardust/roclint/models/julia-1")
-GRANITE_DIR = Path("D:/Stardust/roclint/models/granite-4.2-3b")
-JULIA_PYTHON = Path("D:/Stardust/roclint/build/runtime/julia-python/Scripts/python.exe")
-RUNTIME_CONFIG = Path("D:/Stardust/roclint/build/generated/granite-runtime-config.json")
-QT_BIN = Path("D:/Qt/6.8.2/msvc2022_64/bin")
+
+# The baseline receipt used the main checkout's Release dir. The combined
+# after-run points these at the integration build through environment
+# overrides so the same protocol measures the same production code it links.
+def env_path(name: str, default: str) -> Path:
+    return Path(os.environ.get(name, default))
+
+
+BUILD_DIR = env_path("ROCLINT_EVAL_BUILD", "D:/Stardust/roclint/build/Release")
+TEST_EXE = BUILD_DIR / "roclint_native_granite_tests.exe"
+CONTRACTS_EXE = BUILD_DIR / "roclint_granite_contracts.exe"
+WORKER = BUILD_DIR / "roclint_granite_worker.exe"
+JULIA_DIR = env_path("ROCLINT_EVAL_JULIA", "D:/Stardust/roclint/models/julia-1")
+GRANITE_DIR = env_path("ROCLINT_EVAL_GRANITE", "D:/Stardust/roclint/models/granite-4.2-3b")
+JULIA_PYTHON = env_path("ROCLINT_EVAL_JULIA_PYTHON",
+                        "D:/Stardust/roclint/build/runtime/julia-python/Scripts/python.exe")
+RUNTIME_CONFIG = env_path("ROCLINT_EVAL_RUNTIME_CONFIG",
+                          "D:/Stardust/roclint/build/generated/granite-runtime-config.json")
+QT_BIN = env_path("ROCLINT_EVAL_QT_BIN", "D:/Qt/6.8.2/msvc2022_64/bin")
 
 
 def utc_now() -> str:
@@ -183,7 +194,8 @@ def identity(args, probe_exe: Path) -> dict:
             "top_p": 0.95,
             "seed": 42,
             "julia_python": str(JULIA_PYTHON),
-            "julia_worker": str(Path("D:/Stardust/roclint/build/Release/runtime/julia_worker.py")),
+            "julia_worker": str(env_path("ROCLINT_EVAL_JULIA_WORKER",
+                "D:/Stardust/roclint/build/Release/runtime/julia_worker.py")),
         },
     }
 
