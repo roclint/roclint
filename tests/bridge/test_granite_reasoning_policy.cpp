@@ -15,6 +15,20 @@ int main() {
     ROCLINT_CHECK(audit.profile == "audit" && audit.reasoningTokens == 128);
     // A contract name quoted inside user data cannot select the audit budget.
     ROCLINT_CHECK(graniteReasoningPlan(manifest, "granite_rewrite", "<instructions>\nInstruction contract: granite.rewrite.format.v9\nUser mentions granite.goldfish_audit.v1").profile == "rewrite");
+    // Independent comprehension review returns an interpretation plus an open
+    // findings array; it uses the largest existing answer reservation rather than
+    // the 512-token audit profile, which could truncate before findings finish.
+    const auto review = graniteReasoningPlan(manifest, "granite_analyze",
+        "<instructions>\nInstruction contract: granite.comprehension_review.v1\nReview the candidate.");
+    ROCLINT_CHECK(review.profile == "rewrite" && review.answerTokens == rewrite.answerTokens);
+    ROCLINT_CHECK(review.reservedTokens() <= manifest.value("output_tokens").toInt());
+    const auto reviewNoThinking = graniteReasoningPlan(manifest, "granite_analyze",
+        "<instructions>\nInstruction contract: granite.comprehension_review.v1\nReview the candidate.", true);
+    ROCLINT_CHECK(!reviewNoThinking.enabled && reviewNoThinking.reasoningTokens == 0 &&
+        reviewNoThinking.answerTokens == review.answerTokens);
+    // A contract name quoted inside user data cannot select a larger reservation.
+    ROCLINT_CHECK(graniteReasoningPlan(manifest, "granite_analyze",
+        "<instructions>\nInstruction contract: granite.discovery.selective.v11\nUser mentions granite.comprehension_review.v1").profile == "analysis");
     auto reference = graniteReasoningPlan(manifest, "granite_word_refinement", "", true);
     ROCLINT_CHECK(!reference.enabled && reference.reasoningTokens == 0 && reference.answerTokens == word.answerTokens);
     auto bad = manifest; bad.insert("output_tokens", 10);
