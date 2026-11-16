@@ -33,6 +33,18 @@ struct ConfirmedItem {
     bool operator==(const ConfirmedItem&) const = default;
 };
 
+// An explicit interview decision that is not part of the sealed analysis snapshot
+// (model follow-up question or review finding). The host records the user's raw
+// answer; it is included as an authoritative confirmed decision for the rewrite.
+struct SupplementalDecision {
+    std::string itemId{};
+    std::string text{};        // Verbatim user answer / selected proposal wording
+    std::string rationale{};
+    std::string provenance{};  // "interview_followup" | "review_finding"
+
+    bool operator==(const SupplementalDecision&) const = default;
+};
+
 // C06 intent version: bound to one revision and one sealed analysis snapshot.
 struct ConfirmedIntent {
     std::string id{};          // intent_<intentHash>
@@ -59,10 +71,13 @@ public:
 
     // Builds the intent strictly from explicit user actions recorded in the working state.
     // Material items without an explicit resolution are listed as unresolved, never invented.
+    // Supplemental decisions are explicit interview answers captured by the host; they are
+    // appended verbatim and never inferred. A snapshot item with the same ID wins.
     [[nodiscard]] static Result<ConfirmedIntent> buildConfirmedIntent(const analysis::AnalysisSnapshot& snapshot,
                                                                       const analysis::OverallPolicyResult& policy,
                                                                       const WorkingIntentState& state,
-                                                                      std::int64_t createdAtMs);
+                                                                      std::int64_t createdAtMs,
+                                                                      const std::vector<SupplementalDecision>& supplemental = {});
 
     [[nodiscard]] static Status isIntentValid(const ConfirmedIntent& intent,
                                               std::string_view currentRevisionId,

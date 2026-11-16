@@ -3,6 +3,7 @@
 #include "roclint/core/prompt_state/TextNormalization.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <limits>
 
@@ -61,6 +62,14 @@ bool WorkingIntentState::isResolved(const std::string& itemId) const {
 
 bool WorkingIntentState::isSkipped(const std::string& itemId) const {
     return !isResolved(itemId) && contains(skippedItemIds, itemId);
+}
+
+bool WorkingIntentState::hasUncertainty(const std::string& itemId) const {
+    return uncertaintyNotes.count(itemId) != 0;
+}
+
+bool WorkingIntentState::isDeferred(const std::string& itemId) const {
+    return isSkipped(itemId) || (!isResolved(itemId) && hasUncertainty(itemId));
 }
 
 ActiveItemKind classifyItem(const analysis::NormalizedAnalysis& analysis, std::string_view itemId) {
@@ -127,7 +136,7 @@ InterventionDecision InterventionStateMachine::evaluate(const analysis::Normaliz
 
     // Tier 1: blocking conflicts.
     for (const auto& conflict : analysis.conflicts) {
-        if (conflict.blocking && !state.isResolved(conflict.id) && !state.isSkipped(conflict.id)) {
+        if (conflict.blocking && !state.isResolved(conflict.id) && !state.isDeferred(conflict.id)) {
             return finish(InterventionVerdict::Manual, InterventionReasonCode::BlockingConflictPresent, conflict.id,
                           "Conflicting requirements need a manual decision: " + conflict.description);
         }
@@ -141,7 +150,7 @@ InterventionDecision InterventionStateMachine::evaluate(const analysis::Normaliz
     std::vector<const analysis::ChoiceGroup*> eligibleGroups;
     std::vector<const analysis::ChoiceGroup*> manualGroups;
     for (const auto* g : orderChoiceGroups(analysis, snapshotEval)) {
-        if (!g->material || state.isResolved(g->id) || state.isSkipped(g->id)) {
+        if (!g->material || state.isResolved(g->id) || state.isDeferred(g->id)) {
             continue;
         }
         switch (verdictFor(g->id)) {
@@ -153,7 +162,7 @@ InterventionDecision InterventionStateMachine::evaluate(const analysis::Normaliz
 
     std::vector<const analysis::MissingDecision*> blockingMissing;
     for (const auto& md : analysis.missingDecisions) {
-        if (md.blocking && !state.isResolved(md.id) && !state.isSkipped(md.id)) {
+        if (md.blocking && !state.isResolved(md.id) && !state.isDeferred(md.id)) {
             blockingMissing.push_back(&md);
         }
     }
@@ -161,7 +170,7 @@ InterventionDecision InterventionStateMachine::evaluate(const analysis::Normaliz
     std::vector<const analysis::Assumption*> materialAssumptions;
     for (const auto idx : analysis::orderedAssumptionIndices(analysis, snapshotEval)) {
         const auto& a = analysis.assumptions[idx];
-        if (a.material && !state.isResolved(a.id) && !state.isSkipped(a.id)) {
+        if (a.material && !state.isResolved(a.id) && !state.isDeferred(a.id)) {
             materialAssumptions.push_back(&a);
         }
     }
@@ -208,23 +217,30 @@ InterventionDecision InterventionStateMachine::evaluate(const analysis::Normaliz
     }
 
     for (const auto& c : analysis.conflicts) {
-        if (c.blocking && state.isSkipped(c.id)) {
+        if (c.blocking && state.isDeferred(c.id)) {
             return finish(InterventionVerdict::Manual, InterventionReasonCode::BlockingItemDeferred, c.id,
                           "A blocking conflict was skipped and still needs a decision.");
         }
     }
     for (const auto& md : analysis.missingDecisions) {
-        if (md.blocking && state.isSkipped(md.id)) {
+        if (md.blocking && state.isDeferred(md.id)) {
             return finish(InterventionVerdict::Manual, InterventionReasonCode::BlockingItemDeferred, md.id,
                           "A blocking decision was skipped and still needs an answer.");
         }
     }
 
-    const bool anyDeferred = std::any_of(state.skippedItemIds.begin(), state.skippedItemIds.end(),
-                                         [&](const std::string& id) { return state.isSkipped(id); });
+    bool anyDeferred = std::any_of(state.skippedItemIds.begin(), state.skippedItemIds.end(),
+                                   [&](const std::string& id) { return state.isSkipped(id); });
+    if (!anyDeferred) {
+        anyDeferred = std::any_of(state.uncertaintyNotes.begin(), state.uncertaintyNotes.end(),
+                                  [&](const auto& entry) {
+                                      return classifyItem(analysis, entry.first) != ActiveItemKind::None &&
+                                             !state.isResolved(entry.first);
+                                  });
+    }
     if (anyDeferred) {
         return finish(InterventionVerdict::Quiet, InterventionReasonCode::MaterialItemsDeferred, std::nullopt,
-                      "Remaining questions were skipped and stay unresolved.");
+                      "Remaining questions were skipped or marked unknown and stay unresolved.");
     }
 
     return finish(InterventionVerdict::Quiet,
@@ -317,6 +333,210 @@ Status InterventionStateMachine::applySkip(const analysis::NormalizedAnalysis& a
         state.skippedItemIds.push_back(active.value());
     }
     ++state.roundsCompleted;
+    return Status::success();
+}
+
+namespace {
+
+[[nodiscard]] std::string trimmedUserText(std::string_view text) {
+    const std::string normalized = normalizeLineEndings(text);
+    const auto first = normalized.find_first_not_of(" \t\n");
+    if (first == std::string::npos) return {};
+    const auto last = normalized.find_last_not_of(" \t\n");
+    return normalized.substr(first, last - first + 1);
+}
+
+[[nodiscard]] std::string lowerCopy(std::string_view text) {
+    std::string lower;
+    lower.reserve(text.size());
+    for (const char c : text) {
+        lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    return lower;
+}
+
+[[nodiscard]] bool isYesAnswer(std::string_view lower) {
+    return lower == "yes" || lower == "y" || lower == "true" || lower == "accept" ||
+           lower == "accepted" || lower == "agree" || lower.starts_with("yes,") ||
+           lower.starts_with("yes ");
+}
+
+[[nodiscard]] bool isNoAnswer(std::string_view lower) {
+    return lower == "no" || lower == "n" || lower == "false" || lower == "decline" ||
+           lower == "declined" || lower == "disagree" || lower.starts_with("no,") ||
+           lower.starts_with("no ");
+}
+
+void eraseResolutionFor(WorkingIntentState& state, const std::string& itemId) {
+    state.confirmedAlternatives.erase(itemId);
+    state.customResolutions.erase(itemId);
+    state.assumptionDecisions.erase(itemId);
+    state.uncertaintyNotes.erase(itemId);
+    std::erase(state.keptOriginalItemIds, itemId);
+    std::erase(state.skippedItemIds, itemId);
+}
+
+[[nodiscard]] std::string previousDecisionValue(const analysis::NormalizedAnalysis& analysis,
+                                                const WorkingIntentState& state,
+                                                const std::string& itemId,
+                                                std::string& previousKind) {
+    if (const auto chosen = state.confirmedAlternatives.find(itemId); chosen != state.confirmedAlternatives.end()) {
+        previousKind = "SELECTED_ALTERNATIVE";
+        for (const auto& group : analysis.choiceGroups) {
+            if (group.id != itemId) continue;
+            for (const auto& alt : group.alternatives) {
+                if (alt.id == chosen->second) return alt.interpretation;
+            }
+        }
+        return chosen->second;
+    }
+    if (const auto custom = state.customResolutions.find(itemId); custom != state.customResolutions.end()) {
+        previousKind = "CUSTOM_TEXT";
+        return custom->second;
+    }
+    if (const auto assumption = state.assumptionDecisions.find(itemId); assumption != state.assumptionDecisions.end()) {
+        previousKind = assumption->second ? "ACCEPTED_ASSUMPTION" : "DECLINED_ASSUMPTION";
+        return assumption->second ? "Accepted the assumption" : "Rejected the assumption";
+    }
+    if (const auto note = state.uncertaintyNotes.find(itemId); note != state.uncertaintyNotes.end()) {
+        previousKind = "UNKNOWN";
+        return note->second;
+    }
+    if (contains(state.keptOriginalItemIds, itemId)) {
+        previousKind = "USE_ORIGINAL";
+        return "Keep the original wording";
+    }
+    previousKind.clear();
+    return {};
+}
+
+} // namespace
+
+Status InterventionStateMachine::applyInterviewChoice(const analysis::NormalizedAnalysis& analysis,
+                                                      WorkingIntentState& state,
+                                                      std::string_view itemId,
+                                                      std::string_view alternativeId) {
+    const auto* group = findGroup(analysis, itemId);
+    if (group == nullptr) {
+        return makeError(ErrorCode::InvalidInput, "The interview item is not a choice group");
+    }
+    const auto alternative = std::find_if(group->alternatives.begin(), group->alternatives.end(),
+                                          [&](const analysis::ChoiceAlternative& candidate) {
+                                              return candidate.id == alternativeId;
+                                          });
+    if (alternative == group->alternatives.end()) {
+        return makeError(ErrorCode::InvalidInput, "That option does not belong to the current question");
+    }
+    eraseResolutionFor(state, group->id);
+    state.confirmedAlternatives[group->id] = std::string(alternativeId);
+    return Status::success();
+}
+
+Status InterventionStateMachine::applyInterviewCustomText(const analysis::NormalizedAnalysis& analysis,
+                                                          WorkingIntentState& state,
+                                                          std::string_view itemId,
+                                                          std::string_view text) {
+    const auto kind = classifyItem(analysis, itemId);
+    if (kind == ActiveItemKind::None) {
+        return makeError(ErrorCode::InvalidInput, "That answer does not belong to the current interview");
+    }
+    const auto normalized = trimmedUserText(text);
+    if (normalized.empty()) {
+        return makeError(ErrorCode::InvalidInput, "Custom answer cannot be blank");
+    }
+    if (normalized.size() > 4096) {
+        return makeError(ErrorCode::InvalidInput, "Keep the answer within 4096 UTF-8 bytes");
+    }
+    eraseResolutionFor(state, std::string(itemId));
+    state.customResolutions[std::string(itemId)] = normalized;
+    return Status::success();
+}
+
+Status InterventionStateMachine::applyInterviewAssumption(const analysis::NormalizedAnalysis& analysis,
+                                                          WorkingIntentState& state,
+                                                          std::string_view itemId,
+                                                          bool accepted) {
+    if (classifyItem(analysis, itemId) != ActiveItemKind::Assumption) {
+        return makeError(ErrorCode::InvalidInput, "The interview item is not an assumption");
+    }
+    eraseResolutionFor(state, std::string(itemId));
+    state.assumptionDecisions[std::string(itemId)] = accepted;
+    return Status::success();
+}
+
+Status InterventionStateMachine::applyInterviewSkip(const analysis::NormalizedAnalysis& analysis,
+                                                    WorkingIntentState& state,
+                                                    std::string_view itemId) {
+    if (classifyItem(analysis, itemId) == ActiveItemKind::None) {
+        return makeError(ErrorCode::InvalidInput, "That question does not belong to the current interview");
+    }
+    if (state.isResolved(std::string(itemId))) {
+        return makeError(ErrorCode::Conflict, "That item is already decided. Change the decision explicitly first.");
+    }
+    if (!contains(state.skippedItemIds, std::string(itemId))) {
+        state.skippedItemIds.emplace_back(itemId);
+    }
+    return Status::success();
+}
+
+Status InterventionStateMachine::applyInterviewUnknown(const analysis::NormalizedAnalysis& analysis,
+                                                        WorkingIntentState& state,
+                                                        std::string_view itemId,
+                                                        std::string_view rawText) {
+    if (classifyItem(analysis, itemId) == ActiveItemKind::None) {
+        return makeError(ErrorCode::InvalidInput, "That question does not belong to the current interview");
+    }
+    eraseResolutionFor(state, std::string(itemId));
+    state.uncertaintyNotes[std::string(itemId)] = trimmedUserText(rawText);
+    return Status::success();
+}
+
+Status InterventionStateMachine::applyDecisionChange(const analysis::NormalizedAnalysis& analysis,
+                                                     WorkingIntentState& state,
+                                                     std::string_view itemId,
+                                                     std::string_view newText,
+                                                     std::int64_t nowMs) {
+    const auto kind = classifyItem(analysis, itemId);
+    if (kind == ActiveItemKind::None) {
+        return makeError(ErrorCode::InvalidInput, "That decision does not belong to the current analysis");
+    }
+    const auto normalized = trimmedUserText(newText);
+    if (normalized.empty()) {
+        return makeError(ErrorCode::InvalidInput, "The corrected decision cannot be blank");
+    }
+    if (normalized.size() > 4096) {
+        return makeError(ErrorCode::InvalidInput, "Keep the corrected decision within 4096 UTF-8 bytes");
+    }
+
+    std::string previousKind;
+    const auto previous = previousDecisionValue(analysis, state, std::string(itemId), previousKind);
+    if (!previous.empty() && previous != normalized) {
+        state.supersededDecisions.push_back(SupersededIntentDecision{
+            std::string(itemId), previous, previousKind, nowMs});
+    }
+
+    eraseResolutionFor(state, std::string(itemId));
+    if (kind == ActiveItemKind::ChoiceGroup) {
+        const auto* group = findGroup(analysis, itemId);
+        const auto lower = lowerCopy(normalized);
+        for (const auto& alt : group->alternatives) {
+            if (alt.id == normalized || lowerCopy(alt.interpretation) == lower) {
+                state.confirmedAlternatives[std::string(itemId)] = alt.id;
+                return Status::success();
+            }
+        }
+    } else if (kind == ActiveItemKind::Assumption) {
+        const auto lower = lowerCopy(normalized);
+        if (isYesAnswer(lower)) {
+            state.assumptionDecisions[std::string(itemId)] = true;
+            return Status::success();
+        }
+        if (isNoAnswer(lower)) {
+            state.assumptionDecisions[std::string(itemId)] = false;
+            return Status::success();
+        }
+    }
+    state.customResolutions[std::string(itemId)] = normalized;
     return Status::success();
 }
 

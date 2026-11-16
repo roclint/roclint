@@ -40,6 +40,23 @@
 #include <iostream>
 #include <thread>
 
+namespace {
+
+void completeApprovingReview(roclint::host::HostController& controller) {
+    controller.setComprehensionReviewForTesting(
+        [](const roclint::bridge::ComprehensionReviewRequest&) {
+            roclint::bridge::ComprehensionReviewResult result;
+            result.status = roclint::bridge::ComprehensionReviewStatus::Completed;
+            result.interpretedOutcome = "The rewrite preserves the requested outcome.";
+            result.readyForTask = true;
+            return result;
+        });
+    ROCLINT_CHECK(controller.requestComprehensionReview(controller.stateVersion()) != 0);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(5000));
+}
+
+} // namespace
+
 using namespace roclint::host;
 using namespace roclint::core;
 
@@ -902,6 +919,7 @@ void testReviewGeometryAndExplicitExpansion() {
             ROCLINT_CHECK(c.waitForIdleForTesting(3000));
             ROCLINT_CHECK(!c.hasApproval() && observed->injections.empty() && calls==modelCalls);
         }
+        completeApprovingReview(c);
         ROCLINT_CHECK(c.canApprove() && primary->property("label").toString().startsWith("Approve &"));
         auto* diff=findVisual(window->contentItem(),"diffView");
         auto* viewport=window->findChild<QQuickItem*>("workflowViewport");
@@ -1277,6 +1295,7 @@ void testKeyboardWorkflow() {
     for (int i = 0; i < 300 && c.proposalStatus() == "NONE"; ++i) QTest::qWait(10);
     ROCLINT_CHECK(c.waitForIdleForTesting(3000));
     ROCLINT_CHECK(c.hasProposal());
+    completeApprovingReview(c);
     ROCLINT_CHECK(c.canApprove());
     ROCLINT_CHECK(QGuiApplication::clipboard()->text() == "untouched");
     savePreview(window, QStringLiteral("review-default.png"));
@@ -1354,6 +1373,7 @@ void testReviewRequiresExplicitActivation() {
     QTest::keyClick(window, Qt::Key_Space);
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(controller.pendingReviewCount() == 0 && controller.stateVersion() == observed + 1);
+    completeApprovingReview(controller);
     ROCLINT_CHECK(controller.canApprove() && !controller.hasApproval());
     ROCLINT_CHECK(controller.lastErrorCode().isEmpty());
     std::cout << "  [PASS] Programmatic checkbox changes do not acknowledge; keyboard activation does.\n";
@@ -1650,7 +1670,9 @@ void testHudPresentationSurvivesDraftAndDelivery() {
 
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.confirmChoice("alt_0_0", controller.stateVersion())));
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
-    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.canApprove());
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    completeApprovingReview(controller);
+    ROCLINT_CHECK(controller.canApprove());
     int delivered = 0;
     QObject::connect(&controller, &HostController::promptInjected, [&]() { ++delivered; });
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.approveAndCopyRewrite(controller.stateVersion())));
@@ -1858,10 +1880,10 @@ void testEditPromptFromProposalUsesNewHudDraft() {
         return fx::rewriteReply(rough.toStdString());
     });
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
-    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.hasProposal());
-    ROCLINT_CHECK(controller.proposalMessage().contains("No wording changes suggested"));
-    auto* heading = window->findChild<QObject*>("reviewHeading");
-    ROCLINT_CHECK(heading && heading->property("text").toString().contains("No wording changes suggested"));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    // An identical rewrite is not presented as an applicable proposal.
+    ROCLINT_CHECK(!controller.hasProposal());
+    ROCLINT_CHECK(controller.proposalMessage().contains("No useful change"));
     ROCLINT_CHECK(!controller.hasApproval() && observed->injections.empty());
     std::cout << "  [PASS] Panel edit leaves proposal preview, focuses the draft and rewrites the newly frozen text.\n";
 }
@@ -1897,7 +1919,7 @@ void testExplicitClarificationAndDeferredRewrite() {
         if (prompt.find("<instructions>") != std::string_view::npos) {
             ++rewriteCalls;
             instructions = QString::fromUtf8(prompt.data(), static_cast<qsizetype>(prompt.size()));
-            return fx::rewriteReply(draft.toStdString());
+            return fx::rewriteReply("Make Reader::open better and make Queue::push faster while keeping both changes focused.");
         }
         if (++discoveryCalls == 1) return std::string(R"({"status":"no_ambiguity","choice_groups":[]})");
         return choices;
@@ -2006,7 +2028,9 @@ void testAutoAnalysisResumesAfterDelivery() {
     controller.pauseAmbientFollowing();
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.confirmChoice("alt_0_0", controller.stateVersion())));
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
-    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.canApprove() && calls == 2);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    completeApprovingReview(controller);
+    ROCLINT_CHECK(controller.canApprove() && calls == 2);
     // Editing the bound source supersedes an unapproved review and schedules a fresh check.
     field.text += " Preserve behavior."; observed->observe(field);
     ROCLINT_CHECK(editor->property("text").toString() == field.text && !controller.hasProposal() && !controller.hasConfirmedIntent());
@@ -2015,7 +2039,9 @@ void testAutoAnalysisResumesAfterDelivery() {
     controller.pauseAmbientFollowing();
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.confirmChoice("alt_0_0", controller.stateVersion())));
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
-    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.canApprove() && calls == 4);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    completeApprovingReview(controller);
+    ROCLINT_CHECK(controller.canApprove() && calls == 4);
     int delivered = 0;
     QObject::connect(&controller, &HostController::promptInjected, [&]() { ++delivered; });
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.approveAndCopyRewrite(controller.stateVersion())));
@@ -2306,7 +2332,7 @@ void testUserRequestedRewriteFromNewDraft() {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
         if (request.find("<instructions>")!=std::string_view::npos) {
-            ++rewrites; return fx::rewriteReply(draft.toStdString());
+            ++rewrites; return fx::rewriteReply("Refactor Reader::open for readability, preserving behavior and caller-owned handles.");
         }
         ++discoveries; return std::string(R"({"status":"no_ambiguity","choice_groups":[]})");
     });
@@ -2419,6 +2445,7 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     ROCLINT_CHECK(check && !check->property("checked").toBool());
     check->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    completeApprovingReview(controller);
     ROCLINT_CHECK(controller.canApprove());
     approve->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
@@ -2430,6 +2457,7 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.restoreSessionForReview(savedSession, controller.stateVersion())));
     ROCLINT_CHECK(controller.isCardVisible() && !controller.isAmbientCapture());
     ROCLINT_CHECK(controller.proposalForTesting()->proposalHash == proposalHash && modelCalls == calls);
+    completeApprovingReview(controller);
     ROCLINT_CHECK(controller.canApprove());
     ROCLINT_CHECK(approve->property("label").toString() == "Approve & Copy");
     HostContextDetector::resetMock();

@@ -743,6 +743,84 @@ void testWordEditsRequireCompleteDraftAudit() {
     ROCLINT_CHECK(unresolved.ok() && unresolved.value().candidates.empty());
 }
 
+void testInterviewFollowUpCarriesBriefWithoutRepeatingSettledDecisions() {
+    GraniteOptionDiscoveryRequest request;
+    request.sessionId = kSession;
+    request.revisionId = kRevision;
+    request.promptString = "Make the dashboard feel faster for people on slow laptops.";
+    request.maximumQuestions = 1;
+    request.interviewFollowUp = true;
+    request.settledDecisions = {"Which kind of speed matters? -> Lower latency per call"};
+    request.openChoices = {"Which browsing behavior matters most?"};
+    const auto prompt = buildDiscoveryPrompt(request);
+    ROCLINT_CHECK(prompt.find("interview follow-up") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("settled_decisions") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Lower latency per call") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Which browsing behavior matters most?") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("never question, repeat or contradict") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("\"maximum_questions\":1") != std::string::npos);
+    // The substantial interview uses the richer bounded contract, not the HUD's
+    // ultra-terse 5-word option limit.
+    ROCLINT_CHECK(prompt.find("at most 32 words") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("at most 9 words") == std::string::npos);
+    ROCLINT_CHECK(prompt.find("typographic") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("not fewer features or shortened labels") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("do not question a settled value") != std::string::npos);
+
+    auto firstQuestion = request;
+    firstQuestion.interviewFollowUp = false;
+    firstQuestion.substantialInterview = true;
+    const auto firstPrompt = buildDiscoveryPrompt(firstQuestion);
+    ROCLINT_CHECK(firstPrompt.find("first question of the substantial interview") != std::string::npos);
+    ROCLINT_CHECK(firstPrompt.find("at most 32 words") != std::string::npos);
+    ROCLINT_CHECK(firstPrompt.find("at most 9 words") == std::string::npos);
+
+    GraniteOptionDiscoveryRequest automatic;
+    automatic.sessionId = kSession;
+    automatic.revisionId = kRevision;
+    automatic.promptString = request.promptString;
+    const auto automaticPrompt = buildDiscoveryPrompt(automatic);
+    ROCLINT_CHECK(automaticPrompt.find("settled_decisions") == std::string::npos);
+    ROCLINT_CHECK(automaticPrompt.find("at most 9 words") != std::string::npos);
+    ROCLINT_CHECK(automaticPrompt.find("at most 32 words") == std::string::npos);
+
+    // A mocked typography follow-up parses into two materially distinct directions
+    // with their practical consequences.
+    GraniteOptionDiscoveryRequest typography;
+    typography.sessionId = kSession;
+    typography.revisionId = kRevision;
+    typography.promptString = "Design a music app with compact text and easy browsing.";
+    typography.maximumQuestions = 1;
+    typography.interviewFollowUp = true;
+    typography.substantialInterview = true;
+    const auto typographyReply = std::string(R"({"kind":"creative","groups":[{"focus":"typography","question":"Should compact text mean smaller type with generous leading, or a tighter hierarchy with denser labels?","source":"compact text","options":[{"text":"Smaller type with generous leading","effect":"Keeps every feature and full labels while improving scan comfort.","assume":""},{"text":"Tighter hierarchy with denser labels","effect":"Fits more controls but makes small labels harder to read.","assume":""}]}]})");
+    auto typographyParsed = parseDiscoveryResponse(typographyReply, kSession, kRevision, typography.promptString);
+    ROCLINT_CHECK(typographyParsed.ok());
+    const auto& group = typographyParsed.value().analysis.choiceGroups.front();
+    ROCLINT_CHECK(group.alternatives.size() == 2);
+    ROCLINT_CHECK(group.alternatives[0].interpretation != group.alternatives[1].interpretation);
+    ROCLINT_CHECK(!group.alternatives[0].whyMaterial.empty());
+    ROCLINT_CHECK(!group.alternatives[1].whyMaterial.empty());
+    ROCLINT_CHECK(group.alternatives[0].whyMaterial != group.alternatives[1].whyMaterial);
+
+    const auto reply = std::string(R"({"kind":"creative","groups":[{"focus":"browsing","question":"Which browsing behavior matters most?","source":"slow laptops","options":[{"text":"fast A-Z jump list","effect":"one-click artist browsing","assume":""},{"text":"search-first layout","effect":"type to find anything","assume":""}]}]})");
+    auto parsed = parseDiscoveryResponse(reply, kSession, kRevision, request.promptString);
+    ROCLINT_CHECK(parsed.ok());
+    ROCLINT_CHECK(parsed.value().analysis.choiceGroups.size() == 1);
+    ROCLINT_CHECK(parsed.value().analysis.choiceGroups[0].question == "Which browsing behavior matters most?");
+    ROCLINT_CHECK(parsed.value().analysis.choiceGroups[0].alternatives.size() == 2);
+    ROCLINT_CHECK(!parsed.value().analysis.choiceGroups[0].alternatives[0].evidence.empty());
+    ROCLINT_CHECK(parsed.value().analysis.choiceGroups[0].alternatives[0].evidence[0].startByte ==
+                  request.promptString.find("slow laptops"));
+
+    // A fabricated quotation is not evidence and cannot ground the follow-up.
+    const auto ungrounded = std::string(R"({"kind":"creative","groups":[{"focus":"browsing","question":"Which browsing behavior matters most?","source":"not in the draft","options":[{"text":"fast A-Z jump list","effect":"one-click artist browsing","assume":""},{"text":"search-first layout","effect":"type to find anything","assume":""}]}]})");
+    auto ungroundedParsed = parseDiscoveryResponse(ungrounded, kSession, kRevision, request.promptString);
+    ROCLINT_CHECK(ungroundedParsed.ok());
+    ROCLINT_CHECK(ungroundedParsed.value().analysis.choiceGroups.empty() ||
+                  ungroundedParsed.value().analysis.choiceGroups[0].alternatives[0].evidence.empty());
+}
+
 void testCompactWireContractsRetainProvenanceAndSpanSafety() {
     const auto compact=R"({"kind":"creative","groups":[{"focus":"framing","question":"Which framing?","source":"cinematic","options":[{"text":"A close portrait","effect":"Isolates the subject","assume":"Use shallow focus"},{"text":"A wide environmental shot","effect":"Shows its surroundings","assume":""}]}]})";
     const auto parsed=parseDiscoveryResponse(compact,kSession,kRevision,"Make a cinematic fern portrait.");
@@ -794,6 +872,7 @@ int main() {
     testSourceQuotesAndProposalsAreDistinct();
     testContractRecoveryIsBoundedAndBudgeted();
     testWordEditsRequireCompleteDraftAudit();
+    testInterviewFollowUpCarriesBriefWithoutRepeatingSettledDecisions();
     testCompactWireContractsRetainProvenanceAndSpanSafety();
     std::cout << "[Test GraniteAdapter] All tests PASSED.\n";
     return 0;

@@ -1,4 +1,6 @@
 #include "roclint/intent/InterventionStateMachine.hpp"
+#include "roclint/intent/IntentBrief.hpp"
+#include "roclint/intent/SettledRequirementPolicy.hpp"
 #include "support/check.hpp"
 #include "support/fixtures.hpp"
 
@@ -296,6 +298,256 @@ void testManualRequest() {
     ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::UserRequestedManual);
 }
 
+namespace {
+
+BriefItemKind kindOf(const IntentBrief& brief, const std::string& id) {
+    const auto* item = brief.find(id);
+    ROCLINT_CHECK(item != nullptr);
+    return item->kind;
+}
+
+IntentBrief briefFor(const fx::Pipeline& p, const std::vector<InterviewRecord>& records = {}) {
+    IntentBriefInputs inputs;
+    inputs.sessionId = p.analysis.sessionId;
+    inputs.revisionId = p.analysis.baseRevisionId;
+    inputs.revisionText = p.text;
+    inputs.analysis = &p.analysis;
+    inputs.policy = &p.policy;
+    inputs.workingIntent = &p.state;
+    inputs.interviewRecords = records;
+    return IntentBriefBuilder::build(inputs);
+}
+
+} // namespace
+
+void testIntentBriefSeparatesRequirementsDecisionsAndOpenChoices() {
+    const std::string text =
+        "Keep the dashboard compact for everyday browsing. "
+        "Do not remove the navigation bar. "
+        "I'd prefer smaller type over tighter spacing.";
+    auto a = fx::AnalysisBuilder("sess_a", "rev_sess_a_1", text)
+                 .group("What should compact mean?", {"Smaller type", "Tighter spacing"}, "compact")
+                 .assumption("The dashboard is for desktop only", "everyday browsing")
+                 .missing("Which screen size matters?", true)
+                 .build();
+    fx::Pipeline p(text, a);
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Clarify);
+    ROCLINT_CHECK(*p.decision.activeItemId == "grp_0");
+
+    auto before = briefFor(p);
+    ROCLINT_CHECK(before.hasKind(BriefItemKind::SourceRequirement));
+    ROCLINT_CHECK(before.hasKind(BriefItemKind::Prohibition));
+    ROCLINT_CHECK(before.hasKind(BriefItemKind::Preference));
+    ROCLINT_CHECK(before.hasKind(BriefItemKind::ProposedAssumption));
+    ROCLINT_CHECK(!before.displaySummary.empty());
+    // The display summary is a count, not a replacement for the verbatim source.
+    ROCLINT_CHECK(before.displaySummary.find("smaller type") == std::string::npos);
+    bool sawRequirement = false;
+    for (const auto& item : before.items) {
+        if (item.kind == BriefItemKind::SourceRequirement) {
+            sawRequirement = true;
+            ROCLINT_CHECK(item.sourceExcerpt.find("compact") != std::string::npos);
+        }
+        if (item.kind == BriefItemKind::Prohibition) {
+            ROCLINT_CHECK(item.sourceExcerpt.find("Do not remove") != std::string::npos);
+            ROCLINT_CHECK(item.status == BriefItemStatus::Confirmed);
+        }
+        if (item.kind == BriefItemKind::Preference) {
+            ROCLINT_CHECK(item.status == BriefItemStatus::Confirmed);
+            ROCLINT_CHECK(item.sourceExcerpt.find("prefer") != std::string::npos);
+        }
+    }
+    ROCLINT_CHECK(sawRequirement);
+
+    ROCLINT_CHECK(InterventionStateMachine::applyInterviewChoice(p.analysis, p.state, "grp_0", "alt_0_0").ok());
+    p.reevaluate();
+    auto after = briefFor(p);
+    ROCLINT_CHECK(kindOf(after, "grp_0") == BriefItemKind::ConfirmedDecision);
+    ROCLINT_CHECK(after.find("grp_0")->status == BriefItemStatus::Confirmed);
+    ROCLINT_CHECK(after.find("grp_0")->text == "Smaller type");
+    // An already-settled source requirement survives the decision.
+    bool requirementSurvived = false;
+    for (const auto& item : after.items) {
+        if (item.kind == BriefItemKind::SourceRequirement &&
+            item.sourceExcerpt.find("Keep the dashboard compact") != std::string::npos) {
+            requirementSurvived = true;
+        }
+    }
+    ROCLINT_CHECK(requirementSurvived);
+    const auto openIds = after.openChoiceIds();
+    ROCLINT_CHECK(std::find(openIds.begin(), openIds.end(), "mdc_0") != openIds.end());
+    ROCLINT_CHECK(std::find(openIds.begin(), openIds.end(), "asm_0") == openIds.end());
+}
+
+void testInterviewSkipAndUnknownStayOpenWithoutConsumingBudget() {
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    const auto rounds = p.state.roundsCompleted;
+    ROCLINT_CHECK(InterventionStateMachine::applyInterviewSkip(p.analysis, p.state, "grp_0").ok());
+    ROCLINT_CHECK(p.state.roundsCompleted == rounds);
+    ROCLINT_CHECK(p.state.isSkipped("grp_0"));
+    ROCLINT_CHECK(!p.state.isResolved("grp_0"));
+    p.reevaluate();
+    ROCLINT_CHECK(*p.decision.activeItemId == "grp_1");
+
+    ROCLINT_CHECK(InterventionStateMachine::applyInterviewUnknown(
+                      p.analysis, p.state, "grp_1", "I don't know yet").ok());
+    ROCLINT_CHECK(p.state.hasUncertainty("grp_1"));
+    ROCLINT_CHECK(p.state.uncertaintyNotes["grp_1"] == "I don't know yet");
+    ROCLINT_CHECK(!p.state.isResolved("grp_1"));
+    ROCLINT_CHECK(p.state.roundsCompleted == rounds);
+    p.reevaluate();
+    ROCLINT_CHECK(*p.decision.activeItemId == "grp_2");
+
+    auto brief = briefFor(p);
+    const auto* skipped = brief.find("grp_0");
+    ROCLINT_CHECK(skipped != nullptr && skipped->kind == BriefItemKind::OpenChoice &&
+                  skipped->status == BriefItemStatus::Open);
+    const auto* unknown = brief.find("grp_1");
+    ROCLINT_CHECK(unknown != nullptr && unknown->kind == BriefItemKind::OpenChoice &&
+                  unknown->status == BriefItemStatus::Open);
+    ROCLINT_CHECK(unknown->rawAnswer == "I don't know yet");
+    // A skip or unknown is never a confirmed decision.
+    for (const auto* decision : brief.confirmedDecisions()) {
+        ROCLINT_CHECK(decision->analysisItemId != "grp_0" && decision->analysisItemId != "grp_1");
+    }
+}
+
+void testDecisionChangeSupersedesAndPreservesProvenance() {
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    ROCLINT_CHECK(InterventionStateMachine::applyInterviewChoice(p.analysis, p.state, "grp_0", "alt_0_0").ok());
+    p.reevaluate();
+    ROCLINT_CHECK(InterventionStateMachine::applyDecisionChange(
+                      p.analysis, p.state, "grp_0", "alt_0_1", 5000).ok());
+    ROCLINT_CHECK(p.state.confirmedAlternatives["grp_0"] == "alt_0_1");
+    ROCLINT_CHECK(p.state.supersededDecisions.size() == 1);
+    ROCLINT_CHECK(p.state.supersededDecisions[0].previousValue == "Lower latency per call");
+    ROCLINT_CHECK(p.state.supersededDecisions[0].previousKind == "SELECTED_ALTERNATIVE");
+
+    auto brief = briefFor(p);
+    const auto* current = brief.find("grp_0");
+    ROCLINT_CHECK(current != nullptr && current->kind == BriefItemKind::ConfirmedDecision);
+    ROCLINT_CHECK(current->text == "Higher batch throughput");
+    bool sawSuperseded = false;
+    for (const auto& item : brief.items) {
+        if (item.kind != BriefItemKind::SupersededDecision) continue;
+        sawSuperseded = true;
+        ROCLINT_CHECK(item.status == BriefItemStatus::Superseded);
+        ROCLINT_CHECK(item.rawAnswer == "Lower latency per call");
+        ROCLINT_CHECK(item.analysisItemId == "grp_0");
+    }
+    ROCLINT_CHECK(sawSuperseded);
+
+    // A custom correction replaces the alternative and stores the verbatim answer.
+    ROCLINT_CHECK(InterventionStateMachine::applyDecisionChange(
+                      p.analysis, p.state, "grp_0", "I'd prefer the batch path for nightly imports", 6000).ok());
+    ROCLINT_CHECK(p.state.confirmedAlternatives.count("grp_0") == 0);
+    ROCLINT_CHECK(p.state.customResolutions["grp_0"] == "I'd prefer the batch path for nightly imports");
+    ROCLINT_CHECK(p.state.supersededDecisions.size() == 2);
+    auto custom = briefFor(p);
+    ROCLINT_CHECK(custom.find("grp_0")->kind == BriefItemKind::Preference);
+    ROCLINT_CHECK(custom.find("grp_0")->rawAnswer == "I'd prefer the batch path for nightly imports");
+}
+
+void testUnicodeSourceExcerptsRemainVerbatim() {
+    const std::string text =
+        "Keep the caf\xC3\xA9 header compact, and do not move the \xE2\x80\x9Clogo\xE2\x80\x9D.";
+    auto a = fx::AnalysisBuilder("sess_a", "rev_sess_a_1", text)
+                 .group("What should compact mean here?", {"Caf\xC3\xA9 header type", "Caf\xC3\xA9 header spacing"},
+                        "caf\xC3\xA9 header compact")
+                 .build();
+    fx::Pipeline p(text, a);
+    auto brief = briefFor(p);
+    bool sawUnicode = false;
+    for (const auto& item : brief.items) {
+        if (item.sourceExcerpt.find("caf\xC3\xA9") == std::string::npos) continue;
+        sawUnicode = true;
+        ROCLINT_CHECK(text.find(item.sourceExcerpt) != std::string::npos);
+        if (!item.sourceRef.empty() && item.sourceRef.find("#bytes:") != std::string::npos) {
+            const auto at = item.sourceRef.find("#bytes:");
+            const auto dash = item.sourceRef.find('-', at);
+            const auto start = std::stoul(item.sourceRef.substr(at + 7, dash - at - 7));
+            const auto end = std::stoul(item.sourceRef.substr(dash + 1));
+            ROCLINT_CHECK(end <= text.size());
+            ROCLINT_CHECK(text.substr(start, end - start) == item.sourceExcerpt);
+        }
+    }
+    ROCLINT_CHECK(sawUnicode);
+}
+
+void testFollowUpDecisionsAndSupersessionStayInTheBrief() {
+    InterviewRecord record;
+    record.id = "iv_q_1";
+    record.question = "Which browsing behavior matters most?";
+    record.consequence = "Changes how the library is arranged.";
+    record.origin = "model_followup";
+    record.disposition = "custom";
+    record.rawAnswer = "I'd prefer a fast A-Z jump list";
+    record.asked = true;
+    record.previousAnswers.push_back("A search-first layout");
+
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    auto brief = briefFor(p, {record});
+    const auto* decision = brief.find("iv_q_1");
+    ROCLINT_CHECK(decision != nullptr && decision->kind == BriefItemKind::Preference);
+    ROCLINT_CHECK(decision->rawAnswer == "I'd prefer a fast A-Z jump list");
+    ROCLINT_CHECK(decision->status == BriefItemStatus::Confirmed);
+    bool sawSuperseded = false;
+    for (const auto& item : brief.items) {
+        if (item.kind == BriefItemKind::SupersededDecision && item.analysisItemId == "iv_q_1") {
+            sawSuperseded = true;
+            ROCLINT_CHECK(item.rawAnswer == "A search-first layout");
+        }
+    }
+    ROCLINT_CHECK(sawSuperseded);
+}
+
+void testSettledRequirementPolicyKeepsExactValues() {
+    analysis::PromptTriage triage;
+    triage.categoryScores = {0.10, 0.12, 0.20, 0.9999};
+    triage.primaryCategory = analysis::PromptCategory::RuleConflict;
+    const std::string prompt =
+        "Respond to 95% of requests within 500 ms, and keep the schema unchanged.";
+    ROCLINT_CHECK(hasSettledExactValues(prompt));
+    const auto tokens = exactRequirementTokens(prompt);
+    ROCLINT_CHECK(tokens.size() == 2);
+    ROCLINT_CHECK(std::find(tokens.begin(), tokens.end(), "95%") != tokens.end());
+    ROCLINT_CHECK(std::find(tokens.begin(), tokens.end(), "500 ms") != tokens.end());
+
+    // A lone RULE_CONFLICT head with exact values and no deterministic conflict
+    // keeps the original rather than asking the user to redefine them.
+    ROCLINT_CHECK(shouldKeepOriginalForRuleConflictOnly(triage, prompt, false));
+    // A deterministic explicit conflict still authorizes the question.
+    ROCLINT_CHECK(!shouldKeepOriginalForRuleConflictOnly(triage, prompt, true));
+    // Another head at or above its threshold is real ambiguity evidence.
+    auto action = triage;
+    action.categoryScores[0] = 0.85;
+    ROCLINT_CHECK(!shouldKeepOriginalForRuleConflictOnly(action, prompt, false));
+    // No exact values means the policy does not apply.
+    ROCLINT_CHECK(!shouldKeepOriginalForRuleConflictOnly(triage, "Make the mood calmer.", false));
+    // Decades are word suffixes, not time units. "1990s" must not be treated as an
+    // exact numeric requirement or trigger the settled-value policy.
+    const std::string decades = "Use 1990s and 1960s references for the visual mood.";
+    ROCLINT_CHECK(exactRequirementTokens(decades).empty());
+    ROCLINT_CHECK(!hasSettledExactValues(decades));
+    ROCLINT_CHECK(!shouldKeepOriginalForRuleConflictOnly(
+        triage, "Use 1990s references for the visual mood.", false));
+    const auto msTokens = exactRequirementTokens("Respond within 500 milliseconds.");
+    ROCLINT_CHECK(msTokens.size() == 1 && msTokens.front() == "500 milliseconds");
+
+    // The rewrite guard catches dropped values while accepting "500ms" for "500 ms".
+    const auto kept = droppedExactRequirements(prompt, "Respond within 500ms to 95% of requests.");
+    ROCLINT_CHECK(kept.empty());
+    const auto dropped = droppedExactRequirements(prompt, "Respond quickly to requests and keep the schema.");
+    ROCLINT_CHECK(dropped.size() == 2);
+
+    ROCLINT_CHECK(looksLikeMetaInstruction("Make the mood calmer.",
+                                           "Determine the specific mood categories for the user."));
+    ROCLINT_CHECK(!looksLikeMetaInstruction("Determine the specific tone.",
+                                            "Determine the specific tone with warmer words."));
+    ROCLINT_CHECK(!looksLikeMetaInstruction("Make the mood calmer.",
+                                            "Use calmer, warmer language throughout."));
+}
+
 } // namespace
 
 int main() {
@@ -317,6 +569,12 @@ int main() {
     testProviderFailureReachesManual();
     testStaleDecisionIsRejected();
     testManualRequest();
+    testIntentBriefSeparatesRequirementsDecisionsAndOpenChoices();
+    testInterviewSkipAndUnknownStayOpenWithoutConsumingBudget();
+    testDecisionChangeSupersedesAndPreservesProvenance();
+    testUnicodeSourceExcerptsRemainVerbatim();
+    testFollowUpDecisionsAndSupersessionStayInTheBrief();
+    testSettledRequirementPolicyKeepsExactValues();
     std::cout << "[Test InterventionStateMachine] All tests PASSED.\n";
     return 0;
 }

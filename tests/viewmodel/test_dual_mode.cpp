@@ -265,6 +265,20 @@ void testDismissedBadgeStaysDismissed() {
 }
 
 // Opens the card from Cursor, answers the question and produces an approvable rewrite.
+void completeApprovingReview(HostController& controller) {
+    controller.setComprehensionReviewForTesting(
+        [](const roclint::bridge::ComprehensionReviewRequest&) {
+            roclint::bridge::ComprehensionReviewResult result;
+            result.status = roclint::bridge::ComprehensionReviewStatus::Completed;
+            result.interpretedOutcome = "The rewrite preserves the requested parser refactor.";
+            result.readyForTask = true;
+            return result;
+        });
+    ROCLINT_CHECK(controller.requestComprehensionReview(controller.stateVersion()) != 0);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(controller.comprehensionReviewState() == "ready");
+}
+
 void reachApprovableRewrite(Harness& h) {
     h.c().setAmbientModeEnabled(true);
     observeAndWaitForBadge(h);
@@ -273,6 +287,7 @@ void reachApprovableRewrite(Harness& h) {
     ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().confirmChoice(QStringLiteral("alt_0_0"), h.c().stateVersion())));
     ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().synthesizeRewrite(h.c().stateVersion())));
     ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
+    completeApprovingReview(h.c());
     ROCLINT_CHECK(h.c().canApprove());
 }
 
@@ -311,6 +326,7 @@ void testConnectingEditorPreservesManualRewriteAndAnswers() {
     ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().confirmChoice(QStringLiteral("alt_0_0"), h.c().stateVersion())));
     ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().synthesizeRewrite(h.c().stateVersion())));
     ROCLINT_CHECK(h.c().waitForIdleForTesting(3000));
+    completeApprovingReview(h.c());
     ROCLINT_CHECK(h.c().canApprove() && !h.c().isAmbientCapture());
     const auto version = h.c().stateVersion();
     const auto proposal = *h.c().proposalForTesting();

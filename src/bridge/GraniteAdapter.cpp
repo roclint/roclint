@@ -324,6 +324,25 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     if (!req.repairFeedback.empty()) {
         request.set("repair_feedback", json::Value::string(req.repairFeedback));
     }
+    if (req.interviewFollowUp) {
+        // Only confirmed wording and open topic identities are included. The model is told
+        // not to repeat a settled decision; it must ask at most one new consequential question.
+        auto settled = json::Value::array();
+        std::size_t settledBytes = 0;
+        for (const auto& decision : req.settledDecisions) {
+            if (settled.asArray().size() >= 12 || decision.empty()) break;
+            if (settledBytes + decision.size() > 4096) break;
+            settled.push(json::Value::string(decision.substr(0, 512)));
+            settledBytes += decision.size();
+        }
+        auto open = json::Value::array();
+        for (const auto& topic : req.openChoices) {
+            if (open.asArray().size() >= 8 || topic.empty()) break;
+            open.push(json::Value::string(topic.substr(0, 320)));
+        }
+        request.set("settled_decisions", std::move(settled));
+        request.set("open_choices", std::move(open));
+    }
     request.set("maximum_questions", json::Value::number(static_cast<double>(std::clamp<std::size_t>(req.maximumQuestions, 1, 2))));
 
     std::string out = "Instruction contract: granite.discovery.selective.v11\n";
@@ -350,10 +369,33 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
            "source is ONLY a verbatim source quotation from evidence_quotes, never an explanation. "
            "text is a proposed outcome, effect explains its consequence, and assume discloses any added premise, or is empty. "
            "A proposal is not a source fact or an approved requirement; only selecting it adopts it.\n";
-    out += "Keep the round brief: question at most 9 words, text at most 5 words, effect at most 4 words, assume at most 6 words. "
-           "Use exactly two options per group, answering one parameter or one explicit priority. Options must not answer different questions or merely list features that can coexist. Respect maximum_questions. Use complete phrases that end naturally. "
-           "Do not output empty arrays or repeat source quotations per option. Leave other dimensions for a later round.\n";
+    if (req.interviewFollowUp || req.substantialInterview) {
+        out += "This is the substantial interview, so make the round useful rather than terse while staying bounded. "
+               "question should be a complete plain-language sentence (at most 32 words). Each option text may name a concrete "
+               "outcome or direction (at most 16 words); effect must be one sentence (at most 24 words) explaining the practical "
+               "consequence; assume may be a short disclosure (at most 12 words). "
+               "For a design or typography request, name concrete typographic or visual directions and their practical effect "
+               "(for example type size, leading, hierarchy, contrast or texture). Do not propose removing features, shortening "
+               "labels, or merely restating the question. Respect explicit prohibitions in settled_decisions, including wording "
+               "such as 'not fewer features or shortened labels'. Options must be materially different outcomes or priorities, "
+               "not synonyms and not implementation tactics that answer a different question. If the requirement is already "
+               "exact, return {\"kind\":\"none\"}; do not question a settled value or unit.\n";
+    } else {
+        out += "Keep the round brief: question at most 9 words, text at most 5 words, effect at most 4 words, assume at most 6 words. "
+               "Use exactly two options per group, answering one parameter or one explicit priority. Options must not answer different questions or merely list features that can coexist. Respect maximum_questions. Use complete phrases that end naturally. "
+               "Do not output empty arrays or repeat source quotations per option. Leave other dimensions for a later round.\n";
+    }
     if (!req.repairFeedback.empty()) out += "Repair the earlier unusable response: " + req.repairFeedback + "\n";
+    if (req.interviewFollowUp) {
+        out += "This is an interview follow-up, not a first pass. settled_decisions are already confirmed by the user: "
+               "never question, repeat or contradict them. Ask exactly one new question about the highest-impact "
+               "remaining uncertainty for the requested outcome. open_choices lists topics that are still unresolved. "
+               "If no consequential uncertainty remains, return {\"kind\":\"none\"}. Do not invent a question merely to continue.\n";
+    } else if (req.substantialInterview) {
+        out += "This is the first question of the substantial interview. settled_decisions are already confirmed or are "
+               "verbatim source requirements: never question, repeat or contradict them. Ask exactly one question about "
+               "the highest-impact remaining uncertainty. If no consequential uncertainty remains, return {\"kind\":\"none\"}.\n";
+    }
     out += "Request:\n" + json::serialize(request);
     return out;
 }
