@@ -8,12 +8,13 @@ inserted or sent.
 ## Build and inputs
 
 - Combined branch: `topic/integration-2026-11-15`.
-- Final combined HEAD at delivery: `afbdabd` after the complete 65/65 enabled
-  CTest run. The live after-run used the immediately preceding working-tree
-  binary; its identity and binary hashes are in each run's `identity.json`. The
-  later code change was bounded to the meta-guard scan and keeping the legacy
-  manual-answer field visible when the substantial interview is closed; neither
-  changes the measured music/cinematic/500 ms paths.
+- Final combined HEAD at delivery: `f954707`; the complete 65/65 enabled CTest
+  run was on `afbdabd` and the final commits after it are documentation only.
+  The live after-run used the immediately preceding working-tree binary; its
+  identity and binary hashes are in each run's `identity.json`. The later code
+  change was bounded to the meta-guard scan and keeping the legacy manual-answer
+  field visible when the substantial interview is closed; neither changes the
+  measured music/cinematic/500 ms paths.
 - Pinned model: Granite 4.2 3B Q8_0, configuration
   `v13.context_quality`, temperature 1.0, top-p 0.95, seed 42, thinking off.
 - Backend: Vulkan, NVIDIA RTX 4060 Laptop 8 GB, driver 617.14.
