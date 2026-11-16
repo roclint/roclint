@@ -8,8 +8,9 @@ inserted or sent.
 ## Build and inputs
 
 - Combined branch: `topic/integration-2026-11-15`.
-- Final combined HEAD at delivery: `f954707`; the complete 65/65 enabled CTest
-  run was on `afbdabd` and the final commits after it are documentation only.
+- Final combined HEAD at delivery: the tip of `topic/integration-2026-11-15`;
+  the complete 65/65 enabled CTest run was on `afbdabd` and the final commits
+  after it are documentation only.
   The live after-run used the immediately preceding working-tree binary; its
   identity and binary hashes are in each run's `identity.json`. The later code
   change was bounded to the meta-guard scan and keeping the legacy manual-answer
