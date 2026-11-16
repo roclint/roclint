@@ -1,24 +1,25 @@
 # Companion, interview and review UI evidence
 
-Date: 2026-11-15. Worktree: `D:/Stardust/roclint-wt-ux`, branch
-`topic/ux-2026-11-15`. Baseline HEAD: `d5c8101` (`feat/roc-hud-refresh`).
+Date: 2026-11-15. Originally authored in `D:/Stardust/roclint-wt-ux` on
+`topic/ux-2026-11-15` from baseline `d5c8101`, then integrated into
+`topic/integration-2026-11-15`. The two `*_real_controller.png` files were
+captured from the combined worktree against the actual `HostController`.
 
-Scope: Agent 4 (Companion, Interview and Review UX). No backend, adapter,
-runtime, `CMakeLists.txt`, installed-app or main-checkout changes. Nothing was
-pushed, merged, reset, cleaned or stashed.
+Scope: Agent 4 (Companion, Interview and Review UX), plus coordinator
+integration evidence. No installed application was started, replaced or
+terminated. Nothing was pushed, merged, reset, cleaned or stashed.
 
 ## Evidence classification
 
 The PNGs in this directory are **headless QML renders** captured with
 `QQuickWindow::grabWindow()` under `QT_QPA_PLATFORM=offscreen` and
-`QT_QUICK_BACKEND=software`. They are rendered by the production QML files in
-`app/qml/shell/`, driven by a **QML test double** that mirrors the frozen
-Host/UI v1 names (`tests/viewmodel/CompanionMockController.qml`). The baseline
-`HostController` in this worktree does not yet implement the intent/interview/
-comprehension surface (that is Agent 2's `roclint-wt-intent`), so these are not
-full-app screenshots and not proof of the real controller's behavior. The real
-baseline controller was separately loaded against `WordCompanion.qml` to prove
-the guarded fallback path.
+`QT_QUICK_BACKEND=software`. Most state-variation renders are driven by a
+**QML test double** that mirrors the frozen Host/UI v1 names
+(`tests/viewmodel/CompanionMockController.qml`); they are not full-app
+screenshots. The two `*_real_controller.png` files are different evidence: they
+load the production QML against the actual integrated `HostController` with a
+scripted model transport. The real host was also loaded against
+`WordCompanion.qml` to prove the guarded pre-contract and current paths.
 
 No installed application was started, replaced or terminated. No live model
 was loaded and no GPU work was performed.
@@ -36,6 +37,8 @@ was loaded and no GPU work was performed.
 | `review_not_run.png` | Unreviewed rewrite: Apply absent, explicit not-applicable reason |
 | `review_stale.png` | Stale reread: no Apply, direct Keep original and Reread current |
 | `review_ready_findings.png` | Ready reread with blocking/required/advisory findings, excerpts, repair text and per-finding decisions; Apply still locked while two decisions remain |
+| `companion_interview_real_controller.png` | Real `HostController` + scripted model transport; adaptive interview QML renders the question, choices, source phrase and custom/skip controls |
+| `review_real_controller.png` | Real `HostController` + `FloatingCard.qml`; independent reread READY, interpretation, zero findings, Apply reviewed rewrite and Keep original |
 
 ## Implemented
 
@@ -161,9 +164,13 @@ The four new cases are:
 - `testComprehensionReviewStatesAndApplyGate` — not_run/running/ready/stale/
   failed, stale/unreviewed not applicable, blocking acknowledgement absent,
   finding decisions, apply signal only when unlocked.
-- `testCompanionContractGuardsPreContractHost` — a word-only host and the real
-  baseline `HostController` both load without binding errors, hide the new
-  surfaces and keep the Explore fallback.
+- `testCompanionContractGuardsPreContractHost` — a word-only pre-contract host
+  hides the new surfaces and keeps the Explore fallback; the real integrated
+  `HostController` exposes both surfaces and loads without binding errors.
+- `testCompanionInterviewBindsRealController` — the adaptive interview QML is
+  loaded against the actual `HostController` (scripted model transport), renders
+  the real question and choices, and saves
+  `companion_interview_real_controller.png`.
 
 The test double is deliberately labeled in
 `tests/viewmodel/CompanionMockController.qml` and
@@ -173,13 +180,17 @@ needed for a compiled target. If CI packages only the build directory, those
 two QML files must be copied beside the test binary; that is a packaging
 request, not a source-registration request.
 
+## Combined integration verification
+
+The combined `topic/integration-2026-11-15` worktree contains Agent 2’s real
+intent/interview/review host implementation. The real-controller interview smoke
+test and the full `roclint_product_alignment` suite pass. The full-suite render
+`review_real_controller.png` shows the real `FloatingCard` review panel with the
+independent reread marked READY and its Apply control gated by the host. These
+are headless QML renders, not installed-app screenshots.
+
 ## Limitations / not run
 
-- Agent 2’s real intent/interview/comprehension implementation is not present
-  in this worktree (`HostController.hpp` at baseline exposes only the word
-  surface). Therefore the connected journey against the real controller is
-  **not** validated here. The guarded bindings are ready but must be verified
-  after integration.
 - The word popup keeps `Qt.WindowDoesNotAcceptFocus` from the existing host
   contract, so it cannot receive keyboard input. Keyboard access is the
   deliberate Explore → HUD route; the popup itself exposes accessible names
@@ -193,5 +204,7 @@ request, not a source-registration request.
   system reduced-motion query in `QStyleHints`.
 - No undo and no universal inline underline are shown, because the integration
   does not support them.
-- No real model generation, GPU measurement, native window/focus test,
-  installed-app screenshot, macOS or IDE parity check was run.
+- This UI pass did not run real model generation, GPU measurement, a native
+  window/focus test, an installed-app screenshot, macOS or IDE parity checks.
+  The combined delivery’s live host evidence is recorded separately in
+  `../companion_after_evidence_2026-11-15.md`.
