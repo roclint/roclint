@@ -1,0 +1,1842 @@
+{
+  "schema": "roclint.companion_eval.baseline.v1",
+  "generated_at_utc": "2026-11-16T04:14:27.600056+00:00",
+  "scenario_file": "D:\\Stardust\\roclint-wt-integration\\tests\\fixtures\\companion_eval\\scenarios_interview_after_2026-11-15.json",
+  "identity": {
+    "generated_at_utc": "2026-11-16T04:13:25.007124+00:00",
+    "worktree": "D:\\Stardust\\roclint-wt-integration",
+    "branch": "topic/integration-2026-11-15",
+    "head": "77f3924ac3f3e64f444df6becda7b920057378b2",
+    "dirty": true,
+    "main_checkout": {
+      "path": "D:/Stardust/roclint",
+      "head": "d5c8101e42b45d5d3b0796c97f01024214fd5d57",
+      "branch": "feat/roc-hud-refresh"
+    },
+    "platform": "Windows-11-10.0.26300-SP0",
+    "processor": "AMD64 Family 25 Model 116 Stepping 1, AuthenticAMD",
+    "logical_cpus": 16,
+    "python_system": "3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]",
+    "julia_python": {
+      "version": "3.13.3 (tags/v3.13.3:6280bb5, Apr  8 2025, 14:47:33) [MSC v.1943 64 bit (AMD64)]",
+      "executable": "D:\\Stardust\\roclint\\build\\runtime\\julia-python\\Scripts\\python.exe",
+      "torch": "2.13.0+cu130",
+      "transformers": "5.0.0",
+      "safetensors": "0.8.0"
+    },
+    "gpu": {
+      "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+      "driver": "617.14",
+      "memory_total_mib": 8188,
+      "memory_used_mib": 2462,
+      "utilization_pct": 3,
+      "error": ""
+    },
+    "binaries": {
+      "probe": {
+        "path": "D:\\Stardust\\roclint-wt-integration\\build-eval-probe\\Release\\companion_probe.exe",
+        "sha256": "41198a3c4a5e80ba243196241d71398b4a89e6cbad00d3790de02c44a824de1c"
+      },
+      "native_worker": {
+        "path": "D:\\Stardust\\roclint-wt-integration\\build\\Release\\roclint_granite_worker.exe",
+        "sha256": "f1c1e2dd40b628bb63e16e5e7f188d4dadd12cdcb6a4f26b00bcaa865d499c4b",
+        "mtime": "2026-11-16T04:01:27.312816+00:00"
+      },
+      "native_test_exe": {
+        "path": "D:\\Stardust\\roclint-wt-integration\\build\\Release\\roclint_native_granite_tests.exe",
+        "sha256": "63e62d42b2efa0b3e9ddca8cc37b15f4ed1f5fd64419a62479cc9799ce739a63"
+      },
+      "contracts_exe": {
+        "path": "D:\\Stardust\\roclint-wt-integration\\build\\Release\\roclint_granite_contracts.exe",
+        "sha256": "ec42d5a0e1a774846acdf34a59b89ddd3a354e0195fdd93aba94d08d61168e3c"
+      }
+    },
+    "models": {
+      "granite_directory": "D:\\Stardust\\roclint\\models\\granite-4.2-3b",
+      "granite_manifest_sha256": "6315e8bf06b81496253bf544966e3176a981a499dc9c939b5dd4a782adf7d651",
+      "julia_directory": "D:\\Stardust\\roclint\\models\\julia-1",
+      "julia_manifest_sha256": "7c02feb8726aa7b89fbe3163079ff249c48956e5d0878fce101c50e9c6c05139",
+      "runtime_config_sha256": "9defca254609be0ef09b1fe3356a034a57ced1357c36869e882cd253f9d4b0f7"
+    },
+    "runtime_config": {
+      "analysis_instruction_contract": "granite.discovery.selective.v11",
+      "backend": "vulkan",
+      "candidates": [
+        {
+          "filename": "granite-4.2-3b-Q4_K_M.gguf",
+          "quantization": "Q4_K_M",
+          "sha256": "e0406663965846ae22a403456eb826ccce5f450840491f71952f18a7cb78e7d5",
+          "size_bytes": 2244011552
+        },
+        {
+          "filename": "granite-4.2-3b-Q5_K_M.gguf",
+          "quantization": "Q5_K_M",
+          "sha256": "982e797413f842329266a00c2a85ce540bb5c1b65ac4646276bfb9d2886c5efe",
+          "size_bytes": 2613634592
+        },
+        {
+          "filename": "granite-4.2-3b-Q8_0.gguf",
+          "quantization": "Q8_0",
+          "sha256": "fbe986738041418e26de9e123ba740cb654931f85bf572a71bd01f9e6b85e53d",
+          "size_bytes": 3892651552
+        }
+      ],
+      "clarification_instruction_contract": "granite.clarification_check.v1",
+      "configuration_id": "granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality",
+      "context_tokens": 8192,
+      "cpu_threads": 4,
+      "default_quantization": "Q8_0",
+      "gpu_layers": 99,
+      "grammar_transform": "json_gbnf_space_empty_v1",
+      "input_tokens": 6144,
+      "manifest_version": 1,
+      "model_family": "ibm-granite/granite-4.2-3b-GGUF",
+      "model_license": "Apache-2.0",
+      "model_revision": "c40945d71cd90f249a56985e8155551a9188dc30",
+      "output_format": "compact_json",
+      "output_tokens": 2048,
+      "profiles": {
+        "CPU": {
+          "backend": "cpu",
+          "configuration_id": "granite.cpu.mmap.ctx8192.threads4.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality",
+          "gpu_layers": 0
+        },
+        "METAL": {
+          "backend": "metal",
+          "configuration_id": "granite.metal.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality",
+          "gpu_layers": 99
+        },
+        "VULKAN": {
+          "backend": "vulkan",
+          "configuration_id": "granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality",
+          "gpu_layers": 99
+        }
+      },
+      "reasoning": {
+        "analysis_group_timeout_ms": 90000,
+        "enabled": true,
+        "policy_version": 1,
+        "profiles": {
+          "analysis": {
+            "answer_tokens": 512,
+            "reasoning_tokens": 384
+          },
+          "audit": {
+            "answer_tokens": 512,
+            "reasoning_tokens": 128
+          },
+          "rewrite": {
+            "answer_tokens": 1535,
+            "reasoning_tokens": 512
+          },
+          "word": {
+            "answer_tokens": 256,
+            "reasoning_tokens": 384
+          }
+        }
+      },
+      "rewrite_instruction_contract": "granite.rewrite.format.v9",
+      "runtime_repository": "https://github.com/ggml-org/llama.cpp.git",
+      "runtime_revision": "da2ee1e7a640445fc562fe5529598cee1917e0f5",
+      "sampling": {
+        "grammar_strategy": "llama_common_rejection_v1",
+        "seed": 42,
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "sampling_reference": "https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md",
+      "template_policy": "embedded GGUF Jinja template; bounded private reasoning followed by schema-constrained JSON; input special tokens treated as text"
+    },
+    "settings": {
+      "backend": "native-granite:Q8_0",
+      "thinking": false,
+      "temperature": 1.0,
+      "top_p": 0.95,
+      "seed": 42,
+      "julia_python": "D:\\Stardust\\roclint\\build\\runtime\\julia-python\\Scripts\\python.exe",
+      "julia_worker": "D:\\Stardust\\roclint-wt-integration\\build\\Release\\runtime\\julia_worker.py"
+    }
+  },
+  "host": {
+    "process": {
+      "exit_code": 0,
+      "wall_ms": 180982.0,
+      "probe_config": "D:\\Stardust\\roclint-wt-integration\\docs\\audit\\companion_evidence_after_2026-11-15\\host_config_20261116T041427Z.json",
+      "ndjson": "D:\\Stardust\\roclint-wt-integration\\docs\\audit\\companion_evidence_after_2026-11-15\\host_20261116T041427Z.ndjson",
+      "stderr": "D:\\Stardust\\roclint-wt-integration\\docs\\audit\\companion_evidence_after_2026-11-15\\host_20261116T041427Z.stderr.log"
+    },
+    "ambient": {
+      "before": {
+        "cpu": null,
+        "gpu": {
+          "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+          "driver": "617.14",
+          "memory_total_mib": 8188,
+          "memory_used_mib": 2462,
+          "utilization_pct": 7,
+          "error": ""
+        },
+        "gpu_processes": [
+          "10836, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\CrossDeviceResume.exe, [N/A]",
+          "9884, C:\\Windows\\explorer.exe, [N/A]",
+          "13720, C:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe, [N/A]",
+          "12944, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe, [N/A]",
+          "15004, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe, [N/A]",
+          "13056, C:\\Windows\\System32\\NahimicSvc64.exe, [N/A]",
+          "13492, C:\\Program Files\\ReasonLabs\\Common\\Client\\v1.6.0\\rsAppUI.exe, [N/A]",
+          "20288, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\TextInputHost.exe, [N/A]",
+          "20704, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe, [N/A]",
+          "24160, C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe, [N/A]",
+          "19936, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+          "22192, C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe, [N/A]",
+          "4788, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.1111.2228.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe, [N/A]",
+          "23212, C:\\Program Files (x86)\\Steam\\steam.exe, [N/A]",
+          "24864, C:\\Windows\\System32\\ApplicationFrameHost.exe, [N/A]",
+          "10852, C:\\Program Files\\WindowsApps\\A-Volute.Nahimic_1.10.15.0_x64__w2gh52qy24etm\\Nahimic3.exe, [N/A]",
+          "27452, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.1111.2228.0_x64__2p2nqsd0c76g0\\app\\resources\\cua_node\\bin\\node_modules\\@oai\\sky\\bin\\windows\\swift\\x64\\codex-computer-use-swift.exe, [N/A]",
+          "13692, C:\\Program Files\\WindowsApps\\MicrosoftWindows.Client.WebExperience_526.28801.60.0_x64__cw5n1h2txyewy\\WidgetBoard.exe, [N/A]",
+          "33000, C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe, [N/A]",
+          "2440, C:\\Users\\kirby\\AppData\\Local\\Programs\\ai.opencode.desktop\\OpenCode.exe, [N/A]",
+          "7976, C:\\Users\\kirby\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe, [N/A]",
+          "28036, C:\\Users\\kirby\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe, [N/A]",
+          "35204, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe, [N/A]",
+          "6012, C:\\Windows\\System32\\ShellHost.exe, [N/A]"
+        ],
+        "utc": "2026-11-16T04:14:27.757978+00:00"
+      },
+      "during_cpu_pct": {
+        "count": 90,
+        "min": 26.2,
+        "median": 48.8,
+        "max": 99.2,
+        "mean": 49.7
+      },
+      "after": {
+        "cpu": {
+          "count": 90,
+          "min": 26.2,
+          "median": 48.8,
+          "max": 99.2,
+          "mean": 49.7
+        },
+        "gpu": {
+          "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+          "driver": "617.14",
+          "memory_total_mib": 8188,
+          "memory_used_mib": 2298,
+          "utilization_pct": 48,
+          "error": ""
+        },
+        "gpu_processes": [
+          "10836, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\CrossDeviceResume.exe, [N/A]",
+          "9884, C:\\Windows\\explorer.exe, [N/A]",
+          "13720, C:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe, [N/A]",
+          "12944, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe, [N/A]",
+          "15004, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe, [N/A]",
+          "13056, C:\\Windows\\System32\\NahimicSvc64.exe, [N/A]",
+          "13492, C:\\Program Files\\ReasonLabs\\Common\\Client\\v1.6.0\\rsAppUI.exe, [N/A]",
+          "20288, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\TextInputHost.exe, [N/A]",
+          "20704, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe, [N/A]",
+          "24160, C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe, [N/A]",
+          "19936, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+          "22192, C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe, [N/A]",
+          "4788, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.1111.2228.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe, [N/A]",
+          "23212, C:\\Program Files (x86)\\Steam\\steam.exe, [N/A]",
+          "24864, C:\\Windows\\System32\\ApplicationFrameHost.exe, [N/A]",
+          "10852, C:\\Program Files\\WindowsApps\\A-Volute.Nahimic_1.10.15.0_x64__w2gh52qy24etm\\Nahimic3.exe, [N/A]",
+          "27452, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.1111.2228.0_x64__2p2nqsd0c76g0\\app\\resources\\cua_node\\bin\\node_modules\\@oai\\sky\\bin\\windows\\swift\\x64\\codex-computer-use-swift.exe, [N/A]",
+          "13692, C:\\Program Files\\WindowsApps\\MicrosoftWindows.Client.WebExperience_526.28801.60.0_x64__cw5n1h2txyewy\\WidgetBoard.exe, [N/A]",
+          "33000, C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe, [N/A]",
+          "2440, C:\\Users\\kirby\\AppData\\Local\\Programs\\ai.opencode.desktop\\OpenCode.exe, [N/A]",
+          "7976, C:\\Users\\kirby\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe, [N/A]",
+          "28036, C:\\Users\\kirby\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe, [N/A]",
+          "35204, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe, [N/A]",
+          "6012, C:\\Windows\\System32\\ShellHost.exe, [N/A]"
+        ],
+        "utc": "2026-11-16T04:17:29.131152+00:00"
+      }
+    },
+    "rows": [
+      {
+        "id": "music_typography_interview_after",
+        "class": "development",
+        "surface": "word_or_review_explore",
+        "prompt": "I'm building a music app. I want compact typography, a fusion of 1990s and 1960s/Revolver-era references, and easy browsing.",
+        "explicit_review": false,
+        "thermal_label": "cold_start",
+        "status": "READY",
+        "analysis_message": "Ready to use. Your original wording is unchanged. Review prompt for optional help.",
+        "review_outcome": "READY",
+        "verdict": "QUIET",
+        "prompt_triage": {
+          "ambiguity": 0.13660839002621938,
+          "category_scores": [
+            0.13660839002621938,
+            0.0446808702726502,
+            0.0008693673928062171,
+            0.13660839002621938
+          ],
+          "configuration_id": "julia.cuda.bf16.v2.threads8",
+          "execution": 1,
+          "latency_ms": 173.54140000134066,
+          "model_id": "SupersonicLabs/Julia-1",
+          "model_revision": "a85b127321d580d65176c89ced8273f305745d85",
+          "primary_category": "ACTION",
+          "route": "ORIGINAL",
+          "template_id": "julia.prompt_triage.categories.v3",
+          "weights_sha256": "df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72"
+        },
+        "question": "What specific visual elements (font style, hierarchy, or texture) from 1960s/Revolver-era and 1990s should guide the compact typography design?",
+        "alternatives": [
+          {
+            "consequence": "Creates a visually cohesive, era-aware typography that supports compact layout without sacrificing readability.",
+            "id": "alt_0_0",
+            "label": "Use a clean sans-serif with subtle 60s serif-like strokes and 90s minimal line spacing for balanced legibility and era fusion."
+          },
+          {
+            "consequence": "Introduces period-specific visual details that enhance thematic depth without overcomplicating the compact design.",
+            "id": "alt_0_1",
+            "label": "Apply 1960s script accents with 90s geometric grid overlays to highlight key text elements while maintaining compact space."
+          }
+        ],
+        "interview_choices": [
+          {
+            "consequence": "Creates a visually cohesive, era-aware typography that supports compact layout without sacrificing readability.",
+            "id": "alt_0_0",
+            "label": "Use a clean sans-serif with subtle 60s serif-like strokes and 90s minimal line spacing for balanced legibility and era fusion."
+          },
+          {
+            "consequence": "Introduces period-specific visual details that enhance thematic depth without overcomplicating the compact design.",
+            "id": "alt_0_1",
+            "label": "Apply 1960s script accents with 90s geometric grid overlays to highlight key text elements while maintaining compact space."
+          }
+        ],
+        "intent_brief_items": [
+          {
+            "analysisItemId": "",
+            "consequential": true,
+            "id": "src_1",
+            "kind": "source_requirement",
+            "rawAnswer": "",
+            "sourceExcerpt": "I'm building a music app",
+            "sourceRef": "revision:rev_sess_f7a321364af9420bb588e6d56bc56f27_1#bytes:0-24",
+            "status": "confirmed",
+            "text": "I'm building a music app"
+          },
+          {
+            "analysisItemId": "",
+            "consequential": true,
+            "id": "src_2",
+            "kind": "preference",
+            "rawAnswer": "",
+            "sourceExcerpt": "I want compact typography, a fusion of 1990s and 1960s/Revolver-era references, and easy browsing",
+            "sourceRef": "revision:rev_sess_f7a321364af9420bb588e6d56bc56f27_1#bytes:26-123",
+            "status": "confirmed",
+            "text": "I want compact typography, a fusion of 1990s and 1960s/Revolver-era references, and easy browsing"
+          },
+          {
+            "analysisItemId": "grp_0",
+            "consequential": true,
+            "id": "grp_0",
+            "kind": "open_choice",
+            "rawAnswer": "",
+            "sourceExcerpt": "",
+            "sourceRef": "grp_0",
+            "status": "open",
+            "text": "What specific visual elements (font style, hierarchy, or texture) from 1960s/Revolver-era and 1990s should guide the compact typography design? (skipped; still open)"
+          }
+        ],
+        "assumption_reviews": [],
+        "clarification_checks": [
+          {
+            "checking": false,
+            "event": "clarification_check",
+            "feedback": "",
+            "scenario": "music_typography_interview_after",
+            "t_ms": 202
+          },
+          {
+            "checking": false,
+            "event": "clarification_check",
+            "feedback": "",
+            "scenario": "music_typography_interview_after",
+            "t_ms": 124383
+          }
+        ],
+        "answers": [
+          {
+            "turn": 0,
+            "requested": {
+              "question": "What specific visual elements (font style, hierarchy, or texture) from 1960s/Revolver-era and 1990s should guide the compact typography design?",
+              "text": "Compact typography means smaller type sizes and tighter line spacing for dense lists, not fewer features or shortened labels. Keep browsing one tap away and keep artist and track names readable.",
+              "type": "custom"
+            },
+            "command_completed": null,
+            "idle_ok": true,
+            "advanced": true,
+            "clarification_check": null,
+            "question": "What specific visual elements (font style, hierarchy, or texture) from 1960s/Revolver-era and 1990s should guide the compact typography design?",
+            "analysis_status": "READY",
+            "last_error": "",
+            "last_error_code": "",
+            "confirmed_items": [],
+            "interview_feedback": "Couldn't check that answer. Your text is kept; retry, choose an option, or skip.",
+            "elapsed_ms": 60
+          },
+          {
+            "turn": 1,
+            "requested": {
+              "question": "What specific visual elements (font style, hierarchy, or texture) from 1960s/Revolver-era and 1990s should guide the compact typography design?",
+              "type": "skip"
+            },
+            "command_completed": null,
+            "idle_ok": true,
+            "advanced": true,
+            "clarification_check": null,
+            "question": "",
+            "analysis_status": "READY",
+            "last_error": "",
+            "last_error_code": "",
+            "confirmed_items": [],
+            "interview_feedback": "Couldn't prepare another question. Your answers are kept; retry, skip, or ask for the rewrite.",
+            "elapsed_ms": 31
+          }
+        ],
+        "rewrite": {
+          "proposal_status": "READY_FOR_REVIEW",
+          "proposal_message": "Check the 1 highlighted item(s), then approve the wording.",
+          "has_proposal": true,
+          "proposal_text": "I'm building a music app. I want compact typography that fuses 1990s and 1960s/Revolver-era design elements, and I need easy browsing.",
+          "last_diff": "~ was: I'm building a music app. I want compact typography, a fusion of 1990s and 1960s/Revolver-era references, and easy browsing.\n~ now: I'm building a music app. I want compact typography that fuses 1990s and 1960s/Revolver-era design elements, and I need easy browsing.\n",
+          "audit_outcome": "Pass",
+          "audit_execution_status": "Completed",
+          "audit_violations": [],
+          "audit_unresolved": [],
+          "pending_review_count": 1,
+          "can_approve": false,
+          "creative_alternatives": [
+            {
+              "auditExecutionStatus": "Completed",
+              "auditOutcome": "Pass",
+              "diffText": "~ was: I'm building a music app. I want compact typography, a fusion of 1990s and 1960s/Revolver-era references, and easy browsing.\n~ now: I'm building a music app. I want compact typography that fuses 1990s and 1960s/Revolver-era design elements, and I need easy browsing.\n",
+              "id": "alt_direct",
+              "rewrittenText": "I'm building a music app. I want compact typography that fuses 1990s and 1960s/Revolver-era design elements, and I need easy browsing.",
+              "styleDescriptor": "Keeps the verified rewrite unchanged",
+              "title": "Direct / Minimal"
+            },
+            {
+              "auditExecutionStatus": "Unavailable",
+              "auditOutcome": "Unresolved",
+              "diffText": "~ was: I'm building a music app. I want compact typography, a fusion of 1990s and 1960s/Revolver-era references, and easy browsing.\n~ now: 1. I'm building a music app.\n+ 2. I want compact typography that fuses 1990s and 1960s/Revolver-era design elements, and I need easy browsing.\n",
+              "id": "alt_steps",
+              "rewrittenText": "1. I'm building a music app.\n2. I want compact typography that fuses 1990s and 1960s/Revolver-era design elements, and I need easy browsing.\n",
+              "styleDescriptor": "Separates the user's clauses into numbered steps",
+              "title": "Step-by-Step"
+            },
+            {
+              "auditExecutionStatus": "Unavailable",
+              "auditOutcome": "Unresolved",
+              "diffText": "  I'm building a music app. I want compact typography, a fusion of 1990s and 1960s/Revolver-era references, and easy browsing.\n",
+              "id": "alt_concise",
+              "rewrittenText": "I'm building a music app. I want compact typography, a fusion of 1990s and 1960s/Revolver-era references, and easy browsing.",
+              "styleDescriptor": "Shorter wording built only from the user's own clauses",
+              "title": "Concise"
+            }
+          ],
+          "proposal_constraints": [
+            {
+              "acknowledged": false,
+              "description": "The rewrite contains text",
+              "evidence": "",
+              "id": "rewrite_nonempty",
+              "needsReview": false,
+              "status": "MECHANICALLY_VERIFIED"
+            },
+            {
+              "acknowledged": false,
+              "description": "This question was left open; check the rewrite does not decide it",
+              "evidence": "grp_0",
+              "id": "unresolved_grp_0",
+              "needsReview": true,
+              "status": "SEMANTIC_REVIEW_REQUIRED"
+            }
+          ],
+          "confirmed_items": [],
+          "unresolved_items": [
+            "grp_0"
+          ],
+          "elapsed_ms": 3608,
+          "idle_ok": true,
+          "posted_ok": true,
+          "last_error": "",
+          "last_error_code": ""
+        },
+        "review": {
+          "comprehension_review_state": "not_run",
+          "comprehension_interpretation": "",
+          "comprehension_findings": [],
+          "can_apply_reviewed_output": false,
+          "can_approve": false,
+          "elapsed_ms": 0,
+          "settled": true
+        },
+        "stages": {
+          "status_feedback_ms": 18,
+          "julia_cold_load_ms": 47764,
+          "julia_triage_and_route_ms": 314,
+          "granite_cold_warm_ms": 68793,
+          "discovery_visible_ms": 0,
+          "analysis_to_ready_ms": 48011,
+          "interview_visible_ms": 124110,
+          "first_usable_question_ms": 124110,
+          "rewrite_request_to_ready_ms": 3608,
+          "review_elapsed_ms": 0,
+          "total_to_rewrite_ms": 127848,
+          "total_scenario_ms": 127889,
+          "julia_triage_attempt_ms": 517,
+          "discovery_attempt_ms": 7212,
+          "clarification_check_attempt_ms": null,
+          "rewrite_attempt_ms": 3588
+        },
+        "attempts": [
+          {
+            "attempt_id": "att_515de4d54abd4587922c1c1093913df4",
+            "completed_at_ms": 1794802516085,
+            "duration_ms": 517,
+            "error": "",
+            "model_detail": "digest=df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72; quantization=bfloat16; revision=a85b127321d580d65176c89ced8273f305745d85; template=julia.prompt_triage.categories.v3; threshold=0.70; broad_heads_and_corroborated_goal_check; execution_configuration=julia.cuda.bf16.v2; device=cuda; precision=bfloat16; actual_cpu_threads=8; request_group_id=grp_2afb6ad4-0d9d-46b0-9f86-2e80debf6acb; analysis_group_budget_ms=20000; review_trigger=automatic; workspace_context=incomplete; prompt_triage_payload={\"schema\":\"prompt_triage.v1\",\"id\":\"triage_e1d0852e8cf430ab9d8cefaaba923e7eff2464e4f09957599b6498a32cf68456\",\"hash\":\"e1d0852e8cf430ab9d8cefaaba923e7eff2464e4f09957599b6498a32cf68456\",\"hash_version\":2,\"session_id\":\"sess_f7a321364af9420bb588e6d56bc56f27\",\"revision_id\":\"rev_sess_f7a321364af9420bb588e6d56bc56f27_1\",\"text_hash\":\"9e3d022f9b275a838be1d18baf8f0588ebf3c85c142dee95262ccd1be8b9d0e0\",\"state_version\":2,\"request_group_id\":\"grp_2afb6ad4-0d9d-46b0-9f86-2e80debf6acb\",\"attempt_id\":\"att_515de4d54abd4587922c1c1093913df4\",\"provider\":\"julia_local\",\"model_id\":\"SupersonicLabs/Julia-1\",\"model_revision\":\"a85b127321d580d65176c89ced8273f305745d85\",\"weights_sha256\":\"df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72\",\"configuration_id\":\"julia.cuda.bf16.v2.threads8\",\"template_id\":\"julia.prompt_triage.categories.v3\",\"execution\":1,\"category_scores\":[0.13660839002621938,0.044680870272650199,0.00086936739280621715,0.13660839002621938],\"ambiguity\":0.13660839002621938,\"primary_category\":0,\"latency_ms\":173.54140000134066}",
+            "model_id": "SupersonicLabs/Julia-1",
+            "stage": "julia_triage",
+            "started_at_ms": 1794802515568,
+            "status": "SUCCEEDED",
+            "transport": "local_python_cuda"
+          },
+          {
+            "attempt_id": "att_02d4c3c61f584fae901184bdb662bf5c",
+            "completed_at_ms": 1794802592192,
+            "duration_ms": 7212,
+            "error": "",
+            "model_detail": "digest=fbe986738041418e26de9e123ba740cb654931f85bf572a71bd01f9e6b85e53d; quantization=Q8_0; host_context_category=BROWSER; thinking_enabled=false; model_revision=c40945d71cd90f249a56985e8155551a9188dc30; llama_revision=da2ee1e7a640445fc562fe5529598cee1917e0f5; configuration=granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality; template_sha256=9d573773df6d94356b46a1c500c04532a19bd182903667241eb9d58e4e224add; cpu_threads=4; gpu_layers=99; backend=vulkan; mmap=true; mlock=false; temperature=1; top_p=0.95; seed=42; sampling_reference=https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md; grammar_strategy=llama_common_rejection_v1; analysis_timeout_ms=45000; rewrite_timeout_ms=60000; analysis_instruction_contract=granite.discovery.selective.v11; rewrite_instruction_contract=granite.rewrite.format.v9; output_format=compact_json; grammar_transform=json_gbnf_space_empty_v1; selected_device=Vulkan0; selected_device_description=NVIDIA GeForce RTX 4060 Laptop GPU; residency_policy=GraniteResidencyPolicyV1; residency_preset=BALANCED; residency_tier=HOT; request_group_id=grp_a9b9007639f5412cb483b7cbcc765ca0; analysis_group_budget_ms=45000; review_trigger=explicit_review",
+            "model_id": "ibm-granite/granite-4.2-3b-GGUF@c40945d71cd90f249a56985e8155551a9188dc30",
+            "stage": "discovery",
+            "started_at_ms": 1794802584980,
+            "status": "SUCCEEDED",
+            "transport": "local_native_llama_cpp"
+          },
+          {
+            "attempt_id": "att_42f8fc4622f048ff980605b477fbc7c9",
+            "completed_at_ms": 1794802592248,
+            "duration_ms": 27,
+            "error": "Native request is missing its authoritative context.",
+            "model_detail": "digest=fbe986738041418e26de9e123ba740cb654931f85bf572a71bd01f9e6b85e53d; quantization=Q8_0; host_context_category=BROWSER; thinking_enabled=false; model_revision=c40945d71cd90f249a56985e8155551a9188dc30; llama_revision=da2ee1e7a640445fc562fe5529598cee1917e0f5; configuration=granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality; template_sha256=9d573773df6d94356b46a1c500c04532a19bd182903667241eb9d58e4e224add; cpu_threads=4; gpu_layers=99; backend=vulkan; mmap=true; mlock=false; temperature=1; top_p=0.95; seed=42; sampling_reference=https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md; grammar_strategy=llama_common_rejection_v1; analysis_timeout_ms=45000; rewrite_timeout_ms=60000; analysis_instruction_contract=granite.discovery.selective.v11; rewrite_instruction_contract=granite.rewrite.format.v9; output_format=compact_json; grammar_transform=json_gbnf_space_empty_v1; selected_device=Vulkan0; selected_device_description=NVIDIA GeForce RTX 4060 Laptop GPU; residency_policy=GraniteResidencyPolicyV1; residency_preset=BALANCED; residency_tier=HOT; request_group_id=interview_check_43e702da242349f9874995fa6eee1a00; analysis_group_budget_ms=45000; review_trigger=explicit_review",
+            "model_id": "ibm-granite/granite-4.2-3b-GGUF@c40945d71cd90f249a56985e8155551a9188dc30",
+            "stage": "interview_clarification_check",
+            "started_at_ms": 1794802592221,
+            "status": "FAILED",
+            "transport": "local_native_llama_cpp"
+          },
+          {
+            "attempt_id": "att_4300919687534e99af503bf82434c4a1",
+            "completed_at_ms": 1794802595947,
+            "duration_ms": 3588,
+            "error": "",
+            "model_detail": "digest=fbe986738041418e26de9e123ba740cb654931f85bf572a71bd01f9e6b85e53d; quantization=Q8_0; rewrite_profile=GENERIC@1; thinking_enabled=false; model_revision=c40945d71cd90f249a56985e8155551a9188dc30; llama_revision=da2ee1e7a640445fc562fe5529598cee1917e0f5; configuration=granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality; template_sha256=9d573773df6d94356b46a1c500c04532a19bd182903667241eb9d58e4e224add; cpu_threads=4; gpu_layers=99; backend=vulkan; mmap=true; mlock=false; temperature=1; top_p=0.95; seed=42; sampling_reference=https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md; grammar_strategy=llama_common_rejection_v1; analysis_timeout_ms=45000; rewrite_timeout_ms=60000; analysis_instruction_contract=granite.discovery.selective.v11; rewrite_instruction_contract=granite.rewrite.format.v9; output_format=compact_json; grammar_transform=json_gbnf_space_empty_v1; selected_device=Vulkan0; selected_device_description=NVIDIA GeForce RTX 4060 Laptop GPU; residency_policy=GraniteResidencyPolicyV1; residency_preset=BALANCED; residency_tier=HOT; review_trigger=explicit_review",
+            "model_id": "ibm-granite/granite-4.2-3b-GGUF@c40945d71cd90f249a56985e8155551a9188dc30",
+            "stage": "rewrite",
+            "started_at_ms": 1794802592359,
+            "status": "SUCCEEDED",
+            "transport": "local_native_llama_cpp"
+          }
+        ],
+        "mechanical": {
+          "question_present": true,
+          "option_count": 2,
+          "original_route": true,
+          "proposal_present": true,
+          "proposal_changed": true,
+          "confirmed_item_count": 0,
+          "intent_brief_item_count": 3,
+          "review_state": "not_run",
+          "can_apply_reviewed_output": false,
+          "review_findings": [],
+          "pending_review_count": 1,
+          "can_approve": false,
+          "audit_outcome": "Pass",
+          "audit_execution_status": "Completed",
+          "answer_token_overlap": {
+            "Compact typography means smaller type sizes and tighter line spacing for dense lists, not fewer features or shortened labels. Keep browsing one tap away and keep artist and track names readable.": {
+              "matched": [
+                "compact",
+                "typography"
+              ],
+              "ratio": 0.095
+            }
+          },
+          "typography_terms_in_question": [
+            "font",
+            "hierarchy",
+            "typography"
+          ],
+          "typography_terms_in_proposal": [
+            "typography"
+          ],
+          "browsing_mentioned": true,
+          "gibberish_leaked": false,
+          "exact_values": {
+            "500": false,
+            "95%": false,
+            "schema": false
+          },
+          "reference_terms_in_proposal": [
+            "1960s",
+            "1990s",
+            "revolver"
+          ]
+        },
+        "model_verdict": {
+          "audit_outcome": "Pass",
+          "audit_execution_status": "Completed",
+          "pending_review_count": 1,
+          "note": "Model Pass/valid schema is not a usefulness judgment."
+        },
+        "editorial": null,
+        "events_file": "host_20261116T041427Z.ndjson",
+        "ambient_cpu_pct": {
+          "count": 90,
+          "min": 26.2,
+          "median": 48.8,
+          "max": 99.2,
+          "mean": 49.7
+        }
+      },
+      {
+        "id": "cinematic_interview_after",
+        "class": "unseen",
+        "surface": "word_or_review_explore",
+        "prompt": "Make the product photo look cinematic.",
+        "explicit_review": false,
+        "thermal_label": "warm_process",
+        "status": "READY",
+        "analysis_message": "Ready to use. Your original wording is unchanged. Review prompt for optional help.",
+        "review_outcome": "READY",
+        "verdict": "QUIET",
+        "prompt_triage": {
+          "ambiguity": 0.003664220330784353,
+          "category_scores": [
+            0.0026704039168147643,
+            6.402006410383949e-05,
+            0.003664220330784353,
+            0.0011925492802088101
+          ],
+          "configuration_id": "julia.cuda.bf16.v2.threads8",
+          "execution": 1,
+          "latency_ms": 223.64749999906053,
+          "model_id": "SupersonicLabs/Julia-1",
+          "model_revision": "a85b127321d580d65176c89ced8273f305745d85",
+          "primary_category": "RULE",
+          "route": "ORIGINAL",
+          "template_id": "julia.prompt_triage.categories.v3",
+          "weights_sha256": "df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72"
+        },
+        "question": "What specific cinematic elements would you like emphasized in the product photo (e.g., lighting, composition, mood, depth of field)?",
+        "alternatives": [
+          {
+            "consequence": "Applies cinematic lighting and shallow focus to highlight product texture and shape, enhancing visual drama",
+            "id": "alt_0_0",
+            "label": "Use dramatic side lighting with shallow depth of field to create depth and focus on product details"
+          },
+          {
+            "consequence": "Expands perspective and includes surrounding elements, giving a more immersive, documentary-like cinematic feel",
+            "id": "alt_0_1",
+            "label": "Employ wide-angle lens with balanced natural lighting to emphasize scale and context"
+          }
+        ],
+        "interview_choices": [
+          {
+            "consequence": "Applies cinematic lighting and shallow focus to highlight product texture and shape, enhancing visual drama",
+            "id": "alt_0_0",
+            "label": "Use dramatic side lighting with shallow depth of field to create depth and focus on product details"
+          },
+          {
+            "consequence": "Expands perspective and includes surrounding elements, giving a more immersive, documentary-like cinematic feel",
+            "id": "alt_0_1",
+            "label": "Employ wide-angle lens with balanced natural lighting to emphasize scale and context"
+          }
+        ],
+        "intent_brief_items": [
+          {
+            "analysisItemId": "",
+            "consequential": true,
+            "id": "src_1",
+            "kind": "source_requirement",
+            "rawAnswer": "",
+            "sourceExcerpt": "Make the product photo look cinematic",
+            "sourceRef": "revision:rev_sess_f7a321364af9420bb588e6d56bc56f27_2#bytes:0-37",
+            "status": "confirmed",
+            "text": "Make the product photo look cinematic"
+          },
+          {
+            "analysisItemId": "grp_0",
+            "consequential": true,
+            "id": "grp_0",
+            "kind": "open_choice",
+            "rawAnswer": "",
+            "sourceExcerpt": "",
+            "sourceRef": "grp_0",
+            "status": "open",
+            "text": "What specific cinematic elements would you like emphasized in the product photo (e.g., lighting, composition, mood, depth of field)? (skipped; still open)"
+          }
+        ],
+        "assumption_reviews": [],
+        "clarification_checks": [
+          {
+            "checking": false,
+            "event": "clarification_check",
+            "feedback": "",
+            "scenario": "cinematic_interview_after",
+            "t_ms": 140218
+          },
+          {
+            "checking": false,
+            "event": "clarification_check",
+            "feedback": "",
+            "scenario": "cinematic_interview_after",
+            "t_ms": 147126
+          }
+        ],
+        "answers": [
+          {
+            "turn": 0,
+            "requested": {
+              "pick": "light",
+              "question": "What specific cinematic elements would you like emphasized in the product photo (e.g., lighting, composition, mood, depth of field)?",
+              "resolved_label": "",
+              "type": "choice"
+            },
+            "command_completed": null,
+            "idle_ok": true,
+            "advanced": true,
+            "clarification_check": null,
+            "question": "What specific cinematic elements would you like emphasized in the product photo (e.g., lighting, composition, mood, depth of field)?",
+            "analysis_status": "READY",
+            "last_error": "",
+            "last_error_code": "",
+            "confirmed_items": [],
+            "interview_feedback": "Type an answer or choose one of the options.",
+            "elapsed_ms": 10
+          },
+          {
+            "turn": 1,
+            "requested": {
+              "question": "What specific cinematic elements would you like emphasized in the product photo (e.g., lighting, composition, mood, depth of field)?",
+              "type": "skip"
+            },
+            "command_completed": null,
+            "idle_ok": true,
+            "advanced": true,
+            "clarification_check": null,
+            "question": "",
+            "analysis_status": "READY",
+            "last_error": "",
+            "last_error_code": "",
+            "confirmed_items": [],
+            "interview_feedback": "Couldn't prepare another question. Your answers are kept; retry, skip, or ask for the rewrite.",
+            "elapsed_ms": 31
+          }
+        ],
+        "rewrite": {
+          "proposal_status": "READY_FOR_REVIEW",
+          "proposal_message": "Check the 2 highlighted item(s), then approve the wording.",
+          "has_proposal": true,
+          "proposal_text": "Make the product photo look cinematic. Specify which cinematic elements you want emphasized, such as lighting, composition, mood, or depth of field.",
+          "last_diff": "~ was: Make the product photo look cinematic.\n~ now: Make the product photo look cinematic. Specify which cinematic elements you want emphasized, such as lighting, composition, mood, or depth of field.\n",
+          "audit_outcome": "Unresolved",
+          "audit_execution_status": "Completed",
+          "audit_violations": [],
+          "audit_unresolved": [
+            {
+              "constraintId": "goldfish_audit",
+              "explanation": "Model audit returned an explicit Unresolved verdict."
+            }
+          ],
+          "pending_review_count": 2,
+          "can_approve": false,
+          "creative_alternatives": [
+            {
+              "auditExecutionStatus": "Completed",
+              "auditOutcome": "Unresolved",
+              "diffText": "~ was: Make the product photo look cinematic.\n~ now: Make the product photo look cinematic. Specify which cinematic elements you want emphasized, such as lighting, composition, mood, or depth of field.\n",
+              "id": "alt_direct",
+              "rewrittenText": "Make the product photo look cinematic. Specify which cinematic elements you want emphasized, such as lighting, composition, mood, or depth of field.",
+              "styleDescriptor": "Keeps the verified rewrite unchanged",
+              "title": "Direct / Minimal"
+            },
+            {
+              "auditExecutionStatus": "Unavailable",
+              "auditOutcome": "Unresolved",
+              "diffText": "~ was: Make the product photo look cinematic.\n~ now: 1. Make the product photo look cinematic.\n+ 2. Specify which cinematic elements you want emphasized, such as lighting, composition, mood, or depth of field.\n",
+              "id": "alt_steps",
+              "rewrittenText": "1. Make the product photo look cinematic.\n2. Specify which cinematic elements you want emphasized, such as lighting, composition, mood, or depth of field.\n",
+              "styleDescriptor": "Separates the user's clauses into numbered steps",
+              "title": "Step-by-Step"
+            },
+            {
+              "auditExecutionStatus": "Unavailable",
+              "auditOutcome": "Unresolved",
+              "diffText": "  Make the product photo look cinematic.\n",
+              "id": "alt_concise",
+              "rewrittenText": "Make the product photo look cinematic.",
+              "styleDescriptor": "Shorter wording built only from the user's own clauses",
+              "title": "Concise"
+            }
+          ],
+          "proposal_constraints": [
+            {
+              "acknowledged": false,
+              "description": "The rewrite contains text",
+              "evidence": "",
+              "id": "rewrite_nonempty",
+              "needsReview": false,
+              "status": "MECHANICALLY_VERIFIED"
+            },
+            {
+              "acknowledged": false,
+              "description": "This question was left open; check the rewrite does not decide it",
+              "evidence": "grp_0",
+              "id": "unresolved_grp_0",
+              "needsReview": true,
+              "status": "SEMANTIC_REVIEW_REQUIRED"
+            },
+            {
+              "acknowledged": false,
+              "description": "Audit uncertainty: Model audit returned an explicit Unresolved verdict.",
+              "evidence": "goldfish_audit",
+              "id": "goldfish_audit",
+              "needsReview": true,
+              "status": "SemanticReviewRequired"
+            }
+          ],
+          "confirmed_items": [],
+          "unresolved_items": [
+            "grp_0"
+          ],
+          "elapsed_ms": 3123,
+          "idle_ok": true,
+          "posted_ok": true,
+          "last_error": "",
+          "last_error_code": ""
+        },
+        "review": {
+          "comprehension_review_state": "not_run",
+          "comprehension_interpretation": "",
+          "comprehension_findings": [],
+          "can_apply_reviewed_output": false,
+          "can_approve": false,
+          "elapsed_ms": 0,
+          "settled": true
+        },
+        "stages": {
+          "status_feedback_ms": 483,
+          "julia_cold_load_ms": null,
+          "julia_triage_and_route_ms": 282,
+          "granite_cold_warm_ms": null,
+          "discovery_visible_ms": 0,
+          "analysis_to_ready_ms": 782,
+          "interview_visible_ms": 6901,
+          "first_usable_question_ms": 6901,
+          "rewrite_request_to_ready_ms": 3123,
+          "review_elapsed_ms": 0,
+          "total_to_rewrite_ms": 10108,
+          "total_scenario_ms": 10157,
+          "julia_triage_attempt_ms": 698,
+          "discovery_attempt_ms": 6065,
+          "clarification_check_attempt_ms": null,
+          "rewrite_attempt_ms": 3096
+        },
+        "attempts": [
+          {
+            "attempt_id": "att_d8cad67e67cf4029875832706f2356cf",
+            "completed_at_ms": 1794802608839,
+            "duration_ms": 698,
+            "error": "",
+            "model_detail": "digest=df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72; quantization=bfloat16; revision=a85b127321d580d65176c89ced8273f305745d85; template=julia.prompt_triage.categories.v3; threshold=0.70; broad_heads_and_corroborated_goal_check; execution_configuration=julia.cuda.bf16.v2; device=cuda; precision=bfloat16; actual_cpu_threads=8; request_group_id=grp_62c12513-b3c8-457b-96b2-8baaa5c1e5cf; analysis_group_budget_ms=20000; review_trigger=automatic; workspace_context=incomplete; prompt_triage_payload={\"schema\":\"prompt_triage.v1\",\"id\":\"triage_929296d7754716d8480e27e7965219e50d41c6d46189648932b4946b6bc09854\",\"hash\":\"929296d7754716d8480e27e7965219e50d41c6d46189648932b4946b6bc09854\",\"hash_version\":2,\"session_id\":\"sess_f7a321364af9420bb588e6d56bc56f27\",\"revision_id\":\"rev_sess_f7a321364af9420bb588e6d56bc56f27_2\",\"text_hash\":\"2e33d910a413e984097278680a05ec1a4a87b042c85b7fe09acf79ba72f1221d\",\"state_version\":11,\"request_group_id\":\"grp_62c12513-b3c8-457b-96b2-8baaa5c1e5cf\",\"attempt_id\":\"att_d8cad67e67cf4029875832706f2356cf\",\"provider\":\"julia_local\",\"model_id\":\"SupersonicLabs/Julia-1\",\"model_revision\":\"a85b127321d580d65176c89ced8273f305745d85\",\"weights_sha256\":\"df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72\",\"configuration_id\":\"julia.cuda.bf16.v2.threads8\",\"template_id\":\"julia.prompt_triage.categories.v3\",\"execution\":1,\"category_scores\":[0.0026704039168147643,6.4020064103839492e-05,0.0036642203307843532,0.0011925492802088101],\"ambiguity\":0.0036642203307843532,\"primary_category\":2,\"latency_ms\":223.64749999906053}",
+            "model_id": "SupersonicLabs/Julia-1",
+            "stage": "julia_triage",
+            "started_at_ms": 1794802608141,
+            "status": "SUCCEEDED",
+            "transport": "local_python_cuda"
+          },
+          {
+            "attempt_id": "att_cf88fbb427cf426287da71c8f85212ff",
+            "completed_at_ms": 1794802614988,
+            "duration_ms": 6065,
+            "error": "",
+            "model_detail": "digest=fbe986738041418e26de9e123ba740cb654931f85bf572a71bd01f9e6b85e53d; quantization=Q8_0; host_context_category=BROWSER; thinking_enabled=false; model_revision=c40945d71cd90f249a56985e8155551a9188dc30; llama_revision=da2ee1e7a640445fc562fe5529598cee1917e0f5; configuration=granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality; template_sha256=9d573773df6d94356b46a1c500c04532a19bd182903667241eb9d58e4e224add; cpu_threads=4; gpu_layers=99; backend=vulkan; mmap=true; mlock=false; temperature=1; top_p=0.95; seed=42; sampling_reference=https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md; grammar_strategy=llama_common_rejection_v1; analysis_timeout_ms=45000; rewrite_timeout_ms=60000; analysis_instruction_contract=granite.discovery.selective.v11; rewrite_instruction_contract=granite.rewrite.format.v9; output_format=compact_json; grammar_transform=json_gbnf_space_empty_v1; selected_device=Vulkan0; selected_device_description=NVIDIA GeForce RTX 4060 Laptop GPU; residency_policy=GraniteResidencyPolicyV1; residency_preset=BALANCED; residency_tier=HOT; request_group_id=grp_993956a440614d038ec7f588545ee029; analysis_group_budget_ms=45000; review_trigger=explicit_review",
+            "model_id": "ibm-granite/granite-4.2-3b-GGUF@c40945d71cd90f249a56985e8155551a9188dc30",
+            "stage": "discovery",
+            "started_at_ms": 1794802608923,
+            "status": "SUCCEEDED",
+            "transport": "local_native_llama_cpp"
+          },
+          {
+            "attempt_id": "att_f5c10ab6eed044bd9453af44cc0f77ee",
+            "completed_at_ms": 1794802618197,
+            "duration_ms": 3096,
+            "error": "",
+            "model_detail": "digest=fbe986738041418e26de9e123ba740cb654931f85bf572a71bd01f9e6b85e53d; quantization=Q8_0; rewrite_profile=GENERIC@1; thinking_enabled=false; model_revision=c40945d71cd90f249a56985e8155551a9188dc30; llama_revision=da2ee1e7a640445fc562fe5529598cee1917e0f5; configuration=granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality; template_sha256=9d573773df6d94356b46a1c500c04532a19bd182903667241eb9d58e4e224add; cpu_threads=4; gpu_layers=99; backend=vulkan; mmap=true; mlock=false; temperature=1; top_p=0.95; seed=42; sampling_reference=https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md; grammar_strategy=llama_common_rejection_v1; analysis_timeout_ms=45000; rewrite_timeout_ms=60000; analysis_instruction_contract=granite.discovery.selective.v11; rewrite_instruction_contract=granite.rewrite.format.v9; output_format=compact_json; grammar_transform=json_gbnf_space_empty_v1; selected_device=Vulkan0; selected_device_description=NVIDIA GeForce RTX 4060 Laptop GPU; residency_policy=GraniteResidencyPolicyV1; residency_preset=BALANCED; residency_tier=HOT; review_trigger=explicit_review",
+            "model_id": "ibm-granite/granite-4.2-3b-GGUF@c40945d71cd90f249a56985e8155551a9188dc30",
+            "stage": "rewrite",
+            "started_at_ms": 1794802615101,
+            "status": "SUCCEEDED",
+            "transport": "local_native_llama_cpp"
+          }
+        ],
+        "mechanical": {
+          "question_present": true,
+          "option_count": 2,
+          "original_route": true,
+          "proposal_present": true,
+          "proposal_changed": true,
+          "confirmed_item_count": 0,
+          "intent_brief_item_count": 2,
+          "review_state": "not_run",
+          "can_apply_reviewed_output": false,
+          "review_findings": [],
+          "pending_review_count": 2,
+          "can_approve": false,
+          "audit_outcome": "Unresolved",
+          "audit_execution_status": "Completed",
+          "answer_token_overlap": {},
+          "typography_terms_in_question": [],
+          "typography_terms_in_proposal": [],
+          "browsing_mentioned": false,
+          "gibberish_leaked": false,
+          "exact_values": {
+            "500": false,
+            "95%": false,
+            "schema": false
+          },
+          "reference_terms_in_proposal": []
+        },
+        "model_verdict": {
+          "audit_outcome": "Unresolved",
+          "audit_execution_status": "Completed",
+          "pending_review_count": 2,
+          "note": "Model Pass/valid schema is not a usefulness judgment."
+        },
+        "editorial": null,
+        "events_file": "host_20261116T041427Z.ndjson",
+        "ambient_cpu_pct": {
+          "count": 90,
+          "min": 26.2,
+          "median": 48.8,
+          "max": 99.2,
+          "mean": 49.7
+        }
+      },
+      {
+        "id": "already_clear_500ms_auto",
+        "class": "unseen",
+        "surface": "automatic",
+        "prompt": "Make the search API respond within 500 milliseconds for 95% of requests without changing the response schema.",
+        "explicit_review": false,
+        "thermal_label": "warm_process",
+        "status": "READY",
+        "analysis_message": "Exact values and units are kept. No automatic clarification is needed; open the interview if you want to explore further.",
+        "review_outcome": "READY",
+        "verdict": "QUIET",
+        "prompt_triage": {
+          "ambiguity": 0.9999318512778838,
+          "category_scores": [
+            9.098840359922044e-05,
+            0.007011795381497108,
+            1.5689549727726036e-05,
+            0.9999318512778838
+          ],
+          "configuration_id": "julia.cuda.bf16.v2.threads8",
+          "execution": 1,
+          "latency_ms": 104.32930000024498,
+          "model_id": "SupersonicLabs/Julia-1",
+          "model_revision": "a85b127321d580d65176c89ced8273f305745d85",
+          "primary_category": "RULE_CONFLICT",
+          "route": "CLARIFY",
+          "template_id": "julia.prompt_triage.categories.v3",
+          "weights_sha256": "df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72"
+        },
+        "question": "",
+        "alternatives": [],
+        "interview_choices": [],
+        "intent_brief_items": [
+          {
+            "analysisItemId": "",
+            "consequential": true,
+            "id": "src_1",
+            "kind": "prohibition",
+            "rawAnswer": "",
+            "sourceExcerpt": "Make the search API respond within 500 milliseconds for 95% of requests without changing the response schema",
+            "sourceRef": "revision:rev_sess_f7a321364af9420bb588e6d56bc56f27_3#bytes:0-108",
+            "status": "confirmed",
+            "text": "Make the search API respond within 500 milliseconds for 95% of requests without changing the response schema"
+          }
+        ],
+        "assumption_reviews": [],
+        "clarification_checks": [
+          {
+            "checking": false,
+            "event": "clarification_check",
+            "feedback": "",
+            "scenario": "already_clear_500ms_auto",
+            "t_ms": 163505
+          }
+        ],
+        "answers": [],
+        "rewrite": {
+          "proposal_status": null,
+          "proposal_message": null,
+          "has_proposal": null,
+          "proposal_text": null,
+          "last_diff": null,
+          "audit_outcome": null,
+          "audit_execution_status": null,
+          "audit_violations": null,
+          "audit_unresolved": null,
+          "pending_review_count": null,
+          "can_approve": null,
+          "creative_alternatives": null,
+          "proposal_constraints": null,
+          "confirmed_items": null,
+          "unresolved_items": null,
+          "elapsed_ms": null,
+          "idle_ok": null,
+          "posted_ok": null,
+          "last_error": null,
+          "last_error_code": null
+        },
+        "review": {
+          "comprehension_review_state": "stale",
+          "comprehension_interpretation": "The candidate asks the user to specify additional cinematic details (lighting, composition, mood, depth of field) for the product photo, turning the original one‑sentence instruction into a request for more detailed guidance.",
+          "comprehension_findings": [
+            {
+              "id": "f1",
+              "kind": "comprehension",
+              "proposedRepair": "Present a concise list of typical cinematic elements (lighting, composition, mood, depth of field) and ask the user which they prefer, or select a default set, to complete the instruction.",
+              "requiresUserDecision": true,
+              "severity": "blocking",
+              "sourceExcerpt": "Make the product photo look cinematic. Specify which cinematic elements you want emphasized, such as lighting, composition, mood, or depth of field.",
+              "sourceRef": "candidate",
+              "summary": "The candidate asks the user for additional cinematic details, leaving the original instruction incomplete; it does not provide a clear set of which cinematic elements to emphasize, violating the requirement to produce a ready output."
+            }
+          ],
+          "can_apply_reviewed_output": false,
+          "can_approve": false,
+          "elapsed_ms": 367,
+          "settled": null
+        },
+        "stages": {
+          "status_feedback_ms": 240,
+          "julia_cold_load_ms": null,
+          "julia_triage_and_route_ms": 120,
+          "granite_cold_warm_ms": null,
+          "discovery_visible_ms": 120,
+          "analysis_to_ready_ms": 362,
+          "interview_visible_ms": null,
+          "first_usable_question_ms": null,
+          "rewrite_request_to_ready_ms": null,
+          "review_elapsed_ms": null,
+          "total_to_rewrite_ms": null,
+          "total_scenario_ms": 367,
+          "julia_triage_attempt_ms": 346,
+          "discovery_attempt_ms": 3,
+          "clarification_check_attempt_ms": null,
+          "rewrite_attempt_ms": null
+        },
+        "attempts": [
+          {
+            "attempt_id": "att_a68bc06db3104b4ea3a2103403bec34c",
+            "completed_at_ms": 1794802631775,
+            "duration_ms": 346,
+            "error": "",
+            "model_detail": "digest=df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72; quantization=bfloat16; revision=a85b127321d580d65176c89ced8273f305745d85; template=julia.prompt_triage.categories.v3; threshold=0.70; broad_heads_and_corroborated_goal_check; execution_configuration=julia.cuda.bf16.v2; device=cuda; precision=bfloat16; actual_cpu_threads=8; request_group_id=grp_f38a25c0-2d8e-4ce3-b6fb-a4df72b49b21; analysis_group_budget_ms=20000; review_trigger=automatic; workspace_context=incomplete; prompt_triage_payload={\"schema\":\"prompt_triage.v1\",\"id\":\"triage_8fcd8914c563db3e0f36fdd4114952dacb4d5291793ff81faf519baa9f2c2bb8\",\"hash\":\"8fcd8914c563db3e0f36fdd4114952dacb4d5291793ff81faf519baa9f2c2bb8\",\"hash_version\":2,\"session_id\":\"sess_f7a321364af9420bb588e6d56bc56f27\",\"revision_id\":\"rev_sess_f7a321364af9420bb588e6d56bc56f27_3\",\"text_hash\":\"f54afa1116869b4f5f1c1b4b82d64c1bd226e01cf707f7d48e7ceee97d407233\",\"state_version\":20,\"request_group_id\":\"grp_f38a25c0-2d8e-4ce3-b6fb-a4df72b49b21\",\"attempt_id\":\"att_a68bc06db3104b4ea3a2103403bec34c\",\"provider\":\"julia_local\",\"model_id\":\"SupersonicLabs/Julia-1\",\"model_revision\":\"a85b127321d580d65176c89ced8273f305745d85\",\"weights_sha256\":\"df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72\",\"configuration_id\":\"julia.cuda.bf16.v2.threads8\",\"template_id\":\"julia.prompt_triage.categories.v3\",\"execution\":1,\"category_scores\":[9.0988403599220441e-05,0.0070117953814971077,1.5689549727726036e-05,0.99993185127788375],\"ambiguity\":0.99993185127788375,\"primary_category\":3,\"latency_ms\":104.32930000024498}",
+            "model_id": "SupersonicLabs/Julia-1",
+            "stage": "julia_triage",
+            "started_at_ms": 1794802631429,
+            "status": "SUCCEEDED",
+            "transport": "local_python_cuda"
+          },
+          {
+            "attempt_id": "policy_settled_f54afa1116869b4f5f1c1b4b82d64c1bd226e01cf707f7d48e7ceee97d407233",
+            "completed_at_ms": 1794802631778,
+            "duration_ms": 3,
+            "error": "",
+            "model_detail": "settled_value_policy; review_trigger=automatic; no model generation",
+            "model_id": "none",
+            "stage": "discovery",
+            "started_at_ms": 1794802631775,
+            "status": "SUCCEEDED",
+            "transport": "deterministic_policy"
+          }
+        ],
+        "mechanical": {
+          "question_present": false,
+          "option_count": 0,
+          "original_route": true,
+          "proposal_present": false,
+          "proposal_changed": false,
+          "confirmed_item_count": 0,
+          "intent_brief_item_count": 1,
+          "review_state": "stale",
+          "can_apply_reviewed_output": false,
+          "review_findings": [
+            {
+              "id": "f1",
+              "kind": "comprehension",
+              "proposedRepair": "Present a concise list of typical cinematic elements (lighting, composition, mood, depth of field) and ask the user which they prefer, or select a default set, to complete the instruction.",
+              "requiresUserDecision": true,
+              "severity": "blocking",
+              "sourceExcerpt": "Make the product photo look cinematic. Specify which cinematic elements you want emphasized, such as lighting, composition, mood, or depth of field.",
+              "sourceRef": "candidate",
+              "summary": "The candidate asks the user for additional cinematic details, leaving the original instruction incomplete; it does not provide a clear set of which cinematic elements to emphasize, violating the requirement to produce a ready output."
+            }
+          ],
+          "pending_review_count": 0,
+          "can_approve": false,
+          "audit_outcome": "",
+          "audit_execution_status": "",
+          "answer_token_overlap": {},
+          "typography_terms_in_question": [],
+          "typography_terms_in_proposal": [],
+          "browsing_mentioned": false,
+          "gibberish_leaked": false,
+          "exact_values": {
+            "500": true,
+            "95%": true,
+            "schema": true
+          },
+          "reference_terms_in_proposal": []
+        },
+        "model_verdict": {
+          "audit_outcome": "",
+          "audit_execution_status": "",
+          "pending_review_count": 0,
+          "note": "Model Pass/valid schema is not a usefulness judgment."
+        },
+        "editorial": null,
+        "events_file": "host_20261116T041427Z.ndjson",
+        "ambient_cpu_pct": {
+          "count": 90,
+          "min": 26.2,
+          "median": 48.8,
+          "max": 99.2,
+          "mean": 49.7
+        }
+      },
+      {
+        "id": "custom_unknown_skip_after",
+        "class": "unseen",
+        "surface": "interview",
+        "prompt": "Organize the photo gallery by mood.",
+        "explicit_review": false,
+        "thermal_label": "warm_process",
+        "status": "READY",
+        "analysis_message": "One detail could change the result. Your original prompt is unchanged.",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY",
+        "prompt_triage": {
+          "ambiguity": 0.7490872131147275,
+          "category_scores": [
+            0.7490872131147275,
+            9.818326983657703e-06,
+            0.07807816514495095,
+            0.1480471980316895
+          ],
+          "configuration_id": "julia.cuda.bf16.v2.threads8",
+          "execution": 1,
+          "latency_ms": 79.46980000087933,
+          "model_id": "SupersonicLabs/Julia-1",
+          "model_revision": "a85b127321d580d65176c89ced8273f305745d85",
+          "primary_category": "ACTION",
+          "route": "CLARIFY",
+          "template_id": "julia.prompt_triage.categories.v3",
+          "weights_sha256": "df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72"
+        },
+        "question": "What mood categories should be used?",
+        "alternatives": [
+          {
+            "consequence": "specify pastel mood grouping",
+            "id": "alt_0_0",
+            "label": "pastel_mood"
+          },
+          {
+            "consequence": "specify contemporary mood grouping",
+            "id": "alt_0_1",
+            "label": "contemporary_mood"
+          }
+        ],
+        "interview_choices": [
+          {
+            "consequence": "specify pastel mood grouping",
+            "id": "alt_0_0",
+            "label": "pastel_mood"
+          },
+          {
+            "consequence": "specify contemporary mood grouping",
+            "id": "alt_0_1",
+            "label": "contemporary_mood"
+          }
+        ],
+        "intent_brief_items": [
+          {
+            "analysisItemId": "",
+            "consequential": true,
+            "id": "src_1",
+            "kind": "source_requirement",
+            "rawAnswer": "",
+            "sourceExcerpt": "Organize the photo gallery by mood",
+            "sourceRef": "revision:rev_sess_f7a321364af9420bb588e6d56bc56f27_4#bytes:0-34",
+            "status": "confirmed",
+            "text": "Organize the photo gallery by mood"
+          },
+          {
+            "analysisItemId": "grp_0",
+            "consequential": true,
+            "id": "grp_0",
+            "kind": "open_choice",
+            "rawAnswer": "",
+            "sourceExcerpt": "",
+            "sourceRef": "grp_0",
+            "status": "open",
+            "text": "What mood categories should be used? (skipped; still open)"
+          }
+        ],
+        "assumption_reviews": [],
+        "clarification_checks": [
+          {
+            "checking": false,
+            "event": "clarification_check",
+            "feedback": "",
+            "scenario": "custom_unknown_skip_after",
+            "t_ms": 163873
+          },
+          {
+            "checking": false,
+            "event": "clarification_check",
+            "feedback": "",
+            "scenario": "custom_unknown_skip_after",
+            "t_ms": 167683
+          }
+        ],
+        "answers": [
+          {
+            "turn": 0,
+            "requested": {
+              "question": "What mood categories should be used?",
+              "text": "I don't know",
+              "type": "unknown"
+            },
+            "command_completed": null,
+            "idle_ok": true,
+            "advanced": true,
+            "clarification_check": null,
+            "question": "What mood categories should be used?",
+            "analysis_status": "READY",
+            "last_error": "The prompt changed while this action was pending. The prompt state changed. Review the current state and try again.",
+            "last_error_code": "STALE_VERSION",
+            "confirmed_items": [],
+            "interview_feedback": "",
+            "elapsed_ms": 5
+          },
+          {
+            "turn": 1,
+            "requested": {
+              "question": "What mood categories should be used?",
+              "type": "skip"
+            },
+            "command_completed": null,
+            "idle_ok": true,
+            "advanced": true,
+            "clarification_check": null,
+            "question": "",
+            "analysis_status": "READY",
+            "last_error": "",
+            "last_error_code": "",
+            "confirmed_items": [],
+            "interview_feedback": "Couldn't prepare another question. Your answers are kept; retry, skip, or ask for the rewrite.",
+            "elapsed_ms": 9
+          },
+          {
+            "turn": 2,
+            "requested": {
+              "question": "What mood categories should be used?",
+              "text": "Start with calm and playful, and keep it easy to scan.",
+              "type": "custom"
+            },
+            "command_completed": null,
+            "idle_ok": true,
+            "advanced": true,
+            "clarification_check": null,
+            "question": "",
+            "analysis_status": "READY",
+            "last_error": "",
+            "last_error_code": "",
+            "confirmed_items": [],
+            "interview_feedback": "Couldn't check that answer. Your text is kept; retry, choose an option, or skip.",
+            "elapsed_ms": 11
+          }
+        ],
+        "rewrite": {
+          "proposal_status": "READY_FOR_REVIEW",
+          "proposal_message": "Check the 1 highlighted item(s), then approve the wording.",
+          "has_proposal": true,
+          "proposal_text": "Organize the photo gallery by mood. The user may choose mood categories; do not assign specific categories.",
+          "last_diff": "~ was: Organize the photo gallery by mood.\n~ now: Organize the photo gallery by mood. The user may choose mood categories; do not assign specific categories.\n",
+          "audit_outcome": "Pass",
+          "audit_execution_status": "Completed",
+          "audit_violations": [],
+          "audit_unresolved": [],
+          "pending_review_count": 1,
+          "can_approve": false,
+          "creative_alternatives": [
+            {
+              "auditExecutionStatus": "Completed",
+              "auditOutcome": "Pass",
+              "diffText": "~ was: Organize the photo gallery by mood.\n~ now: Organize the photo gallery by mood. The user may choose mood categories; do not assign specific categories.\n",
+              "id": "alt_direct",
+              "rewrittenText": "Organize the photo gallery by mood. The user may choose mood categories; do not assign specific categories.",
+              "styleDescriptor": "Keeps the verified rewrite unchanged",
+              "title": "Direct / Minimal"
+            },
+            {
+              "auditExecutionStatus": "Unavailable",
+              "auditOutcome": "Unresolved",
+              "diffText": "~ was: Organize the photo gallery by mood.\n~ now: 1. Organize the photo gallery by mood.\n+ 2. The user may choose mood categories.\n+ 3. Leave do not assign specific categories untouched.\n",
+              "id": "alt_steps",
+              "rewrittenText": "1. Organize the photo gallery by mood.\n2. The user may choose mood categories.\n3. Leave do not assign specific categories untouched.",
+              "styleDescriptor": "Separates the user's clauses into numbered steps",
+              "title": "Step-by-Step"
+            },
+            {
+              "auditExecutionStatus": "Unavailable",
+              "auditOutcome": "Unresolved",
+              "diffText": "~ was: Organize the photo gallery by mood.\n~ now: Organize the photo gallery by mood. do not assign specific categories.\n",
+              "id": "alt_concise",
+              "rewrittenText": "Organize the photo gallery by mood. do not assign specific categories.",
+              "styleDescriptor": "Shorter wording built only from the user's own clauses",
+              "title": "Concise"
+            }
+          ],
+          "proposal_constraints": [
+            {
+              "acknowledged": false,
+              "description": "The rewrite contains text",
+              "evidence": "",
+              "id": "rewrite_nonempty",
+              "needsReview": false,
+              "status": "MECHANICALLY_VERIFIED"
+            },
+            {
+              "acknowledged": false,
+              "description": "This question was left open; check the rewrite does not decide it",
+              "evidence": "grp_0",
+              "id": "unresolved_grp_0",
+              "needsReview": true,
+              "status": "SEMANTIC_REVIEW_REQUIRED"
+            }
+          ],
+          "confirmed_items": [],
+          "unresolved_items": [
+            "grp_0"
+          ],
+          "elapsed_ms": 2605,
+          "idle_ok": true,
+          "posted_ok": true,
+          "last_error": "",
+          "last_error_code": ""
+        },
+        "review": {
+          "comprehension_review_state": "not_run",
+          "comprehension_interpretation": "",
+          "comprehension_findings": [],
+          "can_apply_reviewed_output": false,
+          "can_approve": false,
+          "elapsed_ms": 6450,
+          "settled": null
+        },
+        "stages": {
+          "status_feedback_ms": 217,
+          "julia_cold_load_ms": null,
+          "julia_triage_and_route_ms": 3578,
+          "granite_cold_warm_ms": null,
+          "discovery_visible_ms": 3487,
+          "analysis_to_ready_ms": 3797,
+          "interview_visible_ms": 3802,
+          "first_usable_question_ms": 3802,
+          "rewrite_request_to_ready_ms": 2605,
+          "review_elapsed_ms": null,
+          "total_to_rewrite_ms": 6446,
+          "total_scenario_ms": 6450,
+          "julia_triage_attempt_ms": 302,
+          "discovery_attempt_ms": 3487,
+          "clarification_check_attempt_ms": null,
+          "rewrite_attempt_ms": 2601
+        },
+        "attempts": [
+          {
+            "attempt_id": "att_cd5279d1be4248a09323b559b942306d",
+            "completed_at_ms": 1794802632099,
+            "duration_ms": 302,
+            "error": "",
+            "model_detail": "digest=df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72; quantization=bfloat16; revision=a85b127321d580d65176c89ced8273f305745d85; template=julia.prompt_triage.categories.v3; threshold=0.70; broad_heads_and_corroborated_goal_check; execution_configuration=julia.cuda.bf16.v2; device=cuda; precision=bfloat16; actual_cpu_threads=8; request_group_id=grp_a92096b4-98bb-444c-b2d9-7e116a394f23; analysis_group_budget_ms=20000; review_trigger=automatic; workspace_context=incomplete; prompt_triage_payload={\"schema\":\"prompt_triage.v1\",\"id\":\"triage_68a9d942a6bdbcf3b044435ba259854bcfdaabc4544e9602433c8bb91f1d9cce\",\"hash\":\"68a9d942a6bdbcf3b044435ba259854bcfdaabc4544e9602433c8bb91f1d9cce\",\"hash_version\":2,\"session_id\":\"sess_f7a321364af9420bb588e6d56bc56f27\",\"revision_id\":\"rev_sess_f7a321364af9420bb588e6d56bc56f27_4\",\"text_hash\":\"90ee7cbc746c6aa4f1404a7f74babc95e81922a6ea561582bf977df940255498\",\"state_version\":23,\"request_group_id\":\"grp_a92096b4-98bb-444c-b2d9-7e116a394f23\",\"attempt_id\":\"att_cd5279d1be4248a09323b559b942306d\",\"provider\":\"julia_local\",\"model_id\":\"SupersonicLabs/Julia-1\",\"model_revision\":\"a85b127321d580d65176c89ced8273f305745d85\",\"weights_sha256\":\"df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72\",\"configuration_id\":\"julia.cuda.bf16.v2.threads8\",\"template_id\":\"julia.prompt_triage.categories.v3\",\"execution\":1,\"category_scores\":[0.74908721311472748,9.8183269836577031e-06,0.078078165144950945,0.1480471980316895],\"ambiguity\":0.74908721311472748,\"primary_category\":0,\"latency_ms\":79.469800000879331}",
+            "model_id": "SupersonicLabs/Julia-1",
+            "stage": "julia_triage",
+            "started_at_ms": 1794802631797,
+            "status": "SUCCEEDED",
+            "transport": "local_python_cuda"
+          },
+          {
+            "attempt_id": "att_f4c31eb9578f4d2e8a00e9a8b2ebf82a",
+            "completed_at_ms": 1794802635586,
+            "duration_ms": 3487,
+            "error": "",
+            "model_detail": "digest=fbe986738041418e26de9e123ba740cb654931f85bf572a71bd01f9e6b85e53d; quantization=Q8_0; host_context_category=BROWSER; thinking_enabled=false; model_revision=c40945d71cd90f249a56985e8155551a9188dc30; llama_revision=da2ee1e7a640445fc562fe5529598cee1917e0f5; configuration=granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality; template_sha256=9d573773df6d94356b46a1c500c04532a19bd182903667241eb9d58e4e224add; cpu_threads=4; gpu_layers=99; backend=vulkan; mmap=true; mlock=false; temperature=1; top_p=0.95; seed=42; sampling_reference=https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md; grammar_strategy=llama_common_rejection_v1; analysis_timeout_ms=45000; rewrite_timeout_ms=60000; analysis_instruction_contract=granite.discovery.selective.v11; rewrite_instruction_contract=granite.rewrite.format.v9; output_format=compact_json; grammar_transform=json_gbnf_space_empty_v1; selected_device=Vulkan0; selected_device_description=NVIDIA GeForce RTX 4060 Laptop GPU; residency_policy=GraniteResidencyPolicyV1; residency_preset=BALANCED; residency_tier=HOT; request_group_id=grp_a92096b4-98bb-444c-b2d9-7e116a394f23; analysis_group_budget_ms=20000; review_trigger=automatic",
+            "model_id": "ibm-granite/granite-4.2-3b-GGUF@c40945d71cd90f249a56985e8155551a9188dc30",
+            "stage": "discovery",
+            "started_at_ms": 1794802632099,
+            "status": "SUCCEEDED",
+            "transport": "local_native_llama_cpp"
+          },
+          {
+            "attempt_id": "att_7349b40e5eae4252b6e4242a21d41102",
+            "completed_at_ms": 1794802635622,
+            "duration_ms": 3,
+            "error": "Native request is missing its authoritative context.",
+            "model_detail": "digest=fbe986738041418e26de9e123ba740cb654931f85bf572a71bd01f9e6b85e53d; quantization=Q8_0; host_context_category=UNKNOWN; thinking_enabled=false; model_revision=c40945d71cd90f249a56985e8155551a9188dc30; llama_revision=da2ee1e7a640445fc562fe5529598cee1917e0f5; configuration=granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality; template_sha256=9d573773df6d94356b46a1c500c04532a19bd182903667241eb9d58e4e224add; cpu_threads=4; gpu_layers=99; backend=vulkan; mmap=true; mlock=false; temperature=1; top_p=0.95; seed=42; sampling_reference=https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md; grammar_strategy=llama_common_rejection_v1; analysis_timeout_ms=45000; rewrite_timeout_ms=60000; analysis_instruction_contract=granite.discovery.selective.v11; rewrite_instruction_contract=granite.rewrite.format.v9; output_format=compact_json; grammar_transform=json_gbnf_space_empty_v1; selected_device=Vulkan0; selected_device_description=NVIDIA GeForce RTX 4060 Laptop GPU; residency_policy=GraniteResidencyPolicyV1; residency_preset=BALANCED; residency_tier=HOT; request_group_id=interview_check_c563b61175b34fe5b242605f7e45207e; analysis_group_budget_ms=45000; review_trigger=explicit_review",
+            "model_id": "ibm-granite/granite-4.2-3b-GGUF@c40945d71cd90f249a56985e8155551a9188dc30",
+            "stage": "interview_clarification_check",
+            "started_at_ms": 1794802635619,
+            "status": "FAILED",
+            "transport": "local_native_llama_cpp"
+          },
+          {
+            "attempt_id": "att_6773893e6ec54750a654cad1c95ab103",
+            "completed_at_ms": 1794802638237,
+            "duration_ms": 2601,
+            "error": "",
+            "model_detail": "digest=fbe986738041418e26de9e123ba740cb654931f85bf572a71bd01f9e6b85e53d; quantization=Q8_0; rewrite_profile=GENERIC@1; thinking_enabled=false; model_revision=c40945d71cd90f249a56985e8155551a9188dc30; llama_revision=da2ee1e7a640445fc562fe5529598cee1917e0f5; configuration=granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality; template_sha256=9d573773df6d94356b46a1c500c04532a19bd182903667241eb9d58e4e224add; cpu_threads=4; gpu_layers=99; backend=vulkan; mmap=true; mlock=false; temperature=1; top_p=0.95; seed=42; sampling_reference=https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md; grammar_strategy=llama_common_rejection_v1; analysis_timeout_ms=45000; rewrite_timeout_ms=60000; analysis_instruction_contract=granite.discovery.selective.v11; rewrite_instruction_contract=granite.rewrite.format.v9; output_format=compact_json; grammar_transform=json_gbnf_space_empty_v1; selected_device=Vulkan0; selected_device_description=NVIDIA GeForce RTX 4060 Laptop GPU; residency_policy=GraniteResidencyPolicyV1; residency_preset=BALANCED; residency_tier=HOT; review_trigger=explicit_review",
+            "model_id": "ibm-granite/granite-4.2-3b-GGUF@c40945d71cd90f249a56985e8155551a9188dc30",
+            "stage": "rewrite",
+            "started_at_ms": 1794802635636,
+            "status": "SUCCEEDED",
+            "transport": "local_native_llama_cpp"
+          }
+        ],
+        "mechanical": {
+          "question_present": true,
+          "option_count": 2,
+          "original_route": false,
+          "proposal_present": true,
+          "proposal_changed": true,
+          "confirmed_item_count": 0,
+          "intent_brief_item_count": 2,
+          "review_state": "not_run",
+          "can_apply_reviewed_output": false,
+          "review_findings": [],
+          "pending_review_count": 1,
+          "can_approve": false,
+          "audit_outcome": "Pass",
+          "audit_execution_status": "Completed",
+          "answer_token_overlap": {
+            "I don't know": {
+              "matched": [],
+              "ratio": 0.0
+            },
+            "Start with calm and playful, and keep it easy to scan.": {
+              "matched": [],
+              "ratio": 0.0
+            }
+          },
+          "typography_terms_in_question": [],
+          "typography_terms_in_proposal": [],
+          "browsing_mentioned": false,
+          "gibberish_leaked": false,
+          "exact_values": {
+            "500": false,
+            "95%": false,
+            "schema": false
+          },
+          "reference_terms_in_proposal": []
+        },
+        "model_verdict": {
+          "audit_outcome": "Pass",
+          "audit_execution_status": "Completed",
+          "pending_review_count": 1,
+          "note": "Model Pass/valid schema is not a usefulness judgment."
+        },
+        "editorial": null,
+        "events_file": "host_20261116T041427Z.ndjson",
+        "ambient_cpu_pct": {
+          "count": 90,
+          "min": 26.2,
+          "median": 48.8,
+          "max": 99.2,
+          "mean": 49.7
+        }
+      },
+      {
+        "id": "changed_preference_after",
+        "class": "unseen",
+        "surface": "interview",
+        "prompt": "Redesign the landing page with a bold hero and a retro palette.",
+        "explicit_review": false,
+        "thermal_label": "warm_process",
+        "status": "READY",
+        "analysis_message": "Ready to use. Your original wording is unchanged. Review prompt for optional help.",
+        "review_outcome": "READY",
+        "verdict": "QUIET",
+        "prompt_triage": {
+          "ambiguity": 0.06853749303199023,
+          "category_scores": [
+            0.06853749303199023,
+            0.0002581481452421289,
+            0.0007733057081242417,
+            7.254361823018916e-05
+          ],
+          "configuration_id": "julia.cuda.bf16.v2.threads8",
+          "execution": 1,
+          "latency_ms": 95.65329999895766,
+          "model_id": "SupersonicLabs/Julia-1",
+          "model_revision": "a85b127321d580d65176c89ced8273f305745d85",
+          "primary_category": "ACTION",
+          "route": "ORIGINAL",
+          "template_id": "julia.prompt_triage.categories.v3",
+          "weights_sha256": "df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72"
+        },
+        "question": "What specific aspects of the landing page should prioritize the bold hero and retro palette (layout, typography, color usage, interactive elements)?",
+        "alternatives": [
+          {
+            "consequence": "The hero dominates the page, drawing attention and guiding users quickly to primary action.",
+            "id": "alt_0_0",
+            "label": "Prioritize visual hierarchy with oversized hero image and high-contrast retro colors to immediately engage users."
+          },
+          {
+            "consequence": "Maintains retro aesthetic but ensures hero remains clearly distinct and impactful.",
+            "id": "alt_0_1",
+            "label": "Use retro palette colors consistently across sections while keeping hero as a standalone focal point."
+          }
+        ],
+        "interview_choices": [
+          {
+            "consequence": "The hero dominates the page, drawing attention and guiding users quickly to primary action.",
+            "id": "alt_0_0",
+            "label": "Prioritize visual hierarchy with oversized hero image and high-contrast retro colors to immediately engage users."
+          },
+          {
+            "consequence": "Maintains retro aesthetic but ensures hero remains clearly distinct and impactful.",
+            "id": "alt_0_1",
+            "label": "Use retro palette colors consistently across sections while keeping hero as a standalone focal point."
+          }
+        ],
+        "intent_brief_items": [
+          {
+            "analysisItemId": "",
+            "consequential": true,
+            "id": "src_1",
+            "kind": "source_requirement",
+            "rawAnswer": "",
+            "sourceExcerpt": "Redesign the landing page with a bold hero and a retro palette",
+            "sourceRef": "revision:rev_sess_f7a321364af9420bb588e6d56bc56f27_5#bytes:0-62",
+            "status": "confirmed",
+            "text": "Redesign the landing page with a bold hero and a retro palette"
+          },
+          {
+            "analysisItemId": "grp_0",
+            "consequential": true,
+            "id": "grp_0",
+            "kind": "open_choice",
+            "rawAnswer": "",
+            "sourceExcerpt": "",
+            "sourceRef": "grp_0",
+            "status": "open",
+            "text": "What specific aspects of the landing page should prioritize the bold hero and retro palette (layout, typography, color usage, interactive elements)? (skipped; still open)"
+          }
+        ],
+        "assumption_reviews": [],
+        "clarification_checks": [
+          {
+            "checking": false,
+            "event": "clarification_check",
+            "feedback": "",
+            "scenario": "changed_preference_after",
+            "t_ms": 170326
+          },
+          {
+            "checking": false,
+            "event": "clarification_check",
+            "feedback": "",
+            "scenario": "changed_preference_after",
+            "t_ms": 176960
+          }
+        ],
+        "answers": [
+          {
+            "turn": 0,
+            "requested": {
+              "pick": "80s",
+              "question": "What specific aspects of the landing page should prioritize the bold hero and retro palette (layout, typography, color usage, interactive elements)?",
+              "resolved_label": "",
+              "type": "choice"
+            },
+            "command_completed": null,
+            "idle_ok": true,
+            "advanced": true,
+            "clarification_check": null,
+            "question": "What specific aspects of the landing page should prioritize the bold hero and retro palette (layout, typography, color usage, interactive elements)?",
+            "analysis_status": "READY",
+            "last_error": "",
+            "last_error_code": "",
+            "confirmed_items": [],
+            "interview_feedback": "Type an answer or choose one of the options.",
+            "elapsed_ms": 15
+          },
+          {
+            "turn": 1,
+            "requested": {
+              "item": "grp_0",
+              "question": "What specific aspects of the landing page should prioritize the bold hero and retro palette (layout, typography, color usage, interactive elements)?",
+              "text": "Use a muted 1970s palette, not neon.",
+              "type": "change"
+            },
+            "command_completed": null,
+            "idle_ok": true,
+            "advanced": true,
+            "clarification_check": null,
+            "question": "What specific aspects of the landing page should prioritize the bold hero and retro palette (layout, typography, color usage, interactive elements)?",
+            "analysis_status": "READY",
+            "last_error": "",
+            "last_error_code": "",
+            "confirmed_items": [],
+            "interview_feedback": "Only a settled decision can be corrected. Answer or skip the open item instead.",
+            "elapsed_ms": 14
+          },
+          {
+            "turn": 2,
+            "requested": {
+              "question": "What specific aspects of the landing page should prioritize the bold hero and retro palette (layout, typography, color usage, interactive elements)?",
+              "type": "skip"
+            },
+            "command_completed": null,
+            "idle_ok": true,
+            "advanced": true,
+            "clarification_check": null,
+            "question": "",
+            "analysis_status": "READY",
+            "last_error": "",
+            "last_error_code": "",
+            "confirmed_items": [],
+            "interview_feedback": "Couldn't prepare another question. Your answers are kept; retry, skip, or ask for the rewrite.",
+            "elapsed_ms": 34
+          }
+        ],
+        "rewrite": {
+          "proposal_status": "READY_FOR_REVIEW",
+          "proposal_message": "Check the 2 highlighted item(s), then approve the wording.",
+          "has_proposal": true,
+          "proposal_text": "Redesign the landing page, prioritizing a bold hero and a retro palette. Specify which aspects (layout, typography, color usage, interactive elements) should take priority.",
+          "last_diff": "~ was: Redesign the landing page with a bold hero and a retro palette.\n~ now: Redesign the landing page, prioritizing a bold hero and a retro palette. Specify which aspects (layout, typography, color usage, interactive elements) should take priority.\n",
+          "audit_outcome": "Unresolved",
+          "audit_execution_status": "Completed",
+          "audit_violations": [],
+          "audit_unresolved": [
+            {
+              "constraintId": "goldfish_audit",
+              "explanation": "Model audit returned an explicit Unresolved verdict."
+            }
+          ],
+          "pending_review_count": 2,
+          "can_approve": false,
+          "creative_alternatives": [
+            {
+              "auditExecutionStatus": "Completed",
+              "auditOutcome": "Unresolved",
+              "diffText": "~ was: Redesign the landing page with a bold hero and a retro palette.\n~ now: Redesign the landing page, prioritizing a bold hero and a retro palette. Specify which aspects (layout, typography, color usage, interactive elements) should take priority.\n",
+              "id": "alt_direct",
+              "rewrittenText": "Redesign the landing page, prioritizing a bold hero and a retro palette. Specify which aspects (layout, typography, color usage, interactive elements) should take priority.",
+              "styleDescriptor": "Keeps the verified rewrite unchanged",
+              "title": "Direct / Minimal"
+            },
+            {
+              "auditExecutionStatus": "Unavailable",
+              "auditOutcome": "Unresolved",
+              "diffText": "~ was: Redesign the landing page with a bold hero and a retro palette.\n~ now: 1. Redesign the landing page, prioritizing a bold hero and a retro palette.\n+ 2. Specify which aspects (layout, typography, color usage, interactive elements) should take priority.\n",
+              "id": "alt_steps",
+              "rewrittenText": "1. Redesign the landing page, prioritizing a bold hero and a retro palette.\n2. Specify which aspects (layout, typography, color usage, interactive elements) should take priority.\n",
+              "styleDescriptor": "Separates the user's clauses into numbered steps",
+              "title": "Step-by-Step"
+            },
+            {
+              "auditExecutionStatus": "Unavailable",
+              "auditOutcome": "Unresolved",
+              "diffText": "  Redesign the landing page with a bold hero and a retro palette.\n",
+              "id": "alt_concise",
+              "rewrittenText": "Redesign the landing page with a bold hero and a retro palette.",
+              "styleDescriptor": "Shorter wording built only from the user's own clauses",
+              "title": "Concise"
+            }
+          ],
+          "proposal_constraints": [
+            {
+              "acknowledged": false,
+              "description": "The rewrite contains text",
+              "evidence": "",
+              "id": "rewrite_nonempty",
+              "needsReview": false,
+              "status": "MECHANICALLY_VERIFIED"
+            },
+            {
+              "acknowledged": false,
+              "description": "This question was left open; check the rewrite does not decide it",
+              "evidence": "grp_0",
+              "id": "unresolved_grp_0",
+              "needsReview": true,
+              "status": "SEMANTIC_REVIEW_REQUIRED"
+            },
+            {
+              "acknowledged": false,
+              "description": "Audit uncertainty: Model audit returned an explicit Unresolved verdict.",
+              "evidence": "goldfish_audit",
+              "id": "goldfish_audit",
+              "needsReview": true,
+              "status": "SemanticReviewRequired"
+            }
+          ],
+          "confirmed_items": [],
+          "unresolved_items": [
+            "grp_0"
+          ],
+          "elapsed_ms": 3579,
+          "idle_ok": true,
+          "posted_ok": true,
+          "last_error": "",
+          "last_error_code": ""
+        },
+        "review": {
+          "comprehension_review_state": "not_run",
+          "comprehension_interpretation": "",
+          "comprehension_findings": [],
+          "can_apply_reviewed_output": false,
+          "can_approve": false,
+          "elapsed_ms": 10296,
+          "settled": null
+        },
+        "stages": {
+          "status_feedback_ms": 227,
+          "julia_cold_load_ms": null,
+          "julia_triage_and_route_ms": 102,
+          "granite_cold_warm_ms": null,
+          "discovery_visible_ms": 0,
+          "analysis_to_ready_ms": 331,
+          "interview_visible_ms": 6555,
+          "first_usable_question_ms": 6555,
+          "rewrite_request_to_ready_ms": 3579,
+          "review_elapsed_ms": null,
+          "total_to_rewrite_ms": 10267,
+          "total_scenario_ms": 10296,
+          "julia_triage_attempt_ms": 322,
+          "discovery_attempt_ms": 6201,
+          "clarification_check_attempt_ms": null,
+          "rewrite_attempt_ms": 3556
+        },
+        "attempts": [
+          {
+            "attempt_id": "att_a6f2b14309324d3bb841905dc7ea9df3",
+            "completed_at_ms": 1794802638572,
+            "duration_ms": 322,
+            "error": "",
+            "model_detail": "digest=df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72; quantization=bfloat16; revision=a85b127321d580d65176c89ced8273f305745d85; template=julia.prompt_triage.categories.v3; threshold=0.70; broad_heads_and_corroborated_goal_check; execution_configuration=julia.cuda.bf16.v2; device=cuda; precision=bfloat16; actual_cpu_threads=8; request_group_id=grp_3ed711c2-97f2-48d0-b78f-7f30cd3a5a70; analysis_group_budget_ms=20000; review_trigger=automatic; workspace_context=incomplete; prompt_triage_payload={\"schema\":\"prompt_triage.v1\",\"id\":\"triage_6ccef8f64a575197d0464adca3374911ff9e0e4f3b4c62c74eb5a2e66588f46f\",\"hash\":\"6ccef8f64a575197d0464adca3374911ff9e0e4f3b4c62c74eb5a2e66588f46f\",\"hash_version\":2,\"session_id\":\"sess_f7a321364af9420bb588e6d56bc56f27\",\"revision_id\":\"rev_sess_f7a321364af9420bb588e6d56bc56f27_5\",\"text_hash\":\"ddfe3de54650b1385184cde0125f69df68213780784af326598fad52800d359b\",\"state_version\":30,\"request_group_id\":\"grp_3ed711c2-97f2-48d0-b78f-7f30cd3a5a70\",\"attempt_id\":\"att_a6f2b14309324d3bb841905dc7ea9df3\",\"provider\":\"julia_local\",\"model_id\":\"SupersonicLabs/Julia-1\",\"model_revision\":\"a85b127321d580d65176c89ced8273f305745d85\",\"weights_sha256\":\"df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72\",\"configuration_id\":\"julia.cuda.bf16.v2.threads8\",\"template_id\":\"julia.prompt_triage.categories.v3\",\"execution\":1,\"category_scores\":[0.068537493031990235,0.00025814814524212891,0.00077330570812424171,7.2543618230189156e-05],\"ambiguity\":0.068537493031990235,\"primary_category\":0,\"latency_ms\":95.653299998957664}",
+            "model_id": "SupersonicLabs/Julia-1",
+            "stage": "julia_triage",
+            "started_at_ms": 1794802638250,
+            "status": "SUCCEEDED",
+            "transport": "local_python_cuda"
+          },
+          {
+            "attempt_id": "att_555dec2f073e4642a796965e4297311e",
+            "completed_at_ms": 1794802644786,
+            "duration_ms": 6201,
+            "error": "",
+            "model_detail": "digest=fbe986738041418e26de9e123ba740cb654931f85bf572a71bd01f9e6b85e53d; quantization=Q8_0; host_context_category=UNKNOWN; thinking_enabled=false; model_revision=c40945d71cd90f249a56985e8155551a9188dc30; llama_revision=da2ee1e7a640445fc562fe5529598cee1917e0f5; configuration=granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality; template_sha256=9d573773df6d94356b46a1c500c04532a19bd182903667241eb9d58e4e224add; cpu_threads=4; gpu_layers=99; backend=vulkan; mmap=true; mlock=false; temperature=1; top_p=0.95; seed=42; sampling_reference=https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md; grammar_strategy=llama_common_rejection_v1; analysis_timeout_ms=45000; rewrite_timeout_ms=60000; analysis_instruction_contract=granite.discovery.selective.v11; rewrite_instruction_contract=granite.rewrite.format.v9; output_format=compact_json; grammar_transform=json_gbnf_space_empty_v1; selected_device=Vulkan0; selected_device_description=NVIDIA GeForce RTX 4060 Laptop GPU; residency_policy=GraniteResidencyPolicyV1; residency_preset=BALANCED; residency_tier=HOT; request_group_id=grp_ef851c42d0c04b548f9386c09ba1f307; analysis_group_budget_ms=45000; review_trigger=explicit_review",
+            "model_id": "ibm-granite/granite-4.2-3b-GGUF@c40945d71cd90f249a56985e8155551a9188dc30",
+            "stage": "discovery",
+            "started_at_ms": 1794802638585,
+            "status": "SUCCEEDED",
+            "transport": "local_native_llama_cpp"
+          },
+          {
+            "attempt_id": "att_39d8c4cabea7469293f5af8dd2cf70b5",
+            "completed_at_ms": 1794802648505,
+            "duration_ms": 3556,
+            "error": "",
+            "model_detail": "digest=fbe986738041418e26de9e123ba740cb654931f85bf572a71bd01f9e6b85e53d; quantization=Q8_0; rewrite_profile=GENERIC@1; thinking_enabled=false; model_revision=c40945d71cd90f249a56985e8155551a9188dc30; llama_revision=da2ee1e7a640445fc562fe5529598cee1917e0f5; configuration=granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality; template_sha256=9d573773df6d94356b46a1c500c04532a19bd182903667241eb9d58e4e224add; cpu_threads=4; gpu_layers=99; backend=vulkan; mmap=true; mlock=false; temperature=1; top_p=0.95; seed=42; sampling_reference=https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md; grammar_strategy=llama_common_rejection_v1; analysis_timeout_ms=45000; rewrite_timeout_ms=60000; analysis_instruction_contract=granite.discovery.selective.v11; rewrite_instruction_contract=granite.rewrite.format.v9; output_format=compact_json; grammar_transform=json_gbnf_space_empty_v1; selected_device=Vulkan0; selected_device_description=NVIDIA GeForce RTX 4060 Laptop GPU; residency_policy=GraniteResidencyPolicyV1; residency_preset=BALANCED; residency_tier=HOT; review_trigger=explicit_review",
+            "model_id": "ibm-granite/granite-4.2-3b-GGUF@c40945d71cd90f249a56985e8155551a9188dc30",
+            "stage": "rewrite",
+            "started_at_ms": 1794802644949,
+            "status": "SUCCEEDED",
+            "transport": "local_native_llama_cpp"
+          }
+        ],
+        "mechanical": {
+          "question_present": true,
+          "option_count": 2,
+          "original_route": true,
+          "proposal_present": true,
+          "proposal_changed": true,
+          "confirmed_item_count": 0,
+          "intent_brief_item_count": 2,
+          "review_state": "not_run",
+          "can_apply_reviewed_output": false,
+          "review_findings": [],
+          "pending_review_count": 2,
+          "can_approve": false,
+          "audit_outcome": "Unresolved",
+          "audit_execution_status": "Completed",
+          "answer_token_overlap": {
+            "Use a muted 1970s palette, not neon.": {
+              "matched": [],
+              "ratio": 0.0
+            }
+          },
+          "typography_terms_in_question": [
+            "typography"
+          ],
+          "typography_terms_in_proposal": [
+            "typography"
+          ],
+          "browsing_mentioned": false,
+          "gibberish_leaked": false,
+          "exact_values": {
+            "500": false,
+            "95%": false,
+            "schema": false
+          },
+          "reference_terms_in_proposal": []
+        },
+        "model_verdict": {
+          "audit_outcome": "Unresolved",
+          "audit_execution_status": "Completed",
+          "pending_review_count": 2,
+          "note": "Model Pass/valid schema is not a usefulness judgment."
+        },
+        "editorial": null,
+        "events_file": "host_20261116T041427Z.ndjson",
+        "ambient_cpu_pct": {
+          "count": 90,
+          "min": 26.2,
+          "median": 48.8,
+          "max": 99.2,
+          "mean": 49.7
+        }
+      }
+    ],
+    "stamp": "20261116T041427Z"
+  },
+  "raw": null
+}

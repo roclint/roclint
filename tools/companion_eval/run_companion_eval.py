@@ -219,6 +219,8 @@ def run_host(args, scenarios: list, evidence: Path) -> dict:
             "rewrite": scenario.get("rewrite", True),
             "max_turns": scenario.get("max_turns", 3),
             "explicit_review": scenario.get("explicit_review", False),
+            "interview": scenario.get("interview", False),
+            "review": scenario.get("review", False),
             "analysis_timeout_ms": 400000,
             "rewrite_timeout_ms": 240000,
         }
@@ -319,8 +321,11 @@ def build_rows(scenarios, events, ambient):
                     if e.get("event") == "observation" and e.get("phase") == "scenario_end"), None)
         observations = {e.get("phase"): e for e in selected if e.get("event") == "observation"}
         analysis = observations.get("analysis_complete", {})
+        interview = observations.get("interview_ready", {})
         rewrite = observations.get("rewrite_complete", {})
-        answers = [e for e in selected if e.get("event") == "observation" and e.get("phase") == "answer"]
+        review = observations.get("review_complete", {})
+        answers = [e for e in selected if e.get("event") == "observation" and
+                   e.get("phase") in ("answer", "interview_answer")]
         statuses = [e for e in selected if e.get("event") == "status"]
 
         def first_status(text):
@@ -346,8 +351,11 @@ def build_rows(scenarios, events, ambient):
             "granite_cold_warm_ms": span(granite_warm, granite_ready),
             "discovery_visible_ms": span(granite_ready or julia_ready, ready),
             "analysis_to_ready_ms": analysis.get("elapsed_ms"),
-            "first_usable_question_ms": span(start, ready) if ready and analysis.get("question") else None,
+            "interview_visible_ms": (interview.get("t_ms") - start_t) if interview.get("t_ms") else None,
+            "first_usable_question_ms": (interview.get("t_ms") - start_t) if interview.get("t_ms") else
+                                        (span(start, ready) if ready and analysis.get("question") else None),
             "rewrite_request_to_ready_ms": rewrite.get("elapsed_ms"),
+            "review_elapsed_ms": review.get("elapsed_ms"),
             "total_to_rewrite_ms": (rewrite.get("t_ms") - start_t) if rewrite.get("t_ms") else None,
             "total_scenario_ms": (end.get("t_ms") - start_t) if end and start else None,
         }
@@ -358,8 +366,10 @@ def build_rows(scenarios, events, ambient):
         stages["clarification_check_attempt_ms"] = stage_attempts.get("clarification_check", {}).get("duration_ms")
         stages["rewrite_attempt_ms"] = stage_attempts.get("rewrite", {}).get("duration_ms")
 
-        q = analysis.get("question") or ""
-        proposal = rewrite.get("proposal_text") or analysis.get("proposal_text") or ""
+        q = interview.get("interview_question") or analysis.get("question") or ""
+        proposal = (rewrite.get("proposal_text") or interview.get("proposal_text") or
+                    analysis.get("proposal_text") or (end or {}).get("proposal_text") or "")
+        choices = interview.get("interview_choices") or analysis.get("alternatives") or []
         lower_proposal = proposal.lower()
         answer_texts = [a.get("requested", {}).get("text", "") for a in answers if a.get("requested", {}).get("text")]
         stop = set("the a an and or of to in on for with without keep not use more than is are be as at by from into your their it this that".split())
@@ -375,11 +385,20 @@ def build_rows(scenarios, events, ambient):
 
         mechanical = {
             "question_present": bool(q),
-            "option_count": len(analysis.get("alternatives") or []),
+            "option_count": len(choices),
             "original_route": bool(analysis.get("is_original_route")),
-            "proposal_present": bool(rewrite.get("has_proposal")),
+            "proposal_present": bool((rewrite or end or {}).get("has_proposal")),
             "proposal_changed": bool(proposal.strip()) and proposal.strip() != scenario["prompt"].strip(),
-            "confirmed_item_count": len((rewrite.get("confirmed_items") or analysis.get("confirmed_items") or [])),
+            "confirmed_item_count": len((rewrite.get("confirmed_items") or
+                                         interview.get("confirmed_items") or
+                                         analysis.get("confirmed_items") or [])),
+            "intent_brief_item_count": len((end or interview).get("intent_brief_items") or []),
+            "review_requested": bool(scenario.get("review")),
+            "review_state": review.get("comprehension_review_state") if review else
+                            ("not_completed" if scenario.get("review") else "not_requested"),
+            "can_apply_reviewed_output": review.get("can_apply_reviewed_output") if review else False,
+            "review_findings": (review.get("comprehension_findings") or []) if review else [],
+            "final_host_review_state": (end or {}).get("comprehension_review_state"),
             "pending_review_count": rewrite.get("pending_review_count", analysis.get("pending_review_count")),
             "can_approve": rewrite.get("can_approve", analysis.get("can_approve")),
             "audit_outcome": rewrite.get("audit_outcome", analysis.get("audit_outcome")),
@@ -410,12 +429,15 @@ def build_rows(scenarios, events, ambient):
             "verdict": analysis.get("verdict"),
             "prompt_triage": analysis.get("prompt_triage"),
             "question": q,
-            "alternatives": analysis.get("alternatives") or [],
+            "alternatives": choices,
+            "interview_choices": interview.get("interview_choices") or [],
+            "intent_brief_items": (end or interview).get("intent_brief_items") or [],
             "assumption_reviews": analysis.get("assumption_reviews") or [],
             "clarification_checks": [e for e in selected if e.get("event") == "clarification_check"],
             "answers": [{k: a.get(k) for k in ("turn", "requested", "command_completed", "idle_ok",
-                                               "clarification_check", "question", "analysis_status",
-                                               "last_error", "last_error_code", "confirmed_items")}
+                                               "advanced", "clarification_check", "question",
+                                               "analysis_status", "last_error", "last_error_code",
+                                               "confirmed_items", "interview_feedback")}
                         | {"elapsed_ms": a.get("elapsed_ms")} for a in answers],
             "rewrite": {k: rewrite.get(k) for k in (
                 "proposal_status", "proposal_message", "has_proposal", "proposal_text", "last_diff",
@@ -423,6 +445,10 @@ def build_rows(scenarios, events, ambient):
                 "pending_review_count", "can_approve", "creative_alternatives",
                 "proposal_constraints", "confirmed_items", "unresolved_items", "elapsed_ms",
                 "idle_ok", "posted_ok", "last_error", "last_error_code")},
+            "review": {k: review.get(k) for k in (
+                "comprehension_review_state", "comprehension_interpretation",
+                "comprehension_findings", "can_apply_reviewed_output", "can_approve",
+                "elapsed_ms", "settled")} if review else None,
             "stages": stages,
             "attempts": attempts,
             "mechanical": mechanical,

@@ -130,11 +130,33 @@ percentile guarantee follows.
 
 ## 4. After-change evidence
 
-To be filled from the combined build: the same 12 scenarios and the explicit
-music follow-up, timestamps split by observable stage, raw responses, review
-findings, and editorial judgments. Every after row will identify the combined
-commit, build, worker hash, model/quantization, backend, sampling and thinking
-state. Partial or unreviewed output is not counted as a usable result.
+Full details, raw paths and limitations are in
+[the combined after-run report](companion_after_evidence_2026-11-15.md).
+
+Key results on the combined build (one cold process, warm siblings, Windows,
+Q8_0/Vulkan, thinking off):
+
+| Scenario | Before | After |
+|---|---|---|
+| Music app, automatic | ORIGINAL after 40.5 s, no typography advice | ORIGINAL remains; explicit Explore now revives a bounded interview |
+| Music app, explicit | 113.3 s cold to question; fusion drift; dropped "not fewer features or shortened labels" | 119.8 s cold to a typography-focused question; custom answer preserved (token overlap 0.952); negative constraint and one-tap browsing retained; independent review ready, no findings |
+| Cinematic | "cinematic with high drama" (generic), model Pass | concrete side lighting + shallow depth of field; independent review ready, no findings |
+| 500 ms / 95% / unchanged schema | false RULE_CONFLICT question after 12.4 s with unrelated database/caching options | 0.48 s, no question, no Granite call, exact values retained |
+| Skip / "I don't know" | meta-instructions or an identical proposal | both remain open; a later custom answer is the only confirmed category wording and is carried into the rewrite |
+| Changed preference | not exercised in baseline | explicit supersession of an 80s choice by a muted 1970s palette; final text uses the new preference (successful live sample in `companion_evidence_after_fix_2026-11-15`) |
+| Independent review | no comprehension stage | fresh-context review caught a generated meta-instruction as blocking in the first after attempt; valid music/cinematic rewrites passed with source-linked readiness |
+
+Warm first-question time was 5.37 s (cinematic), 3.84 s (gallery) and 6.83 s
+(changed preference); warm rewrite 2.39–3.41 s; warm review 4.56–5.53 s. Cold
+readiness still dominates (Julia 44.3 s + Granite 70.1 s). These are single-run,
+contended Windows measurements, not percentile guarantees.
+
+The first after attempt exposed and fixed: a missing native attempt identity in
+the interview custom check, an unsupported `granite_interview` helper operation,
+a probe review-state race, a first-sentence-only meta-instruction guard, and a
+review-card Apply path that ignored pending audit acknowledgments. Those fixes
+are in the combined commit; the retained failure evidence is under
+`companion_evidence_after_2026-11-15/`.
 
 ## 5. UI evidence
 
@@ -154,6 +176,23 @@ be named.
 
 ## 7. Remaining limitations
 
+- The automatic ORIGINAL route still does not volunteer a typography question
+  for the music prompt. Explicit Explore now produces one; the automatic HUD
+  remains quiet for that classifier result.
+- One music interview option makes a reference-specific creative proposal about
+  "Revolver-era song titles." It is disclosed as a proposed assumption, but it
+  is not verified artwork fact and the final rewrite does not rely on it.
+- The live changed-preference sample comes from the second after run; the final
+  run's model generated a different question and the fixture's fixed pick no
+  longer matched. Host tests cover supersession and invalidation.
+- No automatic repair follows a blocking review finding. The user returns to
+  the interview or keeps the original, within the bounded-repair rule.
+- Independent review is an explicit step after a substantial rewrite; apply is
+  locked until it completes. It is not an extra automatic call on every edit.
+- Native insertion/readback on a disposable Windows field was **NOT rerun** on
+  this combined build. Shared tests use the scripted accessibility bridge and
+  exact-readback policy; the user's prior native insertion confirmation belongs
+  to the installed build, not this binary.
 - Native macOS build, Apple Clang, Metal, TCC/signing and native AX range
   insertion remain **NOT RUN**. Mac `injectRange` still inherits `NotSupported`.
 - Windows/shared tests do not establish macOS or IDE-provider parity.

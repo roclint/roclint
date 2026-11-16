@@ -110,6 +110,26 @@ public:
                                      {QStringLiteral("checking"), host_.isCheckingClarification()},
                                      {QStringLiteral("feedback"), host_.clarificationFeedback()}});
             }));
+        connections_.push_back(QObject::connect(
+            &host_, &roclint::host::HostController::interviewChanged, &host_, [this]() {
+                emitLine(QJsonObject{{QStringLiteral("event"), QStringLiteral("interview_state")},
+                                     {QStringLiteral("t_ms"), nowMs()},
+                                     {QStringLiteral("scenario"), scenarioId()},
+                                     {QStringLiteral("active"), host_.isInterviewActive()},
+                                     {QStringLiteral("busy"), host_.isInterviewBusy()},
+                                     {QStringLiteral("turns"), host_.interviewTurnsCompleted()},
+                                     {QStringLiteral("question"), host_.interviewQuestion()},
+                                     {QStringLiteral("feedback"), host_.interviewFeedback()}});
+            }));
+        connections_.push_back(QObject::connect(
+            &host_, &roclint::host::HostController::comprehensionReviewChanged, &host_, [this]() {
+                emitLine(QJsonObject{{QStringLiteral("event"), QStringLiteral("review_state")},
+                                     {QStringLiteral("t_ms"), nowMs()},
+                                     {QStringLiteral("scenario"), scenarioId()},
+                                     {QStringLiteral("state"), host_.comprehensionReviewState()},
+                                     {QStringLiteral("findings"), host_.comprehensionFindings().size()},
+                                     {QStringLiteral("can_apply"), host_.canApplyReviewedOutput()}});
+            }));
     }
 
     QString scenarioId() const { return scenario_.value(QStringLiteral("id")).toString(); }
@@ -149,6 +169,25 @@ public:
         out.insert(QStringLiteral("is_intent_stale"), host_.isIntentStale());
         out.insert(QStringLiteral("confirmed_items"), toJsonArray(host_.confirmedItems()));
         out.insert(QStringLiteral("unresolved_items"), QJsonArray::fromStringList(host_.unresolvedItems()));
+        // Host/UI v1 shared intent, adaptive interview and independent review.
+        out.insert(QStringLiteral("has_intent_brief"), host_.hasIntentBrief());
+        out.insert(QStringLiteral("intent_brief_items"), toJsonArray(host_.intentBriefItems()));
+        out.insert(QStringLiteral("intent_open_choice_ids"),
+                   QJsonArray::fromStringList(host_.intentOpenChoiceIds()));
+        out.insert(QStringLiteral("intent_brief_summary"), host_.intentBriefSummary());
+        out.insert(QStringLiteral("is_interview_active"), host_.isInterviewActive());
+        out.insert(QStringLiteral("interview_turns_completed"), host_.interviewTurnsCompleted());
+        out.insert(QStringLiteral("interview_question"), host_.interviewQuestion());
+        out.insert(QStringLiteral("interview_consequence"), host_.interviewConsequence());
+        out.insert(QStringLiteral("interview_choices"), toJsonArray(host_.interviewChoices()));
+        out.insert(QStringLiteral("is_interview_busy"), host_.isInterviewBusy());
+        out.insert(QStringLiteral("interview_feedback"), host_.interviewFeedback());
+        out.insert(QStringLiteral("comprehension_review_state"), host_.comprehensionReviewState());
+        out.insert(QStringLiteral("comprehension_interpretation"),
+                   host_.comprehensionInterpretation());
+        out.insert(QStringLiteral("comprehension_findings"),
+                   toJsonArray(host_.comprehensionFindings()));
+        out.insert(QStringLiteral("can_apply_reviewed_output"), host_.canApplyReviewedOutput());
         out.insert(QStringLiteral("audit_outcome"), host_.auditOutcome());
         out.insert(QStringLiteral("audit_execution_status"), host_.auditExecutionStatus());
         out.insert(QStringLiteral("audit_violations"), toJsonArray(host_.auditViolations()));
@@ -301,7 +340,117 @@ public:
         emitLine(attempts());
 
         int turn = 0;
-        while (host_.isClarifying() && turn < maxTurns) {
+        const bool interview = scenario_.value(QStringLiteral("interview")).toBool(false);
+        const bool review = scenario_.value(QStringLiteral("review")).toBool(interview);
+        // Opening an interview and finishing a turn enqueue storage commands that
+        // advance the state version. Submit only after the version has settled so
+        // the probe measures the product, not a harness race.
+        const auto settledVersion = [&]() {
+            quint64 version = host_.stateVersion();
+            for (int i = 0; i < 20; ++i) {
+                host_.waitForIdleForTesting(2000);
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+                if (host_.stateVersion() == version) return version;
+                version = host_.stateVersion();
+            }
+            return version;
+        };
+        if (interview) {
+            // Explicit Explore from the compact surface. This is the path that must
+            // revive an automatic ORIGINAL/QUIET route and carry its context into the
+            // substantial interview rather than ending at "Ready to use".
+            const quint64 openVersion = host_.stateVersion();
+            host_.openInterviewFromCompanion(openVersion);
+            const bool opened = waitUntil([&]() {
+                return host_.isInterviewActive() &&
+                       (!host_.interviewQuestion().isEmpty() ||
+                        host_.interviewTurnsCompleted() > 0 ||
+                        !host_.interviewFeedback().isEmpty() ||
+                        host_.analysisStatus() == QLatin1String("FAILED"));
+            }, analysisTimeout);
+            {
+                QJsonObject out = observation(QStringLiteral("interview_ready"), turn);
+                out.insert(QStringLiteral("opened"), opened);
+                emitLine(out);
+            }
+            while (host_.isInterviewActive() && turn < maxTurns) {
+                if (host_.isInterviewBusy()) {
+                    waitUntil([&]() { return !host_.isInterviewBusy(); }, analysisTimeout);
+                }
+                const quint64 answerVersion = settledVersion();
+                const QString question = host_.interviewQuestion();
+                QJsonObject plan = (turn < answerPlan.size()) ? answerPlan.at(turn).toObject() : QJsonObject();
+                if (!plan.contains(QStringLiteral("type"))) {
+                    plan.insert(QStringLiteral("type"), QStringLiteral("skip"));
+                }
+                const QString type = plan.value(QStringLiteral("type")).toString();
+                if (question.isEmpty() && type != QLatin1String("change")) break;
+                const QString text = plan.value(QStringLiteral("text")).toString();
+                const qint64 turnStart = nowMs();
+                const quint64 beforeTurns = host_.interviewTurnsCompleted();
+                const quint64 beforeVersion = host_.stateVersion();
+                QJsonObject requested{{QStringLiteral("type"), type},
+                                      {QStringLiteral("question"), question}};
+                quint64 commandId = 0;
+                if (type == QLatin1String("change")) {
+                    const QString item = plan.value(QStringLiteral("item")).toString();
+                    requested.insert(QStringLiteral("item"), item);
+                    requested.insert(QStringLiteral("text"), text);
+                    commandId = host_.changeIntentDecision(item, text, answerVersion);
+                } else if (type == QLatin1String("choice")) {
+                    const QString pick = plan.value(QStringLiteral("pick")).toString();
+                    QString selected;
+                    const auto choices = host_.interviewChoices();
+                    for (int i = 0; i < choices.size(); ++i) {
+                        const auto map = choices.at(i).toMap();
+                        const QString id = map.value(QStringLiteral("id")).toString();
+                        const QString label = map.value(QStringLiteral("label")).toString();
+                        if (!pick.isEmpty() &&
+                            (id.compare(pick, Qt::CaseInsensitive) == 0 ||
+                             label.compare(pick, Qt::CaseInsensitive) == 0 ||
+                             label.contains(pick, Qt::CaseInsensitive))) {
+                            selected = label;
+                            break;
+                        }
+                        if (pick.isEmpty() && i == 0) selected = label;
+                    }
+                    requested.insert(QStringLiteral("pick"), pick);
+                    requested.insert(QStringLiteral("resolved_label"), selected);
+                    commandId = host_.submitInterviewResponse(selected, QStringLiteral("answer"), answerVersion);
+                } else if (type == QLatin1String("custom")) {
+                    requested.insert(QStringLiteral("text"), text);
+                    commandId = host_.submitInterviewResponse(text, QStringLiteral("custom"),
+                                                               answerVersion);
+                } else if (type == QLatin1String("unknown")) {
+                    requested.insert(QStringLiteral("text"), text);
+                    commandId = host_.submitInterviewResponse(
+                        text.isEmpty() ? QStringLiteral("I don't know") : text,
+                        QStringLiteral("unknown"), answerVersion);
+                } else {
+                    commandId = host_.submitInterviewResponse(QString(), QStringLiteral("skip"),
+                                                               answerVersion);
+                }
+                const bool advanced = waitUntil([&]() {
+                    return !host_.isInterviewBusy() &&
+                           (host_.interviewTurnsCompleted() > beforeTurns ||
+                            host_.interviewQuestion() != question ||
+                            host_.stateVersion() != beforeVersion ||
+                            !host_.interviewFeedback().isEmpty());
+                }, analysisTimeout);
+                const bool idle = host_.waitForIdleForTesting(analysisTimeout);
+                QJsonObject answer = observation(QStringLiteral("interview_answer"), turn,
+                                                 nowMs() - turnStart);
+                answer.insert(QStringLiteral("requested"), requested);
+                answer.insert(QStringLiteral("command_id"), QJsonValue::fromVariant(commandId));
+                answer.insert(QStringLiteral("advanced"), advanced);
+                answer.insert(QStringLiteral("idle_ok"), idle);
+                emitLine(answer);
+                emitLine(attempts());
+                ++turn;
+                if (!advanced) break;
+            }
+        }
+        while (!interview && host_.isClarifying() && turn < maxTurns) {
             QJsonObject plan = (turn < answerPlan.size()) ? answerPlan.at(turn).toObject() : QJsonObject();
             const QString type = plan.value(QStringLiteral("type")).toString();
             const qint64 turnStart = nowMs();
@@ -389,6 +538,34 @@ public:
             out.insert(QStringLiteral("command_id"), QJsonValue::fromVariant(id));
             out.insert(QStringLiteral("posted_ok"), posted);
             out.insert(QStringLiteral("idle_ok"), idle);
+            emitLine(out);
+            emitLine(attempts());
+        }
+
+        if (review) {
+            const qint64 reviewStart = nowMs();
+            quint64 reviewId = 0;
+            bool settled = false;
+            if (host_.hasProposal()) {
+                reviewId = host_.requestComprehensionReview(host_.stateVersion());
+                // The review command is queued before the state changes. Wait for
+                // it to actually start, then for it to finish; otherwise an
+                // immediate `!= running` would record not_run and leak the real
+                // review into the next scenario.
+                const bool started = waitUntil([&]() {
+                    return host_.comprehensionReviewState() != QLatin1String("not_run");
+                }, 15000);
+                settled = started && waitUntil([&]() {
+                    return host_.comprehensionReviewState() != QLatin1String("running");
+                }, 120000);
+                if (host_.isInterviewBusy()) {
+                    waitUntil([&]() { return !host_.isInterviewBusy(); }, 120000);
+                }
+            }
+            QJsonObject out = observation(QStringLiteral("review_complete"), turn,
+                                          nowMs() - reviewStart);
+            out.insert(QStringLiteral("command_id"), QJsonValue::fromVariant(reviewId));
+            out.insert(QStringLiteral("settled"), settled);
             emitLine(out);
             emitLine(attempts());
         }
