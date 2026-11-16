@@ -198,15 +198,14 @@ data or source text cannot select the larger reservation.
 
 Test: `roclint_granite_reasoning_policy_tests` covers the mapping, the
 thinking-off zero-reasoning case, the 2048 reservation bound and the quoted-data
-negative case. Exact command/result are recorded under measurements when the
-build ran.
+negative case. The test passed (0.04 s); see Verification.
 
 ## Measurements
 
 Status: helper-only live run completed after the eval baseline stopped. Raw files
 are in `docs/audit/runtime_evidence_2026-11-15/` (`runtime_trace.jsonl`,
 `receipt.json`, `contracts.json`, `live_driver.py`). Two runs were performed; the
-numbers below are the second run, with the first run in parentheses where they
+numbers below are the retained second run, with the first run beside it where they
 differ. No other Granite worker ran during the second run; a CPU-only host test
 from another worktree overlapped for part of it. No prompt or output text is in
 the trace.
@@ -233,7 +232,7 @@ restarts would need an explicit coordinator decision because it weakens that gat
 
 ### Warm single request A (`ambiguous_speed`)
 
-| Metric | A (cold cache) | C (warm repeat) | Q (queued, different prompt) |
+| Metric | A (cold KV) | C (warm repeat) | Q (queued, different prompt) |
 |---|---:|---:|---:|
 | input tokens | 852 | 852 | 969 |
 | output tokens | 149 | 149 | 80 |
@@ -263,10 +262,11 @@ requests; it was not changed.
 | D (repeat of A) | A and Q pending, `remaining_budget_ms=100` | dequeued after 4,889.3 ms, `expired_before_start` at `remaining_ms=-4,889.3`, rejected `TIMEOUT` without inference |
 
 The single helper loop serialized all semantic work. Q's 5.27 s request time was
-63% queue wait. B and D consumed no GPU inference; before this change B would have
-run to completion because the helper used a fresh 45 s budget, and D would have
-been admitted on the host's timeout race. The cancellation reader and the
-pre-dequeue expiry check both worked live. The trace recorded
+63% queue wait. B and D consumed no GPU inference. B's caller-cancellation path
+already existed; the new pre-dequeue check makes its rejection explicit and avoids
+a no-op dispatch span. D is the case the budget change addresses: the host
+abandoned it at 100 ms, and the helper would previously have granted a fresh 45 s
+budget and could have started it. The live trace recorded
 `cancelled_before_start` and `expired_before_start` marks with the wire/attempt
 IDs.
 
