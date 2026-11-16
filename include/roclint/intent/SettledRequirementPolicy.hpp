@@ -122,6 +122,12 @@ inline constexpr const char* kSettledRequirementPolicyVersion = "settled_require
         }
         return false;
     };
+    const auto sourceStartsWithMeta = [&]() {
+        for (const auto verb : kVerbs) {
+            if (source.starts_with(verb)) return true;
+        }
+        return false;
+    };
     // A generated rewrite may append a meta-instruction after a legitimate first
     // sentence. Scan every sentence, not only the opening one. A sentence that
     // already appears in the user's own draft is their instruction, not a model
@@ -139,8 +145,13 @@ inline constexpr const char* kSettledRequirementPolicyVersion = "settled_require
             sentence.remove_prefix(1);
         }
         if (startsWithMetaVerb(sentence) && hasMetaMarker(sentence)) {
-            const std::string text(sentence);
-            if (source.find(text) == std::string::npos) return true;
+            // If the user's own opening is already a meta instruction, an edit
+            // that extends that sentence is still the user's instruction.
+            const bool userOpening = start == 0 && sourceStartsWithMeta();
+            if (!userOpening) {
+                const std::string text(sentence);
+                if (source.find(text) == std::string::npos) return true;
+            }
         }
         if (end >= output.size()) break;
         start = end + 1;

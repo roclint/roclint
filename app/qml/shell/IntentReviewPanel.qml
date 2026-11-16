@@ -121,8 +121,11 @@ FocusScope {
 
     // The new host surface is guarded: before D03 lands, these stay false and
     // the established clarification controls below remain the active route.
+    // The substantial interview replaces the legacy clarification controls only
+    // while it is explicitly open. Automatic/manual clarification keeps the
+    // established inline controls, including their custom-answer field.
     readonly property bool interviewSurfaceActive: hc && companionContract.intentSurfaceAvailable &&
-                                                   (companionContract.hasIntentBrief || companionContract.isInterviewActive)
+                                                   companionContract.isInterviewActive
     readonly property bool reviewContractActive: hc && companionContract.reviewSurfaceAvailable
     readonly property string comprehensionReviewState: reviewContractActive ? companionContract.comprehensionState : ""
     function focusInterview() {

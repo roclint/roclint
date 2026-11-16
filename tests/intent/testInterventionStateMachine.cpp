@@ -551,30 +551,40 @@ void testSettledRequirementPolicyKeepsExactValues() {
 } // namespace
 
 int main() {
+    std::cout << std::unitbuf;
     std::cout << "[Test InterventionStateMachine] Starting...\n";
-    testFixtureGroupsAreEligible();
-    testClearPromptReachesQuiet();
-    testBudgetAccountingAcrossThreeRounds();
-    testBudgetExhaustionWithItemsLeftGoesManual();
-    testSkipsAndAssumptionsConsumeBudget();
-    testExplicitManualAnswerAfterThreeChoices();
-    testNonBlockingConflictDoesNotBlock();
-    testBlockingConflictGoesManual();
-    testBlockingMissingDecisionTriggersIntervention();
-    testRejectedGroupIsNeverActive();
-    testConfirmChoiceRejectsForeignAlternative();
-    testUnrankedOrderingIsByEarliestByte();
-    testNanSafeRankedOrdering();
-    testScoreBindingMismatchGoesManual();
-    testProviderFailureReachesManual();
-    testStaleDecisionIsRejected();
-    testManualRequest();
-    testIntentBriefSeparatesRequirementsDecisionsAndOpenChoices();
-    testInterviewSkipAndUnknownStayOpenWithoutConsumingBudget();
-    testDecisionChangeSupersedesAndPreservesProvenance();
-    testUnicodeSourceExcerptsRemainVerbatim();
-    testFollowUpDecisionsAndSupersessionStayInTheBrief();
-    testSettledRequirementPolicyKeepsExactValues();
+    const auto run = [](const char* name, auto check) {
+        std::cout << "  [RUN] " << name << '\n';
+        check();
+    };
+    run("testFixtureGroupsAreEligible", testFixtureGroupsAreEligible);
+    run("testClearPromptReachesQuiet", testClearPromptReachesQuiet);
+    run("testBudgetAccountingAcrossThreeRounds", testBudgetAccountingAcrossThreeRounds);
+    run("testBudgetExhaustionWithItemsLeftGoesManual", testBudgetExhaustionWithItemsLeftGoesManual);
+    run("testSkipsAndAssumptionsConsumeBudget", testSkipsAndAssumptionsConsumeBudget);
+    run("testExplicitManualAnswerAfterThreeChoices", testExplicitManualAnswerAfterThreeChoices);
+    run("testNonBlockingConflictDoesNotBlock", testNonBlockingConflictDoesNotBlock);
+    run("testBlockingConflictGoesManual", testBlockingConflictGoesManual);
+    run("testBlockingMissingDecisionTriggersIntervention", testBlockingMissingDecisionTriggersIntervention);
+    run("testRejectedGroupIsNeverActive", testRejectedGroupIsNeverActive);
+    run("testConfirmChoiceRejectsForeignAlternative", testConfirmChoiceRejectsForeignAlternative);
+    run("testUnrankedOrderingIsByEarliestByte", testUnrankedOrderingIsByEarliestByte);
+    run("testNanSafeRankedOrdering", testNanSafeRankedOrdering);
+    run("testScoreBindingMismatchGoesManual", testScoreBindingMismatchGoesManual);
+    run("testProviderFailureReachesManual", testProviderFailureReachesManual);
+    run("testStaleDecisionIsRejected", testStaleDecisionIsRejected);
+    run("testManualRequest", testManualRequest);
+    run("testIntentBriefSeparatesRequirementsDecisionsAndOpenChoices",
+        testIntentBriefSeparatesRequirementsDecisionsAndOpenChoices);
+    run("testInterviewSkipAndUnknownStayOpenWithoutConsumingBudget",
+        testInterviewSkipAndUnknownStayOpenWithoutConsumingBudget);
+    run("testDecisionChangeSupersedesAndPreservesProvenance",
+        testDecisionChangeSupersedesAndPreservesProvenance);
+    run("testUnicodeSourceExcerptsRemainVerbatim", testUnicodeSourceExcerptsRemainVerbatim);
+    run("testFollowUpDecisionsAndSupersessionStayInTheBrief",
+        testFollowUpDecisionsAndSupersessionStayInTheBrief);
+    run("testSettledRequirementPolicyKeepsExactValues",
+        testSettledRequirementPolicyKeepsExactValues);
     std::cout << "[Test InterventionStateMachine] All tests PASSED.\n";
     return 0;
 }
