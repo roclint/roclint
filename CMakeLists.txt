@@ -191,6 +191,11 @@ add_executable(roclint_ast_evaluator tools/ast_grounding_evaluator.cpp)
 target_link_libraries(roclint_ast_evaluator PRIVATE roclint_storage)
 roclint_apply_warnings(roclint_ast_evaluator)
 
+# Evaluation-only sources are intentionally not product targets. The probe has
+# its own standalone CMakeLists and the code project is synthetic fixture data:
+# tools/companion_probe/companion_probe.cpp
+# tests/fixtures/companion_eval/code_project/src/metrics.cpp
+
 include(CTest)
 if(BUILD_TESTING)
     roclint_add_core_library(roclint_core_testing ON)

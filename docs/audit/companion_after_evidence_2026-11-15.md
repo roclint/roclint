@@ -83,6 +83,14 @@ measured opportunities, not changed here.
 5. The review card's Apply path ignored pending audit acknowledgments; it now
    also requires `canApprove`. Stale review interpretation/findings from a
    different revision are hidden rather than displayed under the new prompt.
+6. The first meta-guard fix advanced the sentence scan with `continue` without
+   moving the cursor, hanging on a user-authored opening such as "Determine the
+   specific tone." The scan now advances unconditionally; the intervention-state
+   test passes with the exact-value/decade regressions.
+7. The new interview surface initially replaced the legacy manual-answer field
+   even when the interview was not explicitly open. The legacy clarification
+   controls now remain authoritative until `isInterviewActive`; the substantial
+   interview replaces them only while open.
 
 ## Failures and limitations retained
 

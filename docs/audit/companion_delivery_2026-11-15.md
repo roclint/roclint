@@ -169,10 +169,59 @@ evidence are recorded separately once the combined build is exercised.
 
 ## 6. Verification
 
-To be filled: build commands, focused tests, complete enabled CTest suite,
-Python/structure/whitespace checks, offscreen startup, real-model after-run and
-disposable-field interaction results. Disabled and platform-skipped gates will
-be named.
+### Build
+
+CMake/Visual Studio 2022 Release with `BUILD_TESTING=ON`, native Granite ON
+(pinned llama.cpp `da2ee1e`, Vulkan), Q8_0 model present for the token-budget
+test, `ROCLINT_DEPLOY_QT=OFF` for the integration tree. `roclint_host`,
+`roclint_granite_worker`, `roclint_granite_contracts` and all registered C++
+test targets built successfully. Raw build logs are under `build/` in the
+integration worktree.
+
+### Complete CTest
+
+```
+ctest --test-dir D:\Stardust\roclint-wt-integration\build -C Release --output-on-failure
+```
+
+**65/65 enabled tests passed, 0 failed, 334.83 s.** 66 tests are registered;
+`roclint_retrieval_integration` is disabled because real embedding assets are
+not present. Log: `build/final-ctest-2.log`. This includes
+`roclint_product_alignment` (91.19 s), `roclint_host_controller` (37.28 s),
+`roclint_ast_freshness_integration` (38.19 s), `roclint_dual_mode` (14.17 s),
+`roclint_native_granite` (27.79 s), `roclint_e2e` (8.10 s) and the complete
+retrieval/rewrite/storage gates.
+
+### Python, structure and whitespace
+
+- `python -m unittest discover -s tools -p "test_*.py"`: **86 tests, 1 skipped,
+  48.63 s, OK**. The standalone run needs Qt on `PATH` and
+  `ROCLINT_CONTRACTS_TOOL`; CTest configures its own test environment.
+- `python tools/check_structure.py`: **passed, 94/94 original paths preserved,
+  0 errors, 649 source files.** The new evaluation/docs directories are recorded
+  in `docs/alignment_baseline.json`; the standalone probe and synthetic fixture
+  are documented as evaluation-only in `CMakeLists.txt`.
+- `git diff --check` and `git diff --check d5c8101..HEAD`: clean.
+- Offscreen startup: `roclint_host --dry-run --db :memory:` exit 0, all four QML
+  roots loaded with no QML warnings.
+
+### UI and real-model evidence
+
+- Real-controller QML smoke test loads `CompanionInterview` from the actual
+  `HostController` and renders the question/choices:
+  `docs/audit/companion_ui_2026-11-15/companion_interview_real_controller.png`.
+- The full `roclint_product_alignment` suite (including the real-controller
+  interview test, manual-remainder custom answer, review gates and the legacy
+  keyboard flow) passed in the complete suite.
+- Live after-run: 5 scenarios, 179.7 s, final code in
+  `docs/audit/companion_evidence_after_final_2026-11-15/` and
+  `companion_after_evidence_2026-11-15.md`. A successful changed-preference
+  sample is in `docs/audit/companion_evidence_after_fix_2026-11-15/`.
+- Native insertion/readback on a disposable Windows field was **not rerun** on
+  this combined build. Shared tests use the scripted accessibility bridge and
+  exact-readback policy. The installed application was not replaced or
+  terminated.
+- macOS/Metal, Apple Clang, TCC/signing and IDE-provider parity: **NOT RUN**.
 
 ## 7. Remaining limitations
 
