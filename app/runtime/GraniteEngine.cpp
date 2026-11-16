@@ -152,6 +152,17 @@ public:
         tier_.store(Tier::Unloaded);
     }
 
+    // Cold/warm preparation is measured separately from generation so callers can
+    // distinguish model mapping, integrity verification, context creation and the
+    // warm-up decode from prompt prefill and token decode. Values are zero when the
+    // corresponding stage was skipped (already hot).
+    struct PrepareTiming {
+        double verifyMs{0.0};
+        double modelLoadMs{0.0};
+        double contextInitMs{0.0};
+        double warmupMs{0.0};
+    };
+
     void decode(const std::vector<llama_token>& tokens, llama_pos start, GraniteWorkControl& control) {
         auto batch = std::unique_ptr<llama_batch_ext, decltype(&llama_batch_ext_free)>(llama_batch_ext_init(context_.get()), llama_batch_ext_free);
         if (!batch) throw GraniteFailure(QStringLiteral("RUNTIME"), "Native Granite could not allocate an inference batch.");
@@ -175,7 +186,7 @@ public:
         }
     }
 
-    void prepare(GraniteWorkControl& control) {
+    void prepare(GraniteWorkControl& control, PrepareTiming* timing = nullptr) {
         state_.store(ReadyState::Loading);
         control.check();
         if (!backendInitialized_) {
@@ -190,6 +201,7 @@ public:
             QFile file(QDir(directory_).filePath(candidate_.value(QStringLiteral("filename")).toString()));
             if (!file.open(QIODevice::ReadOnly) || file.size() != candidate_.value(QStringLiteral("size_bytes")).toInteger())
                 throw GraniteFailure(QStringLiteral("MODEL_MISSING"), "The pinned Granite model is missing or has the wrong size.");
+            QElapsedTimer verifyTimer; verifyTimer.start();
             QCryptographicHash hash(QCryptographicHash::Sha256);
             while (!file.atEnd()) {
                 control.check();
@@ -198,8 +210,10 @@ public:
                     throw GraniteFailure(QStringLiteral("MODEL_READ"), "The native model could not be read completely.");
                 hash.addData(chunk);
             }
+            if (timing) timing->verifyMs = static_cast<double>(verifyTimer.nsecsElapsed()) / 1e6;
             if (hash.result().toHex() != candidate_.value(QStringLiteral("sha256")).toString().toLatin1())
                 throw GraniteFailure(QStringLiteral("INTEGRITY"), "The native model failed its pinned SHA-256 integrity check.");
+            QElapsedTimer modelTimer; modelTimer.start();
             auto params = llama_model_default_params();
             params.n_gpu_layers = effectiveGpuLayers();
             if (params.n_gpu_layers > 0) {
@@ -229,6 +243,7 @@ public:
             params.progress_callback = loadProgress;
             params.progress_callback_user_data = &control;
             model_.reset(llama_model_load_from_file(text(file.fileName()).c_str(), params));
+            if (timing) timing->modelLoadMs = static_cast<double>(modelTimer.nsecsElapsed()) / 1e6;
             control.check();
             if (!model_) throw GraniteFailure(QStringLiteral("MODEL_LOAD"), "The pinned native model could not be loaded.");
             if (!llama_model_chat_template(model_.get(), nullptr))
@@ -238,6 +253,7 @@ public:
             tier_.store(Tier::IdleMapped);
         }
         if (!context_) {
+            QElapsedTimer contextTimer; contextTimer.start();
             auto params = llama_context_default_params();
             params.n_ctx = static_cast<std::uint32_t>(manifest_.value(QStringLiteral("context_tokens")).toInt());
             params.n_batch = 512;
@@ -274,15 +290,18 @@ public:
             params.abort_callback = abortDecode;
             params.abort_callback_data = &control;
             context_.reset(llama_init_from_model(model_.get(), params));
+            if (timing) timing->contextInitMs = static_cast<double>(contextTimer.nsecsElapsed()) / 1e6;
             control.check();
             if (!context_) throw GraniteFailure(QStringLiteral("CONTEXT"), "The native runtime could not allocate its context.");
             cachedTokens_.clear();
             cacheValid_ = false;
             lastPrefixReused_.store(0);
+            QElapsedTimer warmupTimer; warmupTimer.start();
             const auto tokens = common_tokenize(llama_model_get_vocab(model_.get()), "Runtime warm-up.", true, false);
             decode(tokens, 0, control);
             llama_memory_clear(llama_get_memory(context_.get()), true);
             llama_set_abort_callback(context_.get(), nullptr, nullptr);
+            if (timing) timing->warmupMs = static_cast<double>(warmupTimer.nsecsElapsed()) / 1e6;
         }
         tier_.store(Tier::Hot);
         state_.store(ReadyState::Ready);
@@ -290,8 +309,17 @@ public:
 
     QJsonObject generate(const QString& operation, const QJsonObject& payload, GraniteWorkControl& control,
                          const std::function<void(const GraniteStreamProgress&)>& progressCallback) {
-        prepare(control);
+        QElapsedTimer totalTimer; totalTimer.start();
+        PrepareTiming prepareTiming;
+        QElapsedTimer prepareTimer; prepareTimer.start();
+        prepare(control, &prepareTiming);
+        const auto prepareMs = static_cast<double>(prepareTimer.nsecsElapsed()) / 1e6;
         state_.store(ReadyState::Busy);
+        // Prompt/template rendering, tokenization, schema-to-grammar conversion and
+        // sampler compilation all happen before prefill but were previously invisible
+        // in latency telemetry. Measure them separately from generation.
+        QElapsedTimer setupTimer; setupTimer.start();
+        QElapsedTimer finishTimer;
         const auto instructions = payload.value(QStringLiteral("instructions")).toString().toUtf8();
         const auto schema = payload.value(QStringLiteral("schema")).toString().toUtf8();
         const auto parsedSchema = core::json::parse(std::string_view(schema.constData(), static_cast<std::size_t>(schema.size())));
@@ -353,9 +381,20 @@ public:
         if (!sampler) throw GraniteFailure(QStringLiteral("SCHEMA"), "The native runtime could not compile its output schema.");
 
         // Reuse matching system and instruction tokens instead of re-prefilling them.
+        // candidatePrefixTokens is the unaligned common prefix: the difference from
+        // reusedTokens shows prefix matches withheld by prefill-chunk alignment.
         llama_memory_t memory = llama_get_memory(context_.get());
         std::size_t reusedTokens = 0;
-        if (cacheValid_) reusedTokens = reusablePromptPrefix(cachedTokens_, tokens, 512);
+        std::size_t candidatePrefixTokens = 0;
+        if (cacheValid_) {
+            const auto limit = std::min(cachedTokens_.size(), tokens.size());
+            while (candidatePrefixTokens < limit && cachedTokens_[candidatePrefixTokens] == tokens[candidatePrefixTokens])
+                ++candidatePrefixTokens;
+            // The final prompt token must always be re-evaluated for fresh logits.
+            if (!tokens.empty()) candidatePrefixTokens = std::min(candidatePrefixTokens, tokens.size() - 1);
+            reusedTokens = reusablePromptPrefix(cachedTokens_, tokens, 512);
+        }
+        const auto setupMs = static_cast<double>(setupTimer.nsecsElapsed()) / 1e6;
         if (reusedTokens > 0) {
             if (!llama_memory_seq_rm(memory, 0, static_cast<llama_pos>(reusedTokens), -1)) {
                 llama_memory_clear(memory, false);
@@ -476,6 +515,9 @@ public:
                     static_cast<double>(genTimer.isValid() ? genTimer.nsecsElapsed() : timer.nsecsElapsed()) / 1e6, reasoningTokens, answerTokens, false});
             const auto generationMs = static_cast<double>(genTimer.nsecsElapsed()) / 1e6;
             const auto latency = static_cast<double>(timer.nsecsElapsed()) / 1e6;
+            // Structured-output finish: cache bookkeeping and complete-JSON validation.
+            // Kept out of latency_ms, whose original definition is unchanged.
+            finishTimer.start();
             llama_set_abort_callback(context_.get(), nullptr, nullptr);
             // Keep only the prompt tokens in the cache; generated tokens are removed
             // so the next request can reuse the stable instruction prefix safely.
@@ -502,8 +544,15 @@ public:
                 {QStringLiteral("decode_ms"), static_cast<double>(decodeNanoseconds) / 1e6},
                 {QStringLiteral("prefill_ms"), static_cast<double>(prefillNanoseconds) / 1e6},
                 {QStringLiteral("kv_cache_reused_tokens"), static_cast<qint64>(reusedTokens)},
+                {QStringLiteral("kv_cache_candidate_tokens"), static_cast<qint64>(candidatePrefixTokens)},
                 {QStringLiteral("kv_cache_prefix_enabled"), true},
                 {QStringLiteral("sampler_ms"), static_cast<double>(samplerNanoseconds) / 1e6},
+                {QStringLiteral("prepare_ms"), prepareMs}, {QStringLiteral("verify_ms"), prepareTiming.verifyMs},
+                {QStringLiteral("model_load_ms"), prepareTiming.modelLoadMs},
+                {QStringLiteral("context_init_ms"), prepareTiming.contextInitMs},
+                {QStringLiteral("warmup_ms"), prepareTiming.warmupMs}, {QStringLiteral("setup_ms"), setupMs},
+                {QStringLiteral("finish_ms"), static_cast<double>(finishTimer.nsecsElapsed()) / 1e6},
+                {QStringLiteral("total_ms"), static_cast<double>(totalTimer.nsecsElapsed()) / 1e6},
                 {QStringLiteral("sampling_temperature"), effectiveTemperature()},
                 {QStringLiteral("generation_ms"), generationMs}, {QStringLiteral("latency_ms"), latency}, {QStringLiteral("template_sha256"), QString::fromLatin1(templateHash_)}};
         } catch (GraniteFailure& error) {
@@ -521,7 +570,14 @@ public:
                 {QStringLiteral("decode_ms"), static_cast<double>(decodeNanoseconds) / 1e6},
                 {QStringLiteral("prefill_ms"), static_cast<double>(prefillNanoseconds) / 1e6},
                 {QStringLiteral("kv_cache_reused_tokens"), static_cast<qint64>(reusedTokens)},
+                {QStringLiteral("kv_cache_candidate_tokens"), static_cast<qint64>(candidatePrefixTokens)},
                 {QStringLiteral("sampler_ms"), static_cast<double>(samplerNanoseconds) / 1e6},
+                {QStringLiteral("prepare_ms"), prepareMs}, {QStringLiteral("verify_ms"), prepareTiming.verifyMs},
+                {QStringLiteral("model_load_ms"), prepareTiming.modelLoadMs},
+                {QStringLiteral("context_init_ms"), prepareTiming.contextInitMs},
+                {QStringLiteral("warmup_ms"), prepareTiming.warmupMs}, {QStringLiteral("setup_ms"), setupMs},
+                {QStringLiteral("finish_ms"), finishTimer.isValid() ? static_cast<double>(finishTimer.nsecsElapsed()) / 1e6 : 0.0},
+                {QStringLiteral("total_ms"), static_cast<double>(totalTimer.nsecsElapsed()) / 1e6},
                 {QStringLiteral("prefill_completed"), prefillCompleted},
                 {QStringLiteral("generation_ms"), genTimer.isValid() ? static_cast<double>(genTimer.nsecsElapsed()) / 1e6 : 0.0}};
             throw;
@@ -531,7 +587,11 @@ public:
     QJsonObject execute(const QString& operation, const QJsonObject& payload, GraniteWorkControl& control,
                         const std::function<void(const GraniteStreamProgress&)>& progressCallback) {
         try {
-            if (operation == QLatin1String("load") || operation == QLatin1String("warm")) prepare(control);
+            PrepareTiming prepareTiming;
+            QElapsedTimer prepareTimer; prepareTimer.start();
+            const auto prepareStarted = operation == QLatin1String("load") || operation == QLatin1String("warm") ||
+                (operation == QLatin1String("set_residency") && payload.value(QStringLiteral("tier")).toString() == QLatin1String("HOT"));
+            if (prepareStarted) prepare(control, &prepareTiming);
             else if (operation == QLatin1String("reset_cache")) {
                 if (context_) {
                     llama_memory_clear(llama_get_memory(context_.get()), true);
@@ -542,16 +602,21 @@ public:
             }
             else if (operation == QLatin1String("set_residency")) {
                 const auto tier = payload.value(QStringLiteral("tier")).toString();
-                if (tier == QLatin1String("HOT")) prepare(control);
-                else if (tier == QLatin1String("IDLE_MAPPED") && model_) {
+                if (tier == QLatin1String("IDLE_MAPPED") && model_) {
                     if (effectiveGpuLayers() == 0) freeContext();
                     else unload(); // GPU weights cannot claim the CPU mmap reclaim behavior.
                 }
                 else if (tier == QLatin1String("UNLOADED")) unload();
-                else throw GraniteFailure(QStringLiteral("CONFIGURATION"), "Requested residency is unavailable.");
+                else if (tier != QLatin1String("HOT")) throw GraniteFailure(QStringLiteral("CONFIGURATION"), "Requested residency is unavailable.");
             } else return generate(operation, payload, control, progressCallback);
             auto result = status();
             result.insert(QStringLiteral("template_sha256"), QString::fromLatin1(templateHash_));
+            const auto prepareMs = prepareStarted ? static_cast<double>(prepareTimer.nsecsElapsed()) / 1e6 : 0.0;
+            result.insert(QStringLiteral("prepare_ms"), prepareMs);
+            result.insert(QStringLiteral("verify_ms"), prepareTiming.verifyMs);
+            result.insert(QStringLiteral("model_load_ms"), prepareTiming.modelLoadMs);
+            result.insert(QStringLiteral("context_init_ms"), prepareTiming.contextInitMs);
+            result.insert(QStringLiteral("warmup_ms"), prepareTiming.warmupMs);
             return result;
         } catch (...) {
             if (!templates_) { context_.reset(); model_.reset(); tier_.store(Tier::Unloaded); }

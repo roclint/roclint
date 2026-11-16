@@ -1,5 +1,7 @@
 #include "GraniteEngine.hpp"
 #include "GraniteConfig.hpp"
+#include "GraniteQueuePolicy.hpp"
+#include "GraniteTimingTrace.hpp"
 #include "roclint/core/Json.hpp"
 #include "roclint/rewrite/RewriteProfile.hpp"
 
@@ -13,8 +15,11 @@
 #include <QJsonObject>
 #include <QStringDecoder>
 
+#include <QStringList>
+
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstdio>
 #include <deque>
@@ -142,6 +147,19 @@ QJsonObject decode(const QByteArray& frame, const QJsonObject& identity) {
     if (hash.size() != 64 || std::any_of(hash.begin(), hash.end(), [](QChar value) {
             return !(value >= QLatin1Char('0') && value <= QLatin1Char('9')) && !(value >= QLatin1Char('a') && value <= QLatin1Char('f'));
         })) throw GraniteFailure(QStringLiteral("PROTOCOL"), "Native input hash is invalid.");
+    if (request.contains(QStringLiteral("surface"))) {
+        const auto surface = request.value(QStringLiteral("surface"));
+        if (!surface.isString() || surface.toString().size() > 32 ||
+            (!surface.toString().isEmpty() && !QStringList{QStringLiteral("word"), QStringLiteral("interview"),
+                QStringLiteral("rewrite"), QStringLiteral("review"), QStringLiteral("apply")}.contains(surface.toString())))
+            throw GraniteFailure(QStringLiteral("PROTOCOL"), "Native surface binding is invalid.");
+    }
+    if (request.contains(QStringLiteral("remaining_budget_ms"))) {
+        const auto budget = request.value(QStringLiteral("remaining_budget_ms"));
+        const auto value = budget.toDouble(-1);
+        if (!budget.isDouble() || value < 0.0 || value > 3600000.0 || std::floor(value) != value)
+            throw GraniteFailure(QStringLiteral("PROTOCOL"), "Native remaining-budget binding is invalid.");
+    }
     const auto op = request.value(QStringLiteral("op")).toString();
     if (op == QLatin1String("granite_analyze") || op == QLatin1String("granite_rewrite") ||
         op == QLatin1String("granite_word_refinement")) {
@@ -168,7 +186,79 @@ struct Work {
     QJsonObject request;
     std::shared_ptr<std::atomic_bool> cancelled;
     Clock::time_point deadline;
+    Clock::time_point receivedAt;
 };
+
+QString traceSurface(const QJsonObject& request, const QString& operation) {
+    const auto declared = request.value(QStringLiteral("surface")).toString();
+    if (!declared.isEmpty()) return declared;
+    if (operation == QLatin1String("granite_word_refinement")) return QStringLiteral("word");
+    if (operation == QLatin1String("granite_rewrite")) return QStringLiteral("rewrite");
+    return {};
+}
+
+QString traceIdOf(const QJsonObject& request) { return request.value(QStringLiteral("request_group_id")).toString(); }
+QString traceRequestOf(const QJsonObject& request) { return request.value(QStringLiteral("attempt_id")).toString(); }
+QString traceRevisionOf(const QJsonObject& request) { return request.value(QStringLiteral("draft_revision_id")).toString(); }
+
+// The instruction contract id is a bounded identifier (for example
+// granite.discovery.selective.v11), never instruction text. Emitted only when
+// the first line matches a conservative identifier shape.
+QString traceContract(const QJsonObject& request) {
+    const auto instructions = request.value(QStringLiteral("payload")).toObject()
+        .value(QStringLiteral("instructions")).toString();
+    auto line = instructions.section(QLatin1Char('\n'), 0, 0).trimmed();
+    const QString prefix = QStringLiteral("Instruction contract: ");
+    if (line.startsWith(prefix)) line = line.mid(prefix.size());
+    if (line.isEmpty() || line.size() > 64) return {};
+    for (const auto character : line)
+        if (!character.isLetterOrNumber() && character != QLatin1Char('_') && character != QLatin1Char('.') &&
+            character != QLatin1Char('-')) return {};
+    return line;
+}
+
+void trace(const QJsonObject& request, const QString& stage, const QString& phase, double elapsedMs,
+           QJsonObject detail = {}) {
+    detail.insert(QStringLiteral("operation"), request.value(QStringLiteral("op")).toString());
+    detail.insert(QStringLiteral("wire_request_id"), request.value(QStringLiteral("request_id")).toString());
+    detail.insert(QStringLiteral("attempt_id"), traceRequestOf(request));
+    detail.insert(QStringLiteral("group_id"), traceIdOf(request));
+    const auto contract = traceContract(request);
+    if (!contract.isEmpty()) detail.insert(QStringLiteral("contract"), contract);
+    const auto payload = request.value(QStringLiteral("payload")).toObject();
+    const auto inputBytes = payload.value(QStringLiteral("prompt")).toString().toUtf8().size() +
+        payload.value(QStringLiteral("instructions")).toString().toUtf8().size() +
+        payload.value(QStringLiteral("schema")).toString().toUtf8().size();
+    if (inputBytes > 0) detail.insert(QStringLiteral("input_bytes"), static_cast<qint64>(inputBytes));
+    roclint::runtime::GraniteTimingTrace::instance().event(stage, phase, traceIdOf(request),
+        traceRequestOf(request), traceRevisionOf(request),
+        traceSurface(request, request.value(QStringLiteral("op")).toString()), elapsedMs, detail);
+}
+
+// Only counts, identifiers, durations and outcomes. Never prompt, instruction,
+// schema, token or source text.
+QJsonObject measuredDetail(const QJsonObject& source) {
+    QJsonObject detail;
+    for (const auto* key : {"prefill_ms", "decode_ms", "first_token_ms", "first_answer_token_ms",
+             "sampler_ms", "generation_ms", "latency_ms", "setup_ms", "finish_ms", "prepare_ms",
+             "verify_ms", "model_load_ms", "context_init_ms", "warmup_ms", "total_ms"}) {
+        const auto value = source.value(QLatin1String(key));
+        if (value.isDouble()) detail.insert(QLatin1String(key), value);
+    }
+    for (const auto* key : {"input_tokens", "output_tokens", "reasoning_tokens", "answer_tokens",
+             "control_tokens", "kv_cache_reused_tokens", "kv_cache_candidate_tokens",
+             "reasoning_budget", "answer_budget"}) {
+        const auto value = source.value(QLatin1String(key));
+        if (value.isDouble()) detail.insert(QLatin1String(key), value);
+    }
+    for (const auto* key : {"phase", "reasoning_stop", "reasoning_profile", "state", "residency"}) {
+        const auto value = source.value(QLatin1String(key));
+        if (value.isString()) detail.insert(QLatin1String(key), value);
+    }
+    const auto output = source.value(QStringLiteral("text"));
+    if (output.isString()) detail.insert(QStringLiteral("output_bytes"), static_cast<qint64>(output.toString().toUtf8().size()));
+    return detail;
+}
 }
 
 int main(int argc, char** argv) {
@@ -185,6 +275,7 @@ int main(int argc, char** argv) {
         QStringLiteral("Development-only benchmark reference: force gpu_layers=0 with the same weights.")});
     parser.addOption({QStringLiteral("diagnostic-no-deadlines"), QStringLiteral("Development investigation only: disable semantic operation deadlines; cancellation and shutdown remain active.")});
     parser.process(app);
+    roclint::runtime::GraniteTimingTrace::instance().identify(QStringLiteral("granite_helper"));
     if (!parser.isSet(QStringLiteral("model-dir")) || !parser.isSet(QStringLiteral("quantization"))) return 2;
     std::optional<double> temperatureOverride;
     if (parser.isSet(QStringLiteral("sampling-temperature"))) {
@@ -265,15 +356,33 @@ int main(int argc, char** argv) {
                         const auto budget = op == QLatin1String("granite_analyze") ? roclint::runtime::kGraniteAnalysisTimeoutMs :
                             op == QLatin1String("granite_rewrite") ? roclint::runtime::kGraniteRewriteTimeoutMs :
                             op == QLatin1String("granite_word_refinement") ? roclint::runtime::kGraniteWordRefinementTimeoutMs : kLoadBudgetMs;
-                        const auto deadline = semantic && diagnosticUnbounded ? Clock::time_point::max() : Clock::now() + std::chrono::milliseconds(budget);
-                        const std::lock_guard lock(mutex);
-                        if (pending.size() >= 8) emitFrame(reply(request, {}, QStringLiteral("Native request queue is full."), QStringLiteral("QUEUE_FULL")));
-                        else {
-                            auto cancelled = std::make_shared<std::atomic_bool>(false);
-                            pending.emplace(id, cancelled);
-                            queue.push_back({request, std::move(cancelled), deadline});
-                            available.notify_one();
+                        const auto receivedAt = Clock::now();
+                        std::optional<std::chrono::milliseconds> callerRemaining;
+                        if (request.contains(QStringLiteral("remaining_budget_ms")))
+                            callerRemaining = std::chrono::milliseconds(request.value(QStringLiteral("remaining_budget_ms")).toInteger());
+                        const auto deadline = semantic && diagnosticUnbounded ? Clock::time_point::max()
+                            : roclint::runtime::effectiveNativeDeadline(receivedAt, std::chrono::milliseconds(budget), callerRemaining);
+                        bool accepted = false;
+                        qsizetype queueDepth = 0;
+                        {
+                            const std::lock_guard lock(mutex);
+                            if (pending.size() < 8) {
+                                auto cancelled = std::make_shared<std::atomic_bool>(false);
+                                pending.emplace(id, cancelled);
+                                queue.push_back({request, std::move(cancelled), deadline, receivedAt});
+                                queueDepth = queue.size();
+                                accepted = true;
+                                // Trace start before waking the worker so queue spans
+                                // can never appear end-before-start in the file.
+                                trace(request, QStringLiteral("queue"), QStringLiteral("start"), 0.0,
+                                    {{QStringLiteral("depth"), static_cast<qint64>(queueDepth)},
+                                     {QStringLiteral("queue_length"), static_cast<qint64>(queueDepth)},
+                                     {QStringLiteral("reason"), queueDepth > 1 ? QStringLiteral("busy") : QStringLiteral("admitted")},
+                                     {QStringLiteral("remaining_budget_ms"), callerRemaining ? QJsonValue(static_cast<qint64>(callerRemaining->count())) : QJsonValue(QJsonValue::Null)}});
+                                available.notify_one();
+                            }
                         }
+                        if (!accepted) emitFrame(reply(request, {}, QStringLiteral("Native request queue is full."), QStringLiteral("QUEUE_FULL")));
                     } else throw GraniteFailure(QStringLiteral("PROTOCOL"), "Native operation is unsupported.");
                 }
             } catch (...) {
@@ -287,15 +396,55 @@ int main(int argc, char** argv) {
         });
         while (!stopping.load()) {
             Work work;
+            qsizetype queuedBehind = 0;
             {
                 std::unique_lock lock(mutex);
                 available.wait(lock, [&]() { return stopping.load() || !queue.empty(); });
                 if (stopping.load()) break;
                 work = std::move(queue.front()); queue.pop_front();
+                queuedBehind = queue.size();
             }
-            roclint::runtime::GraniteWorkControl control{*work.cancelled, stopping, work.deadline};
+            const auto op = work.request.value(QStringLiteral("op")).toString();
+            const bool semanticWork = op == QLatin1String("granite_analyze") || op == QLatin1String("granite_rewrite") ||
+                op == QLatin1String("granite_word_refinement");
+            const bool readiness = op == QLatin1String("load") || op == QLatin1String("warm") || op == QLatin1String("set_residency");
             const auto started = Clock::now();
+            const auto queueWaitMs = std::chrono::duration<double, std::milli>(started - work.receivedAt).count();
+            trace(work.request, QStringLiteral("queue"), QStringLiteral("end"), queueWaitMs,
+                {{QStringLiteral("depth"), static_cast<qint64>(queuedBehind)},
+                 {QStringLiteral("queue_length"), static_cast<qint64>(queuedBehind)},
+                 {QStringLiteral("reason"), queueWaitMs >= 1.0 ? QStringLiteral("busy") : QStringLiteral("admitted")}});
+            // Queued work can be obsolete before it starts. The caller's remaining
+            // budget was captured at submission; never start work that outlived it.
+            if (started >= work.deadline || work.cancelled->load()) {
+                const auto cancelled = work.cancelled->load();
+                const auto remainingMs = std::chrono::duration<double, std::milli>(work.deadline - started).count();
+                trace(work.request, QStringLiteral("queue"), QStringLiteral("mark"), queueWaitMs,
+                    {{QStringLiteral("event"), cancelled ? QStringLiteral("cancelled_before_start") : QStringLiteral("expired_before_start")},
+                     {QStringLiteral("remaining_ms"), remainingMs}});
+                const std::lock_guard lock(mutex);
+                if (!stopping.load()) emitFrame(cancelled
+                    ? reply(work.request, {}, QStringLiteral("Native operation was cancelled."), QStringLiteral("CANCELLED"))
+                    : reply(work.request, {}, QStringLiteral("Native request expired while queued behind other local work."),
+                            QStringLiteral("TIMEOUT"), queueWaitMs));
+                pending.erase(requestId(work.request));
+                continue;
+            }
+            const auto readinessReason = op == QLatin1String("warm") ? QStringLiteral("warm")
+                : op == QLatin1String("load") ? QStringLiteral("cold") : QStringLiteral("policy");
+            if (semanticWork) trace(work.request, QStringLiteral("generate"), QStringLiteral("start"), 0.0,
+                {{QStringLiteral("queue_wait_ms"), queueWaitMs}});
+            else if (readiness) trace(work.request, QStringLiteral("model_ready"), QStringLiteral("start"), 0.0,
+                {{QStringLiteral("runtime"), QStringLiteral("granite")},
+                 {QStringLiteral("reason"), readinessReason},
+                 {QStringLiteral("quantization"), engine.identity().value(QStringLiteral("quantization"))},
+                 {QStringLiteral("backend"), engine.status().value(QStringLiteral("backend"))},
+                 {QStringLiteral("residency_before"), engine.status().value(QStringLiteral("residency"))}});
+            roclint::runtime::GraniteWorkControl control{*work.cancelled, stopping, work.deadline};
             QJsonObject response;
+            QJsonObject outcomeDetail{{QStringLiteral("queue_wait_ms"), queueWaitMs}};
+            QString outcome = QStringLiteral("error");
+            QString errorCode;
             try {
                 control.check();
                 // The decoder preserves Unicode split across token/batch boundaries.
@@ -315,14 +464,36 @@ int main(int argc, char** argv) {
                     partial.insert(QStringLiteral("generation_ms"), progress.generationMs);
                     emitFrame(partial);
                 };
-                const auto result = engine.execute(work.request.value(QStringLiteral("op")).toString(),
-                                                   work.request.value(QStringLiteral("payload")).toObject(), control, streamToken);
+                const auto result = engine.execute(op, work.request.value(QStringLiteral("payload")).toObject(), control, streamToken);
+                outcome = QStringLiteral("ok");
+                outcomeDetail = measuredDetail(result);
+                outcomeDetail.insert(QStringLiteral("queue_wait_ms"), queueWaitMs);
                 response = reply(work.request, result, {}, {}, std::chrono::duration<double, std::milli>(Clock::now() - started).count());
             } catch (const GraniteFailure& error) {
+                errorCode = error.code;
+                outcome = error.code == QLatin1String("CANCELLED") ? QStringLiteral("cancelled")
+                    : error.code == QLatin1String("TIMEOUT") ? QStringLiteral("timeout") : QStringLiteral("error");
+                outcomeDetail = measuredDetail(error.metrics);
+                outcomeDetail.insert(QStringLiteral("queue_wait_ms"), queueWaitMs);
                 response = reply(work.request, {}, QString::fromLatin1(error.what()), error.code,
                     std::chrono::duration<double, std::milli>(Clock::now() - started).count(), error.metrics);
             } catch (...) {
+                outcome = QStringLiteral("error");
                 response = reply(work.request, {}, QStringLiteral("Native Granite could not complete this local operation."), QStringLiteral("RUNTIME"));
+            }
+            const auto serviceMs = std::chrono::duration<double, std::milli>(Clock::now() - started).count();
+            outcomeDetail.insert(QStringLiteral("outcome"), outcome);
+            if (!errorCode.isEmpty()) outcomeDetail.insert(QStringLiteral("error_code"), errorCode);
+            if (stopping.load()) outcomeDetail.insert(QStringLiteral("stopping"), true);
+            if (semanticWork) trace(work.request, QStringLiteral("generate"), QStringLiteral("end"), serviceMs, outcomeDetail);
+            else if (readiness) {
+                outcomeDetail.insert(QStringLiteral("runtime"), QStringLiteral("granite"));
+                outcomeDetail.insert(QStringLiteral("reason"), readinessReason);
+                outcomeDetail.insert(QStringLiteral("load_ms"),
+                    outcomeDetail.value(QStringLiteral("prepare_ms")).isDouble()
+                        ? outcomeDetail.value(QStringLiteral("prepare_ms")).toDouble() : serviceMs);
+                outcomeDetail.insert(QStringLiteral("residency_after"), engine.status().value(QStringLiteral("residency")));
+                trace(work.request, QStringLiteral("model_ready"), QStringLiteral("end"), serviceMs, outcomeDetail);
             }
             const std::lock_guard lock(mutex);
             if (!stopping.load()) emitFrame(work.cancelled->load()

@@ -2,6 +2,7 @@
 #include "GraniteModelInstaller.hpp"
 #include "GraniteJsonGrammar.hpp"
 #include "GranitePrefixCache.hpp"
+#include "GraniteQueuePolicy.hpp"
 #include "GraniteResidencyPolicy.hpp"
 #include "GraniteConfig.hpp"
 #include "HostController.hpp"
@@ -12,6 +13,7 @@
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -25,6 +27,7 @@
 #include <QtConcurrent>
 
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <source_location>
 
@@ -37,6 +40,46 @@ template<class Predicate> void waitUntil(Predicate predicate, int timeout = 6000
     while (!predicate() && timer.elapsed() < timeout) { QCoreApplication::processEvents(); QThread::msleep(1); }
     if (!predicate()) std::cerr << "Timed out at " << source.file_name() << ':' << source.line() << '\n';
     ROCLINT_CHECK(predicate());
+}
+
+// Test-fixture-only execution journal. The production helper never reads this.
+void fixtureLog(const QJsonObject& event) {
+    const auto path = qEnvironmentVariable("ROCLINT_TEST_FIXTURE_LOG");
+    if (path.isEmpty()) return;
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Append)) return;
+    static_cast<void>(file.write(QJsonDocument(event).toJson(QJsonDocument::Compact) + '\n'));
+}
+
+QJsonArray readJsonLines(const QString& path, bool tolerant = false) {
+    QJsonArray lines;
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) return lines;
+    for (const auto& line : file.readAll().split('\n')) {
+        if (line.trimmed().isEmpty()) continue;
+        QJsonParseError error{};
+        const auto document = QJsonDocument::fromJson(line, &error);
+        if (error.error != QJsonParseError::NoError || !document.isObject()) {
+            if (tolerant) continue;
+            ROCLINT_CHECK(false);
+        }
+        lines.append(document.object());
+    }
+    return lines;
+}
+
+bool traceHas(const QString& path, const std::function<bool(const QJsonObject&)>& predicate) {
+    for (const auto& line : readJsonLines(path, true))
+        if (predicate(line.toObject())) return true;
+    return false;
+}
+
+template<class Predicate> void waitForTrace(const QString& path, Predicate predicate, int timeout = 6000,
+    const std::source_location& source = std::source_location::current()) {
+    QElapsedTimer timer; timer.start();
+    while (!traceHas(path, predicate) && timer.elapsed() < timeout) { QCoreApplication::processEvents(); QThread::msleep(5); }
+    if (!traceHas(path, predicate)) std::cerr << "Trace timeout at " << source.file_name() << ':' << source.line() << '\n';
+    ROCLINT_CHECK(traceHas(path, predicate));
 }
 
 // Test-only executable mode. Production helpers contain only actual llama.cpp inference.
@@ -74,6 +117,15 @@ int fixture(const QString& mode) {
             if (mode == QLatin1String("bad_identity")) response.insert(QStringLiteral("model_revision"), QStringLiteral("other"));
         } else if (op == QLatin1String("granite_analyze") || op == QLatin1String("granite_rewrite")) {
             if (mode == QLatin1String("crash_semantic")) std::_Exit(2);
+            if (mode == QLatin1String("queued")) {
+                fixtureLog({{QStringLiteral("event"), QStringLiteral("start")}, {QStringLiteral("op"), op},
+                    {QStringLiteral("attempt_id"), response.value(QStringLiteral("attempt_id"))},
+                    {QStringLiteral("ts"), QDateTime::currentMSecsSinceEpoch()}});
+                QThread::msleep(1000);
+                fixtureLog({{QStringLiteral("event"), QStringLiteral("end")}, {QStringLiteral("op"), op},
+                    {QStringLiteral("attempt_id"), response.value(QStringLiteral("attempt_id"))},
+                    {QStringLiteral("ts"), QDateTime::currentMSecsSinceEpoch()}});
+            }
             if (mode == QLatin1String("late")) QThread::msleep(300);
             if (mode == QLatin1String("malformed")) { std::cout << "{bad json\n" << std::flush; continue; }
             if (mode == QLatin1String("oversize")) { std::cout << std::string(1024 * 1024 + 1, 'x') << '\n' << std::flush; continue; }
@@ -204,6 +256,21 @@ void prefixCacheTests() {
     ROCLINT_CHECK(reusablePromptPrefix(longPrompt, shorter, 512) == 512);
     ROCLINT_CHECK(reusablePromptPrefix(std::vector<int>(512, 7), std::vector<int>(512, 7), 512) == 0);
     ROCLINT_CHECK(reusablePromptPrefix(std::vector<int>(513, 7), std::vector<int>(513, 7), 512) == 512);
+}
+
+void queuePolicyTests() {
+    using namespace std::chrono;
+    using roclint::runtime::effectiveNativeDeadline;
+    const auto received = steady_clock::now();
+    // No caller budget: the helper's own operation budget applies unchanged.
+    ROCLINT_CHECK(effectiveNativeDeadline(received, milliseconds(45000), std::nullopt) == received + seconds(45));
+    // A shorter caller budget is authoritative; the helper cannot extend it.
+    ROCLINT_CHECK(effectiveNativeDeadline(received, milliseconds(45000), milliseconds(120)) == received + milliseconds(120));
+    // A longer caller budget never lengthens the helper operation budget.
+    ROCLINT_CHECK(effectiveNativeDeadline(received, milliseconds(45000), milliseconds(90000)) == received + seconds(45));
+    // An already-expired submission is rejected before inference starts.
+    ROCLINT_CHECK(effectiveNativeDeadline(received, milliseconds(45000), milliseconds(0)) == received);
+    ROCLINT_CHECK(effectiveNativeDeadline(received, milliseconds(45000), milliseconds(-50)) == received);
 }
 
 void residencyPolicyTests() {
@@ -547,6 +614,205 @@ struct DownloadServer {
     QUrl origin() const { return QUrl(QStringLiteral("http://127.0.0.1:%1").arg(server.serverPort())); }
 };
 
+QString traceString(const QJsonObject& event, const char* key) {
+    const auto value = event.value(QLatin1String(key));
+    ROCLINT_CHECK(value.isString());
+    return value.toString();
+}
+
+void timingTraceTests() {
+    QTemporaryDir directory;
+    ROCLINT_CHECK(directory.isValid());
+    const auto tracePath = directory.filePath(QStringLiteral("timing.jsonl"));
+    const auto fixturePath = directory.filePath(QStringLiteral("fixture.jsonl"));
+    const auto sendCount = [&](const QString& attempt) {
+        qsizetype count = 0;
+        for (const auto& line : readJsonLines(fixturePath, true))
+            if (line.toObject().value(QStringLiteral("event")).toString() == QLatin1String("start") &&
+                line.toObject().value(QStringLiteral("attempt_id")).toString() == attempt) ++count;
+        return count;
+    };
+
+    // Tracing is opt-in: with no environment variable no file is created.
+    qunsetenv("ROCLINT_TRACE_TIMING");
+    qunsetenv("ROCLINT_TEST_FIXTURE_LOG");
+    {
+        NativeGraniteRuntime silent(nullptr, QCoreApplication::applicationFilePath());
+        silent.load(QStringLiteral("queued"), QStringLiteral("Q4_K_M"));
+        waitUntil([&]() { return silent.isReady(); });
+        auto future = generate(silent);
+        waitUntil([&]() { return future.isFinished(); });
+        ROCLINT_CHECK(future.result().ok());
+        silent.stop();
+        waitUntil([&]() { return !silent.isRunning(); });
+    }
+    ROCLINT_CHECK(!QFile::exists(tracePath));
+
+    qputenv("ROCLINT_TRACE_TIMING", tracePath.toUtf8());
+    qputenv("ROCLINT_TEST_FIXTURE_LOG", fixturePath.toUtf8());
+    NativeGraniteRuntime runtime(nullptr, QCoreApplication::applicationFilePath());
+    runtime.load(QStringLiteral("queued"), QStringLiteral("Q4_K_M"));
+    waitUntil([&]() { return runtime.isReady(); });
+
+    auto first = context();
+    first.groupId = QStringLiteral("trace_group_a"); first.attemptId = QStringLiteral("trace_attempt_a");
+    first.revisionId = QStringLiteral("rev_trace_a"); first.prompt = QStringLiteral("TRACE_PROMPT_SENTINEL");
+    first.surface = QStringLiteral("interview");
+    auto transportA = runtime.transportFor(first, QStringLiteral("granite_analyze"), "{}");
+    auto futureA = QtConcurrent::run([transportA]() { return transportA("TRACE_INSTRUCTION_SENTINEL"); });
+    waitUntil([&]() { return runtime.state() == QLatin1String("BUSY"); });
+    waitForTrace(tracePath, [](const QJsonObject& event) {
+        return event.value(QStringLiteral("stage")) == QLatin1String("generate") &&
+            event.value(QStringLiteral("phase")) == QLatin1String("start") &&
+            event.value(QStringLiteral("request_id")) == QLatin1String("trace_attempt_a");
+    });
+
+    auto second = context();
+    second.groupId = QStringLiteral("trace_group_b"); second.attemptId = QStringLiteral("trace_attempt_b");
+    second.revisionId = QStringLiteral("rev_trace_b");
+    auto transportB = runtime.transportFor(second, QStringLiteral("granite_analyze"), "{}");
+    auto futureB = QtConcurrent::run([transportB]() { return transportB("Second bound instruction."); });
+    waitUntil([&]() { return futureA.isFinished() && futureB.isFinished(); });
+    ROCLINT_CHECK(futureA.result().ok() && futureB.result().ok());
+    waitUntil([&]() { return runtime.state() == QLatin1String("READY"); });
+
+    // A queued request cancelled by its caller must not invalidate the older one.
+    auto longRunning = context();
+    longRunning.groupId = QStringLiteral("trace_group_c"); longRunning.attemptId = QStringLiteral("trace_attempt_c");
+    longRunning.revisionId = QStringLiteral("rev_trace_c");
+    auto transportC = runtime.transportFor(longRunning, QStringLiteral("granite_analyze"), "{}");
+    auto futureC = QtConcurrent::run([transportC]() { return transportC("Long bound instruction."); });
+    waitUntil([&]() { return runtime.state() == QLatin1String("BUSY"); });
+    waitForTrace(tracePath, [](const QJsonObject& event) {
+        return event.value(QStringLiteral("stage")) == QLatin1String("generate") &&
+            event.value(QStringLiteral("phase")) == QLatin1String("start") &&
+            event.value(QStringLiteral("request_id")) == QLatin1String("trace_attempt_c");
+    });
+    auto cancelled = context();
+    cancelled.groupId = QStringLiteral("trace_group_d"); cancelled.attemptId = QStringLiteral("trace_attempt_d");
+    cancelled.revisionId = QStringLiteral("rev_trace_d");
+    cancelled.cancellation = std::make_shared<std::atomic_bool>(false);
+    auto transportD = runtime.transportFor(cancelled, QStringLiteral("granite_analyze"), "{}");
+    auto futureD = QtConcurrent::run([transportD]() { return transportD("Superseded bound instruction."); });
+    waitForTrace(tracePath, [](const QJsonObject& event) {
+        return event.value(QStringLiteral("stage")) == QLatin1String("generate") &&
+            event.value(QStringLiteral("phase")) == QLatin1String("start") &&
+            event.value(QStringLiteral("request_id")) == QLatin1String("trace_attempt_d");
+    });
+    cancelled.cancellation->store(true);
+    waitUntil([&]() { return futureD.isFinished(); });
+    ROCLINT_CHECK(!futureD.result().ok() &&
+        futureD.result().error().code == roclint::core::ErrorCode::StaleVersion);
+    waitUntil([&]() { return futureC.isFinished(); });
+    ROCLINT_CHECK(futureC.result().ok());
+    waitUntil([&]() { return runtime.state() == QLatin1String("READY"); });
+
+    // A request whose shared deadline expires while it waits must be abandoned.
+    auto longRunningAgain = context();
+    longRunningAgain.groupId = QStringLiteral("trace_group_e"); longRunningAgain.attemptId = QStringLiteral("trace_attempt_e");
+    longRunningAgain.revisionId = QStringLiteral("rev_trace_e");
+    auto transportE = runtime.transportFor(longRunningAgain, QStringLiteral("granite_analyze"), "{}");
+    auto futureE = QtConcurrent::run([transportE]() { return transportE("Long bound instruction again."); });
+    waitUntil([&]() { return runtime.state() == QLatin1String("BUSY"); });
+    auto expiring = context();
+    expiring.groupId = QStringLiteral("trace_group_f"); expiring.attemptId = QStringLiteral("trace_attempt_f");
+    expiring.revisionId = QStringLiteral("rev_trace_f");
+    expiring.deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
+    auto transportF = runtime.transportFor(expiring, QStringLiteral("granite_analyze"), "{}");
+    auto futureF = QtConcurrent::run([transportF]() { return transportF("Expiring bound instruction."); });
+    waitUntil([&]() { return futureF.isFinished(); });
+    ROCLINT_CHECK(!futureF.result().ok() &&
+        futureF.result().error().message.find("NATIVE_TIMEOUT") != std::string::npos);
+    waitUntil([&]() { return futureE.isFinished(); });
+    ROCLINT_CHECK(futureE.result().ok());
+    waitUntil([&]() { return runtime.state() == QLatin1String("READY"); });
+    runtime.stop();
+    waitUntil([&]() { return !runtime.isRunning(); });
+
+    // The trace is valid JSONL with the frozen shape, and it contains no prompt,
+    // instruction or source text.
+    QFile traceFile(tracePath);
+    ROCLINT_CHECK(traceFile.open(QIODevice::ReadOnly));
+    const auto rawTrace = traceFile.readAll();
+    ROCLINT_CHECK(!rawTrace.contains("TRACE_PROMPT_SENTINEL"));
+    ROCLINT_CHECK(!rawTrace.contains("TRACE_INSTRUCTION_SENTINEL"));
+    ROCLINT_CHECK(!rawTrace.contains("Bound instruction"));
+    ROCLINT_CHECK(!rawTrace.contains("Bound prompt"));
+    const auto events = readJsonLines(tracePath);
+    ROCLINT_CHECK(!events.isEmpty());
+    const QStringList stages{QStringLiteral("debounce"), QStringLiteral("route"), QStringLiteral("queue"),
+        QStringLiteral("model_ready"), QStringLiteral("generate"), QStringLiteral("audit"), QStringLiteral("review"),
+        QStringLiteral("visible"), QStringLiteral("apply")};
+    const QStringList surfaces{QString(), QStringLiteral("word"), QStringLiteral("interview"),
+        QStringLiteral("rewrite"), QStringLiteral("review"), QStringLiteral("apply")};
+    const QStringList phases{QStringLiteral("start"), QStringLiteral("end"), QStringLiteral("mark")};
+    for (const auto& line : events) {
+        const auto event = line.toObject();
+        ROCLINT_CHECK(event.value(QStringLiteral("ts_ms")).isDouble());
+        ROCLINT_CHECK(event.value(QStringLiteral("elapsed_ms")).isDouble() && event.value(QStringLiteral("elapsed_ms")).toDouble() >= 0.0);
+        for (const auto* key : {"trace_id", "request_id", "revision_id", "surface", "stage", "phase"})
+            ROCLINT_CHECK(event.value(QLatin1String(key)).isString());
+        ROCLINT_CHECK(stages.contains(traceString(event, "stage")));
+        ROCLINT_CHECK(phases.contains(traceString(event, "phase")));
+        ROCLINT_CHECK(surfaces.contains(traceString(event, "surface")));
+        ROCLINT_CHECK(event.value(QStringLiteral("detail")).isObject());
+    }
+    const auto find = [&](const QString& stage, const QString& phase, const QString& attempt) {
+        for (const auto& line : events) {
+            const auto event = line.toObject();
+            if (event.value(QStringLiteral("stage")).toString() != stage || event.value(QStringLiteral("phase")).toString() != phase) continue;
+            if (!attempt.isEmpty() && event.value(QStringLiteral("request_id")).toString() != attempt) continue;
+            return event;
+        }
+        return QJsonObject{};
+    };
+    const auto readyStart = find(QStringLiteral("model_ready"), QStringLiteral("start"), {});
+    const auto readyEnd = find(QStringLiteral("model_ready"), QStringLiteral("end"), {});
+    ROCLINT_CHECK(!readyStart.isEmpty() && !readyEnd.isEmpty());
+    ROCLINT_CHECK(readyEnd.value(QStringLiteral("detail")).toObject().value(QStringLiteral("source")).toString() == QLatin1String("native_runtime"));
+    const auto startA = find(QStringLiteral("generate"), QStringLiteral("start"), QStringLiteral("trace_attempt_a"));
+    const auto endA = find(QStringLiteral("generate"), QStringLiteral("end"), QStringLiteral("trace_attempt_a"));
+    const auto startB = find(QStringLiteral("generate"), QStringLiteral("start"), QStringLiteral("trace_attempt_b"));
+    const auto endB = find(QStringLiteral("generate"), QStringLiteral("end"), QStringLiteral("trace_attempt_b"));
+    ROCLINT_CHECK(!startA.isEmpty() && !endA.isEmpty() && !startB.isEmpty() && !endB.isEmpty());
+    ROCLINT_CHECK(startA.value(QStringLiteral("surface")).toString() == QLatin1String("interview"));
+    ROCLINT_CHECK(startB.value(QStringLiteral("ts_ms")).toDouble() <= endA.value(QStringLiteral("ts_ms")).toDouble());
+    ROCLINT_CHECK(endA.value(QStringLiteral("ts_ms")).toDouble() <= endB.value(QStringLiteral("ts_ms")).toDouble());
+    ROCLINT_CHECK(endB.value(QStringLiteral("elapsed_ms")).toDouble() >= 100.0); // includes the serialized wait
+    ROCLINT_CHECK(find(QStringLiteral("queue"), QStringLiteral("mark"), QStringLiteral("trace_attempt_b"))
+        .value(QStringLiteral("detail")).toObject().value(QStringLiteral("event")).toString() == QLatin1String("submitted_behind_local_work"));
+    const auto cancelledMark = find(QStringLiteral("generate"), QStringLiteral("mark"), QStringLiteral("trace_attempt_d"));
+    ROCLINT_CHECK(!cancelledMark.isEmpty());
+    ROCLINT_CHECK(cancelledMark.value(QStringLiteral("detail")).toObject().value(QStringLiteral("reason")).toString() == QLatin1String("caller_cancelled"));
+    const auto expiredMark = find(QStringLiteral("generate"), QStringLiteral("mark"), QStringLiteral("trace_attempt_f"));
+    ROCLINT_CHECK(!expiredMark.isEmpty());
+    ROCLINT_CHECK(expiredMark.value(QStringLiteral("detail")).toObject().value(QStringLiteral("reason")).toString() == QLatin1String("deadline_expired"));
+
+    // The mock helper executes one semantic request at a time. Only the first
+    // queued pair is asserted here; cancelled/expired mock requests may still be
+    // delivered to the fixture pipe because it cannot observe cancellation while
+    // sleeping (the production helper has a dedicated reader thread).
+    const auto journal = readJsonLines(fixturePath);
+    ROCLINT_CHECK(journal.size() >= 4);
+    QJsonObject journalStartA, journalEndA, journalStartB, journalEndB;
+    for (const auto& line : journal) {
+        const auto entry = line.toObject();
+        const auto attempt = entry.value(QStringLiteral("attempt_id")).toString();
+        const auto phase = entry.value(QStringLiteral("event")).toString();
+        if (attempt == QLatin1String("trace_attempt_a")) (phase == QLatin1String("start") ? journalStartA : journalEndA) = entry;
+        if (attempt == QLatin1String("trace_attempt_b")) (phase == QLatin1String("start") ? journalStartB : journalEndB) = entry;
+    }
+    ROCLINT_CHECK(!journalStartA.isEmpty() && !journalEndA.isEmpty());
+    ROCLINT_CHECK(!journalStartB.isEmpty() && !journalEndB.isEmpty());
+    ROCLINT_CHECK(journalEndA.value(QStringLiteral("ts")).toDouble() <= journalStartB.value(QStringLiteral("ts")).toDouble());
+    ROCLINT_CHECK(sendCount(QStringLiteral("trace_attempt_a")) == 1);
+    ROCLINT_CHECK(sendCount(QStringLiteral("trace_attempt_b")) == 1);
+    std::cout << "  [PASS] Opt-in worker trace records serialized queue wait, cancellation and deadline events without prompt text.\n";
+
+    qunsetenv("ROCLINT_TRACE_TIMING");
+    qunsetenv("ROCLINT_TEST_FIXTURE_LOG");
+}
+
 void installerTests() {
     QTemporaryDir directory;
     ROCLINT_CHECK(directory.isValid());
@@ -744,8 +1010,9 @@ int main(int argc, char** argv) {
     if (argc == 4 && std::string_view(argv[1]) == "--live-rewrite-corpus") return liveRewriteCorpus(argv);
     if ((argc >= 6 && argc <= 8) && std::string_view(argv[1]) == "--live-host-pipeline") return liveHostPipeline(argc, argv);
     if (argc == 5 && std::string_view(argv[1]) == "--model-dir") return fixture(QString::fromLocal8Bit(argv[2]));
-    grammarTests(); prefixCacheTests(); residencyPolicyTests(); protocolTests(); installerTests(); controllerResidencyTests();
-    acceleratorNameTests(); speedMetricsClearOnStopTests(); decodeThreadLockSanityTest(); nativeWordCompanionAuditTest();
+    grammarTests(); prefixCacheTests(); queuePolicyTests(); residencyPolicyTests(); protocolTests(); installerTests();
+    controllerResidencyTests(); acceleratorNameTests(); speedMetricsClearOnStopTests(); decodeThreadLockSanityTest();
+    nativeWordCompanionAuditTest(); timingTraceTests();
     std::cout << "Native protocol, cancellation, recovery, residency, atomic model installation and calibration tests passed.\n";
     return 0;
 }
