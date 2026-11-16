@@ -106,23 +106,44 @@ inline constexpr const char* kSettledRequirementPolicyVersion = "settled_require
     };
     static constexpr std::string_view kMetaMarkers[] = {
         "the specific", "the user", "the requirements", "the desired", "the context",
-        "what they", "their preferences", "the intent"
+        "what they", "their preferences", "the intent", "which", "you want"
     };
     const std::string output = lower(candidate);
     const std::string source = lower(original);
-    bool startsWithMetaVerb = false;
-    for (const auto verb : kVerbs) {
-        if (output.starts_with(verb)) {
-            startsWithMetaVerb = true;
-            break;
+    const auto startsWithMetaVerb = [&](std::string_view sentence) {
+        for (const auto verb : kVerbs) {
+            if (sentence.starts_with(verb)) return true;
         }
-    }
-    if (!startsWithMetaVerb) return false;
-    for (const auto verb : kVerbs) {
-        if (source.starts_with(verb)) return false;
-    }
-    for (const auto marker : kMetaMarkers) {
-        if (output.find(marker) != std::string::npos) return true;
+        return false;
+    };
+    const auto hasMetaMarker = [&](std::string_view sentence) {
+        for (const auto marker : kMetaMarkers) {
+            if (sentence.find(marker) != std::string_view::npos) return true;
+        }
+        return false;
+    };
+    // A generated rewrite may append a meta-instruction after a legitimate first
+    // sentence. Scan every sentence, not only the opening one. A sentence that
+    // already appears in the user's own draft is their instruction, not a model
+    // instruction about the prompt.
+    std::size_t start = 0;
+    while (start < output.size()) {
+        std::size_t end = start;
+        while (end < output.size() && output[end] != '.' && output[end] != '!' &&
+               output[end] != '?') {
+            ++end;
+        }
+        std::string_view sentence(output.data() + start, end - start);
+        while (!sentence.empty() &&
+               (sentence.front() == ' ' || sentence.front() == '\n' || sentence.front() == '\t')) {
+            sentence.remove_prefix(1);
+        }
+        if (startsWithMetaVerb(sentence) && hasMetaMarker(sentence)) {
+            const std::string text(sentence);
+            if (source.find(text) == std::string::npos) return true;
+        }
+        if (end >= output.size()) break;
+        start = end + 1;
     }
     return false;
 }

@@ -16,6 +16,18 @@ complete-draft model audit. Recovery and auditing share the original host deadli
 and short budgets limit the number and length of questions. See the
 [contracts, verification and limits](audit/context_quality_remediation_2026-11-14.md).
 
+November 15 companion/intent update: the word popup, a substantial adaptive
+interview and an independent fresh-context comprehension review now share one
+revision-bound `IntentBrief` built from the existing analysis snapshot, confirmed
+intent, working decisions and source constraints. Raw answers and source excerpts
+remain authoritative; skip/unknown stay open, corrections supersede explicitly,
+and an automatic ORIGINAL/QUIET route no longer blocks an explicit Explore.
+Substantial rewrites cannot be applied until a current review is completed and
+every blocking/required or user-decision finding is resolved; malformed, stale or
+unavailable reviews fail closed. The review contract and the measured baseline
+are in [the delivery record](audit/companion_delivery_2026-11-15.md). This is
+Windows implementation and measurement, not macOS/IDE parity.
+
 The AST correctness baseline is sealed at `deadd39` with workspace/scope epochs,
 failed-cache invalidation, meaningful bounded renderer identity and automatic
 stale-path recovery. [Baseline verification](audit/ast_baseline_verification_2026-11-05.md)

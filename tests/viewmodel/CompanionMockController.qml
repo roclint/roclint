@@ -96,6 +96,7 @@ QtObject {
     property string comprehensionInterpretation: ""
     property var comprehensionFindings: []
     property bool canApplyReviewedOutput: false
+    property bool canApprove: true
 
     function requestComprehensionReview(expectedVersion) {
         record("requestReview", { version: expectedVersion });

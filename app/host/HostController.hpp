@@ -1094,7 +1094,7 @@ private:
 
     [[nodiscard]] bridge::GraniteTransport currentTransport(const std::string& outputSchema, const PipelineTicket* ticket = nullptr,
         const QString& operation = {}, const QString& prompt = {}, const QString& intentId = {}, const QString& profileId = {},
-        std::shared_ptr<std::atomic_bool> cancellation = {}) const;
+        std::shared_ptr<std::atomic_bool> cancellation = {}, const QString& surface = {}) const;
     int analysisGroupBudgetMs() const;
     void prepareNativeModel();
     void initializeResidencyPolicy();
@@ -1295,6 +1295,9 @@ private:
     std::string m_reviewReturnedFindingId{};
     quint64 m_reviewSerial{0};
     ComprehensionReviewHandler m_reviewHandler;
+    // The production reviewer is one bounded native request. Keep its cancellation
+    // token so a stale proposal/workspace/revision can stop obsolete queued work.
+    std::shared_ptr<std::atomic_bool> m_reviewCancellation;
 
     struct StorageCommand { quint64 id; quint64 editSerial; QString name; std::function<AsyncTask<core::Status>()> operation; bool modelCompletion{false}; };
     struct DraftBatch { core::RevisionState next; quint64 expectedVersion; std::vector<std::pair<quint64, quint64>> requests; };

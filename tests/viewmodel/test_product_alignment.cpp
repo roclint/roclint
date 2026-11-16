@@ -705,6 +705,38 @@ void testComprehensionReviewStatesAndApplyGate() {
     assertNoBindingFailures(warnings);
 }
 
+void testCompanionInterviewBindsRealController() {
+    // The production QML binds the real HostController, not the test double.
+    // This is a small real-controller smoke test for the new intent surface.
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    std::atomic<int> calls{0};
+    prepare(c, calls);
+    QQmlApplicationEngine engine;
+    QStringList warnings;
+    engine.rootContext()->setContextProperty(QStringLiteral("hostController"), &c);
+    ROCLINT_CHECK(c.waitForCommandForTesting(
+        c.analyzePrompt(QStringLiteral("Refactor the parser so it runs faster."), c.stateVersion())));
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    c.openInterviewFromCompanion(c.stateVersion());
+    for (int i = 0; i < 400 && c.interviewQuestion().isEmpty(); ++i) QTest::qWait(10);
+    ROCLINT_CHECK(c.isInterviewActive());
+    ROCLINT_CHECK(c.interviewQuestion().contains(QStringLiteral("Which kind of speed matters?")));
+    auto* window = createCompanionHarness(engine, QStringLiteral("CompanionInterview"), 780, 880, &warnings);
+    auto* question = window->findChild<QObject*>(QStringLiteral("interviewQuestionLabel"));
+    ROCLINT_CHECK(question != nullptr);
+    ROCLINT_CHECK(question->property("text").toString().contains(
+        QStringLiteral("Which kind of speed matters?")));
+    // Repeater delegates may be parented only in the visual item tree.
+    ROCLINT_CHECK(findVisual(window->contentItem(), QStringLiteral("interviewChoice_0")) != nullptr);
+    savePreview(window, QStringLiteral("companion_interview_real_controller.png"));
+    assertNoBindingFailures(warnings);
+    window->close();
+    window->deleteLater();
+    std::cout << "  [PASS] Real HostController binds the adaptive interview QML.\n";
+}
+
 void testCompanionContractGuardsPreContractHost() {
     // A host with only the baseline word surface must not bind missing fields.
     {
@@ -747,8 +779,9 @@ void testCompanionContractGuardsPreContractHost() {
         assertNoBindingFailures(warnings);
     }
 
-    // The real baseline HostController has the same shape. Loading the popup
-    // against it proves the guarded bindings against actual meta-properties.
+    // The integrated HostController now exposes the full v1 contract. The
+    // word-only mock above still proves the guarded pre-contract fallback; here
+    // the real host must light up both new surfaces and bind without warnings.
     auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
     bridge->accessValue = AccessibilityAccess::Granted;
     HostController controller(QStringLiteral(":memory:"), std::move(bridge));
@@ -768,8 +801,8 @@ void testCompanionContractGuardsPreContractHost() {
     ROCLINT_CHECK(engine.rootObjects().size() == 1);
     auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
     ROCLINT_CHECK(window != nullptr);
-    ROCLINT_CHECK(!window->property("contractInterviewAvailable").toBool());
-    ROCLINT_CHECK(!window->property("contractReviewAvailable").toBool());
+    ROCLINT_CHECK(window->property("contractInterviewAvailable").toBool());
+    ROCLINT_CHECK(window->property("contractReviewAvailable").toBool());
     assertNoBindingFailures(warnings);
 }
 
@@ -2775,6 +2808,7 @@ int main(int argc, char* argv[]) {
         run("testCompanionWordSurfaceCompactAndActionable", testCompanionWordSurfaceCompactAndActionable);
         run("testCompanionInterviewContextCorrectionsAndBusy", testCompanionInterviewContextCorrectionsAndBusy);
         run("testComprehensionReviewStatesAndApplyGate", testComprehensionReviewStatesAndApplyGate);
+        run("testCompanionInterviewBindsRealController", testCompanionInterviewBindsRealController);
         run("testCompanionContractGuardsPreContractHost", testCompanionContractGuardsPreContractHost);
         ROCLINT_CHECK(!QTest::currentTestFailed());
         return 0;
@@ -2798,6 +2832,7 @@ int main(int argc, char* argv[]) {
     run("testCompanionWordSurfaceCompactAndActionable", testCompanionWordSurfaceCompactAndActionable);
     run("testCompanionInterviewContextCorrectionsAndBusy", testCompanionInterviewContextCorrectionsAndBusy);
     run("testComprehensionReviewStatesAndApplyGate", testComprehensionReviewStatesAndApplyGate);
+    run("testCompanionInterviewBindsRealController", testCompanionInterviewBindsRealController);
     run("testCompanionContractGuardsPreContractHost", testCompanionContractGuardsPreContractHost);
     run("testReviewAcknowledgementStorageFailure", testReviewAcknowledgementStorageFailure);
     run("testOverBudgetAssumptionsRemainVisibleAndUnconfirmed", testOverBudgetAssumptionsRemainVisibleAndUnconfirmed);

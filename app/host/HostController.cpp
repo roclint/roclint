@@ -1173,7 +1173,7 @@ int HostController::analysisGroupBudgetMs() const {
 
 bridge::GraniteTransport HostController::currentTransport(const std::string& outputSchema, const PipelineTicket* ticket,
     const QString& operation, const QString& prompt, const QString& intentId, const QString& profileId,
-    std::shared_ptr<std::atomic_bool> cancellation) const {
+    std::shared_ptr<std::atomic_bool> cancellation, const QString& surface) const {
 #ifdef ROCLINT_ENABLE_TEST_MOCKS
     if (m_transportOverride) {
         return m_transportOverride;
@@ -1183,6 +1183,7 @@ bridge::GraniteTransport HostController::currentTransport(const std::string& out
         if (!ticket || !m_native->isReady()) return {};
         NativeGraniteRuntime::RequestContext context{qs(ticket->analysisGroup ? ticket->analysisGroup->id : ticket->attemptId), qs(ticket->attemptId), qs(ticket->sessionId),
             qs(ticket->revisionId), ticket->stateVersion, prompt, intentId, profileId, std::move(cancellation), m_thinkingEnabled};
+        context.surface = surface;
         if (ticket->analysisGroup && !ticket->analysisGroup->deadline.isForever())
             context.deadline = std::chrono::steady_clock::now() +
                 std::chrono::milliseconds(std::max<qint64>(0, ticket->analysisGroup->deadline.remainingTime()));
@@ -1451,7 +1452,9 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
         ? 1
         : (ticket.analysisGroup->deadline.isForever() ||
            ticket.analysisGroup->deadline.remainingTime() > 60000 ? 2 : 1);
-    const auto transport = currentTransport(bridge::discoveryResponseSchema(m_revisionState->currentRevision().text(), maximumQuestions), &ticket, QStringLiteral("granite_analyze"), qs(m_revisionState->currentRevision().text()));
+    const auto transport = currentTransport(bridge::discoveryResponseSchema(m_revisionState->currentRevision().text(), maximumQuestions), &ticket,
+        QStringLiteral("granite_analyze"), qs(m_revisionState->currentRevision().text()), {}, {}, {},
+        m_interviewActive ? QStringLiteral("interview") : QString());
     if (runtime != bridge::GraniteRuntimeState::Ready || !transport) {
         std::string reason;
         if (!transport) {
@@ -2827,7 +2830,7 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
         request.rewriteProfileId = profile->id;
         request.proposalEditGeneration = ticket.proposalEditGeneration + 1;
         const auto transport = currentTransport(bridge::rewriteResponseSchema(), &ticket, QStringLiteral("granite_rewrite"),
-            qs(request.originalText), qs(request.confirmedIntent.id), m_rewriteProfile);
+            qs(request.originalText), qs(request.confirmedIntent.id), m_rewriteProfile, {}, QStringLiteral("rewrite"));
         if (!transport) {
             completeAttempt(ticket, storage::AttemptStatus::Failed, "Native rewrite transport is unavailable");
             co_return makeError(ErrorCode::ProviderUnavailable, "The local rewrite runtime is not ready.");
@@ -2838,7 +2841,7 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
         emit modelEngineStatusChanged();
 
         const auto auditTransport = currentTransport(bridge::goldfishAuditResponseSchema(), &ticket, QStringLiteral("granite_rewrite"),
-            qs(request.originalText), qs(request.confirmedIntent.id), m_rewriteProfile);
+            qs(request.originalText), qs(request.confirmedIntent.id), m_rewriteProfile, {}, QStringLiteral("rewrite"));
 
         struct RewriteExecutionResult {
             core::Result<rewrite::RewriteProposal> proposal;
@@ -3749,9 +3752,11 @@ void HostController::requestWordRefinement(const ObservedField& field, int start
     auto schemas = core::json::Value::array(); for (auto& branch : branches) schemas.push(std::move(branch));
     wordSchema.set("oneOf", std::move(schemas));
     const auto transport = currentTransport(core::json::serialize(wordSchema), &ticket,
-                                            QStringLiteral("granite_word_refinement"), field.text, {}, {}, cancellation);
+                                            QStringLiteral("granite_word_refinement"), field.text, {}, {}, cancellation,
+                                            QStringLiteral("word"));
     const auto wordAuditTransport = currentTransport(bridge::wordRefinementAuditResponseSchema(), &ticket,
-                                            QStringLiteral("granite_word_refinement"), field.text, {}, {}, cancellation);
+                                            QStringLiteral("granite_word_refinement"), field.text, {}, {}, cancellation,
+                                            QStringLiteral("word"));
     if (!transport) {
         setAmbientStatus(QStringLiteral("Inline suggestions need a loaded local model. Analyze in the companion instead."));
         return;
@@ -4364,6 +4369,10 @@ void HostController::requestInterviewFollowUp() {
     PipelineTicket ticket = makeTicket();
     ticket.analysisGroup = std::make_shared<AnalysisGroup>(analysisGroupBudgetMs());
     ticket.analysisGroup->id = newOpaqueId("interview_grp_");
+    // This follow-up is a foreground interview turn, not a persisted rewrite attempt.
+    // The native helper still requires a stable request identity for traceability and
+    // for the frozen cancellation/deadline envelope.
+    ticket.attemptId = newOpaqueId("att_interview_");
     const auto deadline = ticket.analysisGroup->deadline;
     const auto revisionText = m_revisionState->currentRevision().text();
 
@@ -4379,7 +4388,8 @@ void HostController::requestInterviewFollowUp() {
     request.settledDecisions = std::move(settled);
     request.openChoices = std::move(open);
     const auto transport = currentTransport(bridge::discoveryResponseSchema(revisionText, 1), &ticket,
-                                            QStringLiteral("granite_interview"), qs(revisionText));
+                                            QStringLiteral("granite_analyze"), qs(revisionText), {}, {}, {},
+                                            QStringLiteral("interview"));
     if (!transport) {
         setInterviewFeedback(QStringLiteral("The local model is not available for a follow-up question."));
         return;
@@ -4793,13 +4803,6 @@ AsyncTask<core::Status> HostController::submitInterviewResponseOperation(QString
     PipelineTicket ticket = makeTicket();
     ticket.analysisGroup = std::make_shared<AnalysisGroup>(analysisGroupBudgetMs());
     ticket.analysisGroup->id = newOpaqueId("interview_check_");
-    const auto transport = currentTransport(bridge::clarificationCheckResponseSchema(), &ticket,
-                                            QStringLiteral("granite_interview"), qs(m_revisionState->currentRevision().text()));
-    if (!transport) {
-        m_interviewBusy = false;
-        setInterviewFeedback(QStringLiteral("The local model is not available to check this answer."));
-        co_return makeError(core::ErrorCode::ProviderUnavailable, "Interview answer check unavailable");
-    }
     bridge::ClarificationCheckRequest request;
     request.prompt = m_revisionState->currentRevision().text();
     request.question = record->question;
@@ -4819,6 +4822,17 @@ AsyncTask<core::Status> HostController::submitInterviewResponseOperation(QString
         m_interviewBusy = false;
         setInterviewFeedback(plainError(status.error()));
         co_return status;
+    }
+    // Build the native transport only after beginAttempt assigns the authoritative
+    // attempt identity. The helper rejects a context with an empty attempt ID.
+    const auto transport = currentTransport(bridge::clarificationCheckResponseSchema(), &ticket,
+                                            QStringLiteral("granite_analyze"), qs(m_revisionState->currentRevision().text()),
+                                            {}, {}, {}, QStringLiteral("interview"));
+    if (!transport) {
+        co_await completeAttempt(ticket, storage::AttemptStatus::Failed, "Interview answer check transport unavailable");
+        m_interviewBusy = false;
+        setInterviewFeedback(QStringLiteral("The local model is not available to check this answer. Your text is kept."));
+        co_return makeError(core::ErrorCode::ProviderUnavailable, "Interview answer check unavailable");
     }
     // Bound the visible wait to this turn's own deadline. The runtime transport has
     // its own timeout; this timer prevents a stuck injected transport from leaving
@@ -5119,15 +5133,21 @@ QString HostController::comprehensionReviewState() const {
 }
 
 QString HostController::comprehensionInterpretation() const {
-    // Display-only: the reviewer's inference is never authoritative.
-    if (m_reviewState == ReviewState::NotRun || m_reviewState == ReviewState::Running) return QString();
+    // Display-only: the reviewer's inference is never authoritative. A stale or
+    // failed review belongs to another proposal/revision; do not show its text as
+    // if it described the current rewrite.
+    if (m_reviewState != ReviewState::Ready || !reviewBindingMatchesCurrent()) return QString();
     return boundedText(m_reviewResult.interpretedOutcome, 1200);
 }
 
 QVariantList HostController::comprehensionFindings() const {
     QVariantList list;
-    if (m_reviewState == ReviewState::NotRun) return list;
+    if (m_reviewState != ReviewState::Ready || !reviewBindingMatchesCurrent()) return list;
     for (const auto& finding : m_reviewResult.findings) {
+        // Acknowledged findings are resolved in this review. Keep them in the host
+        // result for provenance/history, but do not keep asking the user to resolve
+        // an item that no longer blocks applicability.
+        if (findingIsResolved(finding.id)) continue;
         QVariantMap map;
         map[QStringLiteral("id")] = qs(finding.id);
         map[QStringLiteral("severity")] = QString::fromUtf8(reviewSeverityName(finding.severity));
@@ -5145,6 +5165,10 @@ QVariantList HostController::comprehensionFindings() const {
 void HostController::markComprehensionReviewStale() {
     if (m_reviewState == ReviewState::NotRun) return;
     ++m_reviewSerial;
+    if (m_reviewCancellation) {
+        m_reviewCancellation->store(true);
+        m_reviewCancellation.reset();
+    }
     m_reviewState = ReviewState::Stale;
     m_findingResolutions.clear();
     m_reviewReturnedFindingId.clear();
@@ -5181,17 +5205,6 @@ AsyncTask<core::Status> HostController::requestComprehensionReviewOperation(quin
     emit comprehensionReviewChanged();
     emit rewriteProposalChanged();
 
-    if (!m_reviewHandler) {
-        // Not wired: fail closed. A missing reviewer never authorizes apply.
-        m_reviewState = ReviewState::Failed;
-        m_reviewResult.status = bridge::ComprehensionReviewStatus::Unavailable;
-        m_reviewResult.readyForTask = false;
-        m_reviewResult.rationale = "The independent reviewer is not configured.";
-        emit comprehensionReviewChanged();
-        emit rewriteProposalChanged();
-        co_return Status::success();
-    }
-
     bridge::ComprehensionReviewRequest request;
     request.candidatePrompt = m_currentProposal->rewrittenText;
     request.originalPrompt = m_currentProposal->originalText;
@@ -5208,7 +5221,8 @@ AsyncTask<core::Status> HostController::requestComprehensionReviewOperation(quin
         if (item.sourceExcerpt.empty()) continue;
         if (item.kind != core::intent::BriefItemKind::SourceRequirement &&
             item.kind != core::intent::BriefItemKind::Prohibition &&
-            item.kind != core::intent::BriefItemKind::Preference) {
+            item.kind != core::intent::BriefItemKind::Preference &&
+            item.kind != core::intent::BriefItemKind::Evidence) {
             continue;
         }
         const auto excerpt = item.sourceExcerpt.substr(0, 512);
@@ -5221,28 +5235,55 @@ AsyncTask<core::Status> HostController::requestComprehensionReviewOperation(quin
     request.sessionId = m_reviewBinding.sessionId;
     request.revisionId = m_reviewBinding.revisionId;
 
-    // PRODUCTION WIRING POINT (coordinator/D05): the injected review seam has a
-    // fail-closed default. At integration, before this point, assign
-    //     auto transport = currentTransport(<fresh review schema>, &ticket,
-    //         QStringLiteral("granite_comprehension_review"), qs(request.originalPrompt));
-    //     setComprehensionReviewHandler([transport](const bridge::ComprehensionReviewRequest& req) {
-    //         bridge::GraniteGoldfishAdapter reviewer;
-    //         return reviewer.reviewComprehension(req, transport);
-    //     });
-    // using the coordinator-owned review schema/transport. No Goldfish file is
-    // edited here; the reviewer is a fresh-context call with no drafting history.
+    // Production reviewer. The injected seam wins when a test supplies one; the
+    // production path builds exactly one fresh-context native request bound to a
+    // dedicated analysis group and cancellation token. The reviewer sees only the
+    // candidate/original/decisions/constraints/evidence assembled above. A missing
+    // or not-ready runtime fails closed and never authorizes apply.
+    ComprehensionReviewHandler handler = m_reviewHandler;
+    std::shared_ptr<std::atomic_bool> reviewCancellation;
+    if (!handler) {
+        PipelineTicket reviewTicket = makeTicket();
+        reviewTicket.analysisGroup = std::make_shared<AnalysisGroup>(45000);
+        reviewTicket.analysisGroup->id = newOpaqueId("review_grp_");
+        reviewTicket.attemptId = newOpaqueId("att_review_");
+        reviewTicket.reviewTrigger = analysis::ReviewTrigger::ExplicitReview;
+        reviewCancellation = std::make_shared<std::atomic_bool>(false);
+        const auto transport = currentTransport(bridge::comprehensionReviewResponseSchema(), &reviewTicket,
+            QStringLiteral("granite_analyze"), qs(request.originalPrompt),
+            qs(m_confirmedIntent ? m_confirmedIntent->id : std::string()), m_rewriteProfile,
+            reviewCancellation, QStringLiteral("review"));
+        if (!transport) {
+            m_reviewState = ReviewState::Failed;
+            m_reviewResult.status = bridge::ComprehensionReviewStatus::Unavailable;
+            m_reviewResult.readyForTask = false;
+            m_reviewResult.rationale =
+                "The independent reviewer could not start: the local model is not ready.";
+            emit comprehensionReviewChanged();
+            emit rewriteProposalChanged();
+            co_return Status::success();
+        }
+        m_reviewCancellation = reviewCancellation;
+        handler = [transport](const bridge::ComprehensionReviewRequest& req) {
+            bridge::GraniteGoldfishAdapter reviewer;
+            return reviewer.reviewComprehension(req, transport);
+        };
+    }
     const quint64 serial = m_reviewSerial;
     const auto bindingForWorker = m_reviewBinding;
-    const auto handler = m_reviewHandler;
+    const bool nativeWork = nativeGraniteSelected() && !usesTransportOverride();
     ++m_inFlight;
+    if (nativeWork) ++m_nativeSemanticInFlight;
     auto* watcher = new QFutureWatcher<bridge::ComprehensionReviewResult>(this);
     connect(watcher, &QFutureWatcherBase::finished, this,
-        [this, watcher, serial, bindingForWorker]() {
+        [this, watcher, serial, bindingForWorker, nativeWork]() {
             const auto result = watcher->result();
             watcher->deleteLater();
             --m_inFlight;
+            if (nativeWork) --m_nativeSemanticInFlight;
             finishQuitWhenRuntimesStopped();
             if (serial != m_reviewSerial) return;
+            m_reviewCancellation.reset();
             const auto current = currentReviewBinding();
             const bool bound = current.has_value() &&
                                bindingForWorker.sessionId == current->sessionId &&

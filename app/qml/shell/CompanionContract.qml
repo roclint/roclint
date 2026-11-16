@@ -133,6 +133,9 @@ QtObject {
                                                              ? host.comprehensionInterpretation : ""
     readonly property var comprehensionFindings: reviewSurfaceAvailable ? host.comprehensionFindings : []
     readonly property bool canApplyReviewedOutput: reviewSurfaceAvailable && host.canApplyReviewedOutput
+    // Approval also requires the existing proposal acknowledgments/approval hash.
+    // A completed reread alone must not bypass a pending audit item.
+    readonly property bool canApprove: present && has("canApprove") ? host.canApprove : false
     readonly property bool reviewReady: reviewSurfaceAvailable && comprehensionState === "ready"
     readonly property bool reviewStale: reviewSurfaceAvailable && comprehensionState === "stale"
     readonly property bool reviewRunning: reviewSurfaceAvailable && comprehensionState === "running"

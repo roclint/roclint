@@ -28,7 +28,8 @@ FocusScope {
     readonly property int decisionCount: contract.unresolvedDecisionCount
     readonly property int findingCount: contract.comprehensionFindings.length
     readonly property bool applyAllowed: root.proposalAvailable && contract.reviewSurfaceAvailable &&
-                                         root.reviewState === "ready" && contract.canApplyReviewedOutput
+                                         root.reviewState === "ready" && contract.canApplyReviewedOutput &&
+                                         contract.canApprove
 
     implicitWidth: column.implicitWidth + 24
     implicitHeight: column.implicitHeight + 24
@@ -119,6 +120,9 @@ FocusScope {
             if (contract.blockingFindingCount > 0)
                 return qsTr("A blocking finding must be resolved before applying.");
             return qsTr("Review is complete, but the host still locks apply. Try rereading the current rewrite.");
+        }
+        if (!contract.canApprove) {
+            return qsTr("Acknowledge the highlighted rewrite item(s) before applying.");
         }
         return "";
     }
@@ -445,8 +449,10 @@ FocusScope {
                                 }
                                 TinyButton {
                                     objectName: "comprehensionFindingAcknowledge_" + index
-                                    // A blocking finding must be decided, not acknowledged away.
-                                    visible: findingRow.severity !== "blocking"
+                                    // Blocking or user-decision findings must be resolved
+                                    // explicitly; they cannot be acknowledged into applicability.
+                                    visible: findingRow.severity !== "blocking" &&
+                                             !findingRow.needsDecision
                                     label: qsTr("Acknowledge")
                                     quiet: true
                                     active: contract.reviewInvokable
@@ -463,8 +469,10 @@ FocusScope {
                             }
                             Text {
                                 Layout.fillWidth: true
-                                visible: findingRow.severity === "blocking"
-                                text: qsTr("Blocking findings cannot be acknowledged into applicability; choose a resolution.")
+                                visible: findingRow.severity === "blocking" || findingRow.needsDecision
+                                text: findingRow.severity === "blocking"
+                                      ? qsTr("Blocking findings cannot be acknowledged into applicability; choose a resolution.")
+                                      : qsTr("This finding needs your decision; return it to the interview or keep the original.")
                                 wrapMode: Text.WordWrap
                                 font.family: root.sansFont
                                 font.pixelSize: 9
