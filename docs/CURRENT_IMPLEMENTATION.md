@@ -28,6 +28,11 @@ unavailable reviews fail closed. The review contract and the measured baseline
 are in [the delivery record](audit/companion_delivery_2026-11-15.md). This is
 Windows implementation and measurement, not macOS/IDE parity.
 
+November 15 guard follow-up: removed numeric false-conflict suppression and the
+verb-based meta-instruction veto, added exact quantity/unit comparison and UTF-8-safe
+source-clause clipping. Independent semantic review remains required for rewrite
+approval. See [the fixes, regression coverage and limits](audit/companion_guard_remediation_2026-11-15.md).
+
 The AST correctness baseline is sealed at `deadd39` with workspace/scope epochs,
 failed-cache invalidation, meaningful bounded renderer identity and automatic
 stale-path recovery. [Baseline verification](audit/ast_baseline_verification_2026-11-05.md)

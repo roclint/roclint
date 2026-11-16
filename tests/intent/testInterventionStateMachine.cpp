@@ -501,51 +501,58 @@ void testFollowUpDecisionsAndSupersessionStayInTheBrief() {
     ROCLINT_CHECK(sawSuperseded);
 }
 
-void testSettledRequirementPolicyKeepsExactValues() {
-    analysis::PromptTriage triage;
-    triage.categoryScores = {0.10, 0.12, 0.20, 0.9999};
-    triage.primaryCategory = analysis::PromptCategory::RuleConflict;
-    const std::string prompt =
-        "Respond to 95% of requests within 500 ms, and keep the schema unchanged.";
-    ROCLINT_CHECK(hasSettledExactValues(prompt));
+void testExactQuantityBoundariesAndConversions() {
+    const std::string prompt = "Respond to 95% of requests within 500 ms.";
     const auto tokens = exactRequirementTokens(prompt);
     ROCLINT_CHECK(tokens.size() == 2);
-    ROCLINT_CHECK(std::find(tokens.begin(), tokens.end(), "95%") != tokens.end());
-    ROCLINT_CHECK(std::find(tokens.begin(), tokens.end(), "500 ms") != tokens.end());
+    ROCLINT_CHECK(exactRequirementTokens("Use 1990s and 1960s references.").empty());
+    ROCLINT_CHECK(exactRequirementTokens("A v500ms identifier and a 500ms_suffix.").empty());
 
-    // A lone RULE_CONFLICT head with exact values and no deterministic conflict
-    // keeps the original rather than asking the user to redefine them.
-    ROCLINT_CHECK(shouldKeepOriginalForRuleConflictOnly(triage, prompt, false));
-    // A deterministic explicit conflict still authorizes the question.
-    ROCLINT_CHECK(!shouldKeepOriginalForRuleConflictOnly(triage, prompt, true));
-    // Another head at or above its threshold is real ambiguity evidence.
-    auto action = triage;
-    action.categoryScores[0] = 0.85;
-    ROCLINT_CHECK(!shouldKeepOriginalForRuleConflictOnly(action, prompt, false));
-    // No exact values means the policy does not apply.
-    ROCLINT_CHECK(!shouldKeepOriginalForRuleConflictOnly(triage, "Make the mood calmer.", false));
-    // Decades are word suffixes, not time units. "1990s" must not be treated as an
-    // exact numeric requirement or trigger the settled-value policy.
-    const std::string decades = "Use 1990s and 1960s references for the visual mood.";
-    ROCLINT_CHECK(exactRequirementTokens(decades).empty());
-    ROCLINT_CHECK(!hasSettledExactValues(decades));
-    ROCLINT_CHECK(!shouldKeepOriginalForRuleConflictOnly(
-        triage, "Use 1990s references for the visual mood.", false));
-    const auto msTokens = exactRequirementTokens("Respond within 500 milliseconds.");
-    ROCLINT_CHECK(msTokens.size() == 1 && msTokens.front() == "500 milliseconds");
+    // Whole parsed quantities, never numeric substrings or floating-point epsilon.
+    ROCLINT_CHECK(droppedExactRequirements(prompt, "Use 1500 ms for 195% of requests.").size() == 2);
+    for (const auto& candidate : {"1500 ms", "-500 ms", "500ms_suffix", "v500ms",
+                                 "0.5000000001 seconds", "500 KB"}) {
+        ROCLINT_CHECK(droppedExactRequirements("Use 500 ms.", candidate).size() == 1);
+    }
+    for (const auto& candidate : {"500ms", "500 milliseconds", "0.5 seconds", ".5 secs",
+                                 "5e-1 seconds", "+0.500 second", "500.000 ms"}) {
+        ROCLINT_CHECK(droppedExactRequirements("Use 500 ms.", candidate).empty());
+    }
+    ROCLINT_CHECK(droppedExactRequirements(prompt, "Use 0.5 seconds for 95.0% of requests.").empty());
+    ROCLINT_CHECK(droppedExactRequirements("Use -500 ms.", "Use 500 ms.").size() == 1);
+    ROCLINT_CHECK(droppedExactRequirements("Use 1 MB.", "Use 1000 KB.").empty());
+    ROCLINT_CHECK(droppedExactRequirements("Use 1 MiB.", "Use 1024 KiB.").empty());
+    ROCLINT_CHECK(droppedExactRequirements("Use 1 MB.", "Use 0.001 GB.").empty());
+    ROCLINT_CHECK(droppedExactRequirements("Use 1 MB.", "Use 1 MiB.").size() == 1);
+    ROCLINT_CHECK(droppedExactRequirements("Use 9007199254740993 ms.",
+                                          "Use 9007199254740992 ms.").size() == 1);
+    ROCLINT_CHECK(droppedExactRequirements("Use 1e999999999999 ms.",
+                                          "Use 1e999999999999 ms.").empty());
+    ROCLINT_CHECK(droppedExactRequirements("Use 1e999999999999 ms.",
+                                          "Use 2e999999999999 ms.").size() == 1);
+}
 
-    // The rewrite guard catches dropped values while accepting "500ms" for "500 ms".
-    const auto kept = droppedExactRequirements(prompt, "Respond within 500ms to 95% of requests.");
-    ROCLINT_CHECK(kept.empty());
-    const auto dropped = droppedExactRequirements(prompt, "Respond quickly to requests and keep the schema.");
-    ROCLINT_CHECK(dropped.size() == 2);
-
-    ROCLINT_CHECK(looksLikeMetaInstruction("Make the mood calmer.",
-                                           "Determine the specific mood categories for the user."));
-    ROCLINT_CHECK(!looksLikeMetaInstruction("Determine the specific tone.",
-                                            "Determine the specific tone with warmer words."));
-    ROCLINT_CHECK(!looksLikeMetaInstruction("Make the mood calmer.",
-                                            "Use calmer, warmer language throughout."));
+void testLongUnicodeClauseClippingPreservesSourceSpans() {
+    for (const auto& codepoint : {std::string("\xC3\xA9"), std::string("\xE2\x82\xAC"),
+                                  std::string("\xF0\x9F\x8C\xB1")}) {
+        for (std::size_t prefix = 509; prefix <= 513; ++prefix) {
+            const std::string text = "Keep the title; " + std::string(prefix, 'x') +
+                                     codepoint + " and preserve the full heading";
+            const auto clauses = extractSourceClauses(text);
+            ROCLINT_CHECK(clauses.size() == 2);
+            const auto& clipped = clauses.back();
+            ROCLINT_CHECK(clipped.truncated);
+            ROCLINT_CHECK(!clipped.excerpt.empty() && clipped.excerpt.size() <= 512);
+            ROCLINT_CHECK(analysis::isValidSpan(text, {clipped.startByte, clipped.endByte}));
+            ROCLINT_CHECK(text.substr(clipped.startByte, clipped.endByte - clipped.startByte) ==
+                          clipped.excerpt);
+            ROCLINT_CHECK(clipped.endByte - clipped.startByte == clipped.excerpt.size());
+        }
+    }
+    const std::string boundary = std::string(509, 'x') + "\xE2\x82\xAC";
+    const auto complete = extractSourceClauses(boundary);
+    ROCLINT_CHECK(complete.size() == 1 && !complete.front().truncated);
+    ROCLINT_CHECK(complete.front().excerpt == boundary && complete.front().endByte == 512);
 }
 
 } // namespace
@@ -583,8 +590,8 @@ int main() {
     run("testUnicodeSourceExcerptsRemainVerbatim", testUnicodeSourceExcerptsRemainVerbatim);
     run("testFollowUpDecisionsAndSupersessionStayInTheBrief",
         testFollowUpDecisionsAndSupersessionStayInTheBrief);
-    run("testSettledRequirementPolicyKeepsExactValues",
-        testSettledRequirementPolicyKeepsExactValues);
+    run("testExactQuantityBoundariesAndConversions", testExactQuantityBoundariesAndConversions);
+    run("testLongUnicodeClauseClippingPreservesSourceSpans", testLongUnicodeClauseClippingPreservesSourceSpans);
     std::cout << "[Test InterventionStateMachine] All tests PASSED.\n";
     return 0;
 }

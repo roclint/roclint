@@ -144,6 +144,7 @@ struct SourceClause {
     std::size_t endByte{0};
     bool prohibition{false};
     bool preference{false};
+    bool truncated{false}; // excerpt ends early; the original revision remains authoritative
 
     bool operator==(const SourceClause&) const = default;
 };
@@ -278,7 +279,12 @@ namespace detail {
         while (rawStart < rawEnd && (text[rawStart] == ' ' || text[rawStart] == '\t')) ++rawStart;
         while (rawEnd > rawStart && (text[rawEnd - 1] == ' ' || text[rawEnd - 1] == '\t')) --rawEnd;
         if (rawEnd <= rawStart || rawEnd - rawStart < 3) return;
-        if (rawEnd - rawStart > 512) rawEnd = rawStart + 512;
+        const bool truncated = rawEnd - rawStart > 512;
+        if (truncated) {
+            rawEnd = rawStart + 512;
+            while (rawEnd > rawStart && !analysis::isUtf8Boundary(text, rawEnd)) --rawEnd;
+        }
+        if (rawEnd <= rawStart) return;
         const std::string excerpt(text.substr(rawStart, rawEnd - rawStart));
         const auto lower = detail::lowerAscii(excerpt);
         const bool prohibition = detail::hasMarker(lower, {
@@ -286,7 +292,7 @@ namespace detail {
             "avoid", "no ", "not ", "leave untouched", "keeping unchanged", "keep intact"
         });
         const bool preference = !prohibition && detail::isPreferenceWording(lower);
-        clauses.push_back(SourceClause{excerpt, rawStart, rawEnd, prohibition, preference});
+        clauses.push_back(SourceClause{excerpt, rawStart, rawEnd, prohibition, preference, truncated});
     };
 
     for (std::size_t i = 0; i < text.size(); ++i) {

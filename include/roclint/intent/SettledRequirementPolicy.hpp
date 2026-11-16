@@ -1,19 +1,12 @@
 #pragma once
 
-// Deterministic policy for already-settled requirements.
-//
-// The product requirement is narrow and deliberate: an S1 RULE_CONFLICT signal
-// alone is not evidence of a real contradiction. When the user's text already
-// states exact values or units and the deterministic extractor found no explicit
-// conflict, the automatic route must keep the original instead of asking the user
-// to redefine a value they already supplied. This is not a quality heuristic and
-// never invents an answer; the explicit interview/review path remains available.
-
-#include "roclint/analysis/PromptTriage.hpp"
-
+// Presence checks for explicit quantities in rewritten prompts. These checks do
+// not establish semantic equivalence of complete requirements or authorize a
+// classifier bypass: a quantity in the draft is not evidence of no conflict.
 #include <algorithm>
+#include <charconv>
 #include <cctype>
-#include <cstddef>
+#include <cstdint>
 #include <regex>
 #include <string>
 #include <string_view>
@@ -21,142 +14,128 @@
 
 namespace roclint::core::intent {
 
-inline constexpr const char* kSettledRequirementPolicyVersion = "settled_requirement.v1";
+inline constexpr const char* kSettledRequirementPolicyVersion = "settled_requirement.v2";
 
-// Numeric values with a unit or percent. The token is kept verbatim so a rewrite
-// that silently drops or changes it can be refused.
-[[nodiscard]] inline std::vector<std::string> exactRequirementTokens(std::string_view text) {
+namespace quantity_detail {
+struct Quantity {
+    std::string source;
+    std::string key;
+};
+
+[[nodiscard]] inline std::string lower(std::string value) {
+    for (char& c : value) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return value;
+}
+
+// Exact decimal arithmetic: digits * 10^power in seconds, bytes or percent.
+// No floating-point rounding or tolerance may turn a changed requirement into
+// a match. Extremely large exponents retain literal-only matching.
+[[nodiscard]] inline std::string canonical(std::string number, const std::string& unit) {
+    const auto literal = [&]() { return "literal:" + lower(number) + ":" + unit; };
+    std::int64_t power = 0;
+    auto mantissa = std::string_view(number);
+    if (const auto e = number.find_first_of("eE"); e != std::string::npos) {
+        auto exponent = std::string_view(number).substr(e + 1);
+        if (exponent.starts_with('+')) exponent.remove_prefix(1);
+        const auto parsed = std::from_chars(exponent.data(), exponent.data() + exponent.size(), power);
+        if (parsed.ec != std::errc{} || parsed.ptr != exponent.data() + exponent.size() ||
+            power < -10000 || power > 10000) return literal();
+        mantissa = mantissa.substr(0, e);
+    }
+    bool negative = mantissa.starts_with('-');
+    if (mantissa.starts_with('-') || mantissa.starts_with('+')) mantissa.remove_prefix(1);
+    if (const auto dot = mantissa.find('.'); dot != std::string_view::npos)
+        power -= static_cast<std::int64_t>(mantissa.size() - dot - 1);
+    std::string digits;
+    for (const char c : mantissa) if (c != '.') digits.push_back(c);
+
+    std::string dimension;
+    std::uint64_t factor = 1;
+    if (unit == "%") dimension = "percent";
+    else if (unit == "ms" || unit.starts_with("millisecond")) {
+        dimension = "seconds";
+        power -= 3;
+    } else if (unit.starts_with("sec")) dimension = "seconds";
+    else {
+        dimension = "bytes";
+        if (unit == "kb") factor = 1000;
+        else if (unit == "kib") factor = 1024;
+        else if (unit == "mb") factor = 1000000;
+        else if (unit == "mib") factor = 1048576;
+        else if (unit == "gb") factor = 1000000000;
+        else if (unit == "gib") factor = 1073741824;
+    }
+    std::uint64_t carry = 0;
+    for (auto it = digits.rbegin(); it != digits.rend(); ++it) {
+        const auto product = static_cast<std::uint64_t>(*it - '0') * factor + carry;
+        *it = static_cast<char>('0' + product % 10);
+        carry = product / 10;
+    }
+    while (carry > 0) {
+        digits.insert(digits.begin(), static_cast<char>('0' + carry % 10));
+        carry /= 10;
+    }
+    const auto nonzero = digits.find_first_not_of('0');
+    if (nonzero == std::string::npos) return dimension + ":0";
+    digits.erase(0, nonzero);
+    while (digits.size() > 1 && digits.back() == '0') {
+        digits.pop_back();
+        ++power;
+    }
+    return dimension + ":" + (negative ? "-" : "") + digits + "e" + std::to_string(power);
+}
+
+[[nodiscard]] inline std::vector<Quantity> parse(std::string_view text) {
     static const std::regex quantity(
-        R"(([0-9]+(?:\.[0-9]+)?\s*(?:ms\b|milliseconds?\b|seconds?\b|secs?\b|kb\b|kib\b|mb\b|mib\b|gb\b|gib\b|%)))",
+        R"(([+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)\s*(ms\b|milliseconds?\b|seconds?\b|secs?\b|kb\b|kib\b|mb\b|mib\b|gb\b|gib\b|%))",
         std::regex::icase);
     const std::string source(text);
-    std::vector<std::string> tokens;
+    std::vector<Quantity> quantities;
     for (std::sregex_iterator it(source.begin(), source.end(), quantity), end; it != end; ++it) {
-        std::string token = it->str();
-        while (!token.empty() && token.front() == ' ') token.erase(token.begin());
-        while (!token.empty() && token.back() == ' ') token.pop_back();
-        if (std::find(tokens.begin(), tokens.end(), token) == tokens.end()) {
-            tokens.push_back(std::move(token));
+        const auto begin = static_cast<std::size_t>(it->position());
+        // Do not extract a suffix of an identifier, version, or signed quantity.
+        if (begin > 0) {
+            const auto prior = static_cast<unsigned char>(source[begin - 1]);
+            if (std::isalnum(prior) != 0 || prior == '_' || prior == '.' || prior == '+' || prior == '-')
+                continue;
         }
+        const auto after = begin + static_cast<std::size_t>(it->length());
+        if (after < source.size()) {
+            const auto next = static_cast<unsigned char>(source[after]);
+            if (std::isalnum(next) != 0 || next == '_' || next == '%') continue;
+        }
+        quantities.push_back({it->str(), canonical((*it)[1].str(), lower((*it)[2].str()))});
+    }
+    return quantities;
+}
+} // namespace quantity_detail
+
+// Verbatim recognized tokens. In particular, decades such as 1990s are not time
+// units. Token extraction alone never establishes that a prompt is settled.
+[[nodiscard]] inline std::vector<std::string> exactRequirementTokens(std::string_view text) {
+    std::vector<std::string> tokens;
+    for (const auto& quantity : quantity_detail::parse(text)) {
+        if (std::find(tokens.begin(), tokens.end(), quantity.source) == tokens.end())
+            tokens.push_back(quantity.source);
     }
     return tokens;
 }
 
-[[nodiscard]] inline bool hasSettledExactValues(std::string_view text) {
-    return !exactRequirementTokens(text).empty();
-}
-
-// True only when all three conditions hold:
-//  - the automatic route classified this prompt as Clarify;
-//  - the only head at or above its threshold is RULE_CONFLICT (Action, Target and
-//    Rule are below theirs), so the routing signal is a suspicion, not evidence;
-//  - the prompt contains exact values/units and the deterministic extractor found
-//    no explicit contradiction.
-// Explicit review and any deterministic conflict bypass this policy.
-[[nodiscard]] inline bool shouldKeepOriginalForRuleConflictOnly(
-    const analysis::PromptTriage& triage,
-    std::string_view promptText,
-    bool deterministicExplicitConflict,
-    const analysis::TriagePolicy& policy = analysis::TriagePolicy::defaults()) {
-    if (deterministicExplicitConflict) return false;
-    if (!hasSettledExactValues(promptText)) return false;
-    const auto& scores = triage.categoryScores;
-    if (scores[0] >= policy.thresholds[0]) return false;
-    if (scores[1] >= policy.thresholds[1]) return false;
-    if (scores[2] >= policy.thresholds[2]) return false;
-    return scores[3] >= policy.thresholds[3];
-}
-
-// Exact tokens from the original that are absent from the candidate. Comparison is
-// whitespace-insensitive within one token (e.g. "500 ms" == "500ms").
+// Return original quantities with no exact value/dimension match in the candidate.
+// Whitespace, decimal notation, unit aliases and exact supported conversions may
+// differ. This checks presence only; semantic review still checks roles and scope.
 [[nodiscard]] inline std::vector<std::string> droppedExactRequirements(std::string_view original,
                                                                       std::string_view candidate) {
-    const auto compact = [](std::string value) {
-        value.erase(std::remove_if(value.begin(), value.end(),
-                                   [](unsigned char c) { return std::isspace(c) != 0; }),
-                    value.end());
-        for (char& c : value) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        return value;
-    };
-    const std::string compactCandidate = compact(std::string(candidate));
+    const auto candidates = quantity_detail::parse(candidate);
     std::vector<std::string> dropped;
-    for (const auto& token : exactRequirementTokens(original)) {
-        if (compactCandidate.find(compact(token)) == std::string::npos) {
-            dropped.push_back(token);
-        }
+    for (const auto& quantity : quantity_detail::parse(original)) {
+        const bool present = std::any_of(candidates.begin(), candidates.end(), [&](const auto& other) {
+            return quantity.key == other.key;
+        });
+        if (!present && std::find(dropped.begin(), dropped.end(), quantity.source) == dropped.end())
+            dropped.push_back(quantity.source);
     }
     return dropped;
-}
-
-// A rewrite must remain a prompt rather than an instruction about the prompt.
-// Conservative: only an imperative meta-verb at the start, in wording that is not
-// already the user's own opening, counts.
-[[nodiscard]] inline bool looksLikeMetaInstruction(std::string_view original, std::string_view candidate) {
-    const auto lower = [](std::string_view text) {
-        std::string result;
-        result.reserve(text.size());
-        for (const char c : text) {
-            result.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-        }
-        return result;
-    };
-    static constexpr std::string_view kVerbs[] = {
-        "determine ", "identify ", "clarify ", "ask ", "specify ", "decide ",
-        "choose ", "figure out ", "gather ", "collect ", "find out "
-    };
-    static constexpr std::string_view kMetaMarkers[] = {
-        "the specific", "the user", "the requirements", "the desired", "the context",
-        "what they", "their preferences", "the intent", "which", "you want"
-    };
-    const std::string output = lower(candidate);
-    const std::string source = lower(original);
-    const auto startsWithMetaVerb = [&](std::string_view sentence) {
-        for (const auto verb : kVerbs) {
-            if (sentence.starts_with(verb)) return true;
-        }
-        return false;
-    };
-    const auto hasMetaMarker = [&](std::string_view sentence) {
-        for (const auto marker : kMetaMarkers) {
-            if (sentence.find(marker) != std::string_view::npos) return true;
-        }
-        return false;
-    };
-    const auto sourceStartsWithMeta = [&]() {
-        for (const auto verb : kVerbs) {
-            if (source.starts_with(verb)) return true;
-        }
-        return false;
-    };
-    // A generated rewrite may append a meta-instruction after a legitimate first
-    // sentence. Scan every sentence, not only the opening one. A sentence that
-    // already appears in the user's own draft is their instruction, not a model
-    // instruction about the prompt.
-    std::size_t start = 0;
-    while (start < output.size()) {
-        std::size_t end = start;
-        while (end < output.size() && output[end] != '.' && output[end] != '!' &&
-               output[end] != '?') {
-            ++end;
-        }
-        std::string_view sentence(output.data() + start, end - start);
-        while (!sentence.empty() &&
-               (sentence.front() == ' ' || sentence.front() == '\n' || sentence.front() == '\t')) {
-            sentence.remove_prefix(1);
-        }
-        if (startsWithMetaVerb(sentence) && hasMetaMarker(sentence)) {
-            // If the user's own opening is already a meta instruction, an edit
-            // that extends that sentence is still the user's instruction.
-            const bool userOpening = start == 0 && sourceStartsWithMeta();
-            if (!userOpening) {
-                const std::string text(sentence);
-                if (source.find(text) == std::string::npos) return true;
-            }
-        }
-        if (end >= output.size()) break;
-        start = end + 1;
-    }
-    return false;
 }
 
 } // namespace roclint::core::intent

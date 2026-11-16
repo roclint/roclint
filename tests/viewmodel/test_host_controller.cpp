@@ -1,3 +1,4 @@
+#include "roclint/rewrite/StructuredEntityExtractor.hpp"
 #include "HostController.hpp"
 #include "support/check.hpp"
 #include "support/fixtures.hpp"
@@ -3041,75 +3042,93 @@ roclint::core::analysis::PromptTriage sealedRuleConflictTriage(HostController& c
     return std::move(sealed).value();
 }
 
-void testSettledValuePolicyKeepsOriginalWithoutGranite() {
-    const std::string moodPrompt = "Make the mood nicer for a small photo book.";
-    const std::string moodDiscovery = R"({"status": "options_generated",
-      "choice_groups": [{"dimension": "mood", "question": "What should nicer mean?", "material": true,
-        "alternatives": [
-          {"label": "Warmer colors", "why_material": "Changes the emotional temperature", "evidence": ["nicer"]},
-          {"label": "Softer contrast", "why_material": "Changes visual weight", "evidence": ["nicer"]}]}]})";
-    {
-        ScriptedRuntime runtime;
-        runtime.discoveryReply = kExactDiscovery;
-        HostController c(QStringLiteral(":memory:"));
-        ROCLINT_CHECK(c.waitForStorageForTesting());
-        connectRuntime(c, runtime);
-        ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(kExactPrompt, 0)));
-        ROCLINT_CHECK(c.waitForIdleForTesting(5000));
-        const auto triage = sealedRuleConflictTriage(c, kExactPrompt);
-        ROCLINT_CHECK(c.startDiscoveryWithTriageForTesting(triage) != 0);
-        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
-        ROCLINT_CHECK(c.analysisStatus() == "READY");
-        ROCLINT_CHECK(c.interventionVerdict() == "QUIET");
-        ROCLINT_CHECK(c.analysisMessage().contains(QStringLiteral("Exact values")));
-        // Granite was never called for a settled value the user already supplied.
-        ROCLINT_CHECK(runtime.requests().empty());
-    }
-    {
-        ScriptedRuntime runtime;
-        runtime.discoveryReply = moodDiscovery;
-        HostController c(QStringLiteral(":memory:"));
-        ROCLINT_CHECK(c.waitForStorageForTesting());
-        connectRuntime(c, runtime);
-        ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(QString::fromStdString(moodPrompt), 0)));
-        ROCLINT_CHECK(c.waitForIdleForTesting(5000));
-        const auto triage = sealedRuleConflictTriage(c, QString::fromStdString(moodPrompt));
-        ROCLINT_CHECK(c.startDiscoveryWithTriageForTesting(triage) != 0);
-        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
-        // No exact values: the policy does not suppress the question.
-        bool discoveryCalled = false;
-        for (const auto& request : runtime.requests()) {
-            if (request.find("granite.discovery.selective.v11") != std::string::npos) discoveryCalled = true;
-        }
-        ROCLINT_CHECK(discoveryCalled);
-        ROCLINT_CHECK(c.analysisStatus() == "READY");
-    }
-    std::cout << "  [PASS] Lone RULE_CONFLICT + exact values keeps the original without a Granite call.\n";
-}
-
-void testMetaInstructionRewriteIsNotAProposal() {
+void testNumericConflictCannotBypassDiscovery() {
+    const QString prompt = QStringLiteral(
+        "Set the timeout to exactly 500 ms. The timeout must be at least 1 second.");
+    ROCLINT_CHECK(rewrite::StructuredEntityExtractor::analyze(prompt.toStdString())
+                      .detectedExplicitConflicts.empty());
     ScriptedRuntime runtime;
-    runtime.discoveryReply = kPerformanceDiscovery;
-    runtime.rewriteText = "Determine the specific mood categories for the user.";
-    runtime.queueFollowUps({"{\"kind\":\"none\"}"});
+    runtime.discoveryReply = R"({"kind":"conflict","description":
+      "The same timeout cannot be exactly 500 ms and at least 1 second."})";
     HostController c(QStringLiteral(":memory:"));
     ROCLINT_CHECK(c.waitForStorageForTesting());
-    c.setLegacyDiscoveryForTesting(true);
     connectRuntime(c, runtime);
-    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kInterviewPrompt, 0)));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(prompt, 0)));
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    const auto triage = sealedRuleConflictTriage(c, prompt);
+    ROCLINT_CHECK(c.startDiscoveryWithTriageForTesting(triage) != 0);
     ROCLINT_CHECK(c.waitForIdleForTesting(8000));
-    openInterview(c);
-    waitForInterviewQuestion(c, QStringLiteral("What should faster mean?"));
-    answerInterview(c, QStringLiteral("Lower latency per click"));
-    c.waitForCommandForTesting(c.setRewriteProfile(QStringLiteral("GENERIC@1"), c.stateVersion()));
-    ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
-    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
-    ROCLINT_CHECK(!c.hasProposal());
-    ROCLINT_CHECK(c.proposalText().isEmpty());
-    ROCLINT_CHECK(!c.canApprove());
-    ROCLINT_CHECK(c.proposalStatus() == "VALIDATION_FAILED" || c.proposalStatus() == "FAILED");
-    // The skip/unknown path also leaves apply blocked when no useful change exists.
-    std::cout << "  [PASS] Meta-instructions are not presented as rewritten user prompts.\n";
+    bool discoveryCalled = false;
+    for (const auto& request : runtime.requests()) {
+        if (request.find("granite.discovery.selective.v11") != std::string::npos)
+            discoveryCalled = true;
+    }
+    ROCLINT_CHECK(discoveryCalled);
+    ROCLINT_CHECK(c.analysisStatus() == "READY");
+    ROCLINT_CHECK(c.analysisForTesting().has_value());
+    ROCLINT_CHECK(!c.analysisForTesting()->conflicts.empty());
+    ROCLINT_CHECK(c.interventionVerdict() != "QUIET");
+    std::cout << "  [PASS] Exact quantities do not silence a numeric conflict missed by deterministic extraction.\n";
+}
+
+void testTaskParaphrasesReachReviewAndMetaOutputRemainsBlocked() {
+    struct Case { const char* original; const char* candidate; bool meta; };
+    for (const auto& item : {
+             Case{"Find and fix the route causing duplicate orders.",
+                  "Identify which endpoint produces duplicate orders and fix it.", false},
+             Case{"Explain the retry logic in this code.",
+                  "Identify which failures are retried and explain the backoff policy.", false},
+             Case{"Make this dashboard faster.",
+                  "Determine the specific mood categories for the user.", true}}) {
+        ScriptedRuntime runtime;
+        runtime.discoveryReply = R"({"status":"options_generated","choice_groups":[{
+          "dimension":"scope","question":"Which scope should this task cover?","material":true,
+          "alternatives":[
+            {"label":"Only the requested task","why_material":"Keeps the scope focused","evidence":[")" +
+            std::string(item.original) + R"("]},
+            {"label":"Include related behavior","why_material":"Expands the scope","evidence":[")" +
+            std::string(item.original) + R"("]}]}]})";
+        runtime.rewriteText = item.candidate;
+        HostController c(QStringLiteral(":memory:"));
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+        connectRuntime(c, runtime);
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(QString::fromUtf8(item.original), 0)));
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.confirmChoice(QStringLiteral("alt_0_0"), c.stateVersion())));
+        c.waitForCommandForTesting(c.setRewriteProfile(QStringLiteral("GENERIC@1"), c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        // Both are unapproved previews; vocabulary alone cannot decide task meaning.
+        ROCLINT_CHECK(c.hasProposal());
+        ROCLINT_CHECK(c.proposalText() == QString::fromUtf8(item.candidate));
+        ROCLINT_CHECK(!c.canApprove() && !c.canApplyReviewedOutput());
+        c.setComprehensionReviewForTesting([item](const bridge::ComprehensionReviewRequest& request) {
+            ROCLINT_CHECK(request.originalPrompt == item.original && request.candidatePrompt == item.candidate);
+            auto result = approvingReviewResult();
+            result.interpretedOutcome = item.candidate;
+            if (item.meta) {
+                result.readyForTask = false;
+                bridge::ComprehensionFinding finding;
+                finding.id = "task_replaced_by_meta";
+                finding.kind = bridge::ReviewFindingKind::MeaningDrift;
+                finding.severity = bridge::ReviewFindingSeverity::Blocking;
+                finding.summary = "Asks for unrelated clarification instead of the requested dashboard improvement.";
+                finding.sourceRef = "candidate";
+                finding.sourceExcerpt = item.candidate;
+                result.findings.push_back(std::move(finding));
+            }
+            return result;
+        });
+        ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+        waitForReviewState(c, QStringLiteral("ready"));
+        ROCLINT_CHECK(c.canApplyReviewedOutput() == !item.meta);
+        if (item.meta) {
+            ROCLINT_CHECK(!c.canApprove());
+            ROCLINT_CHECK(!c.comprehensionFindings().isEmpty());
+        }
+    }
+    std::cout << "  [PASS] Task paraphrases reach semantic review; blocking meta findings cannot authorize apply.\n";
 }
 
 void testWordPopupExpandsIntoInterviewWithoutRestarting() {
@@ -3231,8 +3250,8 @@ int main(int argc, char* argv[]) {
     testExplicitInterviewRevivesQuietOrOriginalRoute();
     testExactRequirementsSurviveOrBlockTheRewrite();
     testMusicCustomAnswerAndNegativeConstraintReachReview();
-    testSettledValuePolicyKeepsOriginalWithoutGranite();
-    testMetaInstructionRewriteIsNotAProposal();
+    testNumericConflictCannotBypassDiscovery();
+    testTaskParaphrasesReachReviewAndMetaOutputRemainsBlocked();
     testWordPopupExpandsIntoInterviewWithoutRestarting();
     testUnavailableBridgeReportsExplicitRangeResult();
     testMechanicallyExactEditDoesNotAcquireAConfirmationQuestion();

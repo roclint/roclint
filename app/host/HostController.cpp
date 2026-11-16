@@ -1357,53 +1357,9 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
         (m_reviewTrigger != analysis::ReviewTrigger::ExplicitReview &&
          analysis::routePromptTriage(*m_promptTriage).value() != analysis::PromptTriageRoute::Clarify)))
         co_return makeError(ErrorCode::PreconditionFailed, "Granite discovery requires current ambiguous S1 classification");
-    // A RULE_CONFLICT classification alone is a suspicion, not proof of a real
-    // contradiction. When the user already supplied exact values/units and the
-    // deterministic extractor found no explicit conflict, keep the original rather
-    // than asking the user to redefine a settled value. Explicit review still runs.
-    if (promptTriageRoutingEnabled() && m_reviewTrigger != analysis::ReviewTrigger::ExplicitReview &&
-        m_promptTriage && m_routedAnalysisGroup && !m_routedAnalysisGroup->terminal) {
-        const auto route = analysis::routePromptTriage(*m_promptTriage);
-        if (route.ok() && route.value() == analysis::PromptTriageRoute::Clarify) {
-            const auto& text = m_revisionState->currentRevision().text();
-            const auto preflight = rewrite::StructuredEntityExtractor::analyze(text);
-            if (intent::shouldKeepOriginalForRuleConflictOnly(
-                    *m_promptTriage, text, !preflight.detectedExplicitConflicts.empty())) {
-                m_routedAnalysisGroup->terminal = true;
-                // A Clarify route normally requires a recorded discovery attempt. Record
-                // an honest deterministic-policy attempt (not a model generation) so the
-                // empty snapshot is valid and the audit trail does not claim Granite ran.
-                const std::string policyAttemptId =
-                    "policy_settled_" + core::crypto::Sha256::hexDigest(text);
-                storage::ModelAttemptRecord policyAttempt;
-                policyAttempt.attemptId = policyAttemptId;
-                policyAttempt.sessionId = currentSessionId();
-                policyAttempt.revisionId = m_revisionState->currentRevision().revisionId().value();
-                policyAttempt.stage = "discovery";
-                policyAttempt.status = storage::AttemptStatus::InProgress;
-                policyAttempt.transport = "deterministic_policy";
-                policyAttempt.modelId = "none";
-                policyAttempt.modelDetail = "settled_value_policy; review_trigger=automatic";
-                policyAttempt.startedAtMs = nowMs();
-                if (auto st = (co_await m_repository->beginModelAttempt(policyAttempt)); !st.ok()) {
-                    co_return st;
-                }
-                (void)(co_await m_repository->completeModelAttempt(
-                    policyAttemptId, storage::AttemptStatus::Succeeded, "none",
-                    "settled_value_policy; review_trigger=automatic; no model generation", "", nowMs()));
-                analysis::NormalizedAnalysis empty;
-                empty.sessionId = currentSessionId();
-                empty.baseRevisionId = m_revisionState->currentRevision().revisionId().value();
-                analysis::sealSnapshot(empty);
-                if (co_await applyAnalysis(std::move(empty), policyAttemptId, {}, std::nullopt, *m_promptTriage)) {
-                    setAnalysisStatus(AnalysisStatus::Ready,
-                        QStringLiteral("Exact values and units are kept. No automatic clarification is needed; "
-                                       "open the interview if you want to explore further."));
-                }
-                co_return Status::success();
-            }
-        }
-    }
+    // Exact quantities do not prove the absence of a conflict. Preserve S1's
+    // Clarify route when the conservative deterministic extractor finds nothing;
+    // discovery and its semantic audit must evaluate the actual requirements.
     if (promptTriageRoutingEnabled() && !nativeGraniteSelected() && !usesTransportOverride()) {
         m_routedAnalysisGroup->terminal = true;
         const auto reason = QStringLiteral("This flow requires pinned IBM Granite 3B. Choose Native Granite in Settings.");
@@ -3047,18 +3003,9 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
         emit approvalChanged();
         co_return;
     }
-    if (intent::looksLikeMetaInstruction(proposal.originalText, proposal.rewrittenText)) {
-        completeAttempt(ticket, storage::AttemptStatus::Succeeded, "Meta-instruction rejected", &model);
-        m_currentProposal.reset();
-        m_proposalWorkspaceEpoch = 0;
-        m_currentApproval.reset();
-        markComprehensionReviewStale();
-        setProposalStatus(ProposalUiStatus::ValidationFailed,
-                          QStringLiteral("The model returned an instruction about the prompt instead of a prompt. "
-                                         "Your original is kept."));
-        emit approvalChanged();
-        co_return;
-    }
+    // Imperatives such as "identify which" can be the requested task. Do not
+    // reject them by vocabulary; the required independent comprehension review
+    // checks whether a rewrite expresses the task or merely asks to define it.
     if (const auto dropped = intent::droppedExactRequirements(proposal.originalText, proposal.rewrittenText);
         !dropped.empty()) {
         completeAttempt(ticket, storage::AttemptStatus::Failed,
