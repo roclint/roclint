@@ -670,6 +670,7 @@ private:
         if (isElectronBundle(m_bundleId)) {
             // Chromium builds its accessibility tree only when asked.
             AXUIElementSetAttributeValue(m_app, CFSTR("AXManualAccessibility"), kCFBooleanTrue);
+            AXUIElementSetAttributeValue(m_app, CFSTR("AXEnhancedUserInterface"), kCFBooleanTrue);
         }
         if (AXObserverCreate(pid, axCallback, &m_observer) != kAXErrorSuccess || m_observer == nullptr) {
             m_observer = nullptr;
