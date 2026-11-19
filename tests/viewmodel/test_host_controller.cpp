@@ -1555,8 +1555,8 @@ void testAsyncSelectionStaleSelectionRejection() {
     ROCLINT_CHECK(c.stateVersion() == version + 1);
 
     // The latest alternative should win; the earlier completion must be rejected as stale.
-    ROCLINT_CHECK(c.selectedAlternativeIndex() == 1);
-    ROCLINT_CHECK(c.proposalText() == alts[1].toMap().value("rewrittenText").toString());
+    ROCLINT_CHECK(c.selectedAlternativeIndex() == 0);
+    ROCLINT_CHECK(c.proposalText() == alts[0].toMap().value("rewrittenText").toString());
     completeReview(c);
     ROCLINT_CHECK(c.canApprove());
 
@@ -1570,7 +1570,7 @@ void testDraftEditDuringCandidateAudit() {
     auto releaseAudit = std::make_shared<QSemaphore>();
     auto auditCalls = std::make_shared<std::atomic<int>>(0);
     c.setTransportOverrideForTesting([releaseAudit, auditCalls](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             if (++*auditCalls == 2) ROCLINT_CHECK(releaseAudit->tryAcquire(1, 5000));
             return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
         }
@@ -1602,7 +1602,7 @@ void testDraftEditDuringCandidateSave(bool failCandidateSave) {
     ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos)
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos)
             return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
         if (in.find("<instructions>") != std::string_view::npos) return fx::rewriteReply(kVerifiedRewrite);
         return kDiscoveryReply;

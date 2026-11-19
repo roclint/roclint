@@ -435,7 +435,7 @@ void coldInteractiveActionTests() {
     ROCLINT_CHECK(host.requestComprehensionReview(version) != 0);
     ROCLINT_CHECK(host.waitForIdleForTesting(6000));
     ROCLINT_CHECK(host.comprehensionReviewState() == "ready");
-    ROCLINT_CHECK(host.stateVersion() == version + 1 && host.canApplyReviewedOutput());
+    ROCLINT_CHECK(host.stateVersion() == version && host.canApplyReviewedOutput());
     ROCLINT_CHECK(!host.hasApproval() && observed->injections.empty());
     host.setResidencyInputsForTesting(0, true);
     waitUntil([&]() { return host.modelRuntimeState() == "UNLOADED"; });

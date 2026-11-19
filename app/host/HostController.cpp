@@ -3578,7 +3578,7 @@ bool HostController::submitWordClarification(const QString& answer, quint64 expe
         m_wordRefinementStateVersion != stateVersion() ||
         m_ambientObservation->field.fieldToken != m_wordRefinementFieldToken ||
         m_ambientObservation->field.text != m_wordRefinementFieldText) return false;
-    if (answer.trimmed().isEmpty() || answer.toUtf8().size() > bridge::kMaxModelStringBytes) return false;
+    if (answer.trimmed().isEmpty() || static_cast<std::size_t>(answer.toUtf8().size()) > bridge::kMaxModelStringBytes) return false;
     m_wordClarificationAnswer = answer.trimmed();
     requestWordRefinement(m_ambientObservation->field, m_wordRefinementStartOffset, m_wordRefinementEndOffset, m_wordRefinementOriginal);
     return true;
@@ -8108,6 +8108,7 @@ AsyncTask<core::Status> HostController::openFromAmbientOperation(std::optional<A
             m_interviewWordContext = pendingWordContext;
             emit interviewChanged();
         }
+        const bool activeWork = hasActiveWork();
         m_captureSource = CaptureSource::Ambient;
         m_captureTarget = observation;
         m_followAmbientDraft = !activeWork;

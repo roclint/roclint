@@ -676,8 +676,13 @@ Window {
                             objectName: "minButton"
                             compact: true; quiet: true; iconName: "minus"; tip: qsTr("Minimize")
                             onClicked: {
-                                if (Qt.platform.os === "windows") { hostController.minimizeCard(); rootWindow.hide(); }
-                                else rootWindow.showMinimized();
+                                if (rootWindow.isMac) {
+                                    if (rootWindow.hc) hostController.hideCard(); else rootWindow.hide();
+                                } else if (Qt.platform.os === "windows") {
+                                    hostController.minimizeCard(); rootWindow.hide();
+                                } else {
+                                    rootWindow.showMinimized();
+                                }
                             }
                         }
                         HudButton {
