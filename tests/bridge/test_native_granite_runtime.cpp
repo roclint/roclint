@@ -1,3 +1,4 @@
+#include "roclint/bridge/WordSurfaceCheck.hpp"
 #include "NativeGraniteRuntime.hpp"
 #include "GraniteModelInstaller.hpp"
 #include "GraniteJsonGrammar.hpp"
@@ -9,6 +10,7 @@
 #include "roclint/bridge/GraniteRewriteAdapter.hpp"
 #include "support/check.hpp"
 #include "support/wording_fixtures.hpp"
+#include "support/fixtures.hpp"
 #include "support/MockAccessibilityBridge.hpp"
 
 #include <QCoreApplication>
@@ -108,6 +110,7 @@ int fixture(const QString& mode) {
             result.insert(QStringLiteral("diagnostic_unbounded"), mode == QLatin1String("unbounded"));
             result.insert(QStringLiteral("thinking_reference_disabled"), mode == QLatin1String("thinking_reference"));
         } else if (op == QLatin1String("load") || op == QLatin1String("warm") || op == QLatin1String("set_residency")) {
+            if (mode == QLatin1String("interactive")) QThread::msleep(100);
             if (mode == QLatin1String("crash_load")) std::_Exit(2);
             const auto requested = op == QLatin1String("set_residency") ? payload.value(QStringLiteral("tier")).toString() : QStringLiteral("HOT");
             const auto resource = requested == QLatin1String("IDLE_MAPPED") && NativeGraniteRuntime::manifest().value(QStringLiteral("gpu_layers")).toInt() > 0
@@ -134,12 +137,23 @@ int fixture(const QString& mode) {
             if (mode == QLatin1String("bad_hash")) response.insert(QStringLiteral("input_hash"), QString(64, QLatin1Char('0')));
             if (mode == QLatin1String("bad_version")) response.insert(QStringLiteral("protocol_version"), 2);
             result = {{QStringLiteral("text"), QStringLiteral("{\"status\":\"no_ambiguity\"}")}};
+            if (mode == QLatin1String("interactive")) {
+                const auto instruction = payload.value("instructions").toString();
+                if (instruction.contains("granite.comprehension_review"))
+                    result.insert("text", R"({"interpreted_outcome":"Improve readability while preserving behavior.","interpreted_requirements":["Preserve behavior"],"inferred_assumptions":[],"unresolved_decisions":[],"ready_for_task":true,"findings":[],"rationale":"The candidate preserves the requested behavior."})");
+                if (instruction.contains("granite.clarification_check.v1")) {
+                    const bool invalid = instruction.contains("iondwfwoefneiofneionfeio");
+                    result.insert("text", invalid
+                        ? R"({"meaning":"No usable meaning.","answers_question":false,"compatible":true,"feedback":"Describe the readability improvement you want."})"
+                        : R"({"meaning":"Improve readability.","answers_question":true,"compatible":true,"feedback":""})");
+                }
+            }
             if (mode == QLatin1String("thinking_binding")) result.insert("text", payload.value("thinking_enabled").toBool() ? "thinking=true" : "thinking=false");
             if (mode == QLatin1String("bad_thinking_binding")) response.insert("thinking_enabled", !response.value("thinking_enabled").toBool());
         } else if (op == QLatin1String("granite_word_refinement")) {
             if (!response.value("request_group_id").toString().startsWith("word_group_")) return 3;
             const auto instruction = payload.value("instructions").toString();
-            if (instruction.startsWith("<instructions>\nInstruction contract: granite.goldfish_word_audit.v2")) {
+            if (instruction.startsWith("<instructions>\nInstruction contract: granite.goldfish_word_audit.v3")) {
                 if (!instruction.contains("Make the dashboard feel quicker to load.")) return 4;
                 result.insert("text", R"({"verdicts":[{"id":"wcand_1","grammar":"Pass","preservation":"Pass","usefulness":"Pass"}]})");
             } else {
@@ -369,6 +383,72 @@ void controllerResidencyTests() {
     }
 }
 
+void coldInteractiveActionTests() {
+    using roclint::host::HostController;
+    QTemporaryDir settingsDirectory;
+    ROCLINT_CHECK(settingsDirectory.isValid());
+    QCoreApplication::setOrganizationName("RoclintColdInteractionTests");
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsDirectory.path());
+    QSettings().setValue("models/nativeDirectory", "interactive");
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    auto* observed = bridge.get();
+    HostController host(":memory:", std::move(bridge));
+    ROCLINT_CHECK(host.waitForStorageForTesting());
+    host.setLegacyDiscoveryForTesting(true);
+    host.setAmbientModeEnabled(false);
+    ROCLINT_CHECK(host.setNativeWorkerForTesting(QCoreApplication::applicationFilePath()));
+    host.setResidencyInputsForTesting(0, false);
+    host.setTransportOverrideForTesting([](std::string_view request) -> roclint::core::Result<std::string> {
+        if (request.find("granite.goldfish_") != std::string_view::npos)
+            return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+        if (request.find("<instructions>") != std::string_view::npos)
+            return fx::rewriteReply("Improve Reader::open readability while preserving behavior.");
+        return std::string(R"({"status":"options_generated","choice_groups":[{"question":"Which improvement?","material":true,"alternatives":[{"label":"Readability","why_material":"Maintainability","evidence":["better"]},{"label":"Speed","why_material":"Performance","evidence":["better"]}]}]})");
+    });
+    ROCLINT_CHECK(host.markModelReadyForTesting(fx::testModel()));
+    ROCLINT_CHECK(host.waitForCommandForTesting(host.analyzePrompt("Make Reader::open better. Preserve behavior.", host.stateVersion())));
+    ROCLINT_CHECK(host.waitForIdleForTesting(5000) && host.isClarifying());
+    host.setTransportOverrideForTesting({});
+    ROCLINT_CHECK(host.nativeGraniteResidency() == "UNLOADED");
+    ROCLINT_CHECK(host.waitForCommandForTesting(host.submitCustomIntent("iondwfwoefneiofneionfeio", host.stateVersion())));
+    ROCLINT_CHECK(host.isCheckingClarification());
+    ROCLINT_CHECK(host.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(host.isClarifying() && !host.isCheckingClarification());
+    ROCLINT_CHECK(!host.clarificationFeedback().isEmpty());
+    ROCLINT_CHECK(host.waitForCommandForTesting(host.submitCustomIntent("Improve readability", host.stateVersion())));
+    ROCLINT_CHECK(host.waitForIdleForTesting(5000) && host.hasConfirmedIntent());
+    // Supply only the candidate through the test seam; the cold reviewer below
+    // uses the production subprocess protocol and scheduling path.
+    host.setTransportOverrideForTesting([](std::string_view request) -> roclint::core::Result<std::string> {
+        if (request.find("granite.goldfish_audit.v2") != std::string_view::npos)
+            return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+        return fx::rewriteReply("Improve Reader::open readability while preserving behavior.");
+    });
+    ROCLINT_CHECK(host.waitForCommandForTesting(host.synthesizeRewrite(host.stateVersion())));
+    ROCLINT_CHECK(host.waitForIdleForTesting(5000) && host.hasProposal());
+    host.setTransportOverrideForTesting({});
+    host.setResidencyInputsForTesting(0, true);
+    waitUntil([&]() { return host.modelRuntimeState() == "UNLOADED"; });
+    host.setResidencyInputsForTesting(0, false);
+    const auto version = host.stateVersion();
+    ROCLINT_CHECK(host.requestComprehensionReview(version) != 0);
+    ROCLINT_CHECK(host.waitForIdleForTesting(6000));
+    ROCLINT_CHECK(host.comprehensionReviewState() == "ready");
+    ROCLINT_CHECK(host.stateVersion() == version + 1 && host.canApplyReviewedOutput());
+    ROCLINT_CHECK(!host.hasApproval() && observed->injections.empty());
+    host.setResidencyInputsForTesting(0, true);
+    waitUntil([&]() { return host.modelRuntimeState() == "UNLOADED"; });
+    host.setResidencyInputsForTesting(0, false);
+    ROCLINT_CHECK(host.requestComprehensionReview(host.stateVersion()) != 0);
+    waitUntil([&]() { return host.comprehensionReviewState() == "running"; });
+    ROCLINT_CHECK(host.waitForCommandForTesting(host.noteDraftEdited(host.stateVersion())));
+    ROCLINT_CHECK(host.waitForIdleForTesting(6000));
+    ROCLINT_CHECK(host.comprehensionReviewState() == "stale" && !host.canApplyReviewedOutput());
+    ROCLINT_CHECK(!host.hasApproval() && observed->injections.empty());
+    std::cout << "  [PASS] Cold answer/review actions warm and resume; invalid answers and edits during load cannot authorize apply.\n";
+}
+
 void nativeWordCompanionAuditTest() {
     QTemporaryDir settingsDirectory;
     QCoreApplication::setOrganizationName("RoclintNativeWordTests");
@@ -379,16 +459,57 @@ void nativeWordCompanionAuditTest() {
     roclint::host::HostController host(":memory:",std::move(bridge));
     ROCLINT_CHECK(host.waitForStorageForTesting());
     ROCLINT_CHECK(host.setNativeWorkerForTesting(QCoreApplication::applicationFilePath()));
-    host.warmSelectedModel();waitUntil([&] {return host.modelRuntimeState()=="READY";});
+    ROCLINT_CHECK(host.nativeGraniteResidency()=="UNLOADED");
     host.setAmbientModeEnabled(true);
+    bool sawCheckingWithoutProposal = false;
+    QObject::connect(&host, &roclint::host::HostController::wordRefinementChanged, &host, [&] {
+        if (host.wordCompanionState() == "checking" && !host.hasWordRefinement())
+            sawCheckingWithoutProposal = !host.wordCompanionVisible() && !host.wordCompanionMessage().isEmpty();
+    });
     roclint::host::ObservedField field;field.fieldToken=98765;field.appIdentifier="Code.exe";
     field.kind=roclint::host::FieldKind::GuiEditor;field.text="Make the dashboard feel faster.";
     field.caretOffset=field.text.indexOf("faster")+6;field.fieldRect=QRect(60,120,620,120);
     observed->observe(field);
     waitUntil([&] {return host.hasWordRefinement();});
     ROCLINT_CHECK(host.wordRefinementReplacement()=="quicker to load" && observed->rangeInjections.empty());
+    ROCLINT_CHECK(sawCheckingWithoutProposal && host.wordCompanionState() == "ready");
+    ROCLINT_CHECK(!host.wordCompanionVisible() && host.isAmbientBadgeVisible());
+    host.activateAmbientIndicator();
+    ROCLINT_CHECK(host.wordCompanionVisible() && !host.isAmbientBadgeVisible());
+    ROCLINT_CHECK(host.applyWordRefinement(host.stateVersion()+1)==0);
+    ROCLINT_CHECK(host.applyWordRefinement(host.stateVersion())!=0);
+    waitUntil([&] {return !host.hasWordRefinement();});
+    ROCLINT_CHECK(observed->rangeInjections.size()==1 && observed->injections.empty());
+    const auto& range=observed->rangeInjections.front();
+    ROCLINT_CHECK(range.originalRangeText=="faster" && range.replacementText=="quicker to load");
+    ROCLINT_CHECK(range.expectedCurrentText==field.text);
+    ROCLINT_CHECK(range.startOffset==field.text.indexOf("faster") && range.endOffset==field.caretOffset);
     bool quit=false;QObject::connect(&host,&roclint::host::HostController::quitRequested,[&] {quit=true;});
     host.requestQuit();waitUntil([&] {return quit;});
+}
+
+void nativeWordLoadFailureIsVisible() {
+    QTemporaryDir settingsDirectory;
+    QCoreApplication::setOrganizationName("RoclintNativeWordFailureTests");
+    QCoreApplication::setApplicationName("isolated");
+    QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, settingsDirectory.path());
+    QSettings().setValue("models/nativeDirectory", "bad_identity");
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>(); auto* observed = bridge.get();
+    roclint::host::HostController host(":memory:", std::move(bridge));
+    ROCLINT_CHECK(host.waitForStorageForTesting());
+    ROCLINT_CHECK(host.setNativeWorkerForTesting(QCoreApplication::applicationFilePath()));
+    host.setAmbientModeEnabled(true);
+    roclint::host::ObservedField field; field.fieldToken = 98766; field.appIdentifier = "Code.exe";
+    field.text = "Make the dashboard feel faster"; field.caretOffset = field.text.size();
+    field.fieldRect = QRect(60, 120, 620, 120); observed->observe(field);
+    waitUntil([&] { return host.wordCompanionState() == "failed"; }, 10000);
+    ROCLINT_CHECK(!host.wordCompanionVisible() && !host.hasWordRefinement() && host.isAmbientBadgeVisible());
+    host.activateAmbientIndicator();
+    ROCLINT_CHECK(host.wordCompanionVisible() && !host.isAmbientBadgeVisible());
+    ROCLINT_CHECK(host.wordCompanionMessage().contains("couldn't load"));
+    ROCLINT_CHECK(observed->rangeInjections.empty() && observed->injections.empty());
+    bool quit = false; QObject::connect(&host, &roclint::host::HostController::quitRequested, [&] { quit = true; });
+    host.requestQuit(); waitUntil([&] { return quit; });
 }
 
 void protocolTests() {
@@ -906,6 +1027,111 @@ void decodeThreadLockSanityTest() {
 
 // Opt-in installed-model probe. It never observes desktop fields, uses isolated settings/history,
 // performs no downloads, and does not approve, insert or send generated content.
+int liveWordCorpus(char** argv, const QString& overridePath = {}) {
+    std::string instructionOverride;
+    if (!overridePath.isEmpty()) {
+        QFile file(overridePath);
+        ROCLINT_CHECK(file.open(QIODevice::ReadOnly));
+        instructionOverride = file.readAll().toStdString();
+        ROCLINT_CHECK(instructionOverride.starts_with("<instructions>\n") &&
+                      instructionOverride.ends_with("</instructions>\n"));
+    }
+    struct Case { const char* id; const char* draft; const char* selected; const char* correction; };
+    const Case cases[] = {
+        {"reported_typo", "Keep all existing tests unchnaged", "unchnaged", "unchanged"},
+        {"held_out_spelling", "Make the dashboard accessable", "accessable", "accessible"},
+        {"grammar", "The button are blue", "are", "is"},
+        {"exact_code_name", "Use Cache::reaad exactly as named", "reaad", "KEEP"},
+        {"literal_label", "Set the literal label to \"unchagned\" exactly", "unchagned", "KEEP"},
+        {"performance_choice", "Make the dashboard feel faster", "faster", "DECISION"},
+        {"creative_choice", "Make a cinematic photo of a plant", "cinematic", "DECISION"},
+    };
+    QCoreApplication::setOrganizationName("RoclintWordProbe");
+    QCoreApplication::setApplicationName("isolated");
+    NativeGraniteRuntime runtime(nullptr, QString::fromLocal8Bit(argv[3]));
+    QElapsedTimer ready; ready.start();
+    runtime.load(QString::fromLocal8Bit(argv[2]), "Q8_0");
+    waitUntil([&]() { return runtime.isReady(); }, 180000);
+    std::cout << QJsonDocument(QJsonObject{{"event", "model_ready"}, {"ms", ready.elapsed()}})
+        .toJson(QJsonDocument::Compact).toStdString() << '\n' << std::flush;
+    int index = 0, failures = 0;
+    for (const auto& item : cases) {
+        roclint::bridge::WordRefinementRequest request;
+        request.sessionId = "word_probe_session";
+        request.revisionId = "word_probe_revision_" + std::to_string(++index);
+        request.draftText = item.draft; request.selectedText = item.selected;
+        const auto draft = QString::fromUtf8(item.draft);
+        request.selectionStart = draft.indexOf(QString::fromUtf8(item.selected));
+        request.selectionEnd = request.selectionStart + QString::fromUtf8(item.selected).size();
+        NativeGraniteRuntime::RequestContext context{
+            QString("word_probe_group_%1").arg(index), QString("word_probe_attempt_%1").arg(index),
+            QString::fromStdString(request.sessionId), QString::fromStdString(request.revisionId), 1, draft};
+        // Match the installed default explicitly; RequestContext's raw-runtime
+        // default enables thinking, while HostController defaults it off.
+        context.thinkingEnabled = false;
+        context.surface = "word";
+        context.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(45);
+        const auto transport = runtime.transportFor(context, "granite_word_refinement",
+            roclint::bridge::wordRefinementResponseSchema(request.draftText));
+        const auto surfaceChecker = runtime.transportFor(context, "granite_word_refinement",
+            roclint::bridge::wordSurfaceCheckResponseSchema());
+        const auto auditor = runtime.transportFor(context, "granite_word_refinement",
+            roclint::bridge::wordRefinementAuditResponseSchema());
+        using Reply = std::pair<roclint::core::Result<roclint::bridge::WordRefinementResponse>, std::string>;
+        QElapsedTimer elapsed; elapsed.start();
+        auto surfaceDebug = std::make_shared<std::string>();
+        auto future = QtConcurrent::run([request, transport, auditor, surfaceChecker, instructionOverride, surfaceDebug]() -> Reply {
+            auto prompt = roclint::bridge::buildWordRefinementPrompt(request);
+            if (!instructionOverride.empty()) {
+                const auto boundary = prompt.find("</instructions>\n");
+                ROCLINT_CHECK(boundary != std::string::npos);
+                prompt.replace(0, boundary + std::string_view("</instructions>\n").size(), instructionOverride);
+            }
+            const auto raw = transport(prompt);
+            if (!raw.ok()) return {raw.error(), {}};
+            auto parsed = roclint::bridge::parseWordRefinementResponse(raw.value(), request);
+            if (!parsed.ok()) return {parsed, raw.value()};
+            if (parsed.value().needsClarification) {
+                const auto surfaceRaw = surfaceChecker(roclint::bridge::buildWordSurfaceCheckPrompt(request));
+                if (!surfaceRaw.ok()) return {surfaceRaw.error(), raw.value()};
+                *surfaceDebug = surfaceRaw.value();
+                auto surface = roclint::bridge::parseWordSurfaceCheckResponse(surfaceRaw.value(), request);
+                if (!surface.ok()) return {surface.error(), raw.value()};
+                if (surface.value().handled) parsed = std::move(surface).value().response;
+            }
+            if (parsed.value().candidates.empty()) return {parsed, raw.value()};
+            const auto audit = auditor(roclint::bridge::buildWordRefinementAuditPrompt(request, parsed.value()));
+            if (!audit.ok()) return {audit.error(), raw.value()};
+            return {roclint::bridge::auditWordRefinementResponse(audit.value(), request, parsed.value()), raw.value()};
+        });
+        waitUntil([&]() { return future.isFinished(); }, 60000);
+        const auto [result, raw] = future.result();
+        QJsonObject row{{"id", item.id}, {"experimental_instructions", !instructionOverride.empty()}, {"thinking_enabled", context.thinkingEnabled}, {"ms", elapsed.elapsed()}, {"raw", QString::fromStdString(raw)}};
+        row.insert("raw_surface", QString::fromStdString(*surfaceDebug));
+        bool passed = false;
+        if (result.ok()) {
+            const auto& value = result.value();
+            QJsonArray candidates;
+            for (const auto& candidate : value.candidates)
+                candidates.append(QString::fromStdString(candidate.replacement));
+            row.insert("candidates", candidates);
+            row.insert("question", QString::fromStdString(value.clarificationQuestion));
+            if (std::string_view(item.correction) == "KEEP")
+                passed = value.candidates.empty() && !value.needsClarification;
+            else if (std::string_view(item.correction) == "DECISION")
+                passed = value.needsClarification || value.candidates.size() == 2;
+            else
+                passed = !value.needsClarification && !value.candidates.empty() &&
+                    value.candidates.front().replacement == item.correction;
+        } else row.insert("error", QString::fromStdString(result.error().message));
+        row.insert("passed", passed);
+        failures += !passed;
+        std::cout << QJsonDocument(row).toJson(QJsonDocument::Compact).toStdString() << '\n' << std::flush;
+    }
+    runtime.stop(); waitUntil([&]() { return !runtime.isRunning(); });
+    return failures ? 1 : 0;
+}
+
 int liveRewriteCorpus(char** argv) {
     QCoreApplication::setOrganizationName("RoclintRewriteProbe"); QCoreApplication::setApplicationName("isolated");
     NativeGraniteRuntime runtime(nullptr,QString::fromLocal8Bit(argv[3]));
@@ -1008,11 +1234,13 @@ int liveHostPipeline(int argc, char** argv) {
 int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     if (argc == 4 && std::string_view(argv[1]) == "--live-rewrite-corpus") return liveRewriteCorpus(argv);
+    if (argc == 4 && std::string_view(argv[1]) == "--live-word-corpus") return liveWordCorpus(argv);
+    if (argc == 5 && std::string_view(argv[1]) == "--live-word-corpus") return liveWordCorpus(argv, QString::fromLocal8Bit(argv[4]));
     if ((argc >= 6 && argc <= 8) && std::string_view(argv[1]) == "--live-host-pipeline") return liveHostPipeline(argc, argv);
     if (argc == 5 && std::string_view(argv[1]) == "--model-dir") return fixture(QString::fromLocal8Bit(argv[2]));
     grammarTests(); prefixCacheTests(); queuePolicyTests(); residencyPolicyTests(); protocolTests(); installerTests();
-    controllerResidencyTests(); acceleratorNameTests(); speedMetricsClearOnStopTests(); decodeThreadLockSanityTest();
-    nativeWordCompanionAuditTest(); timingTraceTests();
+    controllerResidencyTests(); coldInteractiveActionTests(); acceleratorNameTests(); speedMetricsClearOnStopTests(); decodeThreadLockSanityTest();
+    nativeWordCompanionAuditTest(); nativeWordLoadFailureIsVisible(); timingTraceTests();
     std::cout << "Native protocol, cancellation, recovery, residency, atomic model installation and calibration tests passed.\n";
     return 0;
 }

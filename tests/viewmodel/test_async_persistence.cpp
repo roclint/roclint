@@ -37,7 +37,7 @@ void completeApprovingReview(HostController& controller) {
 }
 void prepareProposal(HostController& controller) {
     controller.setTransportOverrideForTesting([](std::string_view instructions) -> Result<std::string> {
-        if (instructions.find("granite.goldfish_audit.v1") != std::string_view::npos)
+        if (instructions.find("granite.goldfish_audit.v2") != std::string_view::npos)
             return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
         if (instructions.find("<instructions>") != std::string_view::npos)
             return fx::rewriteReply("Refactor the parser for lower latency per call.");

@@ -1,4 +1,5 @@
 #include "GraniteEngine.hpp"
+#include "GraniteModelHash.hpp"
 #include "GraniteConfig.hpp"
 #include "GraniteJsonGrammar.hpp"
 #include "GranitePrefixCache.hpp"
@@ -202,16 +203,9 @@ public:
             if (!file.open(QIODevice::ReadOnly) || file.size() != candidate_.value(QStringLiteral("size_bytes")).toInteger())
                 throw GraniteFailure(QStringLiteral("MODEL_MISSING"), "The pinned Granite model is missing or has the wrong size.");
             QElapsedTimer verifyTimer; verifyTimer.start();
-            QCryptographicHash hash(QCryptographicHash::Sha256);
-            while (!file.atEnd()) {
-                control.check();
-                const auto chunk = file.read(1024 * 1024);
-                if (chunk.isEmpty() && file.error() != QFileDevice::NoError)
-                    throw GraniteFailure(QStringLiteral("MODEL_READ"), "The native model could not be read completely.");
-                hash.addData(chunk);
-            }
+            const auto digest = graniteModelSha256(file, [&control]() { control.check(); });
             if (timing) timing->verifyMs = static_cast<double>(verifyTimer.nsecsElapsed()) / 1e6;
-            if (hash.result().toHex() != candidate_.value(QStringLiteral("sha256")).toString().toLatin1())
+            if (digest.toHex() != candidate_.value(QStringLiteral("sha256")).toString().toLatin1())
                 throw GraniteFailure(QStringLiteral("INTEGRITY"), "The native model failed its pinned SHA-256 integrity check.");
             QElapsedTimer modelTimer; modelTimer.start();
             auto params = llama_model_default_params();

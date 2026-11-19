@@ -39,6 +39,13 @@ void testPageDocumentIsNotPromptComposer() {
     ROCLINT_CHECK(!isGuiCaptureTextReliable(GuiCaptureRole::Edit, true, true, false, true));
     ROCLINT_CHECK(!isGuiCaptureTextReliable(GuiCaptureRole::Document, true, true, true, true));
     ROCLINT_CHECK(isGuiCaptureTextReliable(GuiCaptureRole::Edit, true, false, false, true));
+    using roclint::host::isRichComposerPlaceholder;
+    ROCLINT_CHECK(isRichComposerPlaceholder(u"Work with Codex\r\n", {}, {}, u"ChatGPT.exe", 0));
+    ROCLINT_CHECK(isRichComposerPlaceholder(u"Ask anything\n", u"Ask anything", {}, u"Antigravity.exe", -1));
+    ROCLINT_CHECK(isRichComposerPlaceholder(u"Type a message", {}, u"Type a message", u"Code.exe", 0));
+    ROCLINT_CHECK(!isRichComposerPlaceholder(u"Work with Codex", {}, {}, u"ChatGPT.exe", 4));
+    ROCLINT_CHECK(!isRichComposerPlaceholder(u"Work with Codex on tests", u"Work with Codex", {}, u"ChatGPT.exe", 0));
+    ROCLINT_CHECK(!isRichComposerPlaceholder(u"Work with Codex", {}, {}, u"Antigravity.exe", 0));
 }
 
 HostContextCategory map(const char* id) {

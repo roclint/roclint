@@ -182,7 +182,11 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
     out += "  <settled_decisions>\n";
     for (const auto& item : intent.items) {
         if (item.kind != core::intent::IntentResolutionKind::UseOriginal) {
-            const std::string topic = questionFor(request.analysis.normalized, item.itemId);
+            auto topic = questionFor(request.analysis.normalized, item.itemId);
+            // Supplemental questions are not analysis items. Their exact recorded
+            // question is carried in the hash-bound rationale.
+            if (topic.empty() && item.kind == core::intent::IntentResolutionKind::CustomText)
+                topic = item.rationale;
             std::string ans;
             switch (item.kind) {
                 case core::intent::IntentResolutionKind::SelectedAlternative: ans = item.chosenValue; break;
@@ -491,8 +495,7 @@ GraniteRewriteRepairResult GraniteRewriteAdapter::synthesizeRewriteWithRepairLoo
         auditVerdict = goldfishAdapter.audit(auditReq, auditTransport);
         result.auditVerdict = auditVerdict;
 
-        if (auditVerdict.outcome == core::ValidationOutcome::Pass ||
-            (auditVerdict.violations.empty() && auditVerdict.outcome != core::ValidationOutcome::Fail)) {
+        if (auditVerdict.outcome == core::ValidationOutcome::Pass) {
             result.proposal = std::move(proposal);
             result.repairedSuccessfully = true;
             return result;

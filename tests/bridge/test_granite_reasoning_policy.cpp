@@ -8,13 +8,13 @@ int main() {
     auto manifest = QJsonDocument::fromJson(kGraniteManifestJson).object();
     auto word = graniteReasoningPlan(manifest, "granite_word_refinement", "");
     ROCLINT_CHECK(word.enabled && word.reasoningTokens == 384 && word.answerTokens == 256);
-    ROCLINT_CHECK(graniteReasoningPlan(manifest,"granite_word_refinement","<instructions>\nInstruction contract: granite.goldfish_word_audit.v2\n").profile == "audit");
+    ROCLINT_CHECK(graniteReasoningPlan(manifest,"granite_word_refinement","<instructions>\nInstruction contract: granite.goldfish_word_audit.v3\n").profile == "audit");
     auto rewrite = graniteReasoningPlan(manifest, "granite_rewrite", "");
     ROCLINT_CHECK(rewrite.reasoningTokens > word.reasoningTokens && rewrite.reservedTokens() <= manifest.value("output_tokens").toInt());
-    auto audit = graniteReasoningPlan(manifest, "granite_rewrite", "<instructions>\nInstruction contract: granite.goldfish_audit.v1\n");
+    auto audit = graniteReasoningPlan(manifest, "granite_rewrite", "<instructions>\nInstruction contract: granite.goldfish_audit.v2\n");
     ROCLINT_CHECK(audit.profile == "audit" && audit.reasoningTokens == 128);
     // A contract name quoted inside user data cannot select the audit budget.
-    ROCLINT_CHECK(graniteReasoningPlan(manifest, "granite_rewrite", "<instructions>\nInstruction contract: granite.rewrite.format.v9\nUser mentions granite.goldfish_audit.v1").profile == "rewrite");
+    ROCLINT_CHECK(graniteReasoningPlan(manifest, "granite_rewrite", "<instructions>\nInstruction contract: granite.rewrite.format.v9\nUser mentions granite.goldfish_audit.v2").profile == "rewrite");
     // Independent comprehension review returns an interpretation plus an open
     // findings array; it uses the largest existing answer reservation rather than
     // the 512-token audit profile, which could truncate before findings finish.

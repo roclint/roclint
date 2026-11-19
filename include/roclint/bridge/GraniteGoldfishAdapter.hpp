@@ -21,6 +21,9 @@ inline constexpr std::size_t kMaxAuditResponseBytes = 64 * 1024;
 inline constexpr std::size_t kMaxComprehensionReviewResponseBytes = 64 * 1024;
 
 struct GoldfishAuditRequest {
+    // Reserved for semantic retention of originalPrompt's task. Callers must not
+    // reuse this ID for an independently supplied constraint.
+    static constexpr std::string_view originalTaskConstraintId = "original_task";
     std::string originalPrompt{};
     std::string candidateRewrite{};
     std::vector<core::ScopedConstraint> constraints{};
@@ -48,10 +51,10 @@ struct GoldfishDiscoveryAuditResult {
     std::vector<GoldfishDiscoveryFinding> unresolved{};
 };
 
-// Builds the cold, zero-memory adversarial audit prompt for Granite (contract: granite.goldfish_audit.v1).
+// Builds the cold, zero-memory adversarial audit prompt for Granite (contract: granite.goldfish_audit.v2).
 [[nodiscard]] std::string buildGoldfishAuditPrompt(const GoldfishAuditRequest& request);
 
-// Returns the JSON schema for granite.goldfish_audit.v1 responses.
+// Returns the JSON schema for granite.goldfish_audit.v2 responses.
 [[nodiscard]] const std::string& goldfishAuditResponseSchema();
 
 // Parses the model's JSON response envelope into a ValidationResult.

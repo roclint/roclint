@@ -5,6 +5,7 @@
 #include "roclint/review/ComprehensionReview.hpp"
 #include "support/check.hpp"
 #include "support/fixtures.hpp"
+#include "support/wording_fixtures.hpp"
 
 #include <iostream>
 #include <string>
@@ -15,6 +16,62 @@ using namespace roclint::core;
 using namespace roclint::bridge;
 
 namespace {
+
+void testSourceTaskFindingIsAuthoritativeAndRepairable() {
+    GraniteGoldfishAdapter auditor;
+    GoldfishAuditRequest audit;
+    audit.originalPrompt = "Make the widget less intrusive.";
+    audit.candidateRewrite = "Summarize the user's feedback. Make the widget less intrusive.";
+    auto reject = [](std::string_view) -> Result<std::string> {
+        return std::string(R"({"outcome":"Fail","violations":[{"constraint_id":"original_task","explanation":"The candidate adds a summary task that the source does not request."}],"unresolved":[]})");
+    };
+    const auto rejected = auditor.audit(audit, reject);
+    ROCLINT_CHECK(rejected.outcome == ValidationOutcome::Fail);
+    ROCLINT_CHECK(rejected.violations.size() == 1 && rejected.violations[0].constraintId == "original_task");
+    ROCLINT_CHECK(rejected.unresolved.empty()); // A source-task failure is not demoted to an unknown model rule.
+
+    ScopedConstraint collision;
+    collision.id = "original_task"; collision.enforcement = Enforcement::Advisory;
+    audit.constraints.push_back(collision);
+    int modelCalls = 0;
+    const auto invalid = auditor.audit(audit, [&](std::string_view) -> Result<std::string> {
+        ++modelCalls; return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+    });
+    ROCLINT_CHECK(modelCalls == 0 && invalid.outcome == ValidationOutcome::Unresolved);
+    ROCLINT_CHECK(invalid.executionStatus == AuditExecutionStatus::Malformed);
+
+    const auto request = fx::wordingRequest({"Make the widget less intrusive.", "Make the widget less intrusive."}, 90);
+    GraniteAdapter runtime;
+    ROCLINT_CHECK(runtime.beginLoading());
+    ROCLINT_CHECK(runtime.completeLoading(fx::testModel()));
+    int rewrites = 0, audits = 0;
+    auto rewrite = [&](std::string_view instructions) -> Result<std::string> {
+        if (++rewrites == 1) return fx::rewriteReply("Summarize the user's feedback. Make the widget less intrusive.");
+        ROCLINT_CHECK(instructions.find("original_task") != std::string_view::npos);
+        ROCLINT_CHECK(instructions.find("<previous_candidate>") != std::string_view::npos);
+        return fx::rewriteReply("Make the widget less intrusive.");
+    };
+    auto review = [&](std::string_view instructions) -> Result<std::string> {
+        ROCLINT_CHECK(instructions.find("granite.goldfish_audit.v2") != std::string_view::npos);
+        if (++audits == 1) return reject(instructions);
+        return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+    };
+    const auto repaired = GraniteRewriteAdapter::synthesizeRewriteWithRepairLoop(
+        request, runtime, rewrite, review, 2000, 1, 45000);
+    ROCLINT_CHECK(rewrites == 2 && audits == 2 && repaired.attemptsExecuted == 2);
+    ROCLINT_CHECK(repaired.repairedSuccessfully && repaired.auditVerdict.outcome == ValidationOutcome::Pass);
+    ROCLINT_CHECK(repaired.proposal.ok() && repaired.proposal.value().rewrittenText == "Make the widget less intrusive.");
+
+    // A second audit that remains unresolved cannot be called a successful repair.
+    rewrites = 0; audits = 0;
+    auto unresolvedReview = [&](std::string_view instructions) -> Result<std::string> {
+        if (++audits == 1) return reject(instructions);
+        return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"original_task","explanation":"The intended action remains uncertain."}]})");
+    };
+    const auto uncertain = GraniteRewriteAdapter::synthesizeRewriteWithRepairLoop(
+        request, runtime, rewrite, unresolvedReview, 2000, 1, 45000);
+    ROCLINT_CHECK(!uncertain.repairedSuccessfully && uncertain.auditVerdict.outcome == ValidationOutcome::Unresolved);
+}
 
 void testPromptBuilding() {
     GoldfishAuditRequest req;
@@ -46,7 +103,7 @@ void testPromptBuilding() {
     const std::string prompt = buildGoldfishAuditPrompt(req);
 
     // Contract checks
-    ROCLINT_CHECK(prompt.find("Instruction contract: granite.goldfish_audit.v1") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Instruction contract: granite.goldfish_audit.v2") != std::string::npos);
     ROCLINT_CHECK(prompt.find("Goldfish Auditor") != std::string::npos);
     ROCLINT_CHECK(prompt.find("ZERO VETO POWER") != std::string::npos);
 
@@ -1557,6 +1614,7 @@ void testComprehensionUnicodeAndEscapedEvidencePreserved() {
 int main() {
     std::cout << "[RUNNING] test_granite_goldfish_adapter...\n";
     testPromptBuilding();
+    testSourceTaskFindingIsAuthoritativeAndRepairable();
     testResponseParsing();
     testDeterministicPreGateFastFail();
     testAdvisoryZeroVetoPower();

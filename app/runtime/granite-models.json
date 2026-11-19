@@ -5,7 +5,7 @@
   "model_revision": "c40945d71cd90f249a56985e8155551a9188dc30",
   "runtime_repository": "https://github.com/ggml-org/llama.cpp.git",
   "runtime_revision": "da2ee1e7a640445fc562fe5529598cee1917e0f5",
-  "configuration_id": "granite.cpu.mmap.ctx8192.threads4.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality",
+  "configuration_id": "granite.cpu.mmap.ctx8192.threads4.t1.p095.s42.jinja.json0ws.rejection.review_polish.v16.popup_feedback_fast_verify",
   "context_tokens": 8192,
   "input_tokens": 6144,
   "output_tokens": 2048,
@@ -28,17 +28,17 @@
     "CPU": {
       "backend": "cpu",
       "gpu_layers": 0,
-      "configuration_id": "granite.cpu.mmap.ctx8192.threads4.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality"
+      "configuration_id": "granite.cpu.mmap.ctx8192.threads4.t1.p095.s42.jinja.json0ws.rejection.review_polish.v16.popup_feedback_fast_verify"
     },
     "VULKAN": {
       "backend": "vulkan",
       "gpu_layers": 99,
-      "configuration_id": "granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality"
+      "configuration_id": "granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v16.popup_feedback_fast_verify"
     },
     "METAL": {
       "backend": "metal",
       "gpu_layers": 99,
-      "configuration_id": "granite.metal.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v13.context_quality"
+      "configuration_id": "granite.metal.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v16.popup_feedback_fast_verify"
     }
   },
   "model_license": "Apache-2.0",

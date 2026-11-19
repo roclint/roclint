@@ -104,7 +104,7 @@ int main(int argc, char* argv[]) {
 
     // A normal Start-menu/double-click launch opens a real window. Background
     // startup is an explicit option, rather than a silent tray-only default.
-    if (!dryRun && !backgroundOnly && !autoShow && !autoShowDashboard) autoShow = true;
+    if (!dryRun && !backgroundOnly && !autoShow && !autoShowDashboard) autoShowDashboard = true;
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("Roclint"));
     const std::string_view coreVersion = roclint::core::get_version_string();
@@ -201,17 +201,9 @@ int main(int argc, char* argv[]) {
                 window->setHeight(customHeight);
             }
             QObject::connect(controller, &roclint::host::HostController::showCardRequested,
-                             window, [window, controller](int x, int y) {
-                if (controller->isAmbientAttached() || controller->isAmbientActive()) {
-                    // The retained HUD may be expanded or manually resized. Its
-                    // actual size, rather than the compact default, must fit.
-                    window->setPosition(controller->calculateAmbientAnchor(window->width(), window->height()));
-                } else if (x >= 0 && y >= 0) {
-                    window->setPosition(x, y);
-                } else {
-                    const auto placement = roclint::host::ScreenPlacement::determineTargetPosition(window->width(), window->height());
-                    window->setPosition(placement.x, placement.y);
-                }
+                             window, [window, controller]() {
+                // Use the actual retained HUD size for each invocation, including Copy mode.
+                window->setPosition(controller->calculateAmbientAnchor(window->width(), window->height()));
                 if (controller->isAmbientAttached()) {
                     roclint::host::showNonActivatingWindow(window);
                 } else {
@@ -241,6 +233,15 @@ int main(int argc, char* argv[]) {
             const auto syncVisibility = [window, controller]() {
                 using roclint::host::CardVisibility;
                 if (!window->isVisible() || window->visibility() == QWindow::Minimized) {
+#ifdef Q_OS_WIN
+                    // Minimize the resident helper to its tray. A minimized
+                    // topmost HUD can otherwise return with the editor owner.
+                    if (window->visibility() == QWindow::Minimized) {
+                        QTimer::singleShot(0, window, [window, controller]() {
+                            if (window->visibility() == QWindow::Minimized) { controller->minimizeCard(); window->hide(); }
+                        });
+                    }
+#endif
                     roclint::host::uninstallOutsideClickMonitor();
                     controller->syncCardVisibility(CardVisibility::Hidden);
                 } else {
@@ -328,17 +329,12 @@ int main(int argc, char* argv[]) {
                 window->setProperty("currentTab", dashboardTab);
             }
             QObject::connect(controller, &roclint::host::HostController::showDashboardRequested,
-                             window, [window]() {
-                if (window->x() <= 0 && window->y() <= 0) {
-                    if (const auto* s = window->screen()) {
-                        const QRect geom = s->availableGeometry();
-                        const int cx = geom.x() + (geom.width() - window->width()) / 2;
-                        const int cy = geom.y() + (geom.height() - window->height()) / 2;
-                        window->setX(std::max(geom.x(), cx));
-                        window->setY(std::max(geom.y(), cy));
-                    }
+                             window, [window, dashboardMaximized]() {
+                if (window->visibility() == QWindow::Minimized) {
+                    window->setWindowStates(window->windowStates() & ~Qt::WindowMinimized);
+                } else if (!window->isVisible()) {
+                    QMetaObject::invokeMethod(window, "present", Q_ARG(QVariant, QVariant(dashboardMaximized)));
                 }
-                window->showNormal();
                 window->raise();
                 window->requestActivate();
             });
@@ -354,11 +350,7 @@ int main(int argc, char* argv[]) {
             });
 
             if (autoShowDashboard && !dryRun) {
-                if (dashboardMaximized) {
-                    window->showMaximized();
-                } else {
-                    controller->showDashboard();
-                }
+                controller->showDashboard();
             }
 
             if (!dashboardScreenshotPath.isEmpty()) {
@@ -378,11 +370,14 @@ int main(int argc, char* argv[]) {
                 });
             }
         } else if (objUrl == badgeUrl) {
+#ifndef Q_OS_WIN
             roclint::host::configureNonActivatingPanel(window);
+#endif
             QObject::connect(controller, &roclint::host::HostController::ambientBadgeChanged,
                              window, [window, controller]() {
                 if (controller->isAmbientBadgeVisible()) {
-                    window->setPosition(controller->ambientBadgeX(), controller->ambientBadgeY());
+                    const QPoint position(controller->ambientBadgeX(), controller->ambientBadgeY());
+                    if (window->position() != position) window->setPosition(position);
                     if (!window->isVisible()) {
                         window->show();
                     }
@@ -395,9 +390,17 @@ int main(int argc, char* argv[]) {
         } else if (objUrl == companionUrl) {
             // The QML flags include WindowDoesNotAcceptFocus. Show without activating so the
             // destination editor keeps focus and the frozen target remains valid.
+            const auto placeCompanion = [window, controller]() {
+                if (!window->isVisible() || !controller->wordCompanionVisible()) return;
+                const auto placement = roclint::host::ScreenPlacement::determineAnchorPosition(
+                    controller->wordRefinementAnchorRect(), window->width(), window->height());
+                window->setPosition(placement.x, placement.y);
+            };
+            QObject::connect(window, &QWindow::widthChanged, window, placeCompanion);
+            QObject::connect(window, &QWindow::heightChanged, window, placeCompanion);
             QObject::connect(controller, &roclint::host::HostController::wordRefinementChanged,
-                             window, [window, controller]() {
-                if (!controller->hasWordRefinement()) {
+                             window, [window, controller, placeCompanion]() {
+                if (!controller->wordCompanionVisible()) {
                     if (window->isVisible()) window->hide();
                     return;
                 }
@@ -408,6 +411,7 @@ int main(int argc, char* argv[]) {
                 if (!window->isVisible()) {
                     window->show();
                 }
+                QTimer::singleShot(0, window, placeCompanion);
             });
         }
     });
@@ -416,8 +420,9 @@ int main(int argc, char* argv[]) {
     engine.load(dashboardUrl);
     engine.load(badgeUrl);
     engine.load(companionUrl);
+    engine.load(QUrl(QStringLiteral("qrc:/shell/WordMarks.qml")));
 
-    if (engine.rootObjects().size() != 4) {
+    if (engine.rootObjects().size() != 5) {
         std::cerr << "[Roclint Host] Error: One or more required QML screens failed to load" << std::endl;
         if (!dryRun) QMessageBox::critical(nullptr, QStringLiteral("Roclint"),
             QStringLiteral("Roclint couldn't load its interface. Reinstall the complete application folder, including its Qt runtime."));

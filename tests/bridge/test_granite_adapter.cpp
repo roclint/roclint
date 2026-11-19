@@ -1,3 +1,4 @@
+#include "roclint/bridge/WordSurfaceCheck.hpp"
 #include "roclint/bridge/GraniteAdapter.hpp"
 #include "roclint/bridge/GraniteGoldfishAdapter.hpp"
 #include "roclint/core/Json.hpp"
@@ -587,7 +588,7 @@ void testContextualWordRefinementContract() {
     request.astContextXml = "<symbol name=\"refreshDashboard\"/>";
 
     const auto prompt = buildWordRefinementPrompt(request);
-    ROCLINT_CHECK(prompt.find("granite.word_refinement.v2") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("granite.word_refinement.v4") != std::string::npos);
     ROCLINT_CHECK(prompt.find("Make the dashboard feel faster") != std::string::npos);
     ROCLINT_CHECK(prompt.find("surrounding_before") != std::string::npos);
     ROCLINT_CHECK(prompt.find("surrounding_after") != std::string::npos);
@@ -640,6 +641,15 @@ void testContextualWordRefinementContract() {
     ROCLINT_CHECK(clarification.ok());
     ROCLINT_CHECK(clarification.value().needsClarification);
     ROCLINT_CHECK(clarification.value().clarificationQuestion.find("first paint") != std::string::npos);
+    auto choices = parseWordRefinementResponse(
+        R"({"action":"ask","question":"Which result matters?","choices":["Lower response latency","Higher batch throughput"]})", request);
+    ROCLINT_CHECK(choices.ok() && choices.value().clarificationChoices.size() == 2 && choices.value().candidates.empty());
+    ROCLINT_CHECK(!parseWordRefinementResponse(
+        R"({"action":"ask","question":"Which result matters?","choices":["Same answer","Same answer"]})", request).ok());
+    ROCLINT_CHECK(!parseWordRefinementResponse(
+        R"({"action":"ask","question":"Which result matters?","choices":["One","Two","Three","Four"]})", request).ok());
+    ROCLINT_CHECK(!parseWordRefinementResponse(
+        R"({"action":"ask","question":"Which result matters?","choices":[42]})", request).ok());
 
     auto emptyQuestion = parseWordRefinementResponse(
         R"({"needs_clarification":true,"clarification_question":"","candidates":[]})", request);
@@ -741,6 +751,62 @@ void testWordEditsRequireCompleteDraftAudit() {
         ROCLINT_CHECK(!auditWordRefinementResponse(bad,request,proposed.value()).ok());
     auto unresolved=auditWordRefinementResponse(R"({"verdicts":[{"id":"wcand_1","grammar":"Unresolved","preservation":"Unresolved","usefulness":"Unresolved"},{"id":"wcand_2","grammar":"Fail","preservation":"Fail","usefulness":"Fail"}]})",request,proposed.value());
     ROCLINT_CHECK(unresolved.ok() && unresolved.value().candidates.empty());
+}
+
+void testWordSurfaceRecoveryIsBoundedAndEvidenceChecked() {
+    WordRefinementRequest request;
+    request.draftText = "Keep the output unchnaged"; request.selectedText = "unchnaged";
+    request.selectionStart = 16; request.selectionEnd = 25;
+    const auto repair = parseWordSurfaceCheckResponse(
+        R"({"status":"repair","replacement":"unchanged","explanation":"Correct spelling","source":""})", request);
+    ROCLINT_CHECK(repair.ok() && repair.value().handled && repair.value().response.candidates.size() == 1);
+    ROCLINT_CHECK(repair.value().response.candidates[0].replacement == "unchanged");
+    const auto clean = parseWordSurfaceCheckResponse(
+        R"({"status":"clean","replacement":"","explanation":"","source":""})", request);
+    ROCLINT_CHECK(clean.ok() && !clean.value().handled);
+    const auto fixed = parseWordSurfaceCheckResponse(
+        R"({"status":"protected","replacement":"","explanation":"Exact spelling required","source":"Keep the output unchnaged"})", request);
+    ROCLINT_CHECK(fixed.ok() && fixed.value().handled && fixed.value().response.candidates.empty());
+    for (const auto* invalid : {
+        R"({"status":"clean","replacement":"unchanged","explanation":"","source":""})",
+        R"({"status":"protected","replacement":"","explanation":"Exact","source":"invented source"})",
+        R"({"status":"protected","replacement":"","explanation":"Exact","source":"unchnaged"})",
+        R"({"status":"repair","replacement":"unchnaged","explanation":"No change","source":""})",
+        R"({"status":"repair","replacement":"unchanged","explanation":"","source":""})",
+        R"({"status":"unknown","replacement":"","explanation":"","source":""})", "{}"})
+        ROCLINT_CHECK(!parseWordSurfaceCheckResponse(invalid, request).ok());
+    ++request.selectionStart;
+    ROCLINT_CHECK(!parseWordSurfaceCheckResponse(
+        R"({"status":"clean","replacement":"","explanation":"","source":""})", request).ok());
+}
+
+void testWordCodeIdentitySurvivesFalseModelApproval() {
+    for (const auto* draft : {"Use Cache::reaad exactly as named", "Call cache->reaad next",
+                              "Call cache.reaad next", "Use `reaad` as named", "Set the literal label to \"reaad\" exactly"}) {
+        WordRefinementRequest request;
+        request.draftText = draft; request.selectedText = "reaad";
+        request.selectionStart = static_cast<int>(request.draftText.find("reaad"));
+        request.selectionEnd = request.selectionStart + 5;
+        const auto parsed = parseWordRefinementResponse(
+            R"({"action":"replace","options":[{"text":"read","effect":"Correct spelling","assume":""}]})", request);
+        ROCLINT_CHECK(parsed.ok() && parsed.value().candidates.empty() && !parsed.value().needsClarification);
+        WordRefinementResponse forged;
+        forged.candidates.push_back({"wcand_1", "reaad", "read", "Spelling", "", false});
+        const auto audited = auditWordRefinementResponse(
+            R"({"verdicts":[{"id":"wcand_1","grammar":"Pass","preservation":"Pass","usefulness":"Pass"}]})",
+            request, forged);
+        ROCLINT_CHECK(audited.ok() && audited.value().candidates.empty());
+    }
+    for (const auto& draft : {std::string("Make Cache::run unchnaged"),
+                              std::string("Keep ") + std::string(12000, 'x') + " unchnaged"}) {
+        WordRefinementRequest request;
+        request.draftText = draft; request.selectedText = "unchnaged";
+        request.selectionStart = static_cast<int>(draft.find(request.selectedText));
+        request.selectionEnd = request.selectionStart + 9;
+        const auto parsed = parseWordRefinementResponse(
+            R"({"action":"replace","options":[{"text":"unchanged","effect":"Correct spelling","assume":""}]})", request);
+        ROCLINT_CHECK(parsed.ok() && parsed.value().candidates.size() == 1);
+    }
 }
 
 void testInterviewFollowUpCarriesBriefWithoutRepeatingSettledDecisions() {
@@ -872,6 +938,8 @@ int main() {
     testSourceQuotesAndProposalsAreDistinct();
     testContractRecoveryIsBoundedAndBudgeted();
     testWordEditsRequireCompleteDraftAudit();
+    testWordCodeIdentitySurvivesFalseModelApproval();
+    testWordSurfaceRecoveryIsBoundedAndEvidenceChecked();
     testInterviewFollowUpCarriesBriefWithoutRepeatingSettledDecisions();
     testCompactWireContractsRetainProvenanceAndSpanSafety();
     std::cout << "[Test GraniteAdapter] All tests PASSED.\n";

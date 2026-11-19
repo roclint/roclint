@@ -2,6 +2,20 @@
 
 Roclint is a resident native prompt-engineering application built with C++20, Qt Quick/QML and SQLite. The supplied Stardust v4.2 product contracts guide the implementation.
 
+November 17 word-flow update: the selected word-level companion now has exact
+Windows UIA range marks where the provider supports them, readable compact cards,
+in-card checked answers, and guarded Undo. Accepted answers survive failed local
+wording and sentence-audit rejection, then enter explicit Full rewrite with their
+exact question through existing revision-bound intent provenance. Supplemental
+rewrite topics no longer arrive empty. The full rewrite appears before optional
+healthy-review details. The update is installed on Windows: 66 enabled CTests,
+five focused suites, the seven-case native word corpus and installed startup pass;
+one real-embedding integration remains disabled. Wider live editor/AX geometry
+and macOS behavior are not established. See [the flow and verification](audit/word_flow_2026-11-17.md).
+An isolated [Bonsai 2 9B comparison](audit/bonsai_9b_comparison_2026-11-17.md)
+showed mixed questions, rejected unsafe edits and repeated questions after a valid
+answer, so the installed Granite weights/settings remain unchanged.
+
 November 13 native runtime update: an experimental **Think before answering**
 setting provides bounded private reasoning before constrained JSON, with
 separate thinking/answer token accounting in the HUD. It defaults off because
@@ -32,6 +46,65 @@ November 15 guard follow-up: removed numeric false-conflict suppression and the
 verb-based meta-instruction veto, added exact quantity/unit comparison and UTF-8-safe
 source-clause clipping. Independent semantic review remains required for rewrite
 approval. See [the fixes, regression coverage and limits](audit/companion_guard_remediation_2026-11-15.md).
+
+November 16 word companion update: the caret-anchored popup now leads with the
+replacement, keeps proposed assumptions visible, and puts explanations and other
+readings behind More options. Full rewrite opens a version/field-bound HUD request
+without selecting an answer or starting the interview. Cold inline requests warm
+the native model and retain only the latest pending field/span. Existing sentence
+auditing, exact-range insertion and rewrite approval gates remain in force. See
+[the implementation and rendered references](audit/word_companion_2026-11-16.md)
+for verification and installation status. Editor-wide underlines, live native
+insertion in this pass and macOS parity remain unverified.
+
+November 16 word-action follow-up: a bounded focused surface check can turn an
+unnecessary spelling question into an independently audited correction, while
+leaving genuine intent questions open. Structural guards suppress word edits to
+qualified identifiers, backtick names and double-quoted strings. The seven-case
+real Q8_0 corpus now explicitly matches the default-off thinking profile and
+passes (0.8–3.3 s warm; 47.9 s readiness). The matching v15 release is installed; five rebuilt relevant suites and Windows
+startup verification passed. The user reports that live Apply changed the editor; refreshed capture/logs do not
+yet independently confirm it, so that verification discrepancy remains open. See [the evidence and limits](audit/word_action_quality_2026-11-16.md).
+
+November 16 popup/startup follow-up: Windows observations now convert native
+pixel bounds to Qt logical coordinates per monitor, geometry-only observations
+move the existing popup, and minimizing the HUD hides it to the tray. The word
+companion distinguishes checking, applying, applied and failed; an Applied state
+requires its matching native readback completion. Model-load failures are visible,
+and checking hides previous recommendation details. Windows full-file SHA-256 now
+uses CNG with the pinned digest check retained. The matching v16 host/worker is
+installed: 66 enabled CTests passed, the final companion UI follow-up passed, and
+the real-model corpus passed 7/7. Readiness was 21.3 s in the corpus and 20.5 s in
+the installed trace (earlier 47.9 s; cache/device conditions uncontrolled).
+Single-display 200% placement is observed. One manual Apply in the disposable
+Windows editor is verified by a matching INJECTED completion and an independent
+UIA readback of the corrected sentence; wider IDE/macOS parity remains open.
+See [the measurements, installation and limits](audit/popup_feedback_speed_2026-11-16.md).
+
+November 16 quiet-interaction follow-up (installed and Windows-verified):
+background checks are represented by one 28-pixel Roc indicator. Loading, results
+and failures do not automatically open the phrase card; clicking the icon opens
+it, and the icon hides while that card or the HUD is visible. New drafts and
+field changes clear the explicit-open request. Placement prefers space outside
+the editor, and phrase cards narrow to 312 logical pixels. Audit-only IDs are no
+longer rendered as user answers; plain review labels retain all approval gates.
+Full enabled CTest passed 66/66, the final visual follow-up passed, and the
+installed startup smoke passed. Live 200% observation confirms icon-only help
+and an unchanged draft while model work completes. Native click-to-open was not
+repeated; real QML mouse routing and controller gates are covered separately.
+See [the supplied screenshot findings, rendered references and test status](audit/quiet_companion_2026-11-16.md).
+This is an interaction correction, not editor-wide underlines or native macOS parity.
+
+November 16 rewrite-quality follow-up (installed): first-person negative opinions
+such as "I don't like this UI" no longer create mutation prohibitions. Goldfish
+audit v2 checks retention of the requested task and binds original_task findings
+to the frozen user source, allowing actionable failures into bounded rewrite
+repair. A repair requires a passing re-audit. Release build and 66 enabled CTests
+passed; the actual pinned model and production authority reconciler matched six
+synthetic task-retention verdicts, including two held-out controls. Installed
+Windows startup passed. Three clarification-prompt experiments remained weak and
+were rejected: Clarify's semantic usefulness and the larger review UX are still
+open product gaps. See [the experiments, implementation and limits](audit/rewrite_clarify_quality_2026-11-16.md).
 
 The AST correctness baseline is sealed at `deadd39` with workspace/scope epochs,
 failed-cache invalidation, meaningful bounded renderer identity and automatic

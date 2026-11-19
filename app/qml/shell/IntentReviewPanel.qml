@@ -8,12 +8,15 @@ FocusScope {
     objectName: "intentReviewPanel"
     property real viewportHeight: 520
     property bool showDiagnostics: false
+    property bool compactPresentation: false
     signal reviewRequested()
     signal rewriteRequested()
     property bool reducedMotion: false
     property bool showChanges: false
+    property bool showOriginal: false
     property bool inspectPanelExplicitOpen: false
     property bool draftAvailable: hc && hostController.currentRevisionText.trim().length > 0
+    property bool rewritePending: false
     signal revealReviewItem(var item)
     signal editDraftRequested()
     readonly property bool previewActive: hc && (hostController.proposalStatus === "READY_FOR_REVIEW" || hostController.proposalStatus === "GENERATING")
@@ -31,15 +34,30 @@ FocusScope {
         if (manualResolution) customAnswer.forceActiveFocus();
         else clarifyPanel.forceActiveFocus();
     }
-    function focusReview() {
+    function focusPendingConstraint() {
         for (let i = 0; i < constraintRepeater.count; ++i) {
             const row = constraintRepeater.itemAt(i);
             if (row && row.pending) {
                 row.reviewCheck.forceActiveFocus(Qt.TabFocusReason);
                 revealReviewItem(row);
-                return;
+                return true;
             }
         }
+        return false;
+    }
+    function advanceReview() {
+        if (focusPendingConstraint()) return;
+        if (comprehensionCard.visible) {
+            comprehensionCard.focusStatus();
+            revealReviewItem(comprehensionCard.statusItem);
+            if (comprehensionCard.reviewState !== "ready" && comprehensionCard.reviewState !== "running")
+                comprehensionCard.requestReview();
+            return;
+        }
+        focusReview();
+    }
+    function focusReview() {
+        if (focusPendingConstraint()) return;
         rootWindow.showChanges = true;
         Qt.callLater(function() {
             diffView.forceActiveFocus(Qt.TabFocusReason);
@@ -111,7 +129,7 @@ FocusScope {
     }
     readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property string monoFont: isMac ? "Menlo" : "Consolas"
-    readonly property string sansFont: "Inter Variable"
+    readonly property string sansFont: rocPalette.sansFont
     readonly property bool hc: typeof hostController !== "undefined" && hostController !== null
 
     property string currentTheme: "dark"
@@ -125,14 +143,14 @@ FocusScope {
     // while it is explicitly open. Automatic/manual clarification keeps the
     // established inline controls, including their custom-answer field.
     readonly property bool interviewSurfaceActive: hc && companionContract.intentSurfaceAvailable &&
-                                                   companionContract.isInterviewActive
+        companionContract.isInterviewActive && (!hostController.hasProposal || comprehensionReviewState === "waiting_for_answer")
     readonly property bool reviewContractActive: hc && companionContract.reviewSurfaceAvailable
     readonly property string comprehensionReviewState: reviewContractActive ? companionContract.comprehensionState : ""
     function focusInterview() {
         if (!rootWindow.interviewSurfaceActive) return;
         interviewSurface.forceActiveFocus(Qt.TabFocusReason);
         interviewSurface.focusQuestion();
-        rootWindow.revealReviewItem(interviewSurface);
+        rootWindow.revealReviewItem(interviewSurface.answerField.visible ? interviewSurface.answerField : interviewSurface);
     }
     readonly property color bgColor: rocPalette.background
     readonly property color fgColor: rocPalette.foreground
@@ -288,6 +306,7 @@ FocusScope {
         width: parent.width
         spacing: 8
         Flow {
+            visible: !rootWindow.compactPresentation
             Layout.fillWidth: true
             spacing: 8
             ActionButton {
@@ -300,11 +319,12 @@ FocusScope {
             }
             ActionButton {
                 objectName: "rewriteWithoutQuestionsButton"
-                label: rootWindow.hc && hostController.isClarifying ? qsTr("Skip questions & rewrite") : qsTr("Rewrite prompt")
+                label: rootWindow.rewritePending ? qsTr("Rewrite queued…")
+                    : rootWindow.hc && hostController.isClarifying ? qsTr("Skip questions & rewrite") : qsTr("Rewrite prompt")
                 primary: !(rootWindow.hc && hostController.isClarifying)
                 iconName: "pencil-simple"
                 visible: rootWindow.hc && !rootWindow.previewActive
-                active: rootWindow.draftAvailable && rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy && !hostController.isAnalyzing
+                active: rootWindow.draftAvailable && rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy && !rootWindow.rewritePending
                 onClicked: rootWindow.rewriteRequested()
             }
             ActionButton {
@@ -631,7 +651,7 @@ FocusScope {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
                 spacing: 8
-                visible: rootWindow.hc && hostController.hasConfirmedIntent && !rootWindow.previewActive
+                visible: !rootWindow.compactPresentation && rootWindow.hc && hostController.hasConfirmedIntent && !rootWindow.previewActive
 
                 Text {
                     Layout.fillWidth: true
@@ -744,13 +764,85 @@ FocusScope {
                         font.pixelSize: 14
                         color: rootWindow.mutedTextColor
                     }
+                    TextArea {
+                        objectName: "rewritePromptPreview"
+                        readOnly: true
+                        selectByMouse: true
+                        activeFocusOnTab: true
+                        padding: 0
+                        background: null
+                        Accessible.name: rootWindow.showOriginal ? qsTr("Original prompt") : qsTr("Proposed prompt")
+                        visible: reviewPanel.status === "READY_FOR_REVIEW" && !rootWindow.showChanges
+                        Layout.fillWidth: true; Layout.minimumWidth: 0
+                        text: rootWindow.hc ? (rootWindow.showOriginal ? hostController.currentRevisionText : hostController.proposalText) : ""
+                        textFormat: Text.PlainText; wrapMode: TextEdit.Wrap
+                        font.family: rootWindow.sansFont; font.pixelSize: 15; font.weight: Font.Normal
+                        color: rootWindow.fgColor
+                        opacity: 1.0
+                    }
+                    ActionButton {
+                        objectName: "rewriteCompareOriginalControl"
+                        visible: reviewPanel.status === "READY_FOR_REVIEW" && !rootWindow.showChanges
+                        label: rootWindow.showOriginal ? qsTr("Back to rewrite") : qsTr("Compare original")
+                        compact: true; quiet: true
+                        onClicked: rootWindow.showOriginal = !rootWindow.showOriginal
+                    }
+                    ActionButton {
+                        visible: reviewPanel.status === "READY_FOR_REVIEW"
+                        label: rootWindow.showChanges ? qsTr("Read full prompt") : qsTr("Show changes")
+                        compact: true; quiet: true
+                        onClicked: rootWindow.showChanges = !rootWindow.showChanges
+                    }
+                    ListView {
+                        id: diffView
+                        objectName: "diffView"
+                        onHeightChanged: if (activeFocus) Qt.callLater(function() { rootWindow.revealReviewItem(diffView); })
+                        visible: reviewPanel.status === "READY_FOR_REVIEW" && rootWindow.showChanges
+                        activeFocusOnTab: true
+                        Accessible.name: qsTr("Changes in the suggested rewrite")
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        Layout.preferredHeight: Math.min(contentHeight, Math.max(80, Math.min(240, rootWindow.viewportHeight * 0.4)))
+                        implicitHeight: Layout.preferredHeight
+                        clip: true
+                        Keys.onPressed: function(event) {
+                            const maximum = Math.max(0, contentHeight - height);
+                            let next = contentY;
+                            if (event.key === Qt.Key_End) next = maximum;
+                            else if (event.key === Qt.Key_Home) next = 0;
+                            else if (event.key === Qt.Key_PageDown) next += height * 0.8;
+                            else if (event.key === Qt.Key_PageUp) next -= height * 0.8;
+                            else if (event.key === Qt.Key_Down) next += 24;
+                            else if (event.key === Qt.Key_Up) next -= 24;
+                            else return;
+                            contentY = Math.max(0, Math.min(maximum, next));
+                            event.accepted = true;
+                        }
+                        model: rootWindow.hc && hostController.lastDiffText.length > 0 ? hostController.lastDiffText.split("\n") : []
+                        ScrollBar.vertical: HudScrollBar {}
+                        delegate: Text {
+                            required property string modelData
+                            width: diffView.width
+                            text: modelData
+                            textFormat: Text.PlainText
+                            wrapMode: Text.WrapAnywhere
+                            font.family: rootWindow.monoFont
+                            font.pixelSize: 14
+                            color: modelData.startsWith("+ ") ? rootWindow.addedColor
+                                 : modelData.startsWith("- ") ? rootWindow.removedColor
+                                 : modelData.startsWith("~ ") ? rootWindow.changedColor : rootWindow.mutedTextColor
+                        }
+                    }
                     // Independent comprehension review. Present only on hosts
                     // that expose the review contract; the card itself states
                     // not_run/running/stale/failed rather than implying apply.
                     ComprehensionReview {
                         id: comprehensionCard
+                        embedded: true
                         objectName: "comprehensionCard"
-                        visible: rootWindow.reviewContractActive && reviewPanel.status === "READY_FOR_REVIEW"
+                        visible: rootWindow.reviewContractActive && reviewPanel.status === "READY_FOR_REVIEW" &&
+                            comprehensionCard.reviewState !== "waiting_for_answer" &&
+                            (!comprehensionCard.ready || comprehensionCard.findingCount > 0)
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         currentTheme: rootWindow.currentTheme
@@ -760,12 +852,8 @@ FocusScope {
                             if (rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy)
                                 hostController.approveAndCopyRewrite(hostController.stateVersion);
                         }
-                        onReturnToInterviewRequested: {
-                            // Explicitly expand the interview again; a stale HUD
-                            // may have been reopened without it.
-                            companionContract.openInterview();
-                            rootWindow.focusInterview();
-                        }
+                        onEditDraftRequested: rootWindow.editDraftRequested()
+                        onReturnToInterviewRequested: Qt.callLater(rootWindow.focusInterview)
                         onKeepOriginalRequested: {
                             if (rootWindow.hc) hostController.keepOriginalPrompt(hostController.stateVersion);
                         }
@@ -816,7 +904,9 @@ FocusScope {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
                                     textFormat: Text.PlainText
-                                    text: (rootWindow.showDiagnostics ? "[" + modelData.status + "] " : "") + modelData.description
+                                    text: !rootWindow.showDiagnostics && modelData.description.startsWith("Audit uncertainty:")
+                                        ? qsTr("Check that this rewrite keeps your original requirement.")
+                                        : (rootWindow.showDiagnostics ? "[" + modelData.status + "] " : "") + modelData.description
                                         + (modelData.needsReview && modelData.evidence.length ? "\nYour answer: “" + modelData.evidence + "”" : "")
                                     wrapMode: Text.Wrap
                                     maximumLineCount: 4
@@ -832,7 +922,7 @@ FocusScope {
                                     label: hasAuditExplanation ? qsTr("Why review?") : qsTr("Read full requirement")
                                     onClicked: {
                                         reviewExplanationDialog.explanation = constraintLabel.text
-                                            + (hasAuditExplanation ? "\n\n" + modelData.auditExplanation : "");
+                                            + (hasAuditExplanation && rootWindow.showDiagnostics ? "\n\n" + modelData.auditExplanation : "");
                                         reviewExplanationDialog.returnFocusItem = constraintCheck;
                                         reviewExplanationDialog.open();
                                     }
@@ -869,7 +959,7 @@ FocusScope {
                         spacing: 6
 
                         Text {
-                            text: qsTr("Creative Branches / Aesthetic Styles:")
+                            text: qsTr("Other versions")
                             font.family: rootWindow.sansFont
                             font.pixelSize: 11
                             font.weight: Font.DemiBold
@@ -902,7 +992,7 @@ FocusScope {
 
                     Rectangle {
                         objectName: "comprehensionGateBanner"
-                        visible: rootWindow.reviewContractActive && reviewPanel.status === "READY_FOR_REVIEW" &&
+                        visible: rootWindow.showDiagnostics && rootWindow.reviewContractActive && reviewPanel.status === "READY_FOR_REVIEW" &&
                                  rootWindow.comprehensionReviewState !== "ready"
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
@@ -917,74 +1007,19 @@ FocusScope {
                             width: Math.max(0, parent.width - 14)
                             textFormat: Text.PlainText
                             text: rootWindow.comprehensionReviewState === "stale"
-                                  ? qsTr("NOT APPLICABLE · this reread belongs to an earlier draft. Reread the current rewrite.")
+                                  ? qsTr("Your draft changed. Review the current rewrite before applying.")
                                   : rootWindow.comprehensionReviewState === "running"
-                                    ? qsTr("NOT APPLICABLE YET · the independent reread is running.")
+                                    ? qsTr("Checking that the rewrite keeps your meaning…")
                                     : rootWindow.comprehensionReviewState === "failed"
-                                      ? qsTr("NOT APPLICABLE · the independent reread failed. The proposal was not approved.")
-                                      : qsTr("NOT APPLICABLE YET · this rewrite has not been independently reread.")
+                                      ? qsTr("The review could not finish. Try again before applying.")
+                                      : qsTr("Review this rewrite before applying it.")
                             wrapMode: Text.WordWrap
                             font.family: rootWindow.sansFont
                             font.pixelSize: 11
                             color: rocPalette.warning
                         }
                     }
-                    Text {
-                        visible: reviewPanel.status === "READY_FOR_REVIEW" && !rootWindow.showChanges
-                        Layout.fillWidth: true; Layout.minimumWidth: 0
-                        text: rootWindow.hc ? hostController.proposalText : ""
-                        textFormat: Text.PlainText; wrapMode: Text.WordWrap
-                        font.family: rootWindow.sansFont; font.pixelSize: 15; lineHeight: 1.3
-                        color: rootWindow.fgColor
-                        opacity: rootWindow.reviewContractActive &&
-                                 rootWindow.comprehensionReviewState !== "ready" ? 0.72 : 1.0
-                    }
-                    ActionButton {
-                        visible: reviewPanel.status === "READY_FOR_REVIEW"
-                        label: rootWindow.showChanges ? qsTr("Read full prompt") : qsTr("Show changes")
-                        compact: true; quiet: true
-                        onClicked: rootWindow.showChanges = !rootWindow.showChanges
-                    }
-                    ListView {
-                        id: diffView
-                        objectName: "diffView"
-                        onHeightChanged: if (activeFocus) Qt.callLater(function() { rootWindow.revealReviewItem(diffView); })
-                        visible: reviewPanel.status === "READY_FOR_REVIEW" && rootWindow.showChanges
-                        activeFocusOnTab: true
-                        Accessible.name: qsTr("Changes in the suggested rewrite")
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        Layout.preferredHeight: Math.min(contentHeight, Math.max(80, Math.min(240, rootWindow.viewportHeight * 0.4)))
-                        implicitHeight: Layout.preferredHeight
-                        clip: true
-                        Keys.onPressed: function(event) {
-                            const maximum = Math.max(0, contentHeight - height);
-                            let next = contentY;
-                            if (event.key === Qt.Key_End) next = maximum;
-                            else if (event.key === Qt.Key_Home) next = 0;
-                            else if (event.key === Qt.Key_PageDown) next += height * 0.8;
-                            else if (event.key === Qt.Key_PageUp) next -= height * 0.8;
-                            else if (event.key === Qt.Key_Down) next += 24;
-                            else if (event.key === Qt.Key_Up) next -= 24;
-                            else return;
-                            contentY = Math.max(0, Math.min(maximum, next));
-                            event.accepted = true;
-                        }
-                        model: rootWindow.hc && hostController.lastDiffText.length > 0 ? hostController.lastDiffText.split("\n") : []
-                        ScrollBar.vertical: HudScrollBar {}
-                        delegate: Text {
-                            required property string modelData
-                            width: diffView.width
-                            text: modelData
-                            textFormat: Text.PlainText
-                            wrapMode: Text.WrapAnywhere
-                            font.family: rootWindow.monoFont
-                            font.pixelSize: 14
-                            color: modelData.startsWith("+ ") ? rootWindow.addedColor
-                                 : modelData.startsWith("- ") ? rootWindow.removedColor
-                                 : modelData.startsWith("~ ") ? rootWindow.changedColor : rootWindow.mutedTextColor
-                        }
-                    }
+
                 }
             }
 

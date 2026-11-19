@@ -6,7 +6,7 @@ The user's latest required model order is **Julia/S1 triage → unchanged origin
 
 ## Windows launch
 
-Open **Roclint** from the Start menu or desktop shortcut. It opens the HUD without a terminal; opening it again activates the resident instance and retains the current draft/review. Close hides the HUD; **Quit** in the tray menu ends Roclint. Background-only startup is an explicit `--background` option and is not enabled automatically.
+Open **Roclint** from the Start menu or desktop shortcut. Settings starts in full screen. Press **Esc** or **F11** to return to a regular window. Use **Settings** in the system tray to reopen it. Open the prompt HUD from the Roc badge, the configured shortcut, or **Open prompt HUD** in the tray menu. **Quit** in the tray menu ends Roclint. Background-only startup is an explicit `--background` option and is not enabled automatically.
 
 Maintainers can deploy a complete staged build with `tools/register_windows_app.ps1 -StagedDirectory build/Release/bin -DesktopShortcut`. This copies the app to `%LOCALAPPDATA%/Programs/Roclint/Roclint.exe` and creates direct executable shortcuts. Everyday launch requires neither that script nor a BAT file. This local development deployment still depends on the configured Python/model environment; a signed, clean-machine installer, first-run model setup, upgrade and uninstall remain release work. See [Windows app delivery](docs/plans/2026-11-07-windows-app-delivery.md).
 

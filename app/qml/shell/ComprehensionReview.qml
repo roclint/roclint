@@ -13,20 +13,25 @@ FocusScope {
     property string currentTheme: "dark"
     property bool reducedMotion: false
     property bool proposalAvailable: true
+    property bool embedded: false
+    readonly property bool compactSuccess: embedded && ready && findingCount === 0
 
     signal applyRequested()
     signal returnToInterviewRequested()
+    signal editDraftRequested()
     signal keepOriginalRequested()
 
     CompanionContract { id: contract }
     RocTheme { id: rocTheme; mode: root.currentTheme }
     readonly property string monoFont: Qt.platform.os === "osx" ? "Menlo" : "Consolas"
-    readonly property string sansFont: "Inter Variable"
+    readonly property string sansFont: rocTheme.sansFont
     readonly property color errorColor: "#EEA4AF"
     readonly property string reviewState: contract.reviewSurfaceAvailable ? contract.comprehensionState : "not_run"
     readonly property bool ready: contract.reviewSurfaceAvailable && reviewState === "ready"
     readonly property int decisionCount: contract.unresolvedDecisionCount
-    readonly property int findingCount: contract.comprehensionFindings.length
+    readonly property var presentedFindings: embedded && contract.canApplyReviewedOutput
+        ? [] : contract.comprehensionFindings
+    readonly property int findingCount: presentedFindings.length
     readonly property bool applyAllowed: root.proposalAvailable && contract.reviewSurfaceAvailable &&
                                          root.reviewState === "ready" && contract.canApplyReviewedOutput &&
                                          contract.canApprove
@@ -55,7 +60,7 @@ FocusScope {
         case "stale":
             return qsTr("The draft, an answer or the proposal changed after this reread. Nothing from the earlier review can be applied.");
         case "failed":
-            return qsTr("The reread failed closed. No text was approved, and the proposal is not applicable.");
+            return qsTr("Roclint couldn’t finish checking this rewrite. Try again to continue.");
         default:
             return "";
         }
@@ -105,6 +110,15 @@ FocusScope {
         default: return qsTr("Finding");
         }
     }
+    function decisionPrompt(kind) {
+        switch (kind) {
+        case "omission": return qsTr("Did the rewrite leave out this requirement?")
+        case "meaning_drift": return qsTr("Does this wording still mean what you intended?")
+        case "unsupported_assumption": return qsTr("Did you want the rewrite to make this assumption?")
+        case "negative_constraint": return qsTr("Does the rewrite respect what you asked it to avoid?")
+        default: return qsTr("Does this part of the rewrite reflect your draft?")
+        }
+    }
     function applyReason() {
         if (!root.proposalAvailable) return qsTr("Not applicable: there is no current rewrite.");
         if (!contract.reviewSurfaceAvailable) return qsTr("Independent reread is unavailable on this host.");
@@ -126,7 +140,25 @@ FocusScope {
         }
         return "";
     }
-    function requestReview() { contract.requestReview(); }
+    readonly property alias statusItem: stateHeadline
+    function focusStatus() { stateHeadline.forceActiveFocus(Qt.TabFocusReason); }
+    readonly property bool needsAutomaticReview: embedded && proposalAvailable && contract.reviewInvokable &&
+        (reviewState === "not_run" || reviewState === "stale")
+    property bool reviewStartFailed: false
+    Connections {
+        target: contract.host
+        ignoreUnknownSignals: true
+        function onStorageCommandFinished(requestId, name, succeeded, errorCode, message) {
+            if (name === "requestComprehensionReview" && root.needsAutomaticReview)
+                root.reviewStartFailed = !succeeded;
+        }
+    }
+    function startAutomaticReview() {
+        if (needsAutomaticReview) reviewStartFailed = !requestReview();
+    }
+    onNeedsAutomaticReviewChanged: if (needsAutomaticReview) Qt.callLater(startAutomaticReview)
+    Component.onCompleted: if (needsAutomaticReview) Qt.callLater(startAutomaticReview)
+    function requestReview() { return contract.requestReview(); }
     function resolve(finding, resolution) {
         if (!finding || !contract.reviewInvokable) return;
         contract.resolveFinding(finding.id, resolution);
@@ -181,11 +213,12 @@ FocusScope {
             spacing: 8
 
             RowLayout {
+                visible: !root.embedded || root.reviewState === "failed" || root.reviewStartFailed
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
                 spacing: 6
                 Text {
-                    text: qsTr("INDEPENDENT REREAD")
+                    text: root.embedded ? qsTr("MEANING CHECK") : qsTr("INDEPENDENT REREAD")
                     font.family: root.monoFont
                     font.pixelSize: 9
                     font.bold: true
@@ -217,7 +250,7 @@ FocusScope {
                 Item { Layout.fillWidth: true; Layout.minimumWidth: 0 }
                 TinyButton {
                     objectName: "comprehensionRequestControl"
-                    visible: root.reviewState === "not_run" || root.reviewState === "stale" || root.reviewState === "failed"
+                    visible: (root.needsAutomaticReview && root.reviewStartFailed) || root.reviewState === "failed" || (!root.embedded && (root.reviewState === "not_run" || root.reviewState === "stale"))
                     label: root.reviewState === "not_run" ? qsTr("Reread this prompt")
                                                      : root.reviewState === "stale" ? qsTr("Reread current")
                                                                               : qsTr("Try again")
@@ -228,11 +261,15 @@ FocusScope {
             }
 
             Text {
+                id: stateHeadline
                 objectName: "comprehensionStateHeadline"
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
                 textFormat: Text.PlainText
-                text: root.reviewStateTitle(root.reviewState)
+                text: root.embedded
+                    ? (root.ready ? qsTr("Check the wording") : root.reviewState === "failed"
+                        ? qsTr("The check didn’t finish") : qsTr("Checking your rewrite…"))
+                    : root.reviewStateTitle(root.reviewState)
                 wrapMode: Text.WordWrap
                 font.family: root.sansFont
                 font.pixelSize: 15
@@ -241,6 +278,7 @@ FocusScope {
             }
             Text {
                 objectName: "comprehensionStateDetail"
+                visible: !root.embedded && !root.compactSuccess
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
                 textFormat: Text.PlainText
@@ -253,8 +291,8 @@ FocusScope {
 
             Text {
                 Layout.fillWidth: true
-                visible: root.reviewState === "not_run" || root.reviewState === "running" || root.reviewState === "stale" ||
-                         root.reviewState === "failed"
+                visible: !root.embedded && (root.reviewState === "not_run" || root.reviewState === "running" ||
+                         root.reviewState === "stale" || root.reviewState === "failed")
                 text: qsTr("The proposed text above is not applicable in this state. Your original draft is unchanged.")
                 wrapMode: Text.WordWrap
                 font.family: root.sansFont
@@ -266,7 +304,7 @@ FocusScope {
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                visible: root.ready && contract.comprehensionInterpretation.length > 0
+                visible: !root.embedded && root.ready && contract.comprehensionInterpretation.length > 0 && !root.compactSuccess
                 spacing: 3
                 Text {
                     text: qsTr("REREADER'S READING · NOT AUTHORITATIVE")
@@ -300,7 +338,7 @@ FocusScope {
             ColumnLayout {
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                visible: root.ready
+                visible: root.ready && !root.compactSuccess
                 spacing: 6
                 RowLayout {
                     Layout.fillWidth: true
@@ -332,7 +370,7 @@ FocusScope {
                     color: rocTheme.success
                 }
                 Repeater {
-                    model: root.ready ? contract.comprehensionFindings : []
+                    model: root.ready ? root.presentedFindings : []
                     delegate: Rectangle {
                         id: findingRow
                         required property var modelData
@@ -346,6 +384,7 @@ FocusScope {
                         readonly property string repair: modelData.proposedRepair !== undefined
                                                              ? String(modelData.proposedRepair) : ""
                         readonly property bool needsDecision: modelData.requiresUserDecision === true
+                        readonly property bool canConfirm: modelData.canConfirmIntent === true
                         objectName: "comprehensionFinding_" + modelData.id
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
@@ -363,6 +402,7 @@ FocusScope {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
                                 spacing: 6
+                                visible: !root.embedded
                                 Text {
                                     objectName: "comprehensionFindingSeverity_" + index
                                     text: root.severityLabel(findingRow.severity)
@@ -380,7 +420,7 @@ FocusScope {
                                     color: rocTheme.muted
                                 }
                                 Text {
-                                    visible: findingRow.needsDecision
+                                    visible: !root.embedded && findingRow.needsDecision
                                     text: qsTr("YOUR DECISION")
                                     font.family: root.monoFont
                                     font.pixelSize: 8
@@ -392,7 +432,7 @@ FocusScope {
                                 Layout.fillWidth: true
                                 Layout.minimumWidth: 0
                                 textFormat: Text.PlainText
-                                text: modelData.summary
+                                text: root.embedded ? root.decisionPrompt(modelData.kind) : modelData.summary
                                 wrapMode: Text.WordWrap
                                 font.family: root.sansFont
                                 font.pixelSize: 13
@@ -410,15 +450,15 @@ FocusScope {
                                     visible: findingRow.excerpt.length > 0
                                     textFormat: Text.PlainText
                                     text: "“" + findingRow.excerpt + "”"
-                                    wrapMode: Text.WrapAnywhere
-                                    font.family: root.monoFont
-                                    font.pixelSize: 10
+                                    wrapMode: Text.Wrap
+                                    font.family: root.sansFont
+                                    font.pixelSize: 12
                                     color: rocTheme.foreground
                                 }
                                 Text {
                                     objectName: "comprehensionFindingSource_" + index
                                     Layout.fillWidth: true
-                                    visible: findingRow.sourceRef.length > 0
+                                    visible: !root.embedded && findingRow.sourceRef.length > 0
                                     text: findingRow.sourceRef
                                     wrapMode: Text.WrapAnywhere
                                     font.family: root.monoFont
@@ -428,7 +468,7 @@ FocusScope {
                             }
                             Text {
                                 Layout.fillWidth: true
-                                visible: findingRow.repair.length > 0
+                                visible: !root.embedded && findingRow.repair.length > 0
                                 textFormat: Text.PlainText
                                 text: qsTr("Suggested repair (not applied automatically): ") + findingRow.repair
                                 wrapMode: Text.WordWrap
@@ -439,10 +479,24 @@ FocusScope {
                             Flow {
                                 Layout.fillWidth: true
                                 spacing: 6
-                                visible: findingRow.needsDecision || findingRow.severity !== "blocking"
+                                visible: root.embedded || findingRow.needsDecision || findingRow.severity !== "blocking"
+                                TinyButton {
+                                    objectName: "comprehensionFindingConfirm_" + index
+                                    visible: root.embedded && findingRow.canConfirm
+                                    label: qsTr("This matches my intent")
+                                    primary: true
+                                    active: contract.reviewInvokable
+                                    onClicked: root.resolve(findingRow.modelData, "confirm_intent")
+                                }
+                                TinyButton {
+                                    visible: root.embedded
+                                    label: qsTr("Edit my draft")
+                                    quiet: true
+                                    onClicked: root.editDraftRequested()
+                                }
                                 TinyButton {
                                     objectName: "comprehensionFindingReturn_" + index
-                                    visible: findingRow.needsDecision
+                                    visible: !root.embedded && findingRow.needsDecision
                                     label: qsTr("Return to interview")
                                     active: contract.reviewInvokable
                                     onClicked: root.resolve(findingRow.modelData, "return_to_interview")
@@ -452,7 +506,7 @@ FocusScope {
                                     // Blocking or user-decision findings must be resolved
                                     // explicitly; they cannot be acknowledged into applicability.
                                     visible: findingRow.severity !== "blocking" &&
-                                             !findingRow.needsDecision
+                                             !findingRow.needsDecision && !(root.embedded && findingRow.canConfirm)
                                     label: qsTr("Acknowledge")
                                     quiet: true
                                     active: contract.reviewInvokable
@@ -460,7 +514,7 @@ FocusScope {
                                 }
                                 TinyButton {
                                     objectName: "comprehensionFindingKeep_" + index
-                                    visible: findingRow.needsDecision
+                                    visible: !root.embedded && findingRow.needsDecision
                                     label: qsTr("Keep original here")
                                     quiet: true
                                     active: contract.reviewInvokable
@@ -469,7 +523,7 @@ FocusScope {
                             }
                             Text {
                                 Layout.fillWidth: true
-                                visible: findingRow.severity === "blocking" || findingRow.needsDecision
+                                visible: !root.embedded && (findingRow.severity === "blocking" || findingRow.needsDecision)
                                 text: findingRow.severity === "blocking"
                                       ? qsTr("Blocking findings cannot be acknowledged into applicability; choose a resolution.")
                                       : qsTr("This finding needs your decision; return it to the interview or keep the original.")
@@ -484,12 +538,14 @@ FocusScope {
             }
 
             Rectangle {
+                visible: !root.compactSuccess
                 Layout.fillWidth: true
                 implicitHeight: 1
                 color: rocTheme.border
             }
 
             RowLayout {
+                visible: !root.embedded && !root.compactSuccess
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
                 spacing: 8
@@ -515,7 +571,7 @@ FocusScope {
                 objectName: "comprehensionApplyReason"
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
-                visible: text.length > 0
+                visible: !root.embedded && text.length > 0
                 textFormat: Text.PlainText
                 text: root.applyReason()
                 wrapMode: Text.WordWrap

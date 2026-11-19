@@ -1,0 +1,49 @@
+{
+  "schema": "roclint.task_retention_cases.v1",
+  "synthetic": true,
+  "scope": "Four development cases plus two controls first evaluated after the audit-v2 instruction was frozen. Not a statistically representative quality corpus.",
+  "cases": [
+    {
+      "id": "added_summary",
+      "prompt": "Make the widget less intrusive and more like a quiet writing assistant.",
+      "candidate": "Summarize the user's feedback. The widget is intrusive. Make the widget less intrusive and more like a quiet writing assistant.",
+      "expected": "Fail",
+      "split": "development"
+    },
+    {
+      "id": "direct_request",
+      "prompt": "Make the widget less intrusive and more like a quiet writing assistant.",
+      "candidate": "Make the widget less intrusive, so it behaves more like a quiet writing assistant.",
+      "expected": "Pass",
+      "split": "development"
+    },
+    {
+      "id": "build_changed_to_description",
+      "prompt": "Build a music collection app with compact text. Keep browsing easy.",
+      "candidate": "Describe what a music collection app with compact text and easy browsing might look like.",
+      "expected": "Fail",
+      "split": "development"
+    },
+    {
+      "id": "summary_was_requested",
+      "prompt": "Summarize the user's UI feedback in two bullet points.",
+      "candidate": "Summarize the user's UI feedback in two bullet points.",
+      "expected": "Pass",
+      "split": "development"
+    },
+    {
+      "id": "held_out_feedback_to_request",
+      "prompt": "This widget keeps covering my draft. I want a quieter helper.",
+      "candidate": "Make the widget quieter and keep it from covering my draft.",
+      "expected": "Pass",
+      "split": "held_out"
+    },
+    {
+      "id": "held_out_code_preservation",
+      "prompt": "Refactor Auth::check. Keep its return values unchanged.",
+      "candidate": "Refactor Auth::check while keeping its return values unchanged.",
+      "expected": "Pass",
+      "split": "held_out"
+    }
+  ]
+}

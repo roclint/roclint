@@ -72,6 +72,7 @@ void HostController::applyResidencyPolicy() {
     if (detail != m_graniteResidencyStatus) { m_graniteResidencyStatus = detail; emit modelEngineStatusChanged(); }
     if (!nativeGraniteSelected() || usesTransportOverride() || !m_native->isRunning() || !m_nativeLastUse.isValid()) return;
     const bool busy = m_nativeWarming || m_nativeSemanticInFlight > 0 || m_inFlight > 0 ||
+        m_checkingClarification || m_reviewState == ReviewState::Running ||
         m_discoveryQueued || m_pendingNativeRewrite.has_value() || m_isDownloadingModel ||
         m_native->state() == QLatin1String("LOADING") || m_native->state() == QLatin1String("BUSY") ||
         m_native->state() == QLatin1String("STOPPING") || m_native->state() == QLatin1String("FAILED") ||

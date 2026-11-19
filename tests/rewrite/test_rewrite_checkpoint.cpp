@@ -105,6 +105,20 @@ void testModelCrlfIsNormalized() {
     ROCLINT_CHECK(RewriteValidator::validateProposal(p.value(), c.session, c.revision, c.intent, {}).isValid);
 }
 
+void testSupplementalAnswerRetainsItsQuestionAndEscaping() {
+    fx::Chain chain;
+    auto request = requestFor(chain);
+    request.confirmedIntent.items.push_back({"iv_word_test", intent::IntentResolutionKind::CustomText,
+        "", "", "Refresh <visible> data & preserve filters", "Which interaction & view?"});
+    auto prompt = buildRewritePrompt(request, ProfileRegistry::defaultProfile());
+    ROCLINT_CHECK(prompt.find("<decision topic=\"Which interaction &amp; view?\">Refresh &lt;visible&gt; data &amp; preserve filters</decision>") != std::string::npos);
+    // A sealed analysis question retains precedence over a rationale.
+    request.confirmedIntent.items.back().itemId = request.analysis.normalized.choiceGroups.front().id;
+    request.confirmedIntent.items.back().rationale = "Unrelated fallback topic";
+    prompt = buildRewritePrompt(request, ProfileRegistry::defaultProfile());
+    ROCLINT_CHECK(prompt.find("Unrelated fallback topic") == std::string::npos);
+}
+
 void testOversizedReplyRejected() {
     fx::Chain c;
     const std::string huge = fx::rewriteReply(std::string(kMaxRewriteResponseBytes, 'x'));
@@ -121,6 +135,7 @@ int main() {
     testSynthesizeFailsClosed();
     testModelCrlfIsNormalized();
     testOversizedReplyRejected();
+    testSupplementalAnswerRetainsItsQuestionAndEscaping();
     std::cout << "[Test Rewrite Checkpoint] All tests PASSED.\n";
     return 0;
 }

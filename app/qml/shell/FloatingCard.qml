@@ -9,10 +9,24 @@ Window {
     property bool isDetailedExpanded: false
     readonly property bool isAmbientMode: hc && (hostController.isAmbientAttached || hostController.isAmbientActive)
 
-    width: !isAmbientMode ? 820 : (isDetailedExpanded ? 820 : 620)
-    height: !isAmbientMode ? 600 : 520
+    readonly property bool compactPresentation: isAmbientMode && !isDetailedExpanded
+    readonly property bool compactQuestion: compactPresentation && hc &&
+        (!hostController.hasProposal || hostController.comprehensionReviewState === "waiting_for_answer") &&
+        (hostController.isClarifying || hostController.isInterviewActive || needsManualAnswer)
+    readonly property bool compactDraftActions: compactPresentation && hc && !compactQuestion &&
+        !hostController.hasProposal && !generationPending
+    readonly property int compactWidth: 430
+    // The reading surface grows with the bounded draft preview. Questions and
+    // proposals keep a larger viewport for choices, diffs and review controls.
+    readonly property int compactHeight: (compactDraftActions && !showPromptEditor)
+        ? Math.min(380, Math.max(174, Math.ceil(mainContent.implicitHeight + hudHeader.implicitHeight + hudFooter.implicitHeight
+            + 2 * hudLayout.anchors.margins + 3 * hudLayout.spacing + 4)))
+        : 380
+
+    width: !isAmbientMode || isDetailedExpanded ? 820 : compactWidth
+    height: !isAmbientMode ? 600 : (isDetailedExpanded ? 520 : compactHeight)
     minimumWidth: !isAmbientMode ? 520 : (isDetailedExpanded ? 520 : 420)
-    minimumHeight: !isAmbientMode ? 360 : (isDetailedExpanded ? 360 : 200)
+    minimumHeight: !isAmbientMode ? 360 : (isDetailedExpanded ? 360 : 174)
     visible: false
     flags: (hc && hostController.isAmbientAttached ? Qt.Tool : Qt.Window) | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
     color: "transparent"
@@ -20,10 +34,10 @@ Window {
     function toggleDetailedExpanded() {
         isDetailedExpanded = !isDetailedExpanded;
         if (isAmbientMode) {
-            const targetW = isDetailedExpanded ? 820 : 620;
-            const targetH = 520;
-            width = targetW;
-            height = targetH;
+            const targetW = isDetailedExpanded ? 820 : compactWidth;
+            const targetH = isDetailedExpanded ? 520 : compactHeight;
+            width = Qt.binding(function() { return !isAmbientMode || isDetailedExpanded ? 820 : compactWidth; });
+            height = Qt.binding(function() { return !isAmbientMode ? 600 : (isDetailedExpanded ? 520 : compactHeight); });
             const pt = hostController.calculateAmbientAnchor(targetW, targetH);
             x = pt.x;
             y = pt.y;
@@ -32,7 +46,7 @@ Window {
 
     readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property string monoFont: isMac ? "Menlo" : "Consolas"
-    readonly property string sansFont: interFont.name.length ? interFont.name : (isMac ? "Helvetica Neue" : "Segoe UI")
+    readonly property string sansFont: isMac ? "Helvetica Neue" : "Segoe UI"
     readonly property string serifFont: isMac ? "Times New Roman" : "Georgia"
 
     readonly property bool hc: typeof hostController !== "undefined" && hostController !== null
@@ -69,8 +83,12 @@ Window {
         if (hostController.isAnalyzing) return {badge: "CHECKING", tone: neutral, label: qsTr("Cancel analysis"), action: "CANCEL"};
         if (hostController.proposalStatus === "GENERATING") return {badge: "WRITING", tone: neutral, label: qsTr("Writing…"), action: "NONE"};
         if (hostController.hasProposal && hostController.proposalStatus === "READY_FOR_REVIEW") {
+            if (reviewContractAvailable && hostController.comprehensionReviewState === "running")
+                return {badge: "REVIEW", tone: neutral, label: qsTr("Checking rewrite…"), action: "NONE"};
             if (!hostController.canApprove || !rootWindow.reviewedOutputApplicable)
-                return {badge: "REVIEW", tone: neutral, label: qsTr("Review rewrite"), action: "REVIEW_REWRITE"};
+                return {badge: "REVIEW", tone: neutral,
+                    label: hostController.pendingReviewCount > 0 ? qsTr("Confirm changes") : qsTr("Resolve checks"),
+                    action: "REVIEW_REWRITE"};
             const connected = hostController.isAmbientCapture || hostController.isAmbientAttached;
             return {badge: "REVIEW", tone: neutral,
                 label: connected ? qsTr("Approve & Insert") : qsTr("Approve & Copy"),
@@ -122,7 +140,13 @@ Window {
 
     onActiveFocusItemChanged: focusRevealTimer.restart()
     onWidthChanged: focusRevealTimer.restart()
-    onHeightChanged: focusRevealTimer.restart()
+    onHeightChanged: {
+        focusRevealTimer.restart();
+        if (visible && compactPresentation && hc) {
+            const point = hostController.calculateAmbientAnchor(width, height);
+            x = point.x; y = point.y;
+        }
+    }
     Timer {
         id: focusRevealTimer
         interval: 50
@@ -166,7 +190,13 @@ Window {
 
     function requestFullRewrite() {
         if (!hc || !promptInput.text.trim().length || hostController.storageBusy || !hostController.isStorageAvailable) return;
-        if (!hostController.isDraftDirty && (hostController.hasConfirmedIntent || hostController.isClarifying)) {
+        if (hostController.isAnalyzing && hostController.currentRevisionText === promptInput.text) {
+            rewriteAfterReview = true;
+            rewriteDraft = promptInput.text;
+            return; // Reuse the running check; do not cancel or duplicate it.
+        }
+        if (!hostController.isDraftDirty && hostController.analysisStatus === "READY" &&
+            hostController.currentRevisionText === promptInput.text) {
             hostController.rewriteWithoutQuestions(hostController.stateVersion);
         } else {
             rewriteAfterReview = true;
@@ -176,12 +206,14 @@ Window {
     }
     function continueRequestedRewrite() {
         if (!rewriteAfterReview || !hc || hostController.isAnalyzing || hostController.storageBusy) return;
-        if (promptInput.text !== rewriteDraft || hostController.currentRevisionText !== rewriteDraft) { rewriteAfterReview = false; return; }
+        if (promptInput.text !== rewriteDraft) { rewriteAfterReview = false; return; }
         if (hostController.analysisStatus === "FAILED") { rewriteAfterReview = false; return; }
         if (hostController.analysisStatus !== "READY" || hostController.isDraftDirty) return;
+        // Storage/model-startup notifications can precede the draft commit. Only
+        // compare the committed revision after this analysis is ready.
+        if (hostController.currentRevisionText !== rewriteDraft) return;
         rewriteAfterReview = false;
-        if (!hostController.isClarifying && hostController.hasConfirmedIntent)
-            hostController.rewriteWithoutQuestions(hostController.stateVersion);
+        hostController.rewriteWithoutQuestions(hostController.stateVersion);
     }
 
     property bool isClarificationActive: false
@@ -193,14 +225,18 @@ Window {
     // Focus and draft changes do not dismiss the HUD. Presentation belongs to
     // the user, independently of the captured prompt and its analysis lifetime.
 
-    Shortcut {
-        sequence: "Escape"
-        onActivated: rootWindow.dismissCard()
-    }
-
     Connections {
         target: rootWindow.hc ? hostController : null
+        function onCompanionRewriteRequested(draft, expectedVersion) {
+            if (hostController.stateVersion !== expectedVersion || hostController.currentRevisionText !== draft) return;
+            rootWindow.setEditorText(draft);
+            rootWindow.rewriteDraft = draft;
+            rootWindow.rewriteAfterReview = true;
+            Qt.callLater(rootWindow.continueRequestedRewrite);
+        }
         function onStorageCommandFinished(requestId, name, succeeded, errorCode, message) {
+            if (!succeeded && (name === "rewriteWithoutQuestions" || name === "requestComprehensionReview"))
+                rootWindow.showToast(message);
             if (!rootWindow.pendingEditRequest || requestId !== rootWindow.pendingEditRequest) return;
             rootWindow.pendingEditRequest = 0;
             if (!hostController.hasProposal && rootWindow.visible && rootWindow.visibility !== Window.Minimized) {
@@ -284,11 +320,19 @@ Window {
         promptInput.text = text;
         suppressEditSignal = false;
     }
+    function openSettings() {
+        if (!hc) return;
+        hostController.minimizeCard();
+        rootWindow.hide();
+        hostController.showDashboard();
+    }
     function dismissCard() {
         rewriteAfterReview = false;
         cancelQueuedAnalysis();
         toastMessage = "";
-        if (hc) hostController.hideCard(); else rootWindow.hide();
+        if (hc) hostController.hideCard();
+        // The native window can still be visible after the host has recorded it as hidden.
+        rootWindow.hide();
     }
     function executeHardBypass() {
         cancelQueuedAnalysis();
@@ -321,8 +365,14 @@ Window {
     function handleEnter() {
         if (!hc) return;
         switch (presentation.action) {
-        case "CANCEL": cancelQueuedAnalysis(); hostController.cancelAnalysis(hostController.stateVersion); break;
-        case "REVIEW_REWRITE": openReview(); break;
+        case "CANCEL": rewriteAfterReview = false; cancelQueuedAnalysis(); hostController.cancelAnalysis(hostController.stateVersion); break;
+        case "REVIEW_REWRITE":
+            if (isAmbientMode && !isDetailedExpanded) toggleDetailedExpanded();
+            Qt.callLater(function() {
+                if (rootWindow.visible && rootWindow.visibility !== Window.Minimized && hostController.hasProposal)
+                    reviewFlow.advanceReview();
+            });
+            break;
         case "APPROVE": approveForCurrentDestination(); break;
         case "EDIT": revertToDraft(); break;
         case "CLARIFY": reviewFlow.focusClarification(); break;
@@ -404,8 +454,9 @@ Window {
 
     onVisibleChanged: {
         if (visible) {
+            contentScroll.contentY = 0;
             if (isAmbientMode) {
-                if (!hostController.isDraftDirty && hostController.currentRevisionText.length) {
+                if (!editingDraft && !hostController.isDraftDirty && hostController.currentRevisionText.length) {
                     rootWindow.setEditorText(hostController.currentRevisionText);
                 }
             } else {
@@ -465,14 +516,20 @@ Window {
     }
     Shortcut {
         sequences: [StandardKey.Preferences]
-        onActivated: if (rootWindow.hc) hostController.showDashboard()
+        onActivated: rootWindow.openSettings()
     }
 
     Rectangle {
         id: posterBoard
         anchors.fill: parent
         color: rootWindow.bgColor
-        radius: 18
+        radius: rootWindow.compactPresentation ? 15 : 18
+        gradient: rootWindow.compactPresentation ? companionWash : null
+        Gradient {
+            id: companionWash
+            GradientStop { position: 0; color: rocPalette.light ? "#F1F5FF" : "#172746" }
+            GradientStop { position: 0.62; color: rootWindow.bgColor }
+        }
         border.color: rootWindow.currentTheme === "light" ? rootWindow.borderColor : "#6279AA"
         border.width: 1
 
@@ -502,28 +559,38 @@ Window {
             clip: true
 
             ColumnLayout {
+                id: hudLayout
                 anchors.fill: parent
-                anchors.margins: rootWindow.height <= 260 ? 10 : 20
-                spacing: rootWindow.height <= 260 ? 5 : 12
+                anchors.margins: rootWindow.compactPresentation ? 14 : rootWindow.height <= 260 ? 10 : 20
+                spacing: rootWindow.compactPresentation ? 9 : rootWindow.height <= 260 ? 5 : 12
 
                 RowLayout {
+                    id: hudHeader
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    Layout.preferredHeight: rootWindow.height <= 260 ? 32 : 54
+                    Layout.preferredHeight: rootWindow.compactPresentation || rootWindow.height <= 260 ? 32 : 54
                     spacing: 10
-                    Image {
-                        source: "assets/roc-mark.png"
-                        sourceSize.width: 144; sourceSize.height: 128
-                        Layout.preferredWidth: rootWindow.height <= 260 ? 28 : 48
-                        Layout.preferredHeight: rootWindow.height <= 260 ? 28 : 42
-                        fillMode: Image.PreserveAspectFit
-                        smooth: false
-                        Accessible.ignored: true
+                    Rectangle {
+                        Layout.preferredWidth: rootWindow.compactPresentation ? 32 : rootWindow.height <= 260 ? 28 : 48
+                        Layout.preferredHeight: rootWindow.compactPresentation ? 32 : rootWindow.height <= 260 ? 28 : 42
+                        radius: 9
+                        color: rootWindow.compactPresentation ? "#263D79" : "transparent"
+                        border.width: rootWindow.compactPresentation ? 1 : 0
+                        border.color: "#4965A2"
+                        Image {
+                            anchors.fill: parent
+                            anchors.margins: rootWindow.compactPresentation ? 4 : 0
+                            source: "assets/roc-mark.png"
+                            sourceSize.width: 144; sourceSize.height: 128
+                            fillMode: Image.PreserveAspectFit
+                            smooth: false
+                            Accessible.ignored: true
+                        }
                     }
                     Text {
                         text: "roclint"
-                        font.family: rootWindow.sansFont
-                        font.pixelSize: rootWindow.height <= 260 ? 21 : 26
+                        font.family: interFont.status === FontLoader.Ready ? interFont.name : rootWindow.sansFont
+                        font.pixelSize: rootWindow.compactPresentation ? 17 : rootWindow.height <= 260 ? 19 : 26
                         font.weight: Font.DemiBold
                         font.letterSpacing: -0.7
                         color: rootWindow.fgColor
@@ -532,8 +599,9 @@ Window {
                     Item {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
-                        Layout.preferredHeight: rootWindow.height <= 260 ? 30 : 52
+                        Layout.preferredHeight: rootWindow.compactPresentation || rootWindow.height <= 260 ? 30 : 52
                         GenerationMeter {
+                            visible: !rootWindow.compactPresentation
                             anchors.right: parent.right
                             width: Math.min(250, parent.width)
                             height: rootWindow.height <= 260 ? 30 : 52
@@ -568,6 +636,7 @@ Window {
                         }
                         HudButton {
                             objectName: "pinButton"
+                            visible: !rootWindow.compactPresentation
                             compact: true; quiet: !rootWindow.pinToTop
                             iconName: "push-pin"
                             tip: rootWindow.pinToTop ? qsTr("Unpin window") : qsTr("Keep on top")
@@ -577,20 +646,19 @@ Window {
                                 rootWindow.show();
                             }
                         }
-                        Item {
-                            objectName: "setButton"
-                            implicitWidth: 30; implicitHeight: 30
-                            HudButton {
-                                objectName: "openSettingsControl"
-                                anchors.fill: parent
-                                compact: true; quiet: true; iconName: "gear-six"; tip: qsTr("Settings")
-                                onClicked: if (rootWindow.hc) hostController.showDashboard()
-                            }
+                        HudButton {
+                            objectName: "openSettingsControl"
+                            visible: !rootWindow.compactPresentation
+                            compact: true; quiet: true; iconName: "gear-six"; tip: qsTr("Settings")
+                            onClicked: rootWindow.openSettings()
                         }
                         HudButton {
                             objectName: "minButton"
                             compact: true; quiet: true; iconName: "minus"; tip: qsTr("Minimize")
-                            onClicked: rootWindow.showMinimized()
+                            onClicked: {
+                                if (Qt.platform.os === "windows") { hostController.minimizeCard(); rootWindow.hide(); }
+                                else rootWindow.showMinimized();
+                            }
                         }
                         HudButton {
                             objectName: "closeButton"
@@ -602,6 +670,7 @@ Window {
 
                 RowLayout {
                     objectName: "hudStatusRow"
+                    visible: !rootWindow.compactPresentation
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     spacing: 8
@@ -697,7 +766,7 @@ Window {
                     }
                 }
 
-                Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: rootWindow.borderColor }
+                Rectangle { visible: !rootWindow.compactPresentation; Layout.fillWidth: true; implicitHeight: 1; color: rootWindow.borderColor }
 
                 Flickable {
                     id: contentScroll
@@ -707,12 +776,15 @@ Window {
                     Layout.minimumHeight: 0
                     Layout.minimumWidth: 0
                     clip: true
-                    property real availableWidth: width - 10
+                    property real availableWidth: width - (rootWindow.compactDraftActions ? 0 : 10)
                     contentWidth: availableWidth
                     contentHeight: mainContent.implicitHeight
                     onContentHeightChanged: focusRevealTimer.restart()
                     boundsBehavior: Flickable.StopAtBounds
-                    ScrollBar.vertical: HudScrollBar {}
+                    ScrollBar.vertical: HudScrollBar {
+                        policy: ScrollBar.AsNeeded
+                        background: Item {}
+                    }
 
                     ColumnLayout {
                         id: mainContent
@@ -839,21 +911,34 @@ Window {
                         }
                         Rectangle {
                             objectName: "draftPreview"
-                            visible: !rootWindow.showPromptEditor && !rootWindow.isCompiledPreview
+                            visible: !rootWindow.showPromptEditor && !rootWindow.isCompiledPreview && !rootWindow.compactQuestion
                             Layout.fillWidth: true; Layout.minimumWidth: 0
-                            implicitHeight: sourceColumn.implicitHeight + 22
-                            radius: 10; color: rocPalette.inset
+                            implicitHeight: sourceColumn.implicitHeight + (rootWindow.compactPresentation ? 12 : 22)
+                            radius: 10; color: rootWindow.compactPresentation ? "transparent" : rocPalette.inset
+                            Rectangle {
+                                visible: rootWindow.compactPresentation
+                                anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
+                                anchors.topMargin: 10; anchors.bottomMargin: 5
+                                width: 3; radius: 1
+                                color: rocPalette.focus
+                            }
                             ColumnLayout {
                                 id: sourceColumn
-                                x: 12; y: 11; width: parent.width - 24
-                                spacing: 7
+                                x: 13; y: rootWindow.compactPresentation ? 3 : 11; width: parent.width - 25
+                                spacing: rootWindow.compactPresentation ? 1 : 7
                                 RowLayout {
                                     Layout.fillWidth: true
-                                    Text { text: qsTr("YOUR DRAFT"); font.family: rootWindow.monoFont; font.pixelSize: 10; color: rootWindow.mutedTextColor }
-                                    Item { Layout.fillWidth: true }
+                                    Text {
+                                        Layout.minimumWidth: 0; Layout.fillWidth: true
+                                        text: rootWindow.compactPresentation && rootWindow.hc && hostController.captureTargetName.length
+                                            ? qsTr("Draft from %1").arg(hostController.captureTargetName) : qsTr("Your draft")
+                                        textFormat: Text.PlainText; elide: Text.ElideRight
+                                        font.family: rootWindow.monoFont; font.pixelSize: 11
+                                        color: rootWindow.mutedTextColor
+                                    }
                                     HudButton {
                                         objectName: "editCapturedDraftControl"
-                                        label: qsTr("Edit draft"); iconName: "pencil-simple"; compact: true; quiet: true
+                                        label: rootWindow.compactPresentation ? "" : qsTr("Edit draft"); tip: qsTr("Edit draft"); iconName: "pencil-simple"; compact: true; quiet: true
                                         onClicked: {
                                             if (rootWindow.isAmbientMode && !rootWindow.isDetailedExpanded) rootWindow.toggleDetailedExpanded();
                                             rootWindow.editingDraft = true;
@@ -866,15 +951,20 @@ Window {
                                     objectName: "draftPreviewText"
                                     Layout.fillWidth: true; Layout.minimumWidth: 0
                                     text: promptInput.text; textFormat: Text.PlainText
-                                    font.family: rootWindow.sansFont; font.pixelSize: 13
-                                    color: rootWindow.mutedTextColor
-                                    wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                                    font.family: rootWindow.compactPresentation && interFont.status === FontLoader.Ready ? interFont.name : rootWindow.sansFont
+                                    font.pixelSize: rootWindow.compactPresentation ? 17 : 13
+                                    lineHeight: rootWindow.compactPresentation ? 1.12 : 1.0
+                                    color: rootWindow.compactPresentation ? rootWindow.fgColor : rootWindow.mutedTextColor
+                                    wrapMode: Text.Wrap; maximumLineCount: rootWindow.compactPresentation ? 4 : 2; elide: Text.ElideRight
                                 }
                             }
                         }
                         Text {
                             Layout.fillWidth: true; Layout.minimumWidth: 0
-                            visible: text.length > 0 && (!rootWindow.hc || !hostController.isClarifying)
+                            visible: text.length > 0 && (!rootWindow.hc || !hostController.isClarifying) &&
+                                (!rootWindow.compactPresentation || rootWindow.generationPending ||
+                                 (rootWindow.hc && (hostController.lastError.length > 0 ||
+                                  hostController.shortcutWarning.length > 0 || hostController.analysisStatus === "FAILED")))
                             text: rootWindow.autoAnalysisText.length ? qsTr("Checking after you pause typing…") : rootWindow.hc ? [hostController.shortcutWarning, hostController.lastError === hostController.analysisMessage ? "" : hostController.lastError, hostController.analysisMessage].filter(function(x) { return x.length > 0; }).join("\n") : ""
                             wrapMode: Text.WordWrap
                             font.family: rootWindow.sansFont; font.pixelSize: 12
@@ -887,12 +977,15 @@ Window {
                         }
                         IntentReviewPanel {
                             id: reviewFlow
+                            visible: !rootWindow.compactDraftActions || implicitHeight > 0
+                            compactPresentation: rootWindow.compactPresentation
                             Layout.fillWidth: true; Layout.minimumWidth: 0
                             currentTheme: rootWindow.currentTheme
                             viewportHeight: contentScroll.height
                             reducedMotion: rootWindow.reducedMotion
                             inspectPanelExplicitOpen: rootWindow.inspectPanelExplicitOpen
                             draftAvailable: promptInput.text.trim().length > 0
+                            rewritePending: rootWindow.rewriteAfterReview
                             onReviewRequested: rootWindow.analyzeNow()
                             onRewriteRequested: rootWindow.requestFullRewrite()
                             onRevealReviewItem: function(item) { rootWindow.revealReviewItem(item); }
@@ -903,13 +996,14 @@ Window {
                             }
                         }
                         HudButton {
+                            visible: !rootWindow.compactPresentation
                             label: rootWindow.showWorkspaceOptions ? qsTr("Hide workspace options") : qsTr("Workspace options")
                             compact: true; quiet: true
                             onClicked: rootWindow.showWorkspaceOptions = !rootWindow.showWorkspaceOptions
                         }
                         ColumnLayout {
                             Layout.fillWidth: true
-                            visible: rootWindow.showWorkspaceOptions
+                            visible: !rootWindow.compactPresentation && rootWindow.showWorkspaceOptions
                             spacing: 10
                             RowLayout {
                                 Layout.fillWidth: true
@@ -935,14 +1029,20 @@ Window {
                     }
                 }
 
-                Rectangle { Layout.fillWidth: true; implicitHeight: 1; color: rootWindow.borderColor }
+                Rectangle {
+                    visible: !rootWindow.compactQuestion
+                    Layout.fillWidth: true; implicitHeight: 1; color: rootWindow.borderColor
+                }
                 GridLayout {
+                    id: hudFooter
+                    visible: !rootWindow.compactQuestion
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     columns: rootWindow.width < 600 ? 1 : 2
                     rowSpacing: 3; columnSpacing: 12
                     RowLayout {
                         Layout.fillWidth: true; Layout.minimumWidth: 0; spacing: 6
+                        visible: !rootWindow.compactDraftActions
                         Text {
                             objectName: "deliveryDestinationLabel"
                             Layout.fillWidth: true; Layout.minimumWidth: 0
@@ -961,9 +1061,20 @@ Window {
                     }
                     RowLayout {
                         Layout.alignment: Qt.AlignRight
+                        Layout.fillWidth: rootWindow.compactPresentation
                         spacing: 6
+                        Item { visible: rootWindow.compactPresentation; Layout.fillWidth: true }
+                        HudButton {
+                            objectName: "compactClarifyButton"
+                            visible: rootWindow.compactDraftActions
+                            label: qsTr("Clarify")
+                            compact: true; iconName: "sparkle"
+                            active: promptInput.text.trim().length > 0 && hostController.isStorageAvailable && !hostController.storageBusy
+                            onClicked: rootWindow.analyzeNow()
+                        }
                         HudButton {
                             objectName: "bypassBtn"
+                            visible: !rootWindow.compactDraftActions
                             label: qsTr("Keep original")
                             compact: rootWindow.height <= 260
                             quiet: true
@@ -973,11 +1084,14 @@ Window {
                         }
                         HudButton {
                             objectName: "approveRewriteControl"
-                            label: rootWindow.presentation.label
+                            label: rootWindow.compactDraftActions ? qsTr("Rewrite prompt") : rootWindow.presentation.label
+                            iconName: rootWindow.compactDraftActions ? "pencil-simple" : ""
                             primary: true
-                            compact: rootWindow.height <= 260
-                            active: rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy && rootWindow.presentation.action !== "NONE" && (promptInput.text.trim().length > 0 || hostController.hasProposal || hostController.isAnalyzing)
-                            onClicked: rootWindow.handleEnter()
+                            compact: rootWindow.compactPresentation || rootWindow.height <= 260
+                            active: rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy &&
+                                (rootWindow.compactDraftActions ? promptInput.text.trim().length > 0 :
+                                 rootWindow.presentation.action !== "NONE" && (promptInput.text.trim().length > 0 || hostController.hasProposal || hostController.isAnalyzing))
+                            onClicked: rootWindow.compactDraftActions ? rootWindow.requestFullRewrite() : rootWindow.handleEnter()
                             Text {
                                 objectName: "analysisActionLabel"
                                 text: rootWindow.presentation.label
@@ -986,6 +1100,7 @@ Window {
                         }
                         HudButton {
                             objectName: "hideBtn"
+                            visible: !rootWindow.compactPresentation
                             iconName: "x"; tip: qsTr("Hide Roclint · Esc")
                             compact: rootWindow.height <= 260; quiet: true
                             onClicked: rootWindow.dismissCard()

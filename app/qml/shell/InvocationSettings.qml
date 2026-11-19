@@ -204,8 +204,16 @@ ColumnLayout {
                 font.pixelSize: 12
             }
         }
+        CheckBox {
+            objectName: "ambientBadgeSuggestionsOnly"
+            Layout.fillWidth: true
+            text: qsTr("Show the Roc badge only when a wording suggestion is ready")
+            enabled: ambientCaptureToggle.checked
+            checked: dashboardWindow.hc && hostController.ambientBadgeSuggestionsOnly
+            onToggled: if (dashboardWindow.hc) hostController.ambientBadgeSuggestionsOnly = checked
+        }
         Body {
-            text: qsTr("Pause typing to see Check prompt beside the field. Click it or press %1 to review the captured draft. Insert replaces that field after your approval; it never presses Send. Passwords and read-only content are excluded.").arg(dashboardWindow.globalShortcutString)
+            text: qsTr("Click an underlined phrase for a wording suggestion. Press %1 for a full prompt review.").arg(dashboardWindow.globalShortcutString)
         }
         Body { text: dashboardWindow.hc ? hostController.ambientStatus : "" }
     }

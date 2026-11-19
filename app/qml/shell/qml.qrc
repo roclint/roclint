@@ -8,6 +8,7 @@
         <file>AmbientBadge.qml</file>
         <file>IntentReviewPanel.qml</file>
         <file>WordCompanion.qml</file>
+        <file>WordMarks.qml</file>
         <file>JuliaSettings.qml</file>
         <file>InvocationSettings.qml</file>
         <file>HudMouseArea.qml</file>

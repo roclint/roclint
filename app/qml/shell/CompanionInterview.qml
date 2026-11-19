@@ -22,6 +22,7 @@ FocusScope {
     property bool showEvidence: false
     property bool showSuperseded: false
     property int lastSeenTurns: 0
+    readonly property Item answerField: customAnswer
     property bool justAnswered: false
 
     signal rewriteRequested()
@@ -31,7 +32,7 @@ FocusScope {
     CompanionContract { id: contract }
     RocTheme { id: rocTheme; mode: root.currentTheme }
     readonly property string monoFont: Qt.platform.os === "osx" ? "Menlo" : "Consolas"
-    readonly property string sansFont: "Inter Variable"
+    readonly property string sansFont: rocTheme.sansFont
     readonly property color errorColor: "#EEA4AF"
 
     implicitWidth: contentColumn.implicitWidth
@@ -94,7 +95,6 @@ FocusScope {
     function submit(text, disposition) {
         if (!interviewAvailable || contract.isInterviewBusy) return;
         contract.submitInterview(text, disposition);
-        if (disposition === "custom" || disposition === "answer") customAnswer.text = "";
     }
     function submitCustom() {
         const text = customAnswer.text.trim();
@@ -141,6 +141,7 @@ FocusScope {
         target: contract
         function onInterviewTurnsCompletedChanged() {
             if (contract.interviewTurnsCompleted > root.lastSeenTurns && root.lastSeenTurns >= 0) {
+                customAnswer.clear();
                 root.justAnswered = true;
                 answeredTimer.restart();
             }
@@ -374,42 +375,6 @@ FocusScope {
             }
         }
 
-        // ----------------------------------------------------- source excerpt
-        ColumnLayout {
-            Layout.fillWidth: true
-            Layout.minimumWidth: 0
-            visible: !root.showingWordView && root.draftExcerpt.length > 0
-            spacing: 2
-            Text {
-                text: qsTr("THE PHRASE IN QUESTION")
-                font.family: root.monoFont
-                font.pixelSize: 8
-                color: rocTheme.muted
-            }
-            Text {
-                objectName: "interviewDraftExcerpt"
-                Layout.fillWidth: true
-                Layout.minimumWidth: 0
-                textFormat: Text.PlainText
-                text: "“" + root.draftExcerpt + "”"
-                wrapMode: Text.WordWrap
-                maximumLineCount: 3
-                elide: Text.ElideRight
-                font.family: root.sansFont
-                font.pixelSize: 13
-                font.italic: true
-                color: rocTheme.foreground
-            }
-            Text {
-                Layout.fillWidth: true
-                text: qsTr("Your full draft stays in the editor. Roclint carries it forward; you don't need to repeat it.")
-                wrapMode: Text.WordWrap
-                font.family: root.sansFont
-                font.pixelSize: 10
-                color: rocTheme.muted
-            }
-        }
-
         // ------------------------------------------------------ current question
         Rectangle {
             id: questionCard
@@ -478,6 +443,43 @@ FocusScope {
                     font.family: root.sansFont
                     font.pixelSize: 12
                     color: rocTheme.muted
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.minimumWidth: 0
+                    spacing: 6
+                    TextField {
+                        id: customAnswer
+                        objectName: "interviewCustomAnswer"
+                        Layout.fillWidth: true
+                        Layout.minimumWidth: 0
+                        enabled: !contract.isInterviewBusy
+                        readOnly: contract.isInterviewBusy
+                        implicitHeight: 38
+                        placeholderText: qsTr("Type your answer…")
+                        onPressed: { if (root.Window.window) root.Window.window.requestActivate(); customAnswer.forceActiveFocus(); }
+                        Accessible.name: qsTr("Your answer in your own words")
+                        font.family: root.sansFont
+                        font.pixelSize: 13
+                        color: rocTheme.foreground
+                        placeholderTextColor: rocTheme.muted
+                        background: Rectangle {
+                            color: rocTheme.inset
+                            border.color: customAnswer.activeFocus ? rocTheme.focus : rocTheme.border
+                            border.width: customAnswer.activeFocus ? 2 : 1
+                            radius: 7
+                        }
+                        Keys.onEscapePressed: customAnswer.focus = false
+                        onAccepted: root.submitCustom()
+                    }
+                    TinyButton {
+                        objectName: "interviewUseAnswerControl"
+                        label: qsTr("Use my answer")
+                        primary: true
+                        active: !contract.isInterviewBusy && customAnswer.text.trim().length > 0
+                        onClicked: root.submitCustom()
+                    }
                 }
 
                 ColumnLayout {
@@ -552,42 +554,6 @@ FocusScope {
                     }
                 }
 
-                RowLayout {
-                    Layout.fillWidth: true
-                    Layout.minimumWidth: 0
-                    spacing: 6
-                    TextField {
-                        id: customAnswer
-                        objectName: "interviewCustomAnswer"
-                        Layout.fillWidth: true
-                        Layout.minimumWidth: 0
-                        enabled: !contract.isInterviewBusy
-                        readOnly: contract.isInterviewBusy
-                        implicitHeight: 38
-                        placeholderText: qsTr("Or say it in your own words")
-                        Accessible.name: qsTr("Your answer in your own words")
-                        font.family: root.sansFont
-                        font.pixelSize: 13
-                        color: rocTheme.foreground
-                        placeholderTextColor: rocTheme.muted
-                        background: Rectangle {
-                            color: rocTheme.inset
-                            border.color: customAnswer.activeFocus ? rocTheme.focus : rocTheme.border
-                            border.width: customAnswer.activeFocus ? 2 : 1
-                            radius: 7
-                        }
-                        Keys.onEscapePressed: customAnswer.focus = false
-                        onAccepted: root.submitCustom()
-                    }
-                    TinyButton {
-                        objectName: "interviewUseAnswerControl"
-                        label: qsTr("Use my answer")
-                        primary: true
-                        active: !contract.isInterviewBusy && customAnswer.text.trim().length > 0
-                        onClicked: root.submitCustom()
-                    }
-                }
-
                 Flow {
                     Layout.fillWidth: true
                     spacing: 6
@@ -649,6 +615,43 @@ FocusScope {
             }
         }
 
+        // ----------------------------------------------------- source excerpt
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
+            visible: !root.showingWordView && root.draftExcerpt.length > 0
+            spacing: 2
+            Text {
+                text: qsTr("THE PHRASE IN QUESTION")
+                font.family: root.monoFont
+                font.pixelSize: 8
+                color: rocTheme.muted
+            }
+            Text {
+                objectName: "interviewDraftExcerpt"
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                textFormat: Text.PlainText
+                text: "“" + root.draftExcerpt + "”"
+                wrapMode: Text.WordWrap
+                maximumLineCount: 3
+                elide: Text.ElideRight
+                font.family: root.sansFont
+                font.pixelSize: 13
+                font.italic: true
+                color: rocTheme.foreground
+            }
+            Text {
+                Layout.fillWidth: true
+                text: qsTr("Your full draft stays in the editor. Roclint carries it forward; you don't need to repeat it.")
+                wrapMode: Text.WordWrap
+                font.family: root.sansFont
+                font.pixelSize: 10
+                color: rocTheme.muted
+            }
+        }
+
+
         // --------------------------------------------------- no open questions
         Rectangle {
             visible: !root.showingWordView && contract.isInterviewActive && !root.hasQuestion
@@ -672,11 +675,18 @@ FocusScope {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: qsTr("Your decisions are saved. Continue with a full rewrite, go back to the word-level view, or edit the draft yourself.")
+                    text: qsTr("Your answers are saved.")
                     wrapMode: Text.WordWrap
                     font.family: root.sansFont
                     font.pixelSize: 12
                     color: rocTheme.muted
+                }
+                TinyButton {
+                    objectName: "interviewFinishRewriteControl"
+                    label: qsTr("Rewrite prompt")
+                    primary: true
+                    active: !contract.isInterviewBusy
+                    onClicked: root.rewriteRequested()
                 }
             }
         }

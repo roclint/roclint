@@ -258,6 +258,8 @@ public:
     Q_PROPERTY(QString accessibilityStatus READ accessibilityStatus NOTIFY accessibilityTrustedChanged)
     Q_PROPERTY(bool ambientModeEnabled READ isAmbientModeEnabled WRITE setAmbientModeEnabled NOTIFY ambientModeEnabledChanged)
     Q_PROPERTY(bool isAmbientActive READ isAmbientActive NOTIFY ambientModeEnabledChanged)
+    Q_PROPERTY(bool ambientBadgeSuggestionsOnly READ ambientBadgeSuggestionsOnly WRITE setAmbientBadgeSuggestionsOnly NOTIFY ambientBadgeChanged)
+    Q_PROPERTY(bool wordReplacementReady READ wordReplacementReady NOTIFY wordRefinementChanged)
     Q_PROPERTY(bool isAmbientCapture READ isAmbientCapture NOTIFY captureSourceChanged)
     Q_PROPERTY(bool isAmbientAttached READ isAmbientAttached NOTIFY captureSourceChanged)
     Q_PROPERTY(QString captureTargetName READ captureTargetName NOTIFY captureSourceChanged)
@@ -282,6 +284,13 @@ public:
     Q_PROPERTY(QString wordRefinementClarificationQuestion READ wordRefinementClarificationQuestion NOTIFY wordRefinementChanged)
     Q_PROPERTY(bool wordRefinementApplying READ wordRefinementApplying NOTIFY wordRefinementChanged)
     Q_PROPERTY(QRect wordRefinementAnchorRect READ wordRefinementAnchorRect NOTIFY wordRefinementChanged)
+    Q_PROPERTY(bool wordCompanionVisible READ wordCompanionVisible NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QString wordCompanionState READ wordCompanionState NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QString wordCompanionMessage READ wordCompanionMessage NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QVariantList wordMarkRects READ wordMarkRects NOTIFY wordRefinementChanged)
+    Q_PROPERTY(bool wordMarkVisible READ wordMarkVisible NOTIFY wordRefinementChanged)
+    Q_PROPERTY(bool wordCanUndo READ wordCanUndo NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QStringList wordClarificationChoices READ wordClarificationChoices NOTIFY wordRefinementChanged)
 
     // Shared intent brief. Display summaries are never authority: raw answers and
     // source excerpts are. Every item is bound to the current revision/snapshot.
@@ -490,6 +499,9 @@ public:
     [[nodiscard]] QString accessibilityStatus() const;
     [[nodiscard]] bool isAmbientModeEnabled() const noexcept { return m_ambientModeEnabled; }
     void setAmbientModeEnabled(bool enabled);
+    [[nodiscard]] bool ambientBadgeSuggestionsOnly() const noexcept { return m_ambientBadgeSuggestionsOnly; }
+    void setAmbientBadgeSuggestionsOnly(bool enabled);
+    [[nodiscard]] bool wordReplacementReady() const;
     [[nodiscard]] bool isAmbientActive() const;
     [[nodiscard]] bool isAmbientCapture() const noexcept { return m_captureSource == CaptureSource::Ambient; }
     [[nodiscard]] bool isAmbientAttached() const noexcept {
@@ -497,7 +509,7 @@ public:
     }
     [[nodiscard]] QString captureTargetName() const;
     [[nodiscard]] QString deliveryLabel() const;
-    [[nodiscard]] bool isAmbientBadgeVisible() const noexcept { return m_ambientBadgeVisible; }
+    [[nodiscard]] bool isAmbientBadgeVisible() const;
     [[nodiscard]] int ambientBadgeX() const noexcept { return m_ambientBadgePos.x(); }
     [[nodiscard]] int ambientBadgeY() const noexcept { return m_ambientBadgePos.y(); }
     [[nodiscard]] QString ambientBadgeLabel() const { return m_ambientBadgeLabel; }
@@ -517,13 +529,24 @@ public:
     [[nodiscard]] QString wordRefinementClarificationQuestion() const { return m_wordRefinementClarificationQuestion; }
     [[nodiscard]] bool wordRefinementApplying() const noexcept { return m_wordRefinementInFlight; }
     [[nodiscard]] QRect wordRefinementAnchorRect() const noexcept { return m_wordRefinementAnchorRect; }
+    [[nodiscard]] bool wordCompanionVisible() const noexcept { return m_wordCompanionRequested && (m_hasWordRefinement || m_wordCompanionState != QLatin1String("idle")); }
+    [[nodiscard]] QString wordCompanionState() const { return m_wordCompanionState; }
+    [[nodiscard]] QString wordCompanionMessage() const { return m_wordCompanionMessage; }
+    [[nodiscard]] QVariantList wordMarkRects() const;
+    [[nodiscard]] bool wordMarkVisible() const;
+    [[nodiscard]] bool wordCanUndo() const;
+    [[nodiscard]] QStringList wordClarificationChoices() const { return m_wordClarificationChoices; }
+    Q_INVOKABLE quint64 undoWordRefinement(quint64 expectedVersion);
+    Q_INVOKABLE bool submitWordClarification(const QString& answer, quint64 expectedVersion);
 
     // Resolves the stable candidate identity before the write. The candidate id is optional only
     // for backward compatibility; the companion and HUD always pass it explicitly.
     Q_INVOKABLE quint64 applyWordRefinement(quint64 expectedVersion = 0, const QString& candidateId = QString());
     Q_INVOKABLE void selectWordRefinementCandidate(const QString& candidateId);
     Q_INVOKABLE void dismissWordRefinement();
+    Q_INVOKABLE void retryWordRefinement();
     Q_INVOKABLE void exploreInCompanion();
+    Q_INVOKABLE quint64 openRewriteFromCompanion(quint64 expectedVersion);
 
     // Shared intent brief and adaptive interview. Return values are the state
     // version the accepted transition publishes, or 0 when the request is refused
@@ -739,6 +762,7 @@ public slots:
     // App/Start-menu activation shows the retained draft without capturing another app.
     void activateCard();
     void hideCard();
+    void minimizeCard();
     void toggleCard();
     void showDashboard();
     void hideDashboard();
@@ -791,6 +815,8 @@ public slots:
     // Opens the card on the prompt last observed in an eligible app.
     Q_INVOKABLE quint64 openFromAmbient();
     Q_INVOKABLE void dismissAmbientBadge();
+    // The passive icon is the only automatic surface. A card requires this explicit action.
+    Q_INVOKABLE void activateAmbientIndicator();
 
     // History.
     Q_INVOKABLE QVariantList getRecentSessions();
@@ -829,6 +855,7 @@ public slots:
     Q_INVOKABLE QPoint calculateAmbientAnchor(int width, int height);
 
 signals:
+    void companionRewriteRequested(const QString& draft, quint64 expectedVersion);
     void storageBusyChanged();
     void storageCommandFinished(quint64 requestId, const QString& name, bool succeeded, const QString& errorCode, const QString& message);
     void cardVisibilityChanged();
@@ -1142,6 +1169,9 @@ private:
                                      const bridge::WordRefinementRequest& request,
                                      core::Result<bridge::WordRefinementResponse> result);
     void clearWordRefinement();
+    AsyncTask<core::Status> commitPendingWordClarification();
+    void setWordCompanionState(const QString& state, const QString& message = {});
+    quint64 refuseWordApply(const QString& reason);
     void startPendingWordRefinement();
 
     // Shared intent brief and adaptive interview.
@@ -1201,7 +1231,7 @@ private:
 
     void onFieldObserved(const ObservedField& field);
     void followAmbientDraft();
-    void onFieldLost();
+    void onFieldLost(bool interrupted = false);
     void onAmbientDebounce();
     void startAmbientCheck();
     void setAmbientBadge(bool visible, const QString& label = QString());
@@ -1223,6 +1253,32 @@ private:
     HostContextObservation m_hostContext;
     QString m_capturedDraftText;
     bool m_hasWordRefinement{false};
+    bool m_wordCompanionRequested{false};
+    QString m_wordCompanionState{QStringLiteral("idle")};
+    QString m_wordCompanionMessage;
+    quint64 m_wordFeedbackGeneration{0};
+    struct PendingWordApply {
+        quint64 requestId{0}, fieldToken{0}, workspaceEpoch{0}, pipelineSerial{0}, feedbackGeneration{0};
+        qint64 processId{0};
+        QString before, after, original, replacement;
+        QRect anchor;
+        int startOffset{0};
+        bool undo{false};
+    };
+    std::optional<PendingWordApply> m_pendingWordApply;
+    std::optional<PendingWordApply> m_wordUndo;
+    QList<QRect> m_wordMarkRects;
+    QStringList m_wordClarificationChoices;
+    QString m_wordClarificationAnswer;
+    // Only semantically accepted answers, bound to their exact external draft.
+    struct WordClarificationDecision {
+        QString question, answer, original, draftText;
+        quint64 fieldToken{0}, workspaceEpoch{0}, pipelineSerial{0};
+        qint64 processId{0};
+        std::string sessionId, revisionId;
+    };
+    std::optional<WordClarificationDecision> m_acceptedWordClarification;
+    std::optional<WordClarificationDecision> m_pendingWordClarificationHandoff;
     QString m_wordRefinementOriginal;
     QString m_wordRefinementReplacement;
     QString m_wordRefinementExplanation;
@@ -1372,6 +1428,22 @@ private:
         quint64 configurationGeneration;
     };
     std::optional<PendingNativeRewrite> m_pendingNativeRewrite;
+    struct PendingNativeReview {
+        ComprehensionBinding binding;
+        quint64 serial;
+        quint64 configurationGeneration;
+    };
+    std::optional<PendingNativeReview> m_pendingNativeReview;
+    struct PendingNativeClarification {
+        quint64 stateVersion;
+        quint64 serial;
+        quint64 configurationGeneration;
+        quint64 workspaceEpoch;
+        std::string revisionId;
+        std::string itemId;
+        QString answer;
+    };
+    std::optional<PendingNativeClarification> m_pendingNativeClarification;
     QString m_juliaModelDirectory;
     QString m_juliaPython;
     QString m_juliaDevice;
@@ -1472,10 +1544,12 @@ private:
 
     std::unique_ptr<IAccessibilityBridge> m_accessibility;
     bool m_ambientModeEnabled{false};
+    bool m_ambientBadgeSuggestionsOnly{false};
     CaptureSource m_captureSource{CaptureSource::Widget};
     std::optional<AmbientObservation> m_ambientObservation;
     std::optional<AmbientObservation> m_captureTarget;
     bool m_followAmbientDraft{false};
+    bool m_resumeMinimizedCard{false};
     bool m_widgetDraftEdited{false};
     quint64 m_captureOpenGeneration{0};
     bool m_captureOpenPending{false};
@@ -1486,6 +1560,7 @@ private:
     bool m_ambientCheckInFlight{false};
     bool m_ambientCheckPending{false};
     QTimer m_ambientDebounce;
+    QTimer m_ambientBadgeRecovery;
     bool m_ambientBadgeVisible{false};
     QPoint m_ambientBadgePos;
     QString m_ambientBadgeLabel;

@@ -32,12 +32,18 @@ std::string buildGoldfishAuditPrompt(const GoldfishAuditRequest& request) {
     out.reserve(request.originalPrompt.size() + request.candidateRewrite.size() + 2048);
 
     out += "<instructions>\n";
-    out += "Instruction contract: granite.goldfish_audit.v1\n";
+    out += "Instruction contract: granite.goldfish_audit.v2\n";
     out += "You are the Goldfish Auditor, an independent, cold, zero-memory adversarial validation pass.\n";
     out += "You have NO memory of prior conversations, design discussions, or user context.\n";
     out += "Your role is to strictly verify whether the CANDIDATE REWRITE satisfies all HARD requirements "
            "and respects all NEGATIVE BOUNDARY PROHIBITIONS from the ORIGINAL PROMPT and VERIFIED CONSTRAINTS.\n\n";
     out += "Rules for audit:\n";
+    out += "0. Preserve the original task, not just its topic. Compare what the receiving AI is being asked to DO in each text. "
+           "Adding or substituting a request to summarize, describe, analyze or report the user's request changes its task unless "
+           "the user asked for that action. A correct rewrite remains the user's request addressed to the receiving AI, not a "
+           "third-person report of it. An extra unrequested task is a violation even if the intended task is also mentioned. "
+           "Report a task-change violation using constraint_id original_task. Do not flag a summary or description when that "
+           "is what the original asks for.\n";
     out += "1. Hard constraints (Enforcement: Hard) MUST be satisfied in the candidate rewrite. "
            "If a hard requirement is omitted, contradicted, or weakened, report a violation.\n";
     out += "2. Negative prohibitions (Polarity: Prohibit) MUST NOT be breached. "
@@ -50,7 +56,11 @@ std::string buildGoldfishAuditPrompt(const GoldfishAuditRequest& request) {
     out += "5. Epistemic humility: If the candidate rewrite text does not contain enough information to determine "
            "whether a constraint is satisfied, report it under \"unresolved\". Never guess, invent facts, or "
            "assume compliance without evidence.\n";
-    out += "6. Reply with exactly one JSON object: {\"outcome\": \"Pass\" | \"Fail\" | \"Unresolved\", "
+    out += "6. A clear added or substituted task is a Fail, not Unresolved. Every non-Pass needs a specific finding: explain "
+           "the conflicting source request and candidate action using their actual wording. Unresolved is only for an "
+           "interpretation that these texts cannot settle; state exactly what is unknown. An empty verified_constraints list "
+           "does not prevent checking the original task. Never return Unresolved with empty findings.\n";
+    out += "7. Reply with exactly one JSON object: {\"outcome\": \"Pass\" | \"Fail\" | \"Unresolved\", "
            "\"violations\": [{\"constraint_id\": string, \"explanation\": string}], "
            "\"unresolved\": [{\"constraint_id\": string, \"explanation\": string}]}.\n";
     out += "</instructions>\n";
@@ -234,6 +244,15 @@ core::ValidationResult GraniteGoldfishAdapter::audit(
     const GoldfishAuditRequest& request,
     const GraniteTransport& transport) const {
 
+    if (std::any_of(request.constraints.begin(), request.constraints.end(), [](const auto& constraint) {
+        return constraint.id == GoldfishAuditRequest::originalTaskConstraintId;
+    })) {
+        core::ValidationResult invalid;
+        invalid.executionStatus = core::AuditExecutionStatus::Malformed;
+        invalid.outcome = core::ValidationOutcome::Unresolved;
+        invalid.unresolved.push_back({"goldfish_audit", "A supplied constraint uses the reserved original_task identity."});
+        return invalid;
+    }
     // Step 1: Pre-gate with deterministic C++ reconciler
     auto reconcilerResult = reconciler_.reconcile(
         request.originalPrompt,
@@ -286,6 +305,18 @@ core::ValidationResult GraniteGoldfishAdapter::audit(
     for (const auto& c : request.constraints) {
         constraintMap[c.id] = &c;
     }
+    // Task identity comes from the frozen source, never a model-created rule.
+    // It is semantic-only: sending the entire original through the lexical
+    // reconciler would incorrectly require the original words verbatim.
+    core::ScopedConstraint originalTask;
+    originalTask.id = std::string(GoldfishAuditRequest::originalTaskConstraintId);
+    originalTask.rule = request.originalPrompt;
+    originalTask.origin = core::Origin::User;
+    originalTask.derivation = core::Derivation::Direct;
+    originalTask.enforcement = core::Enforcement::Hard;
+    originalTask.polarity = core::Polarity::Require;
+    originalTask.aspect = "task_identity";
+    constraintMap.emplace(originalTask.id, &originalTask);
 
     core::ValidationResult combined = reconcilerResult;
     combined.executionStatus = core::AuditExecutionStatus::Completed;
@@ -1799,7 +1830,10 @@ std::string buildComprehensionReviewPrompt(const ComprehensionReviewRequest& req
     out += "- creative: Do not require file paths, function signatures, schemas, or implementation "
            "identifiers unless the source explicitly asks for them. Judge whether the intended "
            "audience, artifact, content, style, and preservation constraints are clear enough to "
-           "act on without guessing a consequential choice.\n";
+           "act on without guessing a consequential choice. If the requested style is already stated, "
+           "exact colors, fonts, grids, component specifications, and other creative decisions remain "
+           "open unless the user required them. Leaving such details open is ready_for_task=true and "
+           "is not a blocking finding. Never turn a reviewer suggestion into an authoritative requirement.\n";
     out += "- code: Respect explicit files, symbols, AST targets, languages, APIs, and preservation "
            "constraints. A missing required target, silent scope expansion, or violated "
            "preservation constraint is a finding. Never invent a target absent from the source.\n";

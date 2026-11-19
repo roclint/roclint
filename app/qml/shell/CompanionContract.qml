@@ -49,18 +49,30 @@ QtObject {
     readonly property string wordClarificationQuestion: wordSurfaceAvailable
                                                           ? host.wordRefinementClarificationQuestion : ""
     readonly property bool wordApplying: wordSurfaceAvailable ? host.wordRefinementApplying : false
+    readonly property string wordState: has("wordCompanionState") ? host.wordCompanionState
+        : (wordApplying ? "applying" : hasWordRefinement ? "ready" : "idle")
+    readonly property string wordMessage: has("wordCompanionMessage") ? host.wordCompanionMessage : ""
+    readonly property bool wordVisible: has("wordCompanionVisible") ? host.wordCompanionVisible : hasWordRefinement
+    readonly property bool wordChecking: wordState === "checking"
+    readonly property bool wordApplied: wordState === "applied" || wordState === "undone"
+    readonly property bool wordFailed: wordState === "failed"
     readonly property bool wordHasProposal: wordReplacement.length > 0 || wordCandidates.length > 0
-    readonly property bool wordWorking: hasWordRefinement && !wordHasProposal && !wordNeedsClarification &&
-                                        !wordApplying
+    readonly property bool wordWorking: wordChecking || (hasWordRefinement && !wordHasProposal && !wordNeedsClarification &&
+                                        !wordApplying)
     readonly property bool wordCanApply: hasWordRefinement && wordReplacement.length > 0 &&
-                                         !wordNeedsClarification && !wordApplying
+                                         !wordNeedsClarification && !wordApplying && !wordChecking && !wordApplied && !wordFailed
     readonly property bool anchorAvailable: wordSurfaceAvailable && has("wordRefinementAnchorRect")
     readonly property var wordAnchorRect: anchorAvailable ? host.wordRefinementAnchorRect : Qt.rect(0, 0, 0, 0)
-
-    function selectWordCandidate(candidateId) {
-        if (wordSurfaceAvailable && callable("selectWordRefinementCandidate"))
-            host.selectWordRefinementCandidate(candidateId);
+    readonly property var wordChoices: has("wordClarificationChoices") ? host.wordClarificationChoices : []
+    readonly property bool wordAnswerInvokable: callable("submitWordClarification")
+    readonly property bool wordUndoAvailable: has("wordCanUndo") && host.wordCanUndo && callable("undoWordRefinement")
+    function answerWord(text) {
+        return wordAnswerInvokable && wordNeedsClarification && !wordChecking && !wordApplying && host.submitWordClarification(text, stateVersion);
     }
+    function undoWord() {
+        return wordUndoAvailable ? host.undoWordRefinement(stateVersion) : 0;
+    }
+
     function applyWord(candidateId) {
         if (!wordCanApply || !callable("applyWordRefinement")) return 0;
         return host.applyWordRefinement(host.stateVersion, candidateId);
@@ -68,6 +80,15 @@ QtObject {
     function dismissWord() {
         if (wordSurfaceAvailable && callable("dismissWordRefinement"))
             host.dismissWordRefinement();
+    }
+    readonly property bool wordRetryInvokable: callable("retryWordRefinement")
+    function retryWord() {
+        if (wordRetryInvokable && !wordApplying) host.retryWordRefinement();
+    }
+    readonly property bool wordRewriteInvokable: wordSurfaceAvailable && callable("openRewriteFromCompanion")
+    function rewriteWordDraft() {
+        if ((!hasWordRefinement && !wordFailed && !wordChecking) || !wordRewriteInvokable || wordApplying) return 0;
+        return host.openRewriteFromCompanion(host.stateVersion);
     }
 
     // ------------------------------------------------------- intent/interview

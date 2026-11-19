@@ -48,6 +48,7 @@ const std::string kUnverifiedRewrite = "Make the parser quicker for single reque
 struct ScriptedRuntime {
     std::string rewriteText{kVerifiedRewrite};
     std::string wordRefinementReply{};
+    std::string wordSurfaceReply{R"({"status":"clean","replacement":"","explanation":"","source":""})"};
     std::string discoveryReply{kDiscoveryReply};
     std::shared_ptr<std::vector<std::string>> discoveryReplies =
         std::make_shared<std::vector<std::string>>();
@@ -66,20 +67,23 @@ struct ScriptedRuntime {
         const auto delay = discoveryDelay;
         const auto followUpDelayCopy = followUpDelay;
         const std::string wordReply = wordRefinementReply;
+        const std::string surfaceReply = wordSurfaceReply;
         const std::string discovery = discoveryReply;
         auto replies = followUpReplies;
         auto baseReplies = discoveryReplies;
         auto reject = rejectCustom;
-        return [m, log, rewrite, delay, followUpDelayCopy, wordReply, discovery, replies, baseReplies, reject]
+        return [m, log, rewrite, delay, followUpDelayCopy, wordReply, surfaceReply, discovery, replies, baseReplies, reject]
                (std::string_view instruction) -> Result<std::string> {
             {
                 std::lock_guard<std::mutex> lock(*m);
                 log->emplace_back(instruction);
             }
-            if (instruction.find("granite.word_refinement.v2") != std::string_view::npos && !wordReply.empty()) {
+            if (instruction.find("granite.word_surface_check.v1") != std::string_view::npos)
+                return surfaceReply;
+            if (instruction.find("granite.word_refinement.v4") != std::string_view::npos && !wordReply.empty()) {
                 return wordReply;
             }
-            if (instruction.find("granite.goldfish_word_audit.v2") != std::string_view::npos) {
+            if (instruction.find("granite.goldfish_word_audit.v3") != std::string_view::npos) {
                 const bool second = instruction.find("wcand_2") != std::string_view::npos;
                 return std::string(second
                     ? R"({"verdicts":[{"id":"wcand_1","grammar":"Pass","preservation":"Pass","usefulness":"Pass"},{"id":"wcand_2","grammar":"Pass","preservation":"Pass","usefulness":"Pass"}]})"
@@ -88,7 +92,7 @@ struct ScriptedRuntime {
             if (instruction.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
                 return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
             }
-            if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            if (instruction.find("granite.goldfish_audit.v2") != std::string_view::npos) {
                 return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
             }
             if (instruction.find("granite.clarification_check.v1") != std::string_view::npos) {
@@ -1176,7 +1180,7 @@ void testGoldfishAuditPipelineGating() {
         // Now mock a rewrite that breaches the negative prohibition!
         const std::string breachingRewrite = "Refactor the query builder for lower latency per call and modify the token validation logic for efficiency.";
         c.setTransportOverrideForTesting([&](std::string_view instruction) -> Result<std::string> {
-            if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            if (instruction.find("granite.goldfish_audit.v2") != std::string_view::npos) {
                 return std::string(R"({"outcome": "Fail", "violations": [{"constraint_id": "prohibit_boundary_1", "explanation": "Candidate rewrite modifies token validation logic"}]})");
             }
             return fx::rewriteReply(breachingRewrite);
@@ -1195,7 +1199,7 @@ void testGoldfishAuditPipelineGating() {
         // Now mock a compliant rewrite that preserves the negative boundary!
         const std::string compliantRewrite = "Refactor the query builder for lower latency per call, without touching the token validation logic.";
         c.setTransportOverrideForTesting([&](std::string_view instruction) -> Result<std::string> {
-            if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            if (instruction.find("granite.goldfish_audit.v2") != std::string_view::npos) {
                 return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
             }
             return fx::rewriteReply(compliantRewrite);
@@ -1278,7 +1282,7 @@ void testF07ReviewReuseAndVersionAdvancement() {
 
     std::atomic<int> auditCalls{0};
     c.setTransportOverrideForTesting([&](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             ++auditCalls;
             return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"intent_grp_0","explanation":"Manual review required"}]})");
         }
@@ -1337,7 +1341,7 @@ void testF08SelectionPersistenceAndApproval() {
         discovery.replace(at, std::string("Lower latency per call").size(), "lower call latency");
     }
     c.setTransportOverrideForTesting([&](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             ++auditCalls;
             return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
         }
@@ -1381,7 +1385,7 @@ void testF09UnresolvedHardAuditGating() {
     c.setLegacyDiscoveryForTesting(true);
 
     c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"intent_grp_0","explanation":"Cannot verify the hard performance requirement"}]})");
         }
         if (in.find("<instructions>") != std::string_view::npos) {
@@ -1426,7 +1430,7 @@ void testAsyncSelectionNativeTicketAndOffGuiExecution() {
     auto workerAudits = std::make_shared<std::atomic<int>>(0);
 
     c.setTransportOverrideForTesting([guiAudits, workerAudits](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             if (QThread::currentThread() == QCoreApplication::instance()->thread()) {
                 ++(*guiAudits);
             } else {
@@ -1479,7 +1483,7 @@ void testAsyncSelectionDelayedTransportResponsiveness() {
     c.setLegacyDiscoveryForTesting(true);
 
     c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             QThread::msleep(100);
             return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
         }
@@ -1517,7 +1521,7 @@ void testAsyncSelectionStaleSelectionRejection() {
 
     std::atomic<int> auditCount{0};
     c.setTransportOverrideForTesting([&](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             ++auditCount;
             QThread::msleep(80);
             return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
@@ -1563,7 +1567,7 @@ void testAsyncSelectionSaveFailurePreventsApproval() {
     c.setLegacyDiscoveryForTesting(true);
 
     c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
         }
         if (in.find("<instructions>") != std::string_view::npos) {
@@ -1609,7 +1613,7 @@ void testSessionRestoreUncertaintyPreservation() {
         c.setLegacyDiscoveryForTesting(true);
 
         c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
-            if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
                 return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"intent_grp_0","explanation":"Cannot verify the hard performance requirement"}]})");
             }
             if (in.find("<instructions>") != std::string_view::npos) {
@@ -1625,6 +1629,11 @@ void testSessionRestoreUncertaintyPreservation() {
         ROCLINT_CHECK(c.auditOutcome() == QStringLiteral("Unresolved"));
         ROCLINT_CHECK(!c.canApprove());
         ROCLINT_CHECK(c.pendingReviewCount() == 1);
+        for (const auto& value : c.proposalConstraints()) {
+            const auto item = value.toMap();
+            ROCLINT_CHECK(item.value("evidence").toString() != item.value("id").toString());
+            ROCLINT_CHECK(!item.value("description").toString().startsWith("Audit uncertainty:"));
+        }
 
         session = c.currentSessionIdString();
         version = c.stateVersion();
@@ -1671,7 +1680,7 @@ void testExactIdAcknowledgmentBinding() {
     c.setLegacyDiscoveryForTesting(true);
 
     c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"intent_grp_0","explanation":"Hard latency invariant"}]})");
         }
         if (in.find("<instructions>") != std::string_view::npos) {
@@ -1778,7 +1787,7 @@ void testRecommendationCannotCrossDecisionGroups() {
     ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     c.setTransportOverrideForTesting([twoGroups](std::string_view instruction) -> Result<std::string> {
-        if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos)
+        if (instruction.find("granite.goldfish_audit.v2") != std::string_view::npos)
             return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
         if (instruction.find("granite.discovery.selective.v11") != std::string_view::npos)
             return twoGroups;
@@ -1939,6 +1948,285 @@ void testWordCompanionBindsSelectedCandidateAndRejectsStaleRequests() {
     std::cout << "  [PASS] Word companion applies the selected candidate and rejects stale/mismatched requests.\n";
 }
 
+void testFeedbackOpinionsAreNotMutationProhibitions() {
+    using roclint::core::Polarity;
+    const roclint::core::intent::ConfirmedIntent intent;
+    for (const auto& prompt : {
+        "I don't like how this UI interrupts my typing.",
+        "I dont like this cluttered UI; improve its layout.",
+        "I do not enjoy these intrusive popups. Make them less distracting."
+    }) {
+        const auto constraints = HostController::extractSessionConstraints(prompt, intent);
+        ROCLINT_CHECK(std::none_of(constraints.begin(), constraints.end(), [](const auto& c) {
+            return c.polarity == Polarity::Prohibit && c.aspect == "boundary";
+        }));
+    }
+    for (const auto& prompt : {
+        "I don't like the layout, but do not change the API.",
+        "I don't like the layout and don't change public signatures.",
+        "I don't want the API changed.",
+        "Do not like or share any posts.",
+        "Improve this UI without changing its keyboard shortcuts."
+    }) {
+        const auto constraints = HostController::extractSessionConstraints(prompt, intent);
+        ROCLINT_CHECK(std::any_of(constraints.begin(), constraints.end(), [](const auto& c) {
+            return c.polarity == Polarity::Prohibit && c.aspect == "boundary";
+        }));
+    }
+}
+
+void testWordApplyFeedbackIsReadbackBoundAndFollowsGeometry() {
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    auto* native = bridge.get(); native->autoCompleteRangeInjection = false;
+    HostController c(QStringLiteral(":memory:"), std::move(bridge));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    ScriptedRuntime runtime;
+    runtime.wordRefinementReply = R"({"action":"replace","options":[{"text":"quicker to load","effect":"Specifies loading","assume":""}]})";
+    connectRuntime(c, runtime); c.setAmbientModeEnabled(true);
+    roclint::host::ObservedField field;
+    field.fieldToken = 7491; field.processId = 1234;
+    field.appIdentifier = "Code.exe"; field.appDisplayName = "Visual Studio Code";
+    field.text = "Make the dashboard feel faster"; field.caretOffset = field.text.size();
+    field.caretRect = QRect(200, 160, 2, 20); field.fieldRect = QRect(80, 100, 620, 180);
+    native->observe(field);
+    ROCLINT_CHECK(waitForWordSuggestion(c, 5000));
+    ROCLINT_CHECK(c.wordCompanionState() == "ready");
+    c.setAmbientBadgeSuggestionsOnly(true);
+    ROCLINT_CHECK(c.wordReplacementReady() && c.isAmbientBadgeVisible());
+    c.setAmbientBadgeSuggestionsOnly(false);
+    ROCLINT_CHECK(!c.wordCompanionVisible() && c.isAmbientBadgeVisible() && !c.isCardVisible());
+    ROCLINT_CHECK(native->rangeInjections.empty());
+    c.activateAmbientIndicator();
+    ROCLINT_CHECK(c.wordCompanionVisible() && !c.isAmbientBadgeVisible() && !c.isCardVisible());
+    // A geometry-only observation moves the existing suggestion, without a new model request.
+    field.caretRect.translate(400, 200); field.fieldRect.translate(400, 200);
+    native->observe(field); QCoreApplication::processEvents();
+    ROCLINT_CHECK(c.wordRefinementAnchorRect() == field.caretRect);
+    const auto first = c.applyWordRefinement(c.stateVersion());
+    ROCLINT_CHECK(first && c.wordCompanionState() == "applying" && c.wordCompanionVisible());
+    ROCLINT_CHECK(c.wordCompanionMessage().contains("Applying"));
+    ROCLINT_CHECK(c.applyWordRefinement(c.stateVersion()) == 0 && native->rangeInjections.size() == 1);
+    emit native->rangeInjectionFinished(first + 99, roclint::host::InjectionOutcome::Injected, {});
+    ROCLINT_CHECK(c.wordCompanionState() == "applying");
+    emit native->rangeInjectionFinished(first, roclint::host::InjectionOutcome::Failed, "Readback mismatch.");
+    ROCLINT_CHECK(c.wordCompanionState() == "failed" && c.wordCompanionVisible());
+    ROCLINT_CHECK(c.wordCompanionMessage() == "Readback mismatch.");
+    ROCLINT_CHECK(!c.hasWordRefinement());
+    c.retryWordRefinement();
+    ROCLINT_CHECK(waitForWordSuggestion(c, 5000));
+    ROCLINT_CHECK(c.wordCompanionState() == "ready" && c.wordCompanionMessage().isEmpty());
+    ROCLINT_CHECK(native->rangeInjections.size() == 1); // Retry checks; it never writes.
+    const auto second = c.applyWordRefinement(c.stateVersion()); ROCLINT_CHECK(second);
+    const auto request = native->rangeInjections.back();
+    field.text = request.expectedCurrentText.left(request.startOffset) + request.replacementText + request.expectedCurrentText.mid(request.endOffset);
+    field.caretOffset = field.text.size(); native->observe(field);
+    ROCLINT_CHECK(c.wordCompanionState() == "applying"); // A text echo alone is not success.
+    emit native->rangeInjectionFinished(second, roclint::host::InjectionOutcome::Injected, {});
+    ROCLINT_CHECK(c.wordCompanionState() == "applied" && c.wordCompanionVisible() && !c.hasWordRefinement());
+    ROCLINT_CHECK(c.wordCompanionMessage() == "Applied to your draft.");
+    native->observe(field); ROCLINT_CHECK(c.wordCompanionState() == "applied");
+    field.text = "Please make the dashboard feel faster"; field.caretOffset = field.text.size();
+    native->observe(field); ROCLINT_CHECK(waitForWordSuggestion(c, 5000));
+    ROCLINT_CHECK(!c.wordCompanionVisible() && c.isAmbientBadgeVisible());
+    c.activateAmbientIndicator();
+    QThread::msleep(1900); QCoreApplication::processEvents();
+    ROCLINT_CHECK(c.hasWordRefinement() && c.wordCompanionState() == "ready"); // Old success timer is stale.
+    const auto third = c.applyWordRefinement(c.stateVersion()); ROCLINT_CHECK(third);
+    ++field.fieldToken; native->observe(field);
+    emit native->rangeInjectionFinished(third, roclint::host::InjectionOutcome::Injected, {});
+    ROCLINT_CHECK(c.wordCompanionState() != "applied" && !c.wordCompanionVisible());
+    native->observe(field); ROCLINT_CHECK(waitForWordSuggestion(c, 5000));
+    const auto fourth = c.applyWordRefinement(c.stateVersion()); ROCLINT_CHECK(fourth);
+    c.dismissWordRefinement();
+    emit native->rangeInjectionFinished(fourth, roclint::host::InjectionOutcome::Injected, {});
+    ROCLINT_CHECK(!c.wordCompanionVisible()); // Dismissal is not undone by late completion.
+}
+
+void testWordQuestionCanRecoverToAnAuditedCorrection() {
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    auto* observed = bridge.get();
+    HostController c(QStringLiteral(":memory:"), std::move(bridge));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    ScriptedRuntime runtime;
+    runtime.wordRefinementReply = R"({"action":"ask","question":"Was that spelling intentional?"})";
+    runtime.wordSurfaceReply = R"({"status":"repair","replacement":"unchanged","explanation":"Correct spelling","source":""})";
+    connectRuntime(c, runtime);
+    c.setAmbientModeEnabled(true);
+    roclint::host::ObservedField field;
+    field.fieldToken = 4299; field.appIdentifier = "Code.exe";
+    field.appDisplayName = "Visual Studio Code"; field.kind = roclint::host::FieldKind::GuiEditor;
+    field.text = "Keep all existing tests unchnaged on Windows.";
+    field.caretOffset = field.text.size(); field.fieldRect = QRect(60, 120, 620, 120);
+    field.wordStartOffset = field.text.indexOf("unchnaged");
+    field.wordEndOffset = field.wordStartOffset + 9;
+    field.wordRects = {QRect(250, 125, 80, 18)};
+    observed->observe(field);
+    ROCLINT_CHECK(waitForWordSuggestion(c, 5000));
+    ROCLINT_CHECK(!c.wordRefinementNeedsClarification());
+    ROCLINT_CHECK(c.wordRefinementReplacement() == "unchanged");
+    {
+        std::lock_guard<std::mutex> lock(*runtime.mutex);
+        ROCLINT_CHECK(std::count_if(runtime.sent->begin(), runtime.sent->end(), [](const auto& prompt) {
+            return prompt.find("granite.word_surface_check.v1") != std::string::npos;
+        }) == 1);
+        ROCLINT_CHECK(std::any_of(runtime.sent->begin(), runtime.sent->end(), [](const auto& prompt) {
+            return prompt.find("granite.goldfish_word_audit.v3") != std::string::npos &&
+                   prompt.find("Keep all existing tests unchanged") != std::string::npos;
+        }));
+    }
+    ROCLINT_CHECK(observed->rangeInjections.empty());
+    ROCLINT_CHECK(c.applyWordRefinement(c.stateVersion(), "wcand_1") != 0);
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(observed->rangeInjections.size() == 1);
+}
+
+void testPhraseFlowChecksAnswersAndSupportsGuardedUndo() {
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    auto* observed = bridge.get();
+    HostController host(":memory:", std::move(bridge));
+    ROCLINT_CHECK(host.waitForStorageForTesting());
+    ScriptedRuntime runtime;
+    runtime.wordRefinementReply = R"({"action":"ask","question":"Which interaction feels slow?","choices":["Initial loading","Data refresh"]})";
+    auto fallback = runtime.transport();
+    host.setTransportOverrideForTesting([fallback](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.word_refinement.v4") != std::string_view::npos &&
+            prompt.find("Which interaction feels slow? -> Data refresh") != std::string_view::npos)
+            return std::string(R"({"action":"replace","options":[{"text":"quicker to refresh","effect":"Specifies refresh responsiveness","assume":""}]})");
+        return fallback(prompt);
+    });
+    ROCLINT_CHECK(host.markModelReadyForTesting(modelInfo()));
+    host.setAmbientModeEnabled(true);
+    roclint::host::ObservedField field;
+    field.fieldToken = 7612; field.processId = 123; field.appIdentifier = "Code.exe";
+    field.text = "Make the dashboard feel faster.";
+    const int start = field.text.indexOf("faster");
+    field.caretOffset = static_cast<int>(field.text.size()); // Caret after terminal punctuation.
+    field.fieldRect = QRect(40, 100, 500, 160); field.caretRect = QRect(220, 140, 2, 20);
+    observed->observe(field);
+    ROCLINT_CHECK(waitForWordSuggestion(host, 5000));
+    ROCLINT_CHECK(host.wordClarificationChoices() == QStringList({"Initial loading", "Data refresh"}));
+    ROCLINT_CHECK(!host.wordMarkVisible()); // No provider range: honest badge fallback.
+    field.wordStartOffset = start; field.wordEndOffset = start + 6; field.wordRects = {QRect(170, 140, 50, 20)};
+    observed->observe(field); QCoreApplication::processEvents();
+    ROCLINT_CHECK(!host.wordMarkVisible() && host.wordRefinementAnchorRect() == field.wordRects.constFirst());
+    field.wordStartOffset = start - 1;
+    observed->observe(field); QCoreApplication::processEvents();
+    ROCLINT_CHECK(!host.wordMarkVisible()); // Another span's bounds cannot label this suggestion.
+    field.wordStartOffset = start; observed->observe(field);
+    host.activateAmbientIndicator();
+    ROCLINT_CHECK(host.wordCompanionVisible() && !host.wordMarkVisible()); // A question is not an inline replacement.
+    runtime.rejectCustom->store(true);
+    ROCLINT_CHECK(!host.submitWordClarification("Data refresh", host.stateVersion() + 1));
+    ROCLINT_CHECK(host.submitWordClarification("iondwfwoefneiofneionfeio", host.stateVersion()));
+    ROCLINT_CHECK(host.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(host.wordRefinementNeedsClarification() && host.wordCompanionState() == "ready");
+    ROCLINT_CHECK(!host.wordCompanionMessage().isEmpty() && observed->rangeInjections.empty() && !host.isInterviewActive());
+    runtime.rejectCustom->store(false);
+    ROCLINT_CHECK(host.submitWordClarification("Data refresh", host.stateVersion()));
+    ROCLINT_CHECK(host.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(host.hasWordRefinement() && !host.wordRefinementNeedsClarification());
+    ROCLINT_CHECK(host.wordRefinementReplacement() == "quicker to refresh" && observed->rangeInjections.empty());
+    ROCLINT_CHECK(host.wordMarkVisible() && host.wordRefinementAnchorRect() == field.wordRects.constFirst());
+    ROCLINT_CHECK(host.applyWordRefinement(host.stateVersion()) != 0);
+    QCoreApplication::processEvents();
+    const QString before = field.text;
+    field.text.replace(start, 6, "quicker to refresh"); field.caretOffset = start + 18;
+    observed->observe(field); QCoreApplication::processEvents();
+    ROCLINT_CHECK(host.wordCanUndo());
+    ROCLINT_CHECK(host.undoWordRefinement(host.stateVersion() + 1) == 0);
+    ROCLINT_CHECK(host.undoWordRefinement(host.stateVersion()) != 0);
+    ROCLINT_CHECK(observed->rangeInjections.size() == 2);
+    const auto undo = observed->rangeInjections.back();
+    ROCLINT_CHECK(undo.expectedCurrentText == field.text && undo.originalRangeText == "quicker to refresh" && undo.replacementText == "faster");
+    QCoreApplication::processEvents();
+    ROCLINT_CHECK(host.wordCompanionState() == "undone" && !host.wordCanUndo());
+    ROCLINT_CHECK(observed->injections.empty());
+}
+
+void testAcceptedWordAnswerSurvivesLocalFailureAndStaysDraftBound() {
+    for (int mode = 0; mode < 6; ++mode) {
+        auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+        auto* observed = bridge.get();
+        HostController host(":memory:", std::move(bridge));
+        ROCLINT_CHECK(host.waitForStorageForTesting());
+        host.setLegacyDiscoveryForTesting(true);
+        ScriptedRuntime runtime;
+        runtime.discoveryReply = R"({"status":"no_ambiguity","choice_groups":[]})";
+        runtime.discoveryDelay = std::chrono::milliseconds(40); // Handoff precedes analysis completion.
+        runtime.wordRefinementReply = R"({"action":"ask","question":"Which interaction feels slow?"})";
+        runtime.rejectCustom->store(mode == 4);
+        auto fallback = runtime.transport();
+        host.setTransportOverrideForTesting([fallback, mode](std::string_view prompt) -> Result<std::string> {
+            if (mode == 5 && prompt.find("granite.goldfish_word_audit.v3") != std::string_view::npos)
+                return std::string(R"({"verdicts":[{"id":"wcand_1","grammar":"Pass","preservation":"Fail","usefulness":"Fail"}]})");
+            if (prompt.find("granite.word_refinement.v4") != std::string_view::npos &&
+                prompt.find("Which interaction feels slow? -> Data refresh") != std::string_view::npos) {
+                if (mode == 0 || mode == 3) return makeError(ErrorCode::ProviderUnavailable, "Synthetic infill failure");
+                if (mode == 1) return std::string(R"({"action":"ask","question":"Which interaction feels slow?"})");
+                if (mode == 5) return std::string(R"({"action":"replace","options":[{"text":"quicker to refresh","effect":"Refresh response","assume":""}]})");
+                return std::string("malformed synthetic output");
+            }
+            return fallback(prompt);
+        });
+        ROCLINT_CHECK(host.markModelReadyForTesting(modelInfo()));
+        host.setAmbientModeEnabled(true);
+        roclint::host::ObservedField field;
+        field.fieldToken = 7800 + mode; field.processId = 345; field.appIdentifier = "Code.exe";
+        field.text = "Make the dashboard feel faster.";
+        field.caretOffset = field.text.indexOf("faster") + 6;
+        field.fieldRect = QRect(40, 100, 500, 160);
+        observed->observe(field);
+        ROCLINT_CHECK(waitForWordSuggestion(host, 5000));
+        host.activateAmbientIndicator();
+        const QString answer = mode == 4 ? "iondwfwoefneiofneionfeio" : "Data refresh";
+        ROCLINT_CHECK(host.submitWordClarification(answer, host.stateVersion()));
+        ROCLINT_CHECK(host.waitForIdleForTesting(5000));
+        ROCLINT_CHECK(observed->rangeInjections.empty() && observed->injections.empty());
+        ROCLINT_CHECK(host.interviewRecordsForTesting().empty()); // No implicit full interview or confirmation.
+        if (mode == 4) {
+            ROCLINT_CHECK(host.wordRefinementNeedsClarification());
+        } else {
+            ROCLINT_CHECK(host.wordCompanionState() == "failed" && !host.hasWordRefinement());
+            ROCLINT_CHECK(!host.wordRefinementNeedsClarification() && host.wordRefinementReplacement().isEmpty());
+            ROCLINT_CHECK(host.wordCompanionMessage().contains("Your answer is kept"));
+        }
+        ROCLINT_CHECK(host.applyWordRefinement(host.stateVersion()) == 0);
+        if (mode == 3) {
+            field.text = "Make the dashboard feel faster. Keep the existing colors.";
+            field.caretOffset = field.text.indexOf("faster") + 6;
+            observed->observe(field);
+            ROCLINT_CHECK(waitForWordSuggestion(host, 5000));
+        }
+        ROCLINT_CHECK(host.openRewriteFromCompanion(host.stateVersion() + 1) == 0);
+        const auto command = host.openRewriteFromCompanion(host.stateVersion());
+        ROCLINT_CHECK(command != 0 && host.waitForCommandForTesting(command));
+        ROCLINT_CHECK(host.waitForIdleForTesting(5000));
+        ROCLINT_CHECK(host.hasConfirmedIntent() && !host.isInterviewActive());
+        const bool shouldCarryAnswer = mode < 3 || mode == 5;
+        const auto& records = host.interviewRecordsForTesting();
+        ROCLINT_CHECK(records.size() == (shouldCarryAnswer ? 1 : 0));
+        if (shouldCarryAnswer) {
+            ROCLINT_CHECK(records[0].question == "Which interaction feels slow?");
+            ROCLINT_CHECK(records[0].rawAnswer == "Data refresh" && records[0].origin == "word_clarification");
+            const auto decision = host.confirmedIntentForTesting()->getDecision(records[0].id);
+            ROCLINT_CHECK(decision && decision->customText == "Data refresh");
+        }
+        if (mode == 0) {
+            const auto rewriteCommand = host.rewriteWithoutQuestions(host.stateVersion());
+            ROCLINT_CHECK(rewriteCommand && host.waitForCommandForTesting(rewriteCommand));
+            ROCLINT_CHECK(host.waitForIdleForTesting(5000));
+            std::lock_guard<std::mutex> lock(*runtime.mutex);
+            ROCLINT_CHECK(std::any_of(runtime.sent->begin(), runtime.sent->end(), [](const auto& prompt) {
+                return prompt.find("granite.rewrite.format.v9") != std::string::npos &&
+                    prompt.find("Data refresh") != std::string::npos &&
+                    prompt.find("Which interaction feels slow?") != std::string::npos;
+            }));
+        }
+        ROCLINT_CHECK(observed->rangeInjections.empty() && observed->injections.empty());
+    }
+    std::cout << "  [PASS] Accepted phrase answers survive failed/repeated/invalid infill; rejected and stale answers never carry over.\n";
+}
+
 void testWordCompanionNoopClearingAndClarification() {
     auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
     auto* observed = bridge.get();
@@ -2008,7 +2296,7 @@ void testWordAuditFailureNeverOffersAnEdit() {
     ROCLINT_CHECK(c.waitForStorageForTesting());
     std::atomic<int> audited{0};
     c.setTransportOverrideForTesting([&](std::string_view prompt)->Result<std::string>{
-        if(prompt.find("granite.goldfish_word_audit.v2")!=std::string_view::npos) {
+        if(prompt.find("granite.goldfish_word_audit.v3")!=std::string_view::npos) {
             ROCLINT_CHECK(prompt.find("Apply an a clear atmosphere treatment")!=std::string_view::npos);
             ++audited;
             return std::string(R"({"verdicts":[{"id":"wcand_1","grammar":"Fail","preservation":"Fail","usefulness":"Fail"}]})");
@@ -2038,7 +2326,7 @@ void testWordCompanionCoalescesAndDropsStaleWork() {
     std::atomic<int> calls{0}, active{0}, peak{0};
     const auto fallback = runtime.transport();
     c.setTransportOverrideForTesting([&](std::string_view prompt) -> roclint::core::Result<std::string> {
-        if (prompt.find("granite.word_refinement.v2") == std::string_view::npos) return fallback(prompt);
+        if (prompt.find("granite.word_refinement.v4") == std::string_view::npos) return fallback(prompt);
         ++calls;
         const int current = ++active;
         peak.store(std::max(peak.load(), current));
@@ -2548,15 +2836,10 @@ void testComprehensionReviewGatingFindingsAndReturnToInterview() {
     ROCLINT_CHECK(returned != 0);
     ROCLINT_CHECK(c.waitForIdleForTesting(8000));
     ROCLINT_CHECK(c.isInterviewActive());
-    ROCLINT_CHECK(c.interviewQuestion().contains(QStringLiteral("review finding")));
-    ROCLINT_CHECK(c.interviewChoices().size() == 2);
-    bool sawRepairChoice = false;
-    for (const auto& choice : c.interviewChoices()) {
-        const auto map = choice.toMap();
-        if (map.value("label").toString().contains("slow laptops")) sawRepairChoice = true;
-    }
-    ROCLINT_CHECK(sawRepairChoice);
-    ROCLINT_CHECK(c.comprehensionReviewState() == "stale");
+    ROCLINT_CHECK(c.interviewQuestion() == "What should the rewrite say here?");
+    ROCLINT_CHECK(c.interviewChoices().isEmpty());
+    ROCLINT_CHECK(c.comprehensionReviewState() == "waiting_for_answer");
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) == 0);
     ROCLINT_CHECK(!c.canApplyReviewedOutput());
 
     // Skip leaves the review choice open and apply blocked.
@@ -2569,15 +2852,9 @@ void testComprehensionReviewGatingFindingsAndReturnToInterview() {
     ROCLINT_CHECK(!c.canApplyReviewedOutput());
     ROCLINT_CHECK(!c.canApprove());
 
-    // The repair wording becomes an explicit user decision and invalidates the proposal.
-    const auto choices = c.interviewChoices();
-    QString repairLabel;
-    for (const auto& choice : choices) {
-        const auto map = choice.toMap();
-        if (map.value("label").toString().contains("slow laptops")) repairLabel = map.value("label").toString();
-    }
-    ROCLINT_CHECK(!repairLabel.isEmpty());
-    answerInterview(c, repairLabel);
+    // Only the user's own wording becomes a decision.
+    const QString repairLabel = QStringLiteral("Keep support for people on slow laptops.");
+    answerInterview(c, repairLabel, QStringLiteral("custom"));
     ROCLINT_CHECK(!c.hasProposal());
     bool sawRepairDecision = false;
     for (const auto& item : c.getConfirmedIntentPayload().value("items").toList()) {
@@ -2689,6 +2966,7 @@ void testComprehensionReviewMalformedAndAdvisoryHandling() {
     ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
     waitForReviewState(c, QStringLiteral("ready"));
     ROCLINT_CHECK(!c.canApplyReviewedOutput());
+    ROCLINT_CHECK(c.resolveComprehensionFinding("blocking_1", "confirm_intent", c.stateVersion()) == 0);
     ROCLINT_CHECK(c.resolveComprehensionFinding(QStringLiteral("blocking_1"),
                                                 QStringLiteral("acknowledge"), c.stateVersion()) == 0);
     ROCLINT_CHECK(c.resolveComprehensionFinding(QStringLiteral("blocking_1"),
@@ -2698,6 +2976,56 @@ void testComprehensionReviewMalformedAndAdvisoryHandling() {
     ROCLINT_CHECK(!c.canApprove());
 
     std::cout << "  [PASS] Review fails closed on malformed/missing output; required and blocking gates stay strict.\n";
+}
+
+void testWaterBottleReviewDoesNotRequireUnspecifiedDesignDetails() {
+    const QString draft = QStringLiteral(
+        "I want to make a website that is about a water bottle company it is innovative it will use "
+        "modern designs and also the water bottle will use copper and aluminum for the cap and the bottle "
+        "is glass and the price is 5.99 the website should also focus on being minialistic while feeling "
+        "like a tech company depsite being a water bottle company this website/water botttle company "
+        "is aimed at selling a premium product to tech bros");
+    ScriptedRuntime runtime;
+    runtime.discoveryReply = R"({"status":"no_ambiguity","choice_groups":[]})";
+    runtime.rewriteText = "Build a product website for an innovative water bottle company selling a "
+        "premium glass bottle with a copper and aluminum cap for $5.99. The audience is tech bros. "
+        "Keep the visual design minimalist and modern, with a tech-company feel.";
+    HostController c(":memory:");
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    connectRuntime(c, runtime);
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.reviewPrompt(draft, c.stateVersion())));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.setRewriteProfile("GENERIC@1", c.stateVersion())));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.rewriteWithoutQuestions(c.stateVersion())));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    ROCLINT_CHECK(c.hasProposal());
+    const auto& candidate = c.proposalForTesting()->rewrittenText;
+    for (const auto* requirement : {"glass", "copper", "aluminum", "$5.99", "tech bros", "minimalist"})
+        ROCLINT_CHECK(candidate.find(requirement) != std::string::npos);
+
+    auto candidateReview = approvingReviewResult();
+    candidateReview.readyForTask = false;
+    bridge::ComprehensionFinding optionalDesign;
+    optionalDesign.id = "water_bottle_design";
+    optionalDesign.kind = bridge::ReviewFindingKind::Readiness;
+    optionalDesign.severity = bridge::ReviewFindingSeverity::Blocking;
+    optionalDesign.summary = "The minimalist design does not specify exact fonts and colors.";
+    optionalDesign.sourceRef = "candidate";
+    optionalDesign.sourceExcerpt = "Keep the visual design minimalist and modern, with a tech-company feel.";
+    optionalDesign.requiresUserDecision = true;
+    optionalDesign.proposedRepair = "Ask the user to specify a color palette.";
+    candidateReview.findings = {optionalDesign};
+    c.setComprehensionReviewForTesting([candidateReview](const auto&) { return candidateReview; });
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+    waitForReviewState(c, QStringLiteral("ready"));
+    ROCLINT_CHECK(!c.canApprove());
+    ROCLINT_CHECK(c.resolveComprehensionFinding("water_bottle_design", "confirm_intent", c.stateVersion()) != 0);
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(c.canApprove() && c.comprehensionFindings().isEmpty());
+
+    ROCLINT_CHECK(!c.isInterviewActive() && !c.hasApproval());
+    std::cout << "  [PASS] Water bottle review keeps product facts and accepts the user's design confirmation.\n";
 }
 
 void testInterviewStaleResultAndWorkspaceSwitchInvalidate() {
@@ -3016,7 +3344,7 @@ void testMusicCustomAnswerAndNegativeConstraintReachReview() {
                                                 QStringLiteral("return_to_interview"), c.stateVersion()) != 0);
     ROCLINT_CHECK(c.waitForIdleForTesting(8000));
     ROCLINT_CHECK(c.isInterviewActive());
-    ROCLINT_CHECK(c.interviewQuestion().contains(QStringLiteral("review finding")));
+    ROCLINT_CHECK(c.interviewQuestion() == "What should the rewrite say here?");
     ROCLINT_CHECK(!c.canApplyReviewedOutput());
 
     std::cout << "  [PASS] Music custom answer/negative constraint reach rewrite and review; drift blocks apply.\n";
@@ -3237,7 +3565,12 @@ int main(int argc, char* argv[]) {
     testSessionRestoreUncertaintyPreservation();
     testExactIdAcknowledgmentBinding();
     testWordCompanionBindsSelectedCandidateAndRejectsStaleRequests();
+    testPhraseFlowChecksAnswersAndSupportsGuardedUndo();
+    testAcceptedWordAnswerSurvivesLocalFailureAndStaysDraftBound();
     testWordCompanionNoopClearingAndClarification();
+    testWordQuestionCanRecoverToAnAuditedCorrection();
+    testFeedbackOpinionsAreNotMutationProhibitions();
+    testWordApplyFeedbackIsReadbackBoundAndFollowsGeometry();
     testWordCompanionCoalescesAndDropsStaleWork();
     testWordAuditFailureNeverOffersAnEdit();
     testIdleWaitIncludesDeferredModelWork();
@@ -3246,6 +3579,7 @@ int main(int argc, char* argv[]) {
     testChangeIntentDecisionSupersedesAndInvalidatesReview();
     testComprehensionReviewGatingFindingsAndReturnToInterview();
     testComprehensionReviewMalformedAndAdvisoryHandling();
+    testWaterBottleReviewDoesNotRequireUnspecifiedDesignDetails();
     testInterviewStaleResultAndWorkspaceSwitchInvalidate();
     testExplicitInterviewRevivesQuietOrOriginalRoute();
     testExactRequirementsSurviveOrBlockTheRewrite();

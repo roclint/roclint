@@ -133,7 +133,7 @@ struct ClarificationCheckResponse {
 [[nodiscard]] core::Result<ClarificationCheckResponse> parseClarificationCheckResponse(std::string_view response);
 
 // ---------------------------------------------------------------------------------------------
-// Contextual local word/phrase refinement (contract: granite.word_refinement.v2).
+// Contextual local word/phrase refinement (contract: granite.word_refinement.v4).
 // ---------------------------------------------------------------------------------------------
 
 enum class WordIntervention {
@@ -177,6 +177,7 @@ struct WordRefinementResponse {
     bool needsClarification{false};
     std::string clarificationQuestion{};
     std::vector<WordRefinementCandidate> candidates{};
+    std::vector<std::string> clarificationChoices{}; // Model-proposed answers, never confirmed automatically
 };
 
 [[nodiscard]] std::string buildWordRefinementPrompt(const WordRefinementRequest& request);

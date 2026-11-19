@@ -36,7 +36,28 @@ QtObject {
     property bool wordRefinementNeedsClarification: false
     property string wordRefinementClarificationQuestion: ""
     property bool wordRefinementApplying: false
+    property string wordCompanionState: wordRefinementApplying ? "applying" : hasWordRefinement ? "ready" : "idle"
+    property string wordCompanionMessage: ""
+    property bool wordReplacementReady: false
+    property int ambientBadgeX: 0
+    property int ambientBadgeY: 0
+    function showCard() { record("openFullHud", {}); }
+    function activateAmbientIndicator() { record("openIndicator", {}); }
+    function dismissAmbientBadge() { record("dismissIndicator", {}); }
+    property bool wordCompanionVisible: hasWordRefinement || wordCompanionState !== "idle"
     property var wordRefinementAnchorRect: Qt.rect(120, 240, 48, 18)
+    property var wordMarkRects: []
+    property bool wordMarkVisible: false
+    property bool wordCanUndo: false
+    property var wordClarificationChoices: []
+    function submitWordClarification(answer, expectedVersion) {
+        record("answerWord", { answer: String(answer), version: expectedVersion });
+        return true;
+    }
+    function undoWordRefinement(expectedVersion) {
+        record("undoWord", { version: expectedVersion });
+        return 1;
+    }
 
     function applyWordRefinement(expectedVersion, candidateId) {
         record("applyWord", { version: expectedVersion, candidateId: String(candidateId) });
@@ -46,7 +67,12 @@ QtObject {
         record("selectWord", { candidateId: String(candidateId) });
     }
     function dismissWordRefinement() { record("dismissWord", {}) }
+    function retryWordRefinement() { record("retryWord", {}) }
     function exploreInCompanion() { record("explore", {}) }
+    function openRewriteFromCompanion(expectedVersion) {
+        record("fullRewrite", { version: expectedVersion });
+        return stateVersion;
+    }
 
     // ----------------------------------------------------- intent/interview
     property bool hasIntentBrief: false

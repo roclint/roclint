@@ -26,6 +26,7 @@ public:
     std::vector<host::RangeInjectionRequest> rangeInjections;
     host::InjectionOutcome nextOutcome{host::InjectionOutcome::Injected};
     host::InjectionOutcome nextRangeOutcome{host::InjectionOutcome::Injected};
+    bool autoCompleteRangeInjection{true};
 
     [[nodiscard]] host::AccessibilityAccess access() const override { return accessValue; }
 
@@ -57,6 +58,7 @@ public:
 
     void injectRange(const host::RangeInjectionRequest& request) override {
         rangeInjections.push_back(request);
+        if (!autoCompleteRangeInjection) return;
         const auto outcome = nextRangeOutcome;
         const quint64 id = request.requestId;
         QMetaObject::invokeMethod(
