@@ -1,0 +1,3316 @@
+{
+  "config": {
+    "corpus_sha256": "8e83e07ac389dfaf069a140655f55bef79baf1b4a1fecdee96cbebc0693cf43b",
+    "julia_revision": "a85b127321d580d65176c89ced8273f305745d85",
+    "julia_sha256": "df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72",
+    "granite": {
+      "analysis_instruction_contract": "granite.discovery.selective.v11",
+      "analysis_timeout_ms": 45000,
+      "backend": "metal",
+      "candidates": [
+        {
+          "filename": "granite-4.2-3b-Q4_K_M.gguf",
+          "quantization": "Q4_K_M",
+          "sha256": "e0406663965846ae22a403456eb826ccce5f450840491f71952f18a7cb78e7d5",
+          "size_bytes": 2244011552
+        },
+        {
+          "filename": "granite-4.2-3b-Q5_K_M.gguf",
+          "quantization": "Q5_K_M",
+          "sha256": "982e797413f842329266a00c2a85ce540bb5c1b65ac4646276bfb9d2886c5efe",
+          "size_bytes": 2613634592
+        },
+        {
+          "filename": "granite-4.2-3b-Q8_0.gguf",
+          "quantization": "Q8_0",
+          "sha256": "fbe986738041418e26de9e123ba740cb654931f85bf572a71bd01f9e6b85e53d",
+          "size_bytes": 3892651552
+        }
+      ],
+      "clarification_instruction_contract": "granite.clarification_check.v1",
+      "configuration_id": "granite.metal.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v16.popup_feedback_fast_verify",
+      "context_tokens": 8192,
+      "cpu_threads": 4,
+      "default_quantization": "Q8_0",
+      "gpu_layers": 99,
+      "grammar_transform": "json_gbnf_space_empty_v1",
+      "input_tokens": 6144,
+      "manifest_version": 1,
+      "model_family": "ibm-granite/granite-4.2-3b-GGUF",
+      "model_license": "Apache-2.0",
+      "model_revision": "c40945d71cd90f249a56985e8155551a9188dc30",
+      "output_format": "compact_json",
+      "output_tokens": 2048,
+      "profiles": {
+        "CPU": {
+          "backend": "cpu",
+          "configuration_id": "granite.cpu.mmap.ctx8192.threads4.t1.p095.s42.jinja.json0ws.rejection.review_polish.v16.popup_feedback_fast_verify",
+          "gpu_layers": 0
+        },
+        "METAL": {
+          "backend": "metal",
+          "configuration_id": "granite.metal.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v16.popup_feedback_fast_verify",
+          "gpu_layers": 99
+        },
+        "VULKAN": {
+          "backend": "vulkan",
+          "configuration_id": "granite.vulkan.ctx8192.threads4.gpu99.t1.p095.s42.jinja.json0ws.rejection.review_polish.v16.popup_feedback_fast_verify",
+          "gpu_layers": 99
+        }
+      },
+      "reasoning": {
+        "analysis_group_timeout_ms": 90000,
+        "enabled": true,
+        "policy_version": 1,
+        "profiles": {
+          "analysis": {
+            "answer_tokens": 512,
+            "reasoning_tokens": 384
+          },
+          "audit": {
+            "answer_tokens": 512,
+            "reasoning_tokens": 128
+          },
+          "rewrite": {
+            "answer_tokens": 1535,
+            "reasoning_tokens": 512
+          },
+          "word": {
+            "answer_tokens": 256,
+            "reasoning_tokens": 384
+          }
+        }
+      },
+      "rewrite_instruction_contract": "granite.rewrite.format.v9",
+      "rewrite_timeout_ms": 60000,
+      "runtime_repository": "https://github.com/ggml-org/llama.cpp.git",
+      "runtime_revision": "da2ee1e7a640445fc562fe5529598cee1917e0f5",
+      "sampling": {
+        "grammar_strategy": "llama_common_rejection_v1",
+        "seed": 42,
+        "temperature": 1.0,
+        "top_p": 0.95
+      },
+      "sampling_reference": "https://huggingface.co/ibm-granite/granite-4.2-3b/blob/4e9c275e232f10211ec88644d106a1f6a1b60e06/README.md",
+      "template_policy": "embedded GGUF Jinja template; bounded private reasoning followed by schema-constrained JSON; input special tokens treated as text",
+      "word_refinement_timeout_ms": 45000
+    },
+    "question": "Which description best fits the requested work, using the draft and available workspace information?",
+    "options": [
+      "Implement a change to code, an API, or structured data.",
+      "Explain, compose, or transform content with routine details delegated to the author.",
+      "Mixed work or insufficient information to classify the task."
+    ],
+    "task_thresholds": [
+      "0.65",
+      "0.85",
+      "0.70"
+    ],
+    "host_thresholds": {
+      "CODE_EDITOR": "0.65",
+      "BROWSER": "0.70",
+      "DOCUMENT": "0.85"
+    },
+    "current": [
+      0.7,
+      0.7,
+      0.7,
+      0.6
+    ],
+    "uncertainty_delta": 0.08
+  },
+  "evidence": {
+    "retry-proceed": {
+      "scores": [
+        0.005379986277842728,
+        5.1475460323142516e-05,
+        0.003941650026323603,
+        0.2581686083007044
+      ],
+      "atomic": {
+        "ACTION": 0.005379986277842728,
+        "TARGET": 5.1475460323142516e-05,
+        "RULE": 0.003941650026323603,
+        "RULE_CONFLICT": 0.2581686083007044,
+        "NEGATIVE_ONLY": 0.1138720697926573,
+        "SECURITY_BYPASS": 0.05096226342983803,
+        "GOAL_CHOICE": 0.12350302287728392
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        7.004352569580078,
+        -7.17165470123291,
+        -9.729976654052734
+      ],
+      "triage_ms": 120.36024999906658,
+      "task_ms": 36.21362500052783
+    },
+    "retry-ask": {
+      "scores": [
+        0.015124007759574912,
+        2.3492891990992348e-05,
+        0.12720260999840263,
+        6.805748887552009e-06
+      ],
+      "atomic": {
+        "ACTION": 0.015124007759574912,
+        "TARGET": 2.3492891990992348e-05,
+        "RULE": 0.12720260999840263,
+        "RULE_CONFLICT": 6.805748887552009e-06,
+        "NEGATIVE_ONLY": 0.5356794499786941,
+        "SECURITY_BYPASS": 0.1061121537297467,
+        "GOAL_CHOICE": 0.9981779775915146
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        6.730374336242676,
+        -8.831693649291992,
+        -9.775213241577148
+      ],
+      "triage_ms": 124.91183299971453,
+      "task_ms": 36.09558300013305
+    },
+    "museum-proceed": {
+      "scores": [
+        0.10218926428106774,
+        0.08398595431502433,
+        0.026330769651317296,
+        0.0017238010301604263
+      ],
+      "atomic": {
+        "ACTION": 0.10218926428106774,
+        "TARGET": 0.08398595431502433,
+        "RULE": 0.026330769651317296,
+        "RULE_CONFLICT": 0.0017238010301604263,
+        "NEGATIVE_ONLY": 0.06738873803842811,
+        "SECURITY_BYPASS": 0.034431150001633264,
+        "GOAL_CHOICE": 0.0016423027633718495
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        2.4053103923797607,
+        3.433539628982544,
+        -9.752643585205078
+      ],
+      "triage_ms": 124.5508330011944,
+      "task_ms": 44.31983300128195
+    },
+    "museum-ask": {
+      "scores": [
+        0.2663565332806862,
+        0.036817078673665106,
+        0.9889146662645989,
+        0.008920965604622553
+      ],
+      "atomic": {
+        "ACTION": 0.2663565332806862,
+        "TARGET": 0.036817078673665106,
+        "RULE": 0.9889146662645989,
+        "RULE_CONFLICT": 0.008920965604622553,
+        "NEGATIVE_ONLY": 0.8761904098220162,
+        "SECURITY_BYPASS": 0.036315697435645965,
+        "GOAL_CHOICE": 0.17621148649159327
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        -1.7168651819229126,
+        5.40328311920166,
+        -7.960496425628662
+      ],
+      "triage_ms": 134.1295000001992,
+      "task_ms": 39.468625000154134
+    },
+    "currency-proceed": {
+      "scores": [
+        0.8947439809933837,
+        0.023194710266518922,
+        0.031839484248855555,
+        0.5194357405533759
+      ],
+      "atomic": {
+        "ACTION": 0.8947439809933837,
+        "TARGET": 0.023194710266518922,
+        "RULE": 0.031839484248855555,
+        "RULE_CONFLICT": 0.0006767473703774067,
+        "NEGATIVE_ONLY": 0.5194357405533759,
+        "SECURITY_BYPASS": 0.5640631196165939,
+        "GOAL_CHOICE": 0.0198664784529147
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        1.1556137800216675,
+        -6.211136817932129,
+        -9.273804664611816
+      ],
+      "triage_ms": 110.24641699987114,
+      "task_ms": 36.85041700009606
+    },
+    "currency-ask": {
+      "scores": [
+        0.018039528547041588,
+        0.9987935615555796,
+        0.005289089520182105,
+        0.02853890287173274
+      ],
+      "atomic": {
+        "ACTION": 0.018039528547041588,
+        "TARGET": 0.9987935615555796,
+        "RULE": 0.005289089520182105,
+        "RULE_CONFLICT": 0.02853890287173274,
+        "NEGATIVE_ONLY": 0.09042888443078383,
+        "SECURITY_BYPASS": 0.19126512213574,
+        "GOAL_CHOICE": 0.9521373154151178
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        3.3072052001953125,
+        -8.576835632324219,
+        -9.63090705871582
+      ],
+      "triage_ms": 121.49870800021745,
+      "task_ms": 37.85925000011048
+    },
+    "level-proceed": {
+      "scores": [
+        0.024379398137491334,
+        1.477680587365491e-05,
+        0.9259653950335685,
+        0.4060410768676243
+      ],
+      "atomic": {
+        "ACTION": 0.024379398137491334,
+        "TARGET": 1.477680587365491e-05,
+        "RULE": 0.9259653950335685,
+        "RULE_CONFLICT": 0.4060410768676243,
+        "NEGATIVE_ONLY": 0.9903953081971733,
+        "SECURITY_BYPASS": 0.046557190924835325,
+        "GOAL_CHOICE": 0.23183443148600713
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        3.586308240890503,
+        4.94393253326416,
+        -6.516380786895752
+      ],
+      "triage_ms": 108.53770799985796,
+      "task_ms": 36.66300000077172
+    },
+    "level-ask": {
+      "scores": [
+        0.7559430955108881,
+        0.027201817478464042,
+        0.9995620245725086,
+        0.2815994609462966
+      ],
+      "atomic": {
+        "ACTION": 0.7559430955108881,
+        "TARGET": 0.027201817478464042,
+        "RULE": 0.9995620245725086,
+        "RULE_CONFLICT": 0.002535620806411336,
+        "NEGATIVE_ONLY": 0.2815994609462966,
+        "SECURITY_BYPASS": 0.19191056399146328,
+        "GOAL_CHOICE": 0.00397174757720722
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        -4.563223838806152,
+        1.8263869285583496,
+        -3.2079660892486572
+      ],
+      "triage_ms": 157.96187499836378,
+      "task_ms": 48.76033299842675
+    },
+    "cache-proceed": {
+      "scores": [
+        0.02266250268450545,
+        1.3119400260601096e-05,
+        0.9999406001212849,
+        0.994348126061661
+      ],
+      "atomic": {
+        "ACTION": 0.02266250268450545,
+        "TARGET": 1.3119400260601096e-05,
+        "RULE": 0.9999406001212849,
+        "RULE_CONFLICT": 0.994348126061661,
+        "NEGATIVE_ONLY": 0.9792159578201733,
+        "SECURITY_BYPASS": 0.13238294529582792,
+        "GOAL_CHOICE": 0.9888752020531659
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        -9.321070671081543,
+        -3.663463830947876,
+        -6.546867370605469
+      ],
+      "triage_ms": 120.63800000032643,
+      "task_ms": 36.868708000838524
+    },
+    "cache-ask": {
+      "scores": [
+        0.0023396493617156232,
+        0.022836725246024085,
+        0.9877050836433178,
+        0.9670325733568844
+      ],
+      "atomic": {
+        "ACTION": 0.0023396493617156232,
+        "TARGET": 0.022836725246024085,
+        "RULE": 0.9877050836433178,
+        "RULE_CONFLICT": 0.9670325733568844,
+        "NEGATIVE_ONLY": 0.6109148746593082,
+        "SECURITY_BYPASS": 0.051502745855277914,
+        "GOAL_CHOICE": 0.9733376078447964
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        -9.498290061950684,
+        0.7665943503379822,
+        -6.715050220489502
+      ],
+      "triage_ms": 135.86983400091412,
+      "task_ms": 38.050458000725484
+    },
+    "rename-proceed": {
+      "scores": [
+        0.005614252788456481,
+        0.00041729636753780027,
+        0.03652022466072179,
+        0.9977456341877107
+      ],
+      "atomic": {
+        "ACTION": 0.005614252788456481,
+        "TARGET": 0.00041729636753780027,
+        "RULE": 0.03652022466072179,
+        "RULE_CONFLICT": 0.9977456341877107,
+        "NEGATIVE_ONLY": 0.9929749552020666,
+        "SECURITY_BYPASS": 0.9699083482056761,
+        "GOAL_CHOICE": 0.8896192018221253
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        4.819873332977295,
+        -1.768908143043518,
+        -9.803544044494629
+      ],
+      "triage_ms": 133.23775000026217,
+      "task_ms": 38.610875000813394
+    },
+    "rename-ask": {
+      "scores": [
+        0.020782368198654016,
+        0.000550460690016189,
+        0.23678851322249814,
+        0.21940299375556324
+      ],
+      "atomic": {
+        "ACTION": 0.020782368198654016,
+        "TARGET": 0.000550460690016189,
+        "RULE": 0.23678851322249814,
+        "RULE_CONFLICT": 0.21940299375556324,
+        "NEGATIVE_ONLY": 0.9632128815067206,
+        "SECURITY_BYPASS": 0.2863917723912073,
+        "GOAL_CHOICE": 0.9924725111215695
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        -4.668889999389648,
+        -6.254581451416016,
+        -10.170711517333984
+      ],
+      "triage_ms": 132.57441600035236,
+      "task_ms": 37.62395900048432
+    },
+    "audio-log-proceed": {
+      "scores": [
+        0.9996809393292131,
+        0.15707509811589074,
+        0.9248021782049479,
+        0.9671170365208719
+      ],
+      "atomic": {
+        "ACTION": 0.8234062075896186,
+        "TARGET": 0.15707509811589074,
+        "RULE": 0.9248021782049479,
+        "RULE_CONFLICT": 0.9671170365208719,
+        "NEGATIVE_ONLY": 0.5398269558119059,
+        "SECURITY_BYPASS": 0.5614409502037793,
+        "GOAL_CHOICE": 0.9996809393292131
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        -8.453465461730957,
+        -7.0451250076293945,
+        -9.595751762390137
+      ],
+      "triage_ms": 123.16399999872374,
+      "task_ms": 36.55087500010268
+    },
+    "audio-log-ask": {
+      "scores": [
+        0.19877107798451818,
+        9.09097522296822e-05,
+        0.9295888923286064,
+        0.8113272210129616
+      ],
+      "atomic": {
+        "ACTION": 0.19877107798451818,
+        "TARGET": 9.09097522296822e-05,
+        "RULE": 0.9295888923286064,
+        "RULE_CONFLICT": 0.3351827272159571,
+        "NEGATIVE_ONLY": 0.8109127153964689,
+        "SECURITY_BYPASS": 0.8113272210129616,
+        "GOAL_CHOICE": 0.9991674306208687
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        -7.350627899169922,
+        -9.784822463989258,
+        -10.455472946166992
+      ],
+      "triage_ms": 131.15204200039443,
+      "task_ms": 36.72970800107578
+    },
+    "ordering-proceed": {
+      "scores": [
+        0.2835808154812259,
+        2.4050344253561237e-06,
+        0.44373482969480865,
+        0.41824064172165604
+      ],
+      "atomic": {
+        "ACTION": 0.2835808154812259,
+        "TARGET": 2.4050344253561237e-06,
+        "RULE": 0.44373482969480865,
+        "RULE_CONFLICT": 0.41824064172165604,
+        "NEGATIVE_ONLY": 0.08600336129151026,
+        "SECURITY_BYPASS": 0.0585359889678349,
+        "GOAL_CHOICE": 0.9101301911031799
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        1.5721989870071411,
+        -1.8288415670394897,
+        -7.622221946716309
+      ],
+      "triage_ms": 116.04516700026579,
+      "task_ms": 35.89879200080759
+    },
+    "ordering-ask": {
+      "scores": [
+        0.03387785490790482,
+        0.4411958913267696,
+        0.035404166906044206,
+        0.2624962600833275
+      ],
+      "atomic": {
+        "ACTION": 0.03387785490790482,
+        "TARGET": 0.4411958913267696,
+        "RULE": 0.035404166906044206,
+        "RULE_CONFLICT": 0.2624962600833275,
+        "NEGATIVE_ONLY": 0.6738278209124064,
+        "SECURITY_BYPASS": 0.0013877523881116326,
+        "GOAL_CHOICE": 0.9734639578473379
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        -5.451498031616211,
+        -7.940971374511719,
+        -9.603750228881836
+      ],
+      "triage_ms": 130.24470799973642,
+      "task_ms": 36.78254099941114
+    },
+    "sonnet-proceed": {
+      "scores": [
+        0.9871859415648623,
+        0.00020786556169661582,
+        0.16966869356768097,
+        0.9659821220092144
+      ],
+      "atomic": {
+        "ACTION": 0.9871859415648623,
+        "TARGET": 0.00020786556169661582,
+        "RULE": 0.16966869356768097,
+        "RULE_CONFLICT": 0.0011317400333304317,
+        "NEGATIVE_ONLY": 0.9659821220092144,
+        "SECURITY_BYPASS": 0.3875002363038022,
+        "GOAL_CHOICE": 0.006541007574945423
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        1.1840386390686035,
+        -4.568533420562744,
+        -8.67850399017334
+      ],
+      "triage_ms": 111.06541600020137,
+      "task_ms": 35.97204099969531
+    },
+    "sonnet-ask": {
+      "scores": [
+        0.9984766831642362,
+        0.00041425479402258056,
+        0.10646925725179206,
+        0.043986415405507184
+      ],
+      "atomic": {
+        "ACTION": 0.9984766831642362,
+        "TARGET": 0.00041425479402258056,
+        "RULE": 0.10646925725179206,
+        "RULE_CONFLICT": 0.000565170027715027,
+        "NEGATIVE_ONLY": 0.043986415405507184,
+        "SECURITY_BYPASS": 0.5090878729151016,
+        "GOAL_CHOICE": 0.9753642170698753
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        -9.450165748596191,
+        1.8320354223251343,
+        -7.9789042472839355
+      ],
+      "triage_ms": 124.34899999971094,
+      "task_ms": 38.19795900017198
+    },
+    "ending-proceed": {
+      "scores": [
+        0.16907107476190286,
+        0.9135832451663857,
+        0.9462139359526553,
+        0.6716081395564837
+      ],
+      "atomic": {
+        "ACTION": 0.16907107476190286,
+        "TARGET": 0.9135832451663857,
+        "RULE": 0.9462139359526553,
+        "RULE_CONFLICT": 0.6716081395564837,
+        "NEGATIVE_ONLY": 0.9991173444730495,
+        "SECURITY_BYPASS": 0.29850397436378145,
+        "GOAL_CHOICE": 0.010503662831888106
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        2.087460517883301,
+        1.7775137424468994,
+        -9.584965705871582
+      ],
+      "triage_ms": 115.83174999941548,
+      "task_ms": 37.46462499839254
+    },
+    "ending-ask": {
+      "scores": [
+        0.340756355941238,
+        0.2683672979143213,
+        0.8997093709742054,
+        0.9865497597796461
+      ],
+      "atomic": {
+        "ACTION": 0.340756355941238,
+        "TARGET": 0.2683672979143213,
+        "RULE": 0.8997093709742054,
+        "RULE_CONFLICT": 0.1962512288209537,
+        "NEGATIVE_ONLY": 0.996228501434782,
+        "SECURITY_BYPASS": 0.9865497597796461,
+        "GOAL_CHOICE": 0.7912674066301953
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        0.9551563858985901,
+        0.4584057331085205,
+        -7.206538200378418
+      ],
+      "triage_ms": 118.73295800069172,
+      "task_ms": 37.652874998457264
+    },
+    "trailer-proceed": {
+      "scores": [
+        0.9957823047547771,
+        0.001470009031066284,
+        0.9474721079661126,
+        0.23098988896973266
+      ],
+      "atomic": {
+        "ACTION": 0.9957823047547771,
+        "TARGET": 0.001470009031066284,
+        "RULE": 0.9474721079661126,
+        "RULE_CONFLICT": 3.0765352406231774e-05,
+        "NEGATIVE_ONLY": 0.23098988896973266,
+        "SECURITY_BYPASS": 0.04229618870801339,
+        "GOAL_CHOICE": 0.33838664395989315
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        4.260523796081543,
+        4.013432025909424,
+        -6.867678642272949
+      ],
+      "triage_ms": 128.3540839995112,
+      "task_ms": 39.61708299902966
+    },
+    "trailer-ask": {
+      "scores": [
+        0.0006415089179407175,
+        0.3542537464359661,
+        0.0007801111731968482,
+        0.24876045827465199
+      ],
+      "atomic": {
+        "ACTION": 0.0006415089179407175,
+        "TARGET": 0.3542537464359661,
+        "RULE": 0.0007801111731968482,
+        "RULE_CONFLICT": 0.24876045827465199,
+        "NEGATIVE_ONLY": 0.291175493785021,
+        "SECURITY_BYPASS": 0.16931264032041646,
+        "GOAL_CHOICE": 0.34244613816332037
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        3.5834383964538574,
+        -7.834751129150391,
+        -7.988872528076172
+      ],
+      "triage_ms": 146.693790999052,
+      "task_ms": 46.02087500097696
+    },
+    "byline-proceed": {
+      "scores": [
+        0.43578251477018437,
+        0.000658966820441008,
+        0.3015507451668716,
+        0.9919843936233008
+      ],
+      "atomic": {
+        "ACTION": 0.43578251477018437,
+        "TARGET": 0.000658966820441008,
+        "RULE": 0.3015507451668716,
+        "RULE_CONFLICT": 0.1576390790656287,
+        "NEGATIVE_ONLY": 0.9919843936233008,
+        "SECURITY_BYPASS": 0.03964558654043384,
+        "GOAL_CHOICE": 3.3128009855162705e-05
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        -1.6983848810195923,
+        -7.799093723297119,
+        -9.257349014282227
+      ],
+      "triage_ms": 134.88237499950628,
+      "task_ms": 46.5339580005093
+    },
+    "byline-ask": {
+      "scores": [
+        0.8530962434043,
+        0.9241784155958491,
+        0.000329696489517922,
+        0.9586827435959067
+      ],
+      "atomic": {
+        "ACTION": 0.8530962434043,
+        "TARGET": 0.9241784155958491,
+        "RULE": 0.000329696489517922,
+        "RULE_CONFLICT": 0.638766735637129,
+        "NEGATIVE_ONLY": 0.9074778235653973,
+        "SECURITY_BYPASS": 0.9586827435959067,
+        "GOAL_CHOICE": 0.6408213589519204
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        -2.6901488304138184,
+        -3.911120653152466,
+        -8.758024215698242
+      ],
+      "triage_ms": 121.23141700067208,
+      "task_ms": 37.2032079994824
+    },
+    "import-key-proceed": {
+      "scores": [
+        0.8947388053282215,
+        0.7208020280405719,
+        0.9982283245958622,
+        0.9963159199004211
+      ],
+      "atomic": {
+        "ACTION": 0.8833386150617762,
+        "TARGET": 0.7208020280405719,
+        "RULE": 0.9982283245958622,
+        "RULE_CONFLICT": 4.18989499386514e-07,
+        "NEGATIVE_ONLY": 0.9963159199004211,
+        "SECURITY_BYPASS": 0.01307601583946595,
+        "GOAL_CHOICE": 0.8947388053282215
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        -0.35352328419685364,
+        -0.7496163845062256,
+        -8.869449615478516
+      ],
+      "triage_ms": 115.5500419990858,
+      "task_ms": 38.98574999766424
+    },
+    "import-key-ask": {
+      "scores": [
+        0.9999243923307256,
+        0.1408708597199369,
+        0.9920958075104598,
+        0.983910175121472
+      ],
+      "atomic": {
+        "ACTION": 0.9999243923307256,
+        "TARGET": 0.1408708597199369,
+        "RULE": 0.9920958075104598,
+        "RULE_CONFLICT": 7.402070830166227e-06,
+        "NEGATIVE_ONLY": 0.983910175121472,
+        "SECURITY_BYPASS": 0.003549019641150614,
+        "GOAL_CHOICE": 0.007490865605019194
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        1.7297686338424683,
+        -5.725522518157959,
+        -7.636812686920166
+      ],
+      "triage_ms": 132.8456669980369,
+      "task_ms": 39.00787500242586
+    },
+    "null-date-proceed": {
+      "scores": [
+        0.21913949083739037,
+        0.9976290764540156,
+        0.9710694549188427,
+        0.0007558499210160898
+      ],
+      "atomic": {
+        "ACTION": 0.21913949083739037,
+        "TARGET": 0.9976290764540156,
+        "RULE": 0.9710694549188427,
+        "RULE_CONFLICT": 0.0007558499210160898,
+        "NEGATIVE_ONLY": 0.9999731425927068,
+        "SECURITY_BYPASS": 0.022816916628438648,
+        "GOAL_CHOICE": 0.4874299872013499
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        3.718942165374756,
+        -7.3565592765808105,
+        -5.610330581665039
+      ],
+      "triage_ms": 119.39574999996694,
+      "task_ms": 37.20779200011748
+    },
+    "null-date-ask": {
+      "scores": [
+        0.8960548773472967,
+        0.03646666442992684,
+        0.9885567832420722,
+        0.9056807659331535
+      ],
+      "atomic": {
+        "ACTION": 0.8960548773472967,
+        "TARGET": 0.03646666442992684,
+        "RULE": 0.9885567832420722,
+        "RULE_CONFLICT": 0.26217735523144986,
+        "NEGATIVE_ONLY": 0.0006414460425458621,
+        "SECURITY_BYPASS": 0.9056807659331535,
+        "GOAL_CHOICE": 0.6628930139245554
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        0.08902007341384888,
+        -0.26949021220207214,
+        -8.799765586853027
+      ],
+      "triage_ms": 121.05179200079874,
+      "task_ms": 37.28795799906948
+    },
+    "transcript-proceed": {
+      "scores": [
+        0.00014702590654961119,
+        0.0027621179125214826,
+        7.234660794469602e-05,
+        0.039687351656179794
+      ],
+      "atomic": {
+        "ACTION": 0.00014702590654961119,
+        "TARGET": 0.0027621179125214826,
+        "RULE": 7.234660794469602e-05,
+        "RULE_CONFLICT": 0.039687351656179794,
+        "NEGATIVE_ONLY": 0.4092655244215954,
+        "SECURITY_BYPASS": 0.1350777740958283,
+        "GOAL_CHOICE": 0.6659503916080037
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        -9.495086669921875,
+        -0.022256124764680862,
+        -9.673614501953125
+      ],
+      "triage_ms": 130.00170899977093,
+      "task_ms": 40.98270800022874
+    },
+    "transcript-ask": {
+      "scores": [
+        0.0009238628448830172,
+        0.050348273377797424,
+        0.9872838246618395,
+        0.5499515003190717
+      ],
+      "atomic": {
+        "ACTION": 0.0009238628448830172,
+        "TARGET": 0.050348273377797424,
+        "RULE": 0.9872838246618395,
+        "RULE_CONFLICT": 0.5499515003190717,
+        "NEGATIVE_ONLY": 0.9994140895770381,
+        "SECURITY_BYPASS": 0.6318098575954835,
+        "GOAL_CHOICE": 0.9999861413051513
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        -7.121874809265137,
+        -4.625755786895752,
+        -7.197587490081787
+      ],
+      "triage_ms": 138.91262499964796,
+      "task_ms": 44.0217079994909
+    },
+    "spoken-kpi-proceed": {
+      "scores": [
+        0.89960461821492,
+        0.053402172781602725,
+        0.964015507505881,
+        0.9052782499507844
+      ],
+      "atomic": {
+        "ACTION": 0.8881997696823186,
+        "TARGET": 0.053402172781602725,
+        "RULE": 0.964015507505881,
+        "RULE_CONFLICT": 0.09650708024843849,
+        "NEGATIVE_ONLY": 0.2639535039060584,
+        "SECURITY_BYPASS": 0.9052782499507844,
+        "GOAL_CHOICE": 0.89960461821492
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        -5.829556941986084,
+        -9.163402557373047,
+        -9.129976272583008
+      ],
+      "triage_ms": 126.75462499828427,
+      "task_ms": 38.195750003069406
+    },
+    "spoken-kpi-ask": {
+      "scores": [
+        0.9992331163938305,
+        0.006115416837705283,
+        0.24684074053186247,
+        0.9406817492480818
+      ],
+      "atomic": {
+        "ACTION": 0.7734255010178206,
+        "TARGET": 0.006115416837705283,
+        "RULE": 0.24684074053186247,
+        "RULE_CONFLICT": 0.3176914305570523,
+        "NEGATIVE_ONLY": 0.5225847952612539,
+        "SECURITY_BYPASS": 0.9406817492480818,
+        "GOAL_CHOICE": 0.9992331163938305
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        -7.2340497970581055,
+        -3.4619688987731934,
+        -9.774378776550293
+      ],
+      "triage_ms": 125.32454100073664,
+      "task_ms": 37.9825410018384
+    },
+    "recursion-proceed": {
+      "scores": [
+        0.991334768924408,
+        0.006997288444798781,
+        0.1374849333778394,
+        0.7223740369857207
+      ],
+      "atomic": {
+        "ACTION": 0.991334768924408,
+        "TARGET": 0.006997288444798781,
+        "RULE": 0.1374849333778394,
+        "RULE_CONFLICT": 0.647053497058392,
+        "NEGATIVE_ONLY": 0.7223740369857207,
+        "SECURITY_BYPASS": 0.028033453664089037,
+        "GOAL_CHOICE": 0.9858729248067113
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        -6.211971759796143,
+        1.8920185565948486,
+        -9.205739974975586
+      ],
+      "triage_ms": 117.96666699956404,
+      "task_ms": 38.792832998296944
+    },
+    "recursion-ask": {
+      "scores": [
+        0.9996836275670803,
+        0.0008967125573312629,
+        0.24089154952482014,
+        0.8003721313538863
+      ],
+      "atomic": {
+        "ACTION": 0.6668045117537046,
+        "TARGET": 0.0008967125573312629,
+        "RULE": 0.24089154952482014,
+        "RULE_CONFLICT": 0.002025934321061514,
+        "NEGATIVE_ONLY": 0.18166490166252455,
+        "SECURITY_BYPASS": 0.8003721313538863,
+        "GOAL_CHOICE": 0.9996836275670803
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        -4.4571614265441895,
+        0.5213329792022705,
+        -8.275533676147461
+      ],
+      "triage_ms": 133.6902500006545,
+      "task_ms": 40.792124997096835
+    },
+    "oral-quiz-proceed": {
+      "scores": [
+        0.017063902322676634,
+        0.13786977612907766,
+        0.0003521305919936837,
+        0.0006461851613229075
+      ],
+      "atomic": {
+        "ACTION": 0.017063902322676634,
+        "TARGET": 0.13786977612907766,
+        "RULE": 0.0003521305919936837,
+        "RULE_CONFLICT": 0.0006461851613229075,
+        "NEGATIVE_ONLY": 0.009019475007749281,
+        "SECURITY_BYPASS": 0.019095892583747477,
+        "GOAL_CHOICE": 0.9981713900674163
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        3.3309762477874756,
+        -5.451276779174805,
+        -7.081575393676758
+      ],
+      "triage_ms": 117.75258299894631,
+      "task_ms": 37.78312500071479
+    },
+    "oral-quiz-ask": {
+      "scores": [
+        0.3318213621840339,
+        0.4116042984018388,
+        0.15825132190386015,
+        0.0113392563939499
+      ],
+      "atomic": {
+        "ACTION": 0.3318213621840339,
+        "TARGET": 0.4116042984018388,
+        "RULE": 0.15825132190386015,
+        "RULE_CONFLICT": 0.0113392563939499,
+        "NEGATIVE_ONLY": 0.7892126733933122,
+        "SECURITY_BYPASS": 0.030666014633191616,
+        "GOAL_CHOICE": 0.2690620033631546
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 2,
+      "task_logits": [
+        -6.209087371826172,
+        -5.726454734802246,
+        -5.337028503417969
+      ],
+      "triage_ms": 117.62908400123706,
+      "task_ms": 36.931999999069376
+    },
+    "proof-proceed": {
+      "scores": [
+        2.6267288456801588e-05,
+        0.9814095011827673,
+        0.9124919478328111,
+        2.4335937442087776e-05
+      ],
+      "atomic": {
+        "ACTION": 2.6267288456801588e-05,
+        "TARGET": 0.9814095011827673,
+        "RULE": 0.9124919478328111,
+        "RULE_CONFLICT": 2.4335937442087776e-05,
+        "NEGATIVE_ONLY": 7.356274907574166e-05,
+        "SECURITY_BYPASS": 0.0006006393547121789,
+        "GOAL_CHOICE": 0.008789793926803176
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        -3.6985862255096436,
+        1.5854684114456177,
+        -9.114558219909668
+      ],
+      "triage_ms": 109.53266599972267,
+      "task_ms": 38.51795799710089
+    },
+    "proof-ask": {
+      "scores": [
+        0.34418852026734414,
+        0.19019767681610786,
+        0.2899542935870039,
+        0.009513161948492757
+      ],
+      "atomic": {
+        "ACTION": 0.34418852026734414,
+        "TARGET": 0.19019767681610786,
+        "RULE": 0.2899542935870039,
+        "RULE_CONFLICT": 0.009513161948492757,
+        "NEGATIVE_ONLY": 5.460085997771199e-05,
+        "SECURITY_BYPASS": 0.26702729574375883,
+        "GOAL_CHOICE": 0.9937615504963145
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 1,
+      "task_logits": [
+        -6.456965446472168,
+        1.5499051809310913,
+        -3.123077630996704
+      ],
+      "triage_ms": 128.36112500008312,
+      "task_ms": 37.383708000561455
+    },
+    "translation-proceed": {
+      "scores": [
+        1.780206017412965e-05,
+        3.976083800923762e-08,
+        0.007805187763507928,
+        7.273240372702841e-07
+      ],
+      "atomic": {
+        "ACTION": 1.780206017412965e-05,
+        "TARGET": 3.976083800923762e-08,
+        "RULE": 0.007805187763507928,
+        "RULE_CONFLICT": 7.273240372702841e-07,
+        "NEGATIVE_ONLY": 0.8840776000485258,
+        "SECURITY_BYPASS": 0.4280126317524256,
+        "GOAL_CHOICE": 0.9997105626931887
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        2.9129388332366943,
+        -4.595515251159668,
+        -8.819772720336914
+      ],
+      "triage_ms": 114.51008399671991,
+      "task_ms": 38.305375001073116
+    },
+    "translation-ask": {
+      "scores": [
+        0.007923894930716087,
+        0.0045189514546527315,
+        0.4908199494712006,
+        0.8777089326825158
+      ],
+      "atomic": {
+        "ACTION": 0.007923894930716087,
+        "TARGET": 0.0045189514546527315,
+        "RULE": 0.4908199494712006,
+        "RULE_CONFLICT": 0.15102884136358913,
+        "NEGATIVE_ONLY": 0.9767296533639753,
+        "SECURITY_BYPASS": 0.8777089326825158,
+        "GOAL_CHOICE": 0.9996275464379182
+      },
+      "configuration": "julia.cpu.fp32.v2",
+      "task": 0,
+      "task_logits": [
+        -0.309023916721344,
+        -8.30643081665039,
+        -8.013130187988281
+      ],
+      "triage_ms": 117.16133300069487,
+      "task_ms": 39.06000000279164
+    }
+  },
+  "observations": [
+    {
+      "case": "retry-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "a166973e9f6e20c86e04d1012569c8296f59d4ea590ac30703f496435b51a315"
+    },
+    {
+      "case": "retry-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "73d947d96e9195989f77224ed401701bcc2d29d7d2ba098c73179e7bcf86d815"
+    },
+    {
+      "case": "museum-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "1af1b85186c1fbf2ce24721aa77cc220482d07fd85d952e6902feea3ac0f969e"
+    },
+    {
+      "case": "museum-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "890591241bd0f9f2ba614c5c20afd6076db13cbb9d9df1965d2981da25c03295",
+      "discovery": {
+        "ms": 14687.33,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"narrator choice\",\"question\":\"Which narrator should the introduction use?\",\"source\":\"Write a\",\"options\":[{\"text\":\"retired sailor intro\",\"effect\":\"select sailor narrator\",\"assume\":\"\"},{\"text\":\"child discovery intro\",\"effect\":\"select child narrator\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "currency-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "9e8ebde49df98e30cd0c01ddf48874f87f13bccf7a4b3bcc6315e4612dea76a6",
+      "discovery": {
+        "ms": 14061.27,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"Intent\",\"question\":\"What does 'cents' mean for conversion? Are values in dollars before conversion or already in cents?\",\"source\":\"Normalize invoice amounts\",\"options\":[{\"text\":\"Interpret values as dollars and convert to cents\",\"effect\":\"Clarifies monetary unit\",\"assume\":\"\"},{\"text\":\"Assume values are already in cents\",\"effect\":\"No conversion needed\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "currency-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "789e36a7a220bf7aed49a361d8dfac68444669960c49345e78d0c5cdb470b6ad",
+      "discovery": {
+        "ms": 12491.83,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"intent\",\"question\":\"Should we convert invoice amounts to cents or dollars or leave both?\",\"source\":\"Normalize invoice amounts\",\"options\":[{\"text\":\"Convert to cents\",\"effect\":\"standardize to cents\",\"assume\":\"\"},{\"text\":\"Accept both units\",\"effect\":\"preserve original unit\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "level-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "980aeb27286574fb60fe59acc0d167737806f60429b4f3eedd8b520d69d8ca88",
+      "discovery": {
+        "ms": 11747.38,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "level-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "d68641052a28dceb75dcda9289542df9b7aaf5159ea9c3ddf7e59bdfe037c66f",
+      "discovery": {
+        "ms": 14042.61,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"target_audience\",\"question\":\"Which student group(s) define the lesson: fourth graders only, adults only, or both?\",\"source\":\"Prepare a lesson\",\"options\":[{\"text\":\"fourth graders\",\"effect\":\"focus lesson on elementary level\",\"assume\":\"\"},{\"text\":\"adults\",\"effect\":\"focus adult numeracy exam level\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "cache-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "da7b7b3328ac4838ac1587827e2ecccba90eb0c202a1983750757eeeb2de471d",
+      "discovery": {
+        "ms": 15233.55,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"question\",\"question\":\"What specifics describe the behavior?\"}"
+      }
+    },
+    {
+      "case": "cache-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "94609d823ed12e5e6869199c70325cf9dcd5a98287c20572bb0f21feda5a36c6",
+      "discovery": {
+        "ms": 15394.54,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"interpretation\",\"question\":\"What exactly does the user want regarding return behavior description?\",\"source\":\"cache.py, inspect Cache.lookup\",\"options\":[{\"text\":\"Provide generic two-sentence description based on typical cached lookup for expired entries\",\"effect\":\"Clarify expected output format\",\"assume\":\"\"},{\"text\":\"Request additional implementation details to define precise return values\",\"effect\":\"Seek implementation specifics\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "cache-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "157cbc6b510c85e627164a7b6aac6441560c87d70b0a83f48b1fd6743a10b147",
+      "discovery": {
+        "ms": 11972.81,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"question\",\"question\":\"What does Cache.lookup return for expired entries?\"}"
+      }
+    },
+    {
+      "case": "cache-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "16c157982c919f6d24b5c425b7a2cdd27480c785ff86494abc7f937beafaad2e",
+      "discovery": {
+        "ms": 12240.62,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"question\",\"question\":\"Should Cache.lookup serve stale entries or return a cache miss when expired?\"}"
+      }
+    },
+    {
+      "case": "cache-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "30523f0460712ffe26311704e43aaf211236d68da19acf7aacd74df9079c6f7a",
+      "discovery": {
+        "ms": 13378.02,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"creative\",\"groups\":[{\"focus\":\"choose behavior\",\"question\":\"Should Cache.lookup return stale or miss for expired?\",\"source\":\"cache.py, inspect Cache.lookup\",\"options\":[{\"text\":\"serve stale\",\"effect\":\"provide stale entry\",\"assume\":\"\"},{\"text\":\"cache miss\",\"effect\":\"return miss\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "cache-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "62564bcc276788e5af877ed031c6857bb25f63f7c6b1c2f0646560ed3c3b6e01",
+      "discovery": {
+        "ms": 14031.55,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"intent\",\"question\":\"Should Cache.lookup for expired entries return a cache miss or serve the stale entry when the API owner hasn't chosen?\",\"source\":\"In cache.py, inspect\",\"options\":[{\"text\":\"Return stale entry\",\"effect\":\"Serves stale\",\"assume\":\"\"},{\"text\":\"Return cache miss\",\"effect\":\"Cache miss\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "rename-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "cc2465ab158bfe8b52688b89ae650f1c9433a729a56f2d2e536108fc653c81c8",
+      "discovery": {
+        "ms": 14615.4,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"method rename\",\"question\":\"Should readBatch become fetchBatch while retaining its original implementation as a forwarding alias?\",\"source\":\"Rename the public\",\"options\":[{\"text\":\"Rename and keep alias\",\"effect\":\"Rename method, preserve readBatch as alias\",\"assume\":\"\"},{\"text\":\"Rename only\",\"effect\":\"Rename method, remove readBatch\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "rename-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "2459add06ea9f1555d9411976bafea38996863d718ad6b91615c91e14104024d",
+      "discovery": {
+        "ms": 12382.27,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "rename-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "639938cd3df12bbaa1a6d138758ff4ead765bb4b6cd391632733ea6517a95387",
+      "discovery": {
+        "ms": 11226.65,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "rename-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "52867229851047142b1511627ee5b3042b09c5ed8d262fcf98a0405c39464761"
+    },
+    {
+      "case": "rename-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "ef7089498fa8ffc5d2203d80c873a67416eb29ba1b11ae2abda5f7273e19585c"
+    },
+    {
+      "case": "rename-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "4b02685685bdfcfc90b922717000fa432c4f293dac57b1a4dc392286af9ce5d1"
+    },
+    {
+      "case": "audio-log-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "703b98cc649177de99e569dd76fc57be10e1164c4242b28954c3cf4fd8869c1c",
+      "discovery": {
+        "ms": 12635.13,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"explicit stopping condition\",\"question\":\"What condition in poller.py signals the retry loop should stop?\",\"source\":\"poller.py\",\"options\":[{\"text\":\"max attempts reached\",\"effect\":\"indicates loop ends after specified tries\",\"assume\":\"\"},{\"text\":\"timeout elapsed\",\"effect\":\"loop stops when a timeout occurs\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "audio-log-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "2ba76bbe53b1ef4771199033af98d7bf735ab53e128486605cfe2030f33570a8",
+      "discovery": {
+        "ms": 12268.88,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"task details\",\"question\":\"What analogy would you prefer for the retry loop?\",\"source\":\"Prepare\",\"options\":[{\"text\":\"traffic light analogy\",\"effect\":\"provides clear stopping\",\"assume\":\"\"},{\"text\":\"wait until sunrise\",\"effect\":\"shows patience\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "audio-log-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "0e6739da876c1ddd36a4b1b70b430c7805433d2de2d75545ebc5d78e298e920a",
+      "discovery": {
+        "ms": 12540.51,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"detail_needed\",\"question\":\"What specific stopping condition does poller.py use?\",\"source\":\"everyday language; the\",\"options\":[{\"text\":\"Count retries\",\"effect\":\"Provide count-based stop\",\"assume\":\"\"},{\"text\":\"Timeout after N seconds\",\"effect\":\"Provide timeout stop\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "audio-log-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "81958440dedd814c24cf53e7d01c8b60a527501989334f63c41253b73431a930",
+      "discovery": {
+        "ms": 11334.21,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"question\",\"question\":\"Which audience will the explanation target? on-call engineers or first-time operators?\"}"
+      }
+    },
+    {
+      "case": "audio-log-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "e718b5ecf9d7fc4f6f11d6baab16e5e60f6f192a7af96775747ed6ff2bb238d2",
+      "discovery": {
+        "ms": 11393.27,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"question\",\"question\":\"Which audience should the spoken explanation target? on-call engineers or first-time operators?\"}"
+      }
+    },
+    {
+      "case": "audio-log-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "26517a4421b30b7a7263b5d3d0c60d81e5a7b25f40ee5a596e2b91eb841b78d1",
+      "discovery": {
+        "ms": 12857.16,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"audience selection\",\"question\":\"Which audience will the explanation target? On-call engineers or first‑time operators?\",\"source\":\"explanation of the\",\"options\":[{\"text\":\"target on‑call engineers\",\"effect\":\"explain for expert engineers\",\"assume\":\"\"},{\"text\":\"target first‑time operators\",\"effect\":\"explain for new operators\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "ordering-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "576eb94b5694e7dc318aa61aa6f48f4a328b1c58c22c39f3d7b4414e9c801c5d"
+    },
+    {
+      "case": "ordering-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "7842bc5a6be158ca95f068be2db972959b9f94593d555e0413a95d0e1ffc45ca"
+    },
+    {
+      "case": "ordering-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "a1158183a9eacff590054ec8b15830a71cb5de7e61ecd37afbbe0a9df9db4679"
+    },
+    {
+      "case": "ordering-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "d8725f2ee6ee38d562323d811675112eaec38f813984e3eb112dedb1ac5395be"
+    },
+    {
+      "case": "ordering-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "14052194a5cc8ee49d8864bb2bc0908553583995d858cfd271d97d5655624f12"
+    },
+    {
+      "case": "ordering-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "727ecb0c12a8bb8e0a919c622d1c32c9f3cdff0d77a7a6ccfb52a5a4ee53af57"
+    },
+    {
+      "case": "sonnet-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "6aa054860258e314f6e9c4f51967901f043bfd014afdf0e58938a48b70a20bb5",
+      "discovery": {
+        "ms": 11964.64,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "sonnet-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "e68dcd6ba1bb608d96f9b333dca55c5b47fb7fa7ce61abf8107e996a53f4896b",
+      "discovery": {
+        "ms": 15305.24,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "sonnet-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "705b3fc560a973e5d0a5927b7c9767d4e4cadc963183e7d362d2ddc420f0aa89",
+      "discovery": {
+        "ms": 21331.59,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"intent\",\"question\":\"What form does 'any form that fits' imply?\",\"source\":\"Write a poem\",\"options\":[{\"text\":\"Free verse\",\"effect\":\"adaptable\",\"assume\":\"\"},{\"text\":\"Narrative ballad\",\"effect\":\"constrained\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "sonnet-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "04814ddaa211f0c5303564ee2905ed9dc05d6df1e4a1ba86d14a73b9e9615540",
+      "discovery": {
+        "ms": 13989.75,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"creative\",\"groups\":[{\"focus\":\"genre\",\"question\":\"Choose sonnet or free verse\",\"source\":\"The committee has\",\"options\":[{\"text\":\"sonnet\",\"effect\":\"poem in sonnet form\",\"assume\":\"\"},{\"text\":\"free verse\",\"effect\":\"poem in free verse form\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "sonnet-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "ae15fd29dd15aed11376da82880c8b7299541848402dddc49592618202beab8e",
+      "discovery": {
+        "ms": 13582.33,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"creative\",\"groups\":[{\"focus\":\"choice_of_form\",\"question\":\"Select sonnet or free verse for the poem\",\"source\":\"Write a poem\",\"options\":[{\"text\":\"sonnet poem\",\"effect\":\"choose sonnet style\",\"assume\":\"\"},{\"text\":\"free verse poem\",\"effect\":\"choose free verse style\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "sonnet-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "95693ce2f0be808e828a15a2c8b11afbdbd45194843a4dc9e72d3d9e47fb473a",
+      "discovery": {
+        "ms": 13413.54,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"creative\",\"groups\":[{\"focus\":\"choice_category\",\"question\":\"Which poem form should the poem use?\",\"source\":\"Write a poem\",\"options\":[{\"text\":\"sonnet\",\"effect\":\"use sonnet form\",\"assume\":\"\"},{\"text\":\"free verse\",\"effect\":\"use free verse form\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "ending-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "c7e22083c0743bae4b6bf413cf72125ba137b9b6aa4bfe6b8f569ed67b13679b",
+      "discovery": {
+        "ms": 13374.53,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"creative\",\"groups\":[{\"focus\":\"writing_style\",\"question\":\"What tone and mood would you like?\",\"source\":\"Write the final\",\"options\":[{\"text\":\"Atmospheric mystery\",\"effect\":\"Eerie mood\",\"assume\":\"\"},{\"text\":\"Quiet reflective\",\"effect\":\"Calm resolution\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "ending-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "49d33f63b2c84cca2b2f7d8b700617e0d041ee979b743fdb287aa0c296ecda28",
+      "discovery": {
+        "ms": 11231.98,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "ending-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "a7c87bcc277bc357ff0af38115b5d23a50f52be77ec3bf54c6eb20e8c26857e5",
+      "discovery": {
+        "ms": 12809.03,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"tone\",\"question\":\"Do you prefer a concise eerie tone or a bittersweet resolution?\",\"source\":\"Write the final\",\"options\":[{\"text\":\"Eerie\",\"effect\":\"quiet tension\",\"assume\":\"\"},{\"text\":\"Bittersweet\",\"effect\":\"resolution hope\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "ending-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "7945e14a3449783792e2fc241bb8d73baa4e446d0859414d508e1868f882082e",
+      "discovery": {
+        "ms": 11789.92,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "DIRECT_CONFLICT_PRESENT",
+          "policy_verdict": "NEEDS_MANUAL_REVIEW",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"conflict\",\"description\":\"Write the final scene vs. producer approval of keeper survival before writing\"}"
+      }
+    },
+    {
+      "case": "ending-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "8bfe13029c218a42a0e246d067a9cc6c131f7b7dfa6f5ad1ea1d370994cca006",
+      "discovery": {
+        "ms": 12066.95,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "DIRECT_CONFLICT_PRESENT",
+          "policy_verdict": "NEEDS_MANUAL_REVIEW",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"conflict\",\"description\":\"Instruction conflict: write final scene and approve keeper survival before writing scene (mutually exclusive).\"}"
+      }
+    },
+    {
+      "case": "ending-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "306657aaedf0434df9a91dc7b3c828da3c50161f60532e79d5ce16b11ca0b288",
+      "discovery": {
+        "ms": 12861.72,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "DIRECT_CONFLICT_PRESENT",
+          "policy_verdict": "NEEDS_MANUAL_REVIEW",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"conflict\",\"description\":\"Request ambiguous: user wants final scene written before producer approval; conflict between writing scene now and producer approving survival before scene is written.\"}"
+      }
+    },
+    {
+      "case": "trailer-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "aeac80bbf94d54f35cc3a30e797ce691e7e119c438079bd9376bddc7e3f2d39d",
+      "discovery": {
+        "ms": 15315.53,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"creative\",\"groups\":[{\"focus\":\"outline\",\"question\":\"What tone or specific imagery would you like?\",\"source\":\"Draft a spoken\",\"options\":[{\"text\":\"minimal eerie\",\"effect\":\"simple mood\",\"assume\":\"\"},{\"text\":\"bouncy whimsical\",\"effect\":\"playful\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "trailer-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "058522df85fd7516efdb020f6418e2e5c57a6d3ebebaf434e86709d2f5f9adfa",
+      "discovery": {
+        "ms": 14411.22,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"question\",\"question\":\"Please provide the draft text of the spoken trailer you want reviewed.\"}"
+      }
+    },
+    {
+      "case": "trailer-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "bad2bdc4d2bc590f2f8fd219a4b05d73c01003b2b02b4dac594f7a0396743fe5",
+      "discovery": {
+        "ms": 26327.58,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"question\",\"question\":\"What tone or specific audio details would you like for the playful conductor narrator?\"}"
+      }
+    },
+    {
+      "case": "trailer-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "ab3ef8b84a54002411bb5a2e2d806efe3036973e91385a1e232ecc8b759d1b08"
+    },
+    {
+      "case": "trailer-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "e9bba19b6efb4d4550cc0dfd0ad0368d190a505a45039d6d4e9c083a34f8f60f"
+    },
+    {
+      "case": "trailer-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "077551db421e55afc0e6b79d30a87f339920ebbce90a3570ea0b1aea0adaca29"
+    },
+    {
+      "case": "byline-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "028957c6335d3b3c87b4dd9fdbf2ade4eb18e682f79197533788a2441dc3d745",
+      "discovery": {
+        "ms": 14434.13,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "DIRECT_CONFLICT_PRESENT",
+          "policy_verdict": "NEEDS_MANUAL_REVIEW",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"conflict\",\"description\":\"Explicit constraints for invented name and warm documentary tone are mutually exclusive.\"}"
+      }
+    },
+    {
+      "case": "byline-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "30d2f16edf6f3e0838f9a946148c5909b43f9c48596bd3b46fa2981ca9ff7bef",
+      "discovery": {
+        "ms": 12694.76,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "DIRECT_CONFLICT_PRESENT",
+          "policy_verdict": "NEEDS_MANUAL_REVIEW",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"conflict\",\"description\":\"CONSTRAIN target lacks explicit name format or tone specification causing conflict with other implicit rules?\"}"
+      }
+    },
+    {
+      "case": "byline-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "1a8b983280c8ea6fe2ce6e53d2b15a8db1eaa3b9e2c004b621019f747060d499",
+      "discovery": {
+        "ms": 12435.13,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "DIRECT_CONFLICT_PRESENT",
+          "policy_verdict": "NEEDS_MANUAL_REVIEW",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"conflict\",\"description\":\"Constraints appear to overlap or lack clear separation; need clarification.\"}"
+      }
+    },
+    {
+      "case": "byline-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "d8aeafc2c1e60c39308da33dff3fb07ae309e2e5e575d08a731fd7a771616961",
+      "discovery": {
+        "ms": 12752.63,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "DIRECT_CONFLICT_PRESENT",
+          "policy_verdict": "NEEDS_MANUAL_REVIEW",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"conflict\",\"description\":\"gallery requires anonymous publication; artist contract requires full name in same profile\"}"
+      }
+    },
+    {
+      "case": "byline-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "9ca35863a969499fc9afd331d4c56e0c91f889c7b0163bf881e1513025a447d2",
+      "discovery": {
+        "ms": 13317.62,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"creative\",\"groups\":[{\"focus\":\"profile content\",\"question\":\"What style of profile to write?\",\"source\":\"Write a fictional\",\"options\":[{\"text\":\"minimal factual\",\"effect\":\"concise\",\"assume\":\"\"},{\"text\":\"detailed artistic narrative\",\"effect\":\"rich\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "byline-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "a5de3cce5dab99f6c9b392e2355139f9b3278865e7c13fba522c3c1fc38be89b",
+      "discovery": {
+        "ms": 12893.14,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"creative\",\"groups\":[{\"focus\":\"profile content\",\"question\":\"What style tone for fictional profile?\",\"source\":\"Write a fictional\",\"options\":[{\"text\":\"formal minimal\",\"effect\":\"concise neutral\",\"assume\":\"\"},{\"text\":\"artistic narrative\",\"effect\":\"descriptive vivid\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "import-key-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "6db40253cda3053f89cffc61c6e60e7b07cb7ae28fbd4b169b2e3c2eb5f4d5d9",
+      "discovery": {
+        "ms": 10912.71,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "import-key-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "a4fcd658435b5ecb339fccc1ee60fea4a0492eff535a3aff2522dd25df94dc64",
+      "discovery": {
+        "ms": 12567.05,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"intent\",\"question\":\"Do you need the join condition explicitly written as a SQL WHERE clause?\",\"source\":\"Use the supplied\",\"options\":[{\"text\":\"Write join condition explicitly\",\"effect\":\"Provides concrete SQL clause\",\"assume\":\"\"},{\"text\":\"Keep generic join description\",\"effect\":\"Maintains flexibility\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "import-key-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "3aa878d3d1fd3ab093ef5ff80f7635b5f56837e11ee2ecb9e907aa047ebfe78f",
+      "discovery": {
+        "ms": 13582.91,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "import-key-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "f834bed56069aa4b7ade13937729748b02a3a767b428302d7c54bbd39d79ad20",
+      "discovery": {
+        "ms": 14000.71,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"selection_rule\",\"question\":\"Which mapping (customer_uuid vs billing_account_id) should be used for shared accounts?\",\"source\":\"Two approved mappings\",\"options\":[{\"text\":\"Use customer_uuid if exists\",\"effect\":\"applies mapping\",\"assume\":\"\"},{\"text\":\"Use billing_account_id if exists\",\"effect\":\"applies mapping\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "import-key-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "4f9805510a6c5783a420d91c09aa394b40683fb51c653f7acefe930c6f741cad",
+      "discovery": {
+        "ms": 13197.06,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"intent_selection\",\"question\":\"Which mapping (customer_uuid or billing_account_id) should be selected by the data owner?\",\"source\":\"Join shipments to\",\"options\":[{\"text\":\"customer_uuid mapping\",\"effect\":\"select mapping\",\"assume\":\"\"},{\"text\":\"billing_account_id mapping\",\"effect\":\"select mapping\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "import-key-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "2607786804b703d1b323ac9d7d2c478aedd65dab2f83e793af9789439056adea",
+      "discovery": {
+        "ms": 13101.96,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"intent\",\"question\":\"Which mapping does the data owner select?\",\"source\":\"Join shipments to\",\"options\":[{\"text\":\"use customer_uuid\",\"effect\":\"apply customer_uuid mapping\",\"assume\":\"\"},{\"text\":\"use billing_account_id\",\"effect\":\"apply billing_account_id mapping\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "null-date-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "b9fc43f51243dd5131d0528a8e9988bd1cfaa53e946c52699ccdd6be8c06f382",
+      "discovery": {
+        "ms": 12420.22,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"definition\",\"question\":\"What rows are considered undated?\",\"source\":\"Import legacy orders\",\"options\":[{\"text\":\"Rows missing delivery date\",\"effect\":\"Clear\",\"assume\":\"\"},{\"text\":\"Rows with empty delivery column\",\"effect\":\"Clear\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "null-date-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "f5b7410e6d85edabdcbbfcf5850e73bebd0d1de056fa53adff62e6c97b1a4743",
+      "discovery": {
+        "ms": 11019.57,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "null-date-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "cdbb0f7957ff3c0aa1c5ee48dc8a0196493efcffd64b51daa4e9686ab9fcd01c",
+      "discovery": {
+        "ms": 12550.92,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"row_definition\",\"question\":\"What criteria mark a row as undated?\",\"source\":\"Import legacy orders\",\"options\":[{\"text\":\"row missing delivery date\",\"effect\":\"clear definition\",\"assume\":\"\"},{\"text\":\"row with empty delivery field\",\"effect\":\"clear definition\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "null-date-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "d135bcc2c70b71160334b0affed8c60449b2ad6ff860598d745ce372c471ef85",
+      "discovery": {
+        "ms": 12952.69,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"intent\",\"question\":\"What specific behavior is expected for undated rows?\",\"source\":\"Import legacy orders\",\"options\":[{\"text\":\"Apply quarantine rule\",\"effect\":\"quarantine\",\"assume\":\"\"},{\"text\":\"Use invoice date when available\",\"effect\":\"use_invoice\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "null-date-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "a552d0d984fcd7c52960571bea47efc9c8647d40eeb804e078b1d3f3839d3f12",
+      "discovery": {
+        "ms": 11195.52,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "null-date-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "6161d542c05dc444a85beb6c65d62ba22f1f83c3efe8c19b552cb0b2f1ce77b1",
+      "discovery": {
+        "ms": 11439.5,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "transcript-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "e30a67a942e8fec915975f0f86e6fa2f534c93ef1121fc714d64f15bcbce9445"
+    },
+    {
+      "case": "transcript-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "855658d3ee550b25f15bff70c033fa696ad5080d7385ebc88a21c7c81780394d"
+    },
+    {
+      "case": "transcript-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "5bfb99e2396024e1255e8b008ddcf5968e34f4ea0f82a44898654214e7b63c7a"
+    },
+    {
+      "case": "transcript-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "e24b54bc2182adbc2263993675501582a66aab838ff993f37dd4261a15b358b7",
+      "discovery": {
+        "ms": 12673.29,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"extract_target\",\"question\":\"What representation should be returned for due date?\",\"source\":\"Extract owner and\",\"options\":[{\"text\":\"literal phrase Friday\",\"effect\":\"use phrase\",\"assume\":\"\"},{\"text\":\"ISO date 2025-01-XX\",\"effect\":\"normalize\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "transcript-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "7677dd5ee64f26fa1b4fa82337030118977f146c303486608bcd683fe1462e80",
+      "discovery": {
+        "ms": 12702.49,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"due_date_format\",\"question\":\"Do you want due_date as literal phrase \\\"Friday\\\" or normalized calendar date?\",\"source\":\"from this transcript:\",\"options\":[{\"text\":\"literal phrase\",\"effect\":\"keep original day phrase\",\"assume\":\"\"},{\"text\":\"normalized date\",\"effect\":\"convert to ISO date\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "transcript-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "04afcaa2dc9be09c43e848e76b4e6ef73b76bba15a11cb3d5c0b54ceef321341",
+      "discovery": {
+        "ms": 12375.57,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"due_date_representation\",\"question\":\"Should due_date be literal phrase or normalized calendar date?\",\"source\":\"from this transcript:\",\"options\":[{\"text\":\"literal phrase\",\"effect\":\"keep phrase\",\"assume\":\"\"},{\"text\":\"normalized date\",\"effect\":\"convert\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "spoken-kpi-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "ad1a7d24e87dc4f1197bbfe9e8be08dda9754d1855be5b76c53258be0f859e64",
+      "discovery": {
+        "ms": 13737.05,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"intent_clarification\",\"question\":\"What specific phrasing or structure for the spoken update is desired?\",\"source\":\"Prepare a spoken\",\"options\":[{\"text\":\"Use concise bullet style\",\"effect\":\"Clear formatting\",\"assume\":\"\"},{\"text\":\"Include key metrics paragraph\",\"effect\":\"Detailed reporting\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "spoken-kpi-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "e870db56a7daf23e903354ad3c8b32cdb34323f1847a64c34330b4aa868fdbf9",
+      "discovery": {
+        "ms": 11396.08,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "spoken-kpi-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "8d1b3aa35fcc3a0a69e5f702522ba98194a589225916bb281113de9ab7bddd09",
+      "discovery": {
+        "ms": 11396.8,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "spoken-kpi-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "10c41be966565728d62e022819d43dec1dea8c7973d1610d0d4e44d27040010a",
+      "discovery": {
+        "ms": 11736.31,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "spoken-kpi-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "24cafe36ed6f9fd60ee941a7f7a7a0221fe2e0523d0ca0bd727acb6698eaea07",
+      "discovery": {
+        "ms": 13565.51,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"s1_intent\",\"question\":\"Which specific headline rate will the sponsor feature?\",\"source\":\"The sponsor must\",\"options\":[{\"text\":\"renewal rate\",\"effect\":\"feature renewal rate\",\"assume\":\"\"},{\"text\":\"cancellation rate\",\"effect\":\"feature cancellation rate\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "spoken-kpi-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "1eac3f5d76ac44bbaa0d6ad03aa21b2274e55e83538e5d2aa455f73f0eec38f4",
+      "discovery": {
+        "ms": 11558.63,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"question\",\"question\":\"Which rate should sponsor feature?\"}"
+      }
+    },
+    {
+      "case": "recursion-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "11f181394c15ad927150509efba220075845c09e982cd09050a577bf75822438",
+      "discovery": {
+        "ms": 12378.99,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"task_definition\",\"question\":\"What specific parameters or base case should be used for the countdown example?\",\"source\":\"Teach recursion using\",\"options\":[{\"text\":\"Provide a generic example\",\"effect\":\"Generic example\",\"assume\":\"\"},{\"text\":\"Specify step size and limit\",\"effect\":\"Custom parameters\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "recursion-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "7daf3e66973d1e5ee48c923ef1d958ae692bc7f02879d8fc047ef88134616dfb",
+      "discovery": {
+        "ms": 12364.06,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"content\",\"question\":\"What level of detail for the traced calls?\",\"source\":\"Teach recursion using\",\"options\":[{\"text\":\"Brief table of call stack\",\"effect\":\"Short trace\",\"assume\":\"\"},{\"text\":\"Full step-by-step with local variables\",\"effect\":\"Detailed trace\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "recursion-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "a921900bdf3abecad47703542bd81f94b9cf216fe6bd8b6bdf25b43baf786d54",
+      "discovery": {
+        "ms": 12615.82,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"intent\",\"question\":\"What level of detail should the worked example and trace include?\",\"source\":\"Teach recursion\",\"options\":[{\"text\":\"Full trace with call stack\",\"effect\":\"Detailed trace\",\"assume\":\"\"},{\"text\":\"Summary trace only\",\"effect\":\"Brief trace\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "recursion-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "6fde477165d37a765be15b4330d7ca2001c385ee5ba6a65cd13d723209ec668a",
+      "discovery": {
+        "ms": 11024.31,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "recursion-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "000e8aebf778841d14965e4fa7b4b59a1dddb4af9ef11fc51cbb0f37a12bd679",
+      "discovery": {
+        "ms": 12654.57,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"teacher choice\",\"question\":\"Which trace format does teacher prefer?\",\"source\":\"handout. The teacher\",\"options\":[{\"text\":\"Fully worked trace\",\"effect\":\"provides complete solution\",\"assume\":\"\"},{\"text\":\"Hints-only exercise\",\"effect\":\"conceals trace\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "recursion-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "315c9b24e6c91f4c7cebc93f615944b6c60ded3d136bc66256455700c2fa773c",
+      "discovery": {
+        "ms": 12805.62,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"intent\",\"question\":\"What should the handout include for each exercise choice?\",\"source\":\"Teach recursion using\",\"options\":[{\"text\":\"Provide fully worked trace only\",\"effect\":\"handout_trace\",\"assume\":\"\"},{\"text\":\"Provide hints only, hide trace\",\"effect\":\"handout_hints\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "oral-quiz-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "7821ca6a8d2b99003d4c1a294b6b0e8892d1454a4dfc5fc64f7cd72a100887df"
+    },
+    {
+      "case": "oral-quiz-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "17ea9a426761ddc01c7adc4e39cf95568714959d2567d98385df0fa9d01efbd6"
+    },
+    {
+      "case": "oral-quiz-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "d26f40a75ff5dff45545e58cb1939739696c594605baedb08a1a9f0a74fb131b"
+    },
+    {
+      "case": "oral-quiz-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "5fc198db9e63c7c3080f3731abb177e91343b1c13b278f6c313ed0d58ecc47e4"
+    },
+    {
+      "case": "oral-quiz-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "3a9270c4d31709e1b272c23c5c14774ee3b05b31756c64a248f2f2e487a15f83"
+    },
+    {
+      "case": "oral-quiz-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "85b7963d045039982ea1c715c315db1ad9008bfa2f40969764f16c8997ac79bd"
+    },
+    {
+      "case": "proof-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "cef1deb8b59c1e0cba7e2aad709942629a41c01dd666c777420da742eb6382df",
+      "discovery": {
+        "ms": 10832.55,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "proof-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "bc6c7e932314cd84a453f4dc23982fe9d50becdf6926202eec798c8131bfb7c8",
+      "discovery": {
+        "ms": 12381.64,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"Explanation method\",\"question\":\"Which method would you like to use?\",\"source\":\"Explain why the\",\"options\":[{\"text\":\"Direct addition\",\"effect\":\"Uses concrete numbers\",\"assume\":\"\"},{\"text\":\"Parity argument\",\"effect\":\"Uses oddness property\",\"assume\":\"\"}]}]}"
+      }
+    },
+    {
+      "case": "proof-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "5cae4ec2eb0fb1540137afe498b5e19a4c16cf11c161f9f9f18ecb9eaf52f5d3",
+      "discovery": {
+        "ms": 10837.64,
+        "validation": {
+          "id": "response",
+          "outcome": "no_ambiguity",
+          "parse_valid": true,
+          "policy_reason": "OK",
+          "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"none\"}"
+      }
+    },
+    {
+      "case": "proof-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "c46de704b512d761823ce408f188d809216f90bdc97d5dab04960317bd24d6ef"
+    },
+    {
+      "case": "proof-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "93c937c3a00a36f854b586c42a06fe6ce1be2e97a1532eb7a2e9b092e9b23de1"
+    },
+    {
+      "case": "proof-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "76b8a449fc25e81e37ee10100ec82670653ce4fd41ca5a4f4b362c530a221e4a"
+    },
+    {
+      "case": "translation-proceed",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "461476da1e3450b4780b6a28b2295a25bc3aca52070bd74db9d290bfa109c675"
+    },
+    {
+      "case": "translation-proceed",
+      "host": "BROWSER",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "2f341695f22e9deb87346346d3a6b9ebcc8f3e963b3e664bc3bdc5e2e0bd7205"
+    },
+    {
+      "case": "translation-proceed",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "ORIGINAL",
+        "host": "ORIGINAL",
+        "task": "ORIGINAL"
+      },
+      "instructions_sha256": "2480f54947537eac3709a7bc5fa3f368aa5f137a821f3e3446939851f619af0c"
+    },
+    {
+      "case": "translation-ask",
+      "host": "CODE_EDITOR",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "d02953d8a8d873cfa1030431b2f50a39b0242afd26efe36d4b346fa4d61ab03a",
+      "discovery": {
+        "ms": 11431.86,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "DIRECT_CONFLICT_PRESENT",
+          "policy_verdict": "NEEDS_MANUAL_REVIEW",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"conflict\",\"description\":\"The request requires feedback message in French only and also in English only, which are contradictory.\"}"
+      }
+    },
+    {
+      "case": "translation-ask",
+      "host": "BROWSER",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "968033c3e7ddfb5133e039131e57fb832ffd533d512dc96793256f6b61d4470a",
+      "discovery": {
+        "ms": 11281.51,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "DIRECT_CONFLICT_PRESENT",
+          "policy_verdict": "NEEDS_MANUAL_REVIEW",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"conflict\",\"description\":\"Conflict: Tutor requires French only; learner's accommodation requires English only.\"}"
+      }
+    },
+    {
+      "case": "translation-ask",
+      "host": "DOCUMENT",
+      "routes": {
+        "current": "CLARIFY",
+        "host": "CLARIFY",
+        "task": "CLARIFY"
+      },
+      "instructions_sha256": "1c2cb72069d3e3535f2df95a769291425782e17f287695e092a3271c8b11df33",
+      "discovery": {
+        "ms": 11211.42,
+        "validation": {
+          "id": "response",
+          "outcome": "options_generated",
+          "parse_valid": true,
+          "policy_reason": "DIRECT_CONFLICT_PRESENT",
+          "policy_verdict": "NEEDS_MANUAL_REVIEW",
+          "quantization": "Q8_0",
+          "transport_ok": true,
+          "ungrounded_evidence_count": 0
+        },
+        "error": null,
+        "raw": "{\"kind\":\"conflict\",\"description\":\"feedback must be French only and English only simultaneously, impossible\"}"
+      }
+    }
+  ]
+}

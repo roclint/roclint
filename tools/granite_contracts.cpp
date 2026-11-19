@@ -6,6 +6,7 @@
 #include "roclint/intent/ConfirmedIntent.hpp"
 #include "roclint/rewrite/RewriteValidator.hpp"
 #include "HostController.hpp"
+#include "roclint/core/crypto/Sha256.hpp"
 
 #include <QCoreApplication>
 #include <QFile>
@@ -323,16 +324,51 @@ int main(int argc, char** argv) {
             const auto prompt = fixtures.value(QStringLiteral("prompt")).toString();
             if (prompt.trimmed().isEmpty()) throw std::runtime_error("Empty discovery fixture");
             roclint::bridge::GraniteOptionDiscoveryRequest request{kSession, kRevision, ss(prompt), "UNKNOWN"};
+            request.hostContextCategory = ss(fixtures.value("host").toString("UNKNOWN"));
+            for (const auto& file : fixtures.value("workspace_files").toArray())
+                request.workspaceFiles.push_back(ss(file.toString()));
+            for (const auto& symbol : fixtures.value("workspace_symbols").toArray())
+                request.workspaceSymbols.push_back(ss(symbol.toString()));
+            QJsonObject routes;
+            if (fixtures.contains("category_scores")) {
+                namespace analysis = roclint::core::analysis;
+                analysis::PromptTriage triage;
+                triage.sessionId = kSession;
+                triage.revisionId = kRevision;
+                triage.revisionTextHash = roclint::core::crypto::Sha256::hexDigest(request.promptString);
+                triage.requestGroupId = "fixture_group";
+                triage.attemptId = "fixture_attempt";
+                triage.stateVersion = 1;
+                triage.modelId = "SupersonicLabs/Julia-1";
+                triage.modelRevision = ss(fixtures.value("model_revision").toString());
+                triage.weightsSha256 = ss(fixtures.value("weights_sha256").toString());
+                triage.configurationId = ss(fixtures.value("configuration_id").toString());
+                triage.execution = analysis::TriageExecution::Model;
+                const auto scores = fixtures.value("category_scores").toArray();
+                if (scores.size() != 4) throw std::runtime_error("Expected four category scores");
+                for (int i = 0; i < scores.size(); ++i) triage.categoryScores[i] = scores[i].toDouble(-1);
+                auto sealed = analysis::sealPromptTriage(triage, request.promptString);
+                if (!sealed.ok()) throw std::runtime_error(sealed.error().message);
+                request.promptTriage = sealed.value();
+                routes["default"] = analysis::toString(analysis::routePromptTriage(sealed.value()).value());
+                for (double threshold : {0.65, 0.70, 0.85}) {
+                    auto policy = analysis::TriagePolicy::defaults();
+                    policy.thresholds[0] = policy.thresholds[1] = threshold;
+                    routes[QString::number(threshold, 'f', 2)] = analysis::toString(
+                        analysis::routePromptTriage(sealed.value(), policy).value());
+                }
+            }
             request.reviewTrigger = fixtures.value(QStringLiteral("explicit_review")).toBool(true)
                 ? roclint::core::analysis::ReviewTrigger::ExplicitReview
                 : roclint::core::analysis::ReviewTrigger::Automatic;
             request.maximumQuestions = 1;
             request.substantialInterview = fixtures.value(QStringLiteral("substantial_interview")).toBool();
             request.isNonTechnicalPrompt = fixtures.value(QStringLiteral("non_technical")).toBool(true);
-            const QJsonObject result{{QStringLiteral("id"), fixtures.value(QStringLiteral("id"))},
+            QJsonObject result{{QStringLiteral("id"), fixtures.value(QStringLiteral("id"))},
                 {QStringLiteral("op"), QStringLiteral("granite_analyze")}, {QStringLiteral("prompt"), prompt},
                 {QStringLiteral("instructions"), qs(roclint::bridge::buildDiscoveryPrompt(request))},
                 {QStringLiteral("schema"), qs(roclint::bridge::discoveryResponseSchema(request.promptString, 1))}};
+            if (!routes.isEmpty()) result["routes"] = routes;
             std::cout << QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString() << '\n';
             return 0;
         }

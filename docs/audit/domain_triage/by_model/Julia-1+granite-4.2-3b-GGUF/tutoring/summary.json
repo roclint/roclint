@@ -1,0 +1,38 @@
+{
+  "current": {
+    "proceed": 12,
+    "route_CLARIFY": 12,
+    "final_unnecessary": 4,
+    "ask": 12,
+    "final_quiet": 15,
+    "missed_including_errors": 7,
+    "final_on_target": 5,
+    "route_ORIGINAL": 12,
+    "host_final_changes": 2,
+    "host_route_changes": 0
+  },
+  "task": {
+    "proceed": 12,
+    "route_CLARIFY": 12,
+    "final_unnecessary": 4,
+    "ask": 12,
+    "final_quiet": 15,
+    "missed_including_errors": 7,
+    "final_on_target": 5,
+    "route_ORIGINAL": 12,
+    "host_final_changes": 2,
+    "host_route_changes": 0
+  },
+  "host": {
+    "proceed": 12,
+    "route_CLARIFY": 12,
+    "final_unnecessary": 4,
+    "ask": 12,
+    "final_quiet": 15,
+    "missed_including_errors": 7,
+    "final_on_target": 5,
+    "route_ORIGINAL": 12,
+    "host_final_changes": 2,
+    "host_route_changes": 0
+  }
+}

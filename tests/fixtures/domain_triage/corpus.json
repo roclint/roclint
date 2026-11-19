@@ -1,0 +1,650 @@
+[
+  {
+    "id": "retry-proceed",
+    "family": "retry",
+    "split": "dev",
+    "domain": "coding",
+    "task": "modify",
+    "medium": "text",
+    "prompt": "Update the retry limit in retry.ts. Use three attempts including the first request.",
+    "expected": "proceed",
+    "rationale": "Count and convention supplied.",
+    "acceptable_decisions": [],
+    "workspace_files": [
+      "retry.ts"
+    ],
+    "workspace_symbols": []
+  },
+  {
+    "id": "retry-ask",
+    "family": "retry",
+    "split": "dev",
+    "domain": "coding",
+    "task": "modify",
+    "medium": "text",
+    "prompt": "Update the retry limit in retry.ts. The owner must choose between three total attempts and three retries after the first request.",
+    "expected": "ask",
+    "rationale": "How many total attempts?",
+    "acceptable_decisions": [
+      "three or four total",
+      "whether to include the first attempt"
+    ],
+    "workspace_files": [
+      "retry.ts"
+    ],
+    "workspace_symbols": []
+  },
+  {
+    "id": "cache-proceed",
+    "family": "cache",
+    "split": "held",
+    "domain": "coding",
+    "task": "inspect or change",
+    "medium": "text",
+    "prompt": "In cache.py, inspect Cache.lookup for expired entries. Describe its current return behavior in two sentences.",
+    "expected": "proceed",
+    "rationale": "Source inspection answers the request.",
+    "acceptable_decisions": [],
+    "workspace_files": [
+      "cache.py"
+    ],
+    "workspace_symbols": [
+      "Cache.lookup"
+    ]
+  },
+  {
+    "id": "cache-ask",
+    "family": "cache",
+    "split": "held",
+    "domain": "coding",
+    "task": "inspect or change",
+    "medium": "text",
+    "prompt": "In cache.py, inspect Cache.lookup for expired entries. Then implement the new behavior. The API owner has yet to choose between returning a cache miss and serving the stale entry.",
+    "expected": "ask",
+    "rationale": "Should expired entries be served or treated as misses?",
+    "acceptable_decisions": [
+      "serve stale vs miss",
+      "expired-cache behavior"
+    ],
+    "workspace_files": [
+      "cache.py"
+    ],
+    "workspace_symbols": [
+      "Cache.lookup"
+    ]
+  },
+  {
+    "id": "rename-proceed",
+    "family": "rename",
+    "split": "held",
+    "domain": "coding",
+    "task": "migrate API",
+    "medium": "text",
+    "prompt": "Rename the public method readBatch to fetchBatch in BatchReader.ts. Keep readBatch as a forwarding alias for one release.",
+    "expected": "proceed",
+    "rationale": "Compatibility and migration scope specified.",
+    "acceptable_decisions": [],
+    "workspace_files": [
+      "BatchReader.ts"
+    ],
+    "workspace_symbols": [
+      "readBatch"
+    ]
+  },
+  {
+    "id": "rename-ask",
+    "family": "rename",
+    "split": "held",
+    "domain": "coding",
+    "task": "migrate API",
+    "medium": "text",
+    "prompt": "Rename the public method readBatch to fetchBatch in BatchReader.ts. We have approval either to retain readBatch as an alias or remove it immediately; choose after checking with the API owner.",
+    "expected": "ask",
+    "rationale": "Should the old method remain available?",
+    "acceptable_decisions": [
+      "alias vs immediate removal",
+      "compatibility policy"
+    ],
+    "workspace_files": [
+      "BatchReader.ts"
+    ],
+    "workspace_symbols": [
+      "readBatch"
+    ]
+  },
+  {
+    "id": "audio-log-proceed",
+    "family": "audio-log",
+    "split": "held",
+    "domain": "coding",
+    "task": "explain implementation",
+    "medium": "spoken",
+    "prompt": "Prepare a spoken explanation of the retry loop in poller.py. Describe the stopping condition in everyday language; the presenter can choose an analogy.",
+    "expected": "proceed",
+    "rationale": "Code provides stopping rule; analogy delegated.",
+    "acceptable_decisions": [],
+    "workspace_files": [
+      "poller.py"
+    ],
+    "workspace_symbols": []
+  },
+  {
+    "id": "audio-log-ask",
+    "family": "audio-log",
+    "split": "held",
+    "domain": "coding",
+    "task": "explain implementation",
+    "medium": "spoken",
+    "prompt": "Prepare a spoken explanation of the retry loop in poller.py. Prepare one version only. The sponsor still needs to select the audience: on-call engineers or first-time operators.",
+    "expected": "ask",
+    "rationale": "Which audience should the explanation address?",
+    "acceptable_decisions": [
+      "engineers or operators",
+      "technical level of listener"
+    ],
+    "workspace_files": [
+      "poller.py"
+    ],
+    "workspace_symbols": []
+  },
+  {
+    "id": "ordering-proceed",
+    "family": "ordering",
+    "split": "held",
+    "domain": "coding",
+    "task": "modify",
+    "medium": "text",
+    "prompt": "In queue.go order jobs with equal priority. Preserve insertion order for ties.",
+    "expected": "proceed",
+    "rationale": "Tie behavior supplied.",
+    "acceptable_decisions": [],
+    "workspace_files": [
+      "queue.go"
+    ],
+    "workspace_symbols": []
+  },
+  {
+    "id": "ordering-ask",
+    "family": "ordering",
+    "split": "held",
+    "domain": "coding",
+    "task": "modify",
+    "medium": "text",
+    "prompt": "In queue.go order jobs with equal priority. The release notes promise oldest first for ties, while the acceptance test specification requires newest first for those same ties. Both are binding.",
+    "expected": "ask",
+    "rationale": "Which tie order prevails?",
+    "acceptable_decisions": [
+      "FIFO or LIFO",
+      "oldest or newest first"
+    ],
+    "workspace_files": [
+      "queue.go"
+    ],
+    "workspace_symbols": []
+  },
+  {
+    "id": "museum-proceed",
+    "family": "museum",
+    "split": "dev",
+    "domain": "creative",
+    "task": "write narration",
+    "medium": "spoken",
+    "prompt": "Write a brief audio introduction to a museum of lost maps. Use the voice of a retired sailor; invent the exhibits.",
+    "expected": "proceed",
+    "rationale": "Voice fixed and content delegated.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "museum-ask",
+    "family": "museum",
+    "split": "dev",
+    "domain": "creative",
+    "task": "write narration",
+    "medium": "spoken",
+    "prompt": "Write a brief audio introduction to a museum of lost maps. The director has yet to choose the narrator: a retired sailor or the child who discovers the museum.",
+    "expected": "ask",
+    "rationale": "Who narrates?",
+    "acceptable_decisions": [
+      "sailor or child",
+      "narrative voice"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "sonnet-proceed",
+    "family": "sonnet",
+    "split": "held",
+    "domain": "creative",
+    "task": "write poem",
+    "medium": "text",
+    "prompt": "Write a poem for our winter festival about the last ferry. Use any form that fits; keep it under one page.",
+    "expected": "proceed",
+    "rationale": "Form delegated.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "sonnet-ask",
+    "family": "sonnet",
+    "split": "held",
+    "domain": "creative",
+    "task": "write poem",
+    "medium": "text",
+    "prompt": "Write a poem for our winter festival about the last ferry. We must submit in exactly one category. The committee has not chosen between a sonnet and free verse.",
+    "expected": "ask",
+    "rationale": "Which submission category?",
+    "acceptable_decisions": [
+      "sonnet vs free verse",
+      "form for submission"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "ending-proceed",
+    "family": "ending",
+    "split": "held",
+    "domain": "creative",
+    "task": "write scene",
+    "medium": "text",
+    "prompt": "Write the final scene of a lighthouse mystery in close third person. Decide for yourself whether the keeper survives.",
+    "expected": "proceed",
+    "rationale": "Ending delegated.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "ending-ask",
+    "family": "ending",
+    "split": "held",
+    "domain": "creative",
+    "task": "write scene",
+    "medium": "text",
+    "prompt": "Write the final scene of a lighthouse mystery in close third person. The producer wants to approve whether the keeper survives before the scene is written.",
+    "expected": "ask",
+    "rationale": "Should the keeper survive?",
+    "acceptable_decisions": [
+      "fate of the keeper",
+      "survival or death"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "trailer-proceed",
+    "family": "trailer",
+    "split": "held",
+    "domain": "creative",
+    "task": "write trailer",
+    "medium": "spoken",
+    "prompt": "Draft a spoken trailer for a fictional midnight train. Aim for thirty seconds, with a playful conductor as narrator. Invent the route.",
+    "expected": "proceed",
+    "rationale": "Duration and tone supplied, route delegated.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "trailer-ask",
+    "family": "trailer",
+    "split": "held",
+    "domain": "creative",
+    "task": "write trailer",
+    "medium": "spoken",
+    "prompt": "Draft a spoken trailer for a fictional midnight train. One placement is booked. The unconfirmed slot is either fifteen or sixty seconds, and the script must exactly fill it.",
+    "expected": "ask",
+    "rationale": "What is the booked duration?",
+    "acceptable_decisions": [
+      "fifteen or sixty seconds",
+      "slot length"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "byline-proceed",
+    "family": "byline",
+    "split": "held",
+    "domain": "creative",
+    "task": "write profile",
+    "medium": "text",
+    "prompt": "Write a fictional profile of a ceramic artist for the gallery. Use an invented name and a warm documentary tone.",
+    "expected": "proceed",
+    "rationale": "Fictional naming authorized.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "byline-ask",
+    "family": "byline",
+    "split": "held",
+    "domain": "creative",
+    "task": "write profile",
+    "medium": "text",
+    "prompt": "Write a fictional profile of a ceramic artist for the gallery. The gallery requires anonymous publication without a name, while the artist contract requires her full name in that same published profile.",
+    "expected": "ask",
+    "rationale": "Which naming requirement governs?",
+    "acceptable_decisions": [
+      "anonymous or named",
+      "resolve attribution conflict"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "currency-proceed",
+    "family": "currency",
+    "split": "dev",
+    "domain": "enterprise",
+    "task": "normalize records",
+    "medium": "data",
+    "prompt": "Normalize invoice amounts in the export. Convert all values to cents using the given USD currency.",
+    "expected": "proceed",
+    "rationale": "Unit and currency supplied.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "currency-ask",
+    "family": "currency",
+    "split": "dev",
+    "domain": "enterprise",
+    "task": "normalize records",
+    "medium": "data",
+    "prompt": "Normalize invoice amounts in the export. The destination accepts cents or dollars and the schema owner has not chosen the unit.",
+    "expected": "ask",
+    "rationale": "Which destination unit?",
+    "acceptable_decisions": [
+      "dollars vs cents",
+      "storage unit"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "import-key-proceed",
+    "family": "import-key",
+    "split": "held",
+    "domain": "enterprise",
+    "task": "join records",
+    "medium": "data",
+    "prompt": "Join shipments to customers in the nightly load. Use the supplied customer_uuid foreign key exclusively.",
+    "expected": "proceed",
+    "rationale": "Join key prescribed.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "import-key-ask",
+    "family": "import-key",
+    "split": "held",
+    "domain": "enterprise",
+    "task": "join records",
+    "medium": "data",
+    "prompt": "Join shipments to customers in the nightly load. Two approved mappings use customer_uuid or billing_account_id. Shared accounts produce different customer totals; the data owner must select the mapping.",
+    "expected": "ask",
+    "rationale": "Which key governs attribution?",
+    "acceptable_decisions": [
+      "UUID or account ID",
+      "customer vs billing-account mapping"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "null-date-proceed",
+    "family": "null-date",
+    "split": "held",
+    "domain": "enterprise",
+    "task": "normalize records",
+    "medium": "data",
+    "prompt": "Import legacy orders into a table with a required delivery date. Reject undated rows to the quarantine table and keep the rest.",
+    "expected": "proceed",
+    "rationale": "Missing-date policy supplied.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "null-date-ask",
+    "family": "null-date",
+    "split": "held",
+    "domain": "enterprise",
+    "task": "normalize records",
+    "medium": "data",
+    "prompt": "Import legacy orders into a table with a required delivery date. Undated rows exist. Both quarantine and use of the invoice date are supported, pending the warehouse owner’s decision.",
+    "expected": "ask",
+    "rationale": "What happens to undated orders?",
+    "acceptable_decisions": [
+      "quarantine or use invoice date",
+      "fallback date policy"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "transcript-proceed",
+    "family": "transcript",
+    "split": "held",
+    "domain": "enterprise",
+    "task": "extract fields",
+    "medium": "data",
+    "prompt": "Extract owner and due date from this transcript: “Mei will file the report Friday.” Return the literal phrases in a JSON object with keys owner and due_date.",
+    "expected": "proceed",
+    "rationale": "Source, fields and output supplied.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "transcript-ask",
+    "family": "transcript",
+    "split": "held",
+    "domain": "enterprise",
+    "task": "extract fields",
+    "medium": "data",
+    "prompt": "Extract owner and due date from this transcript: “Mei will file the report Friday.” Keep the owner literal. The consumer requires a single due_date representation and has not chosen between the literal phrase and a normalized calendar date.",
+    "expected": "ask",
+    "rationale": "Which date representation is required?",
+    "acceptable_decisions": [
+      "literal Friday or normalized date",
+      "due date format"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "spoken-kpi-proceed",
+    "family": "spoken-kpi",
+    "split": "held",
+    "domain": "enterprise",
+    "task": "communicate metric",
+    "medium": "spoken",
+    "prompt": "Prepare a spoken quarterly update from 80 renewals and 20 cancellations. Report renewals as a share of those 100 outcomes; round to whole percent.",
+    "expected": "proceed",
+    "rationale": "Numerator, denominator, delivery supplied.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "spoken-kpi-ask",
+    "family": "spoken-kpi",
+    "split": "held",
+    "domain": "enterprise",
+    "task": "communicate metric",
+    "medium": "spoken",
+    "prompt": "Prepare a spoken quarterly update from 80 renewals and 20 cancellations. We have one headline slot. The sponsor must choose whether to feature the renewal rate or the cancellation rate.",
+    "expected": "ask",
+    "rationale": "Which metric leads?",
+    "acceptable_decisions": [
+      "renewals vs cancellations",
+      "headline KPI"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "level-proceed",
+    "family": "level",
+    "split": "dev",
+    "domain": "tutoring",
+    "task": "design lesson",
+    "medium": "text",
+    "prompt": "Prepare a lesson on equivalent fractions. Write for fourth graders using pizza slices.",
+    "expected": "proceed",
+    "rationale": "Audience and approach supplied.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "level-ask",
+    "family": "level",
+    "split": "dev",
+    "domain": "tutoring",
+    "task": "design lesson",
+    "medium": "text",
+    "prompt": "Prepare a lesson on equivalent fractions. It will be used for either fourth graders or adults studying for a numeracy exam; the teacher has not picked the class.",
+    "expected": "ask",
+    "rationale": "Who is the lesson for?",
+    "acceptable_decisions": [
+      "students or adult learners",
+      "audience"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "recursion-proceed",
+    "family": "recursion",
+    "split": "held",
+    "domain": "tutoring",
+    "task": "teach concept",
+    "medium": "text",
+    "prompt": "Teach recursion using a small countdown example. Give the worked example and trace every call.",
+    "expected": "proceed",
+    "rationale": "Direct explanation requested.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "recursion-ask",
+    "family": "recursion",
+    "split": "held",
+    "domain": "tutoring",
+    "task": "teach concept",
+    "medium": "text",
+    "prompt": "Teach recursion using a small countdown example. Prepare one classroom handout. The teacher must choose between a fully worked trace and a hints-only exercise that conceals the trace.",
+    "expected": "ask",
+    "rationale": "Should the trace be shown?",
+    "acceptable_decisions": [
+      "worked trace or hints",
+      "reveal solution or withhold"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "oral-quiz-proceed",
+    "family": "oral-quiz",
+    "split": "held",
+    "domain": "tutoring",
+    "task": "conduct quiz",
+    "medium": "spoken",
+    "prompt": "Draft an oral quiz on the phases of the moon. Address eleven-year-olds and give feedback after each response. Choose your own examples.",
+    "expected": "proceed",
+    "rationale": "Feedback timing specified.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "oral-quiz-ask",
+    "family": "oral-quiz",
+    "split": "held",
+    "domain": "tutoring",
+    "task": "conduct quiz",
+    "medium": "spoken",
+    "prompt": "Draft an oral quiz on the phases of the moon. Address eleven-year-olds. The examiner has not decided whether feedback follows each response or is withheld until the quiz ends.",
+    "expected": "ask",
+    "rationale": "When should feedback be given?",
+    "acceptable_decisions": [
+      "immediate vs end feedback",
+      "feedback timing"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "proof-proceed",
+    "family": "proof",
+    "split": "held",
+    "domain": "tutoring",
+    "task": "teach proof",
+    "medium": "text",
+    "prompt": "Explain why the sum of two odd integers is even. Use any valid method suitable for a beginning algebra class.",
+    "expected": "proceed",
+    "rationale": "Proof method delegated.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "proof-ask",
+    "family": "proof",
+    "split": "held",
+    "domain": "tutoring",
+    "task": "teach proof",
+    "medium": "text",
+    "prompt": "Explain why the sum of two odd integers is even. The assessment accepts a single method chosen by the instructor: an algebraic proof or a picture-based proof. The instructor has not selected one.",
+    "expected": "ask",
+    "rationale": "Which proof method is required?",
+    "acceptable_decisions": [
+      "algebraic vs visual",
+      "required method"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "translation-proceed",
+    "family": "translation",
+    "split": "held",
+    "domain": "tutoring",
+    "task": "provide feedback",
+    "medium": "text",
+    "prompt": "Give feedback on a learner’s translation of bonjour as hello. Explain the greeting in plain English and include one example.",
+    "expected": "proceed",
+    "rationale": "Instruction identifies source and feedback language.",
+    "acceptable_decisions": [],
+    "workspace_files": [],
+    "workspace_symbols": []
+  },
+  {
+    "id": "translation-ask",
+    "family": "translation",
+    "split": "held",
+    "domain": "tutoring",
+    "task": "provide feedback",
+    "medium": "text",
+    "prompt": "Give feedback on a learner’s translation of bonjour as hello. The tutor requires the whole feedback message in French only. The learner’s accommodation requires that same message in English only.",
+    "expected": "ask",
+    "rationale": "Which language requirement should govern?",
+    "acceptable_decisions": [
+      "French or English feedback",
+      "resolve language conflict"
+    ],
+    "workspace_files": [],
+    "workspace_symbols": []
+  }
+]
