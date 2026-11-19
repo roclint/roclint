@@ -7,10 +7,17 @@ from types import SimpleNamespace
 from raw_discovery import V13Worker,WORKTREE
 
 def main():
- p=argparse.ArgumentParser(description=__doc__);p.add_argument('--model-dir',required=True);p.add_argument('--out',type=Path,required=True);p.add_argument('--qt-bin',required=True);p.add_argument('--thinking',action='store_true');p.add_argument('--temperature',type=float);p.add_argument('--case',action='append');p.add_argument('--questions-only',action='store_true');a=p.parse_args()
+ p=argparse.ArgumentParser(description=__doc__);p.add_argument('--model-dir',required=True);p.add_argument('--out',type=Path,required=True);p.add_argument('--qt-bin',default='');p.add_argument('--thinking',action='store_true');p.add_argument('--temperature',type=float);p.add_argument('--case',action='append');p.add_argument('--questions-only',action='store_true');a=p.parse_args()
  corpus=json.loads((WORKTREE/'tests/fixtures/companion_eval/word_flow_2026-11-16.json').read_text());assert corpus['synthetic'] is True
- env=os.environ.copy();env['PATH']=a.qt_bin+os.pathsep+env.get('PATH','');config=json.loads((WORKTREE/'build/generated/granite-runtime-config.json').read_text(encoding='utf-8-sig'))
- tool=WORKTREE/'build/Release/roclint_granite_contracts.exe';worker_path=WORKTREE/'build/Release/roclint_granite_worker.exe'
+ env=os.environ.copy()
+ if a.qt_bin: env['PATH']=a.qt_bin+os.pathsep+env.get('PATH','')
+ config=json.loads((WORKTREE/'build/generated/granite-runtime-config.json').read_text(encoding='utf-8-sig'))
+ suffix = ".exe" if os.name == "nt" else ""
+ release_sub = "Release/" if os.name == "nt" else ""
+ tool = WORKTREE / "build" / release_sub / ("roclint_granite_contracts" + suffix)
+ if not tool.exists(): tool = WORKTREE / "build" / ("roclint_granite_contracts" + suffix)
+ worker_path = WORKTREE / "build" / release_sub / ("roclint_granite_worker" + suffix)
+ if not worker_path.exists(): worker_path = WORKTREE / "build" / ("roclint_granite_worker" + suffix)
  a.out.parent.mkdir(parents=True,exist_ok=True);directory=a.out.parent/(a.out.stem+'-fixtures');directory.mkdir(exist_ok=True)
  report={'scope':corpus['scope'],'thinking_enabled':a.thinking,'diagnostic_temperature':a.temperature,'cases':[]};worker=None
  def save():a.out.write_text(json.dumps(report,indent=2,ensure_ascii=False),encoding='utf-8')

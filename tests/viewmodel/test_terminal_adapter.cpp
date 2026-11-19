@@ -2,6 +2,7 @@
 #include "support/check.hpp"
 
 #include <iostream>
+#include <QSysInfo>
 
 using roclint::host::TerminalAdapter;
 
@@ -91,6 +92,10 @@ int main() {
     testClaudeCodeChevronAfterOutput();
     testBoxedInputWithBorders();
     testShellDollarPrompt();
+    ROCLINT_CHECK(draftOf("old output\nuser@host my project % echo abc") == "echo abc");
+    const auto host = QSysInfo::machineHostName().section(QLatin1Char('.'), 0, 0);
+    ROCLINT_CHECK(draftOf(host + QStringLiteral("% echo abc")) == "echo abc");
+    ROCLINT_CHECK(!TerminalAdapter::extractDraft(u"completion 50 % remaining", -1));
     testPowerShellAngleAndInlineGreaterThan();
     testCaretInTheMiddle();
     testNoDelimiterAndEmptyDraft();

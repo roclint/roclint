@@ -2167,6 +2167,14 @@ void testWordQuestionCanRecoverToAnAuditedCorrection() {
                    prompt.find("Keep all existing tests unchanged") != std::string::npos;
         }));
     }
+    const auto beforeScroll = c.stateVersion();
+    field.wordRects = {QRect(250, 150, 80, 18)};
+    observed->observe(field);
+    ROCLINT_CHECK(c.wordRefinementAnchorRect() == field.wordRects.first());
+    field.wordRects.clear(); // Verified word moved outside the viewport.
+    observed->observe(field);
+    ROCLINT_CHECK(!c.wordMarkVisible() && c.wordRefinementOriginal() == "unchnaged");
+    ROCLINT_CHECK(c.stateVersion() == beforeScroll && c.hasWordRefinement());
     ROCLINT_CHECK(observed->rangeInjections.empty());
     ROCLINT_CHECK(c.applyWordRefinement(c.stateVersion(), "wcand_1") != 0);
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));

@@ -1,8 +1,31 @@
 #pragma once
 
+#include <QString>
 #include <QStringView>
+#include <optional>
 
 namespace roclint::host {
+
+inline constexpr qsizetype kMacGuiCaptureLimit = 16000;
+
+// AX providers can report an empty value while exposing the actual draft
+// through their character count and parameterized text range.
+inline std::optional<QString> verifiedMacGuiText(const std::optional<QString>& value, bool verifyEmpty,
+                                                  std::optional<qsizetype> count, const std::optional<QString>& range,
+                                                  const QString& placeholder) {
+    if (count && (*count < 0 || *count > kMacGuiCaptureLimit)) return std::nullopt;
+    if (value && !value->isEmpty()) {
+        if (value->size() > kMacGuiCaptureLimit || *value == placeholder) return std::nullopt;
+        if (count && *count != value->size()) {
+            if (range && range->size() == *count && range->startsWith(*value) && *range != placeholder) return range;
+            return std::nullopt;
+        }
+        return value;
+    }
+    if (count && range && range->size() == *count && (range->isEmpty() || *range != placeholder)) return range;
+    if (!verifyEmpty && value && (!count || *count == 0)) return value;
+    return std::nullopt;
+}
 
 enum class GuiCaptureRole { Edit, Document, ComboBox, Group, Custom, Other };
 

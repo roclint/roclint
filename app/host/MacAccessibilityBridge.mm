@@ -1,6 +1,11 @@
 #include "IAccessibilityBridge.hpp"
+#include "GuiCapturePolicy.hpp"
+#include "HostContext.hpp"
 #include "RangeInjectionPolicy.hpp"
 #include "TerminalAdapter.hpp"
+#include "WordSpan.hpp"
+#include <algorithm>
+#include <QStringList>
 
 #include <QDebug>
 
@@ -25,7 +30,7 @@ namespace {
 
 constexpr CFTimeInterval kTrustPollSeconds = 2.0;
 constexpr CFTimeInterval kElectronWakeSeconds = 0.06;
-constexpr CFIndex kMaxReadChars = 16000;
+constexpr CFIndex kMaxReadChars = kMacGuiCaptureLimit;
 constexpr int kReadbackPolls = 40;
 constexpr useconds_t kPollMicros = 30000;
 
@@ -70,6 +75,205 @@ std::optional<QString> readStringAttribute(AXUIElementRef element, CFStringRef a
 
 QString copyStringAttribute(AXUIElementRef element, CFStringRef attribute) {
     return readStringAttribute(element, attribute).value_or(QString{});
+}
+
+// Objects returned by these readers live in the caller's autorelease pool.
+id axAttribute(AXUIElementRef element, CFStringRef key) {
+    CFTypeRef value = nullptr;
+    if (AXUIElementCopyAttributeValue(element, key, &value) != kAXErrorSuccess) return nil;
+    return [(id)value autorelease];
+}
+
+id axParameter(AXUIElementRef element, CFStringRef key, id parameter) {
+    CFTypeRef value = nullptr;
+    if (!parameter || AXUIElementCopyParameterizedAttributeValue(element, key, (CFTypeRef)parameter, &value) != kAXErrorSuccess)
+        return nil;
+    return [(id)value autorelease];
+}
+
+id axRange(CFRange range) {
+    return [(id)AXValueCreate(static_cast<AXValueType>(kAXValueCFRangeType), &range) autorelease];
+}
+
+std::optional<QString> guiText(AXUIElementRef element, bool rich) {
+    NSNumber* length = axAttribute(element, kAXNumberOfCharactersAttribute);
+    std::optional<qsizetype> count;
+    if ([length isKindOfClass:NSNumber.class]) count = length.longLongValue;
+    if (count && (*count < 0 || *count > kMaxReadChars)) return std::nullopt;
+    const auto value = readStringAttribute(element, kAXValueAttribute);
+    // Chromium can cap both AXValue and AXNumberOfCharacters at 10,000
+    // UTF-16 units. The marker range belongs to this exact focused control.
+    if (rich && (!value || value->isEmpty() || value->size() >= 10000 || (count && *count != value->size()))) {
+        id markers = axParameter(element, CFSTR("AXTextMarkerRangeForUIElement"), (id)element);
+        NSNumber* complete = axParameter(element, CFSTR("AXLengthForTextMarkerRange"), markers);
+        if ([complete isKindOfClass:NSNumber.class]) count = complete.longLongValue;
+        else if ((value && value->size() == 10000) || count == 10000) return std::nullopt;
+    }
+    if (count && (*count < 0 || *count > kMaxReadChars)) return std::nullopt;
+    const bool verifyEmpty = rich || copyStringAttribute(element, kAXRoleAttribute) == QLatin1String("AXComboBox");
+    std::optional<QString> range;
+    if (count && (!value || value->isEmpty() || *count != value->size())) {
+        NSString* text = axParameter(element, kAXStringForRangeParameterizedAttribute, axRange({0, *count}));
+        if ([text isKindOfClass:NSString.class]) range = QString::fromNSString(text);
+    }
+    return verifiedMacGuiText(value, verifyEmpty, count, range, copyStringAttribute(element, kAXPlaceholderValueAttribute));
+}
+
+bool hasClass(AXUIElementRef el, NSString* name) {
+    NSArray* classes = axAttribute(el, CFSTR("AXDOMClassList"));
+    return [classes isKindOfClass:NSArray.class] && [classes containsObject:name];
+}
+
+AXUIElementRef xtermPane(AXUIElementRef el) {
+    for (int depth = 0; el && depth < 12; ++depth) {
+        if (hasClass(el, @"xterm")) return el;
+        el = (AXUIElementRef)axAttribute(el, kAXParentAttribute);
+    }
+    return nullptr;
+}
+
+AXUIElementRef findRowTree(AXUIElementRef el, int depth, int& budget) {
+    if (--budget < 0 || depth > 8) return nullptr;
+    if (hasClass(el, @"xterm-accessibility-tree")) return el;
+    NSArray* children = axAttribute(el, kAXChildrenAttribute);
+    for (id child in children) {
+        if (budget <= 0) break;
+        if (auto tree = findRowTree((AXUIElementRef)child, depth + 1, budget)) return tree;
+    }
+    return nullptr;
+}
+
+std::optional<QString> terminalRows(AXUIElementRef pane) {
+    int budget = 128;
+    auto tree = pane ? findRowTree(pane, 0, budget) : nullptr;
+    if (!tree) return std::nullopt;
+    NSArray* rows = axAttribute(tree, kAXChildrenAttribute);
+    if (![rows isKindOfClass:NSArray.class] || !rows.count || rows.count > 512) return std::nullopt;
+    // xterm's visible rows can be old scrollback even while the helper has focus.
+    // Only the viewport ending at the final buffer row can describe the draft.
+    NSNumber* last = axAttribute((AXUIElementRef)rows.lastObject, CFSTR("AXARIAPosInSet"));
+    NSNumber* total = axAttribute(tree, CFSTR("AXARIASetSize"));
+    if (![total isKindOfClass:NSNumber.class])
+        total = axAttribute((AXUIElementRef)rows.lastObject, CFSTR("AXARIASetSize"));
+    if (![last isKindOfClass:NSNumber.class] || ![total isKindOfClass:NSNumber.class] ||
+        last.integerValue <= 0 || last.integerValue != total.integerValue) return std::nullopt;
+    QStringList lines;
+    qsizetype length = 0;
+    for (id row in rows) {
+        // Chromium exposes xterm list items as groups of static text.
+        auto rowElement = (AXUIElementRef)row;
+        NSArray* fragments = axAttribute(rowElement, kAXChildrenAttribute);
+        std::optional<QString> text;
+        if (fragments.count) {
+            QString joined;
+            for (id fragment in fragments) {
+                auto child = (AXUIElementRef)fragment;
+                if (copyStringAttribute(child, kAXRoleAttribute) != QLatin1String("AXStaticText")) return std::nullopt;
+                auto value = readStringAttribute(child, kAXValueAttribute);
+                if (!value || joined.size() + value->size() > kMaxReadChars) return std::nullopt;
+                joined += *value;
+            }
+            text = joined;
+        } else {
+            text = readStringAttribute(rowElement, kAXValueAttribute);
+            if (!text || text->isEmpty()) text = readStringAttribute(rowElement, kAXDescriptionAttribute);
+            if (!text) return std::nullopt;
+        }
+        length += text->size() + 1;
+        if (length > kMaxReadChars) return std::nullopt;
+        lines.append(*text);
+    }
+    // xterm pads its viewport with blank rows below the live cursor.
+    while (!lines.isEmpty() && lines.last().trimmed().isEmpty()) lines.removeLast();
+    if (lines.isEmpty()) return std::nullopt;
+    return lines.join(QLatin1Char('\n'));
+}
+
+using Word = std::pair<int, int>;
+
+std::optional<Word> recentTypo(const QString& text) {
+    int start = std::max(0, static_cast<int>(text.size()) - 1600);
+    while (start > 0 && start < text.size() && !text[start - 1].isSpace()) ++start;
+    NSString* suffix = text.mid(start).toNSString();
+    NSSpellChecker* checker = [NSSpellChecker sharedSpellChecker];
+    std::optional<Word> result;
+    NSUInteger cursor = 0;
+    for (int errors = 0; cursor < suffix.length && errors < 64; ++errors) {
+        NSRange r = [checker checkSpellingOfString:suffix startingAt:cursor language:nil wrap:NO inSpellDocumentWithTag:0 wordCount:nullptr];
+        if (r.location == NSNotFound || !r.length || r.location < cursor || NSMaxRange(r) > suffix.length) break;
+        cursor = NSMaxRange(r);
+        int first = start + static_cast<int>(r.location), end = start + static_cast<int>(cursor);
+        const auto span = wordSpanAtCaret(text, first);
+        const auto word = QStringView(text).mid(first, end - first);
+        if (r.length >= 4 && span == Word(first, end) && std::all_of(word.begin(), word.end(), [](QChar c) { return c.isLower(); }))
+            result = span;
+    }
+    return result;
+}
+
+QRect elementRect(AXUIElementRef element) {
+    id pos = axAttribute(element, kAXPositionAttribute);
+    id size = axAttribute(element, kAXSizeAttribute);
+    CGPoint origin{};
+    CGSize extent{};
+    if (!pos || !size || CFGetTypeID((CFTypeRef)pos) != AXValueGetTypeID() ||
+        CFGetTypeID((CFTypeRef)size) != AXValueGetTypeID() ||
+        !AXValueGetValue((AXValueRef)pos, static_cast<AXValueType>(kAXValueCGPointType), &origin) ||
+        !AXValueGetValue((AXValueRef)size, static_cast<AXValueType>(kAXValueCGSizeType), &extent)) return {};
+    return QRectF(origin.x, origin.y, extent.width, extent.height).toAlignedRect();
+}
+
+std::optional<QRect> textBounds(AXUIElementRef element, CFRange range) {
+    id value = axParameter(element, kAXBoundsForRangeParameterizedAttribute, axRange(range));
+    CGRect bounds{};
+    if (!value || CFGetTypeID((CFTypeRef)value) != AXValueGetTypeID() ||
+        !AXValueGetValue((AXValueRef)value, static_cast<AXValueType>(kAXValueCGRectType), &bounds) ||
+        CGRectIsInfinite(bounds) || CGRectIsNull(bounds)) return std::nullopt;
+    return QRectF(bounds.origin.x, bounds.origin.y, bounds.size.width, bounds.size.height).toAlignedRect();
+}
+
+void readWordBounds(AXUIElementRef el, ObservedField& f, Word span) {
+    const auto [start, end] = span;
+    if (f.fieldRect.isEmpty()) return;
+    NSString* word = axParameter(el, kAXStringForRangeParameterizedAttribute, axRange({start, end - start}));
+    if (![word isKindOfClass:NSString.class] || QString::fromNSString(word) != f.text.mid(start, end - start)) return;
+    QRect viewport = f.fieldRect;
+    auto ancestor = el;
+    for (int depth = 0; ancestor && depth < 16; ++depth) {
+        const auto role = copyStringAttribute(ancestor, kAXRoleAttribute);
+        if (role == QLatin1String("AXScrollArea") || role == QLatin1String("AXWindow")) {
+            const auto bounds = elementRect(ancestor);
+            if (!bounds.isEmpty()) viewport = viewport.intersected(bounds);
+            if (role == QLatin1String("AXWindow")) break;
+        }
+        ancestor = (AXUIElementRef)axAttribute(ancestor, kAXParentAttribute);
+    }
+    const auto bounds = textBounds(el, {start, end - start});
+    const auto first = textBounds(el, {start, 1});
+    if (!bounds || !first) return;
+    QList<QRect> rects;
+    if (bounds->top() == first->top() && bounds->bottom() == first->bottom()) {
+        const auto visible = bounds->intersected(viewport);
+        if (!visible.isEmpty()) rects.append(visible);
+    } else {
+        // Chromium reports a union across soft wraps even when AXRangeForLine
+        // identifies a single logical line. Join only adjacent glyph bounds.
+        if (end - start > 128) return;
+        for (int pos = start; pos < end; ++pos) {
+            const auto glyph = pos == start ? first : textBounds(el, {pos, 1});
+            if (!glyph) return;
+            const auto visible = glyph->intersected(viewport);
+            if (visible.isEmpty()) continue;
+            if (!rects.isEmpty() && rects.last().top() == visible.top() &&
+                rects.last().bottom() == visible.bottom() && rects.last().adjusted(-1, 0, 1, 0).intersects(visible))
+                rects.last() = rects.last().united(visible);
+            else
+                rects.append(visible);
+        }
+    }
+    f.wordStartOffset = start;
+    f.wordEndOffset = end;
+    f.wordRects = rects;
 }
 
 bool postKey(CGKeyCode key, CGEventFlags flags, pid_t targetPid) {
@@ -217,16 +421,13 @@ public:
                 } else {
                     CFRelease(element);
                 }
+            } else {
+                detachFocused();
+                m_lastField.reset();
+                emit fieldLost();
+                return;
             }
-            if (m_focused != nullptr && m_eligible) {
-                auto field = readField();
-                if (field.has_value()) {
-                    field->refreshRequestId = requestId;
-                    m_lastSignature = field->text + QChar(0x1F) + QString::number(field->caretOffset) + QChar(0x1F) +
-                                      QString::number(field->fieldToken);
-                    emit fieldObserved(*field);
-                }
-            }
+            readAndEmit(requestId, true);
         });
     }
 
@@ -247,7 +448,7 @@ public:
     }
 
 private:
-    struct KnownField { AXUIElementRef element; pid_t pid; QString bundle; quint64 token; };
+    struct KnownField { AXUIElementRef element; pid_t pid; QString bundle; quint64 token; AXUIElementRef pane; FieldKind kind; };
 
     void run() {
         {
@@ -273,7 +474,7 @@ private:
     }
 
     void perform(void (^block)(void)) {
-        CFRunLoopPerformBlock(m_loop, kCFRunLoopDefaultMode, block);
+        CFRunLoopPerformBlock(m_loop, kCFRunLoopDefaultMode, ^{ @autoreleasepool { block(); } });
         CFRunLoopWakeUp(m_loop);
     }
 
@@ -311,7 +512,7 @@ private:
         m_pollTimer = CFRunLoopTimerCreateWithHandler(
             nullptr, CFAbsoluteTimeGetCurrent() + 0.1, 0.1, 0, 0,
             ^(CFRunLoopTimerRef) {
-                this->onHeartbeat();
+                @autoreleasepool { this->onHeartbeat(); }
             });
         CFRunLoopAddTimer(m_loop, m_pollTimer, kCFRunLoopDefaultMode);
     }
@@ -379,16 +580,31 @@ private:
     }
 
     quint64 tokenFor(AXUIElementRef element) {
-        for (const auto& field : m_knownFields)
-            if (field.pid==m_pid && field.bundle==m_bundleId && CFEqual(field.element,element)) return field.token;
-        // Retain only exact native identities. Equal text, labels or geometry never rebind a field.
-        if (m_knownFields.size()==32) { CFRelease(m_knownFields.front().element); m_knownFields.erase(m_knownFields.begin()); }
-        const auto token=++m_nextFieldToken;
-        CFRetain(element); m_knownFields.push_back({element,m_pid,m_bundleId,token});
+        const bool embedded = isElectronBundle(m_bundleId) && hasClass(element, @"xterm-helper-textarea");
+        const auto pane = embedded ? xtermPane(element) : nullptr;
+        const auto kind = embedded || isTerminalBundle(m_bundleId) ? FieldKind::Terminal : FieldKind::GuiEditor;
+        for (const auto& field : m_knownFields) {
+            const bool samePane = pane == field.pane || (pane && field.pane && CFEqual(pane, field.pane));
+            if (field.kind == kind && samePane && field.pid == m_pid && field.bundle == m_bundleId &&
+                CFEqual(field.element, element)) return field.token;
+        }
+        if (m_knownFields.size() == 32) {
+            releaseField(m_knownFields.front());
+            m_knownFields.erase(m_knownFields.begin());
+        }
+        const auto token = ++m_nextFieldToken;
+        CFRetain(element);
+        if (pane) CFRetain(pane);
+        m_knownFields.push_back({element, m_pid, m_bundleId, token, pane, kind});
         return token;
     }
+    static void releaseField(const KnownField& field) {
+        CFRelease(field.element);
+        if (field.pane) CFRelease(field.pane);
+    }
+
     void clearKnownFields() {
-        for (const auto& field : m_knownFields) CFRelease(field.element);
+        for (const auto& field : m_knownFields) releaseField(field);
         m_knownFields.clear();
     }
 
@@ -423,7 +639,10 @@ private:
             m_focused = nullptr;
         }
         m_consecutiveFocusMisses = 0;
-        m_lastSignature.clear();
+        m_spellingText.clear();
+        m_typo.reset();
+        m_lastField.reset();
+        m_newFocus = true;
     }
 
     void onAppActivated(pid_t pid) {
@@ -439,6 +658,10 @@ private:
         }
         if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
             qInfo() << "[MacAX] Target app:" << m_displayName << "bundleId=" << m_bundleId << "isElectron=" << isElectronBundle(m_bundleId);
+        }
+        if (!HostContextDetector::isAmbientEligibleApp(m_bundleId)) {
+            emit fieldLost();
+            return;
         }
         m_app = AXUIElementCreateApplication(pid);
         if (m_app == nullptr) {
@@ -462,7 +685,7 @@ private:
         if (isElectronBundle(m_bundleId)) {
             CFRunLoopTimerRef retry = CFRunLoopTimerCreateWithHandler(
                 nullptr, CFAbsoluteTimeGetCurrent() + kElectronWakeSeconds, 0, 0, 0,
-                ^(CFRunLoopTimerRef) { this->onFocusChanged(); });
+                ^(CFRunLoopTimerRef) { @autoreleasepool { this->onFocusChanged(); } });
             CFRunLoopAddTimer(m_loop, retry, kCFRunLoopDefaultMode);
             CFRelease(retry);
         }
@@ -520,6 +743,9 @@ private:
         if (m_focused == nullptr || !m_eligible) {
             return std::nullopt;
         }
+        // A rich editor can reparent a retained input into a different pane.
+        if (const auto* previous = capturedField(m_token, FieldKind::Terminal);
+            previous && !isTerminalBundle(m_bundleId)) m_token = tokenFor(m_focused);
         ObservedField f;
         f.fieldToken = m_token;
         f.appIdentifier = m_bundleId;
@@ -533,60 +759,34 @@ private:
         }
         f.appDisplayName = m_displayName;
         f.processId = m_pid;
-        f.kind = isTerminalBundle(m_bundleId) ? FieldKind::Terminal : FieldKind::GuiEditor;
+        const auto target = std::find_if(m_knownFields.begin(), m_knownFields.end(), [this](const KnownField& known) { return known.token == m_token; });
+        if (target == m_knownFields.end()) return std::nullopt;
+        f.kind = target->kind;
         f.isPassword = copyStringAttribute(m_focused, kAXSubroleAttribute) == QLatin1String("AXSecureTextField");
         if (f.isPassword) {
             return f;
         }
-        f.text = copyStringAttribute(m_focused, kAXValueAttribute).left(kMaxReadChars);
+        auto text = captureText(*target);
+        if (!text) return std::nullopt;
+        f.text = *text;
 
-        CFTypeRef rangeValue = nullptr;
-        if (AXUIElementCopyAttributeValue(m_focused, kAXSelectedTextRangeAttribute, &rangeValue) == kAXErrorSuccess &&
-            rangeValue != nullptr) {
-            CFRange range{};
-            if (AXValueGetValue(static_cast<AXValueRef>(rangeValue), static_cast<AXValueType>(kAXValueCFRangeType), &range)) {
-                f.caretOffset = static_cast<int>(range.location);
-                CFRange caret{range.location, 0};
-                AXValueRef caretValue = AXValueCreate(static_cast<AXValueType>(kAXValueCFRangeType), &caret);
-                CFTypeRef boundsValue = nullptr;
-                if (caretValue != nullptr &&
-                    AXUIElementCopyParameterizedAttributeValue(m_focused, kAXBoundsForRangeParameterizedAttribute,
-                                                               caretValue, &boundsValue) == kAXErrorSuccess &&
-                    boundsValue != nullptr) {
-                    CGRect rect{};
-                    if (AXValueGetValue(static_cast<AXValueRef>(boundsValue), static_cast<AXValueType>(kAXValueCGRectType), &rect)) {
-                        f.caretRect = QRect(static_cast<int>(rect.origin.x), static_cast<int>(rect.origin.y),
-                                            std::max(1, static_cast<int>(rect.size.width)),
-                                            std::max(1, static_cast<int>(rect.size.height)));
-                    }
-                    CFRelease(boundsValue);
+        if (!target->pane) {
+            if (auto selection = readSelection(m_focused)) {
+                f.caretOffset = static_cast<int>(std::min<CFIndex>(selection->location, f.text.size()));
+                id value = axParameter(m_focused, kAXBoundsForRangeParameterizedAttribute, axRange({selection->location, 0}));
+                CGRect rect{};
+                if (value && CFGetTypeID((CFTypeRef)value) == AXValueGetTypeID() &&
+                    AXValueGetValue((AXValueRef)value, static_cast<AXValueType>(kAXValueCGRectType), &rect) && rect.size.height > 0) {
+                    f.caretRect = QRect(qRound(rect.origin.x), qRound(rect.origin.y),
+                                        std::max(1, qRound(rect.size.width)), std::max(1, qRound(rect.size.height)));
                 }
-                if (caretValue != nullptr) CFRelease(caretValue);
             }
-            CFRelease(rangeValue);
         }
-
-        CFTypeRef posValue = nullptr;
-        CFTypeRef sizeValue = nullptr;
-        CGPoint pt{};
-        CGSize sz{};
-        bool hasPos = false;
-        bool hasSize = false;
-        if (AXUIElementCopyAttributeValue(m_focused, kAXPositionAttribute, &posValue) == kAXErrorSuccess && posValue != nullptr) {
-            hasPos = AXValueGetValue(static_cast<AXValueRef>(posValue), static_cast<AXValueType>(kAXValueCGPointType), &pt);
-            CFRelease(posValue);
-        }
-        if (AXUIElementCopyAttributeValue(m_focused, kAXSizeAttribute, &sizeValue) == kAXErrorSuccess && sizeValue != nullptr) {
-            hasSize = AXValueGetValue(static_cast<AXValueRef>(sizeValue), static_cast<AXValueType>(kAXValueCGSizeType), &sz);
-            CFRelease(sizeValue);
-        }
-        if (hasPos && hasSize && sz.width > 0 && sz.height > 0) {
-            f.fieldRect = QRect(static_cast<int>(pt.x), static_cast<int>(pt.y),
-                                static_cast<int>(sz.width), static_cast<int>(sz.height));
-        }
+        const auto container = target->pane ? target->pane : m_focused;
+        if (container) f.fieldRect = elementRect(container);
 
         if (f.kind == FieldKind::Terminal) {
-            const auto rawCaret = f.caretOffset;
+            const auto rawCaret = target->pane ? static_cast<int>(f.text.size()) : f.caretOffset;
             const auto offset = rawCaret < 0 ? f.text.size() : std::min<qsizetype>(rawCaret, f.text.size());
             auto prefix = f.text.left(offset);
             prefix.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
@@ -597,24 +797,33 @@ private:
         if (f.caretOffset > f.text.size()) {
             f.caretOffset = static_cast<int>(f.text.size());
         }
+        if (f.kind == FieldKind::GuiEditor && f.caretOffset >= 0) {
+            if (QStringView(f.text).mid(f.caretOffset).trimmed().isEmpty()) {
+                if (m_spellingText != f.text) {
+                    m_spellingText = f.text;
+                    m_typo = recentTypo(f.text);
+                }
+                if (m_typo) readWordBounds(m_focused, f, *m_typo);
+            }
+            if (f.wordStartOffset < 0) {
+                if (auto span = wordSpanAtCaret(f.text, f.caretOffset)) readWordBounds(m_focused, f, *span);
+            }
+        }
         return f;
     }
 
-    void readAndEmit() {
+    void readAndEmit(quint64 requestId = 0, bool force = false) {
         auto field = readField();
-        if (!field.has_value()) {
+        if (!field) {
+            if (m_lastField || force || m_newFocus) emit fieldLost();
+            m_lastField.reset();
+            m_newFocus = false;
             return;
         }
-        const QString signature = field->text + QChar(0x1F) + QString::number(field->caretOffset) + QChar(0x1F) +
-                                  QString::number(field->fieldToken) + QChar(0x1F) +
-                                  QString::number(field->fieldRect.x()) + QChar(0x1F) +
-                                  QString::number(field->fieldRect.y()) + QChar(0x1F) +
-                                  QString::number(field->fieldRect.width()) + QChar(0x1F) +
-                                  QString::number(field->fieldRect.height());
-        if (signature == m_lastSignature) {
-            return;
-        }
-        m_lastSignature = signature;
+        if (!force && m_lastField && *field == *m_lastField) return;
+        m_newFocus = false;
+        m_lastField = field;
+        field->refreshRequestId = requestId;
         if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
             qInfo() << "[MacAX] readAndEmit: characters=" << field->text.size() << "fieldRect=" << field->fieldRect;
         }
@@ -624,7 +833,7 @@ private:
     const KnownField* capturedField(quint64 token, FieldKind kind) const {
         for (const auto& field : m_knownFields) {
             if (field.token == token &&
-                isTerminalBundle(field.bundle) == (kind == FieldKind::Terminal)) return &field;
+                field.kind == kind) return &field;
         }
         return nullptr;
     }
@@ -636,44 +845,91 @@ private:
             return false;
         const bool matches = CFEqual(focused, target.element);
         CFRelease(focused);
-        return matches;
+        if (!matches || !target.pane) return matches;
+        const auto pane = xtermPane(target.element);
+        return pane && CFEqual(pane, target.pane);
     }
 
-    static bool activateCapturedApp(AXUIElementRef app, const KnownField& target) {
+    // Chromium can return focus to the containing web document when the
+    // user clicks Roclint. Restore only the last observed editor inside that
+    // exact focused document and window. A sibling input or pane is a veto.
+    static bool focusReturnedWebEditor(AXUIElementRef app, const KnownField& target) {
+        if (target.kind != FieldKind::GuiEditor || !isElectronBundle(target.bundle) ||
+            frontmostPid() != target.pid) return false;
+        auto focused = (AXUIElementRef)axAttribute(app, kAXFocusedUIElementAttribute);
+        if (!focused || copyStringAttribute(focused, kAXRoleAttribute) != QLatin1String("AXWebArea")) return false;
+        id window = axAttribute(app, kAXFocusedWindowAttribute);
+        id capturedWindow = axAttribute(target.element, kAXWindowAttribute);
+        if (!window || !capturedWindow || !CFEqual((CFTypeRef)window, (CFTypeRef)capturedWindow)) return false;
+        const auto rect = elementRect(target.element);
+        if (rect.isEmpty()) return false;
+        AXUIElementRef hit = nullptr;
+        const auto center = rect.center();
+        if (AXUIElementCopyElementAtPosition(app, center.x(), center.y(), &hit) != kAXErrorSuccess || !hit) return false;
+        const bool visible = CFEqual(hit, target.element);
+        CFRelease(hit);
+        if (!visible) return false;
+        auto parent = target.element;
+        for (int depth = 0; parent && depth < 32; ++depth) {
+            if (CFEqual(parent, focused)) {
+                return AXUIElementSetAttributeValue(target.element, kAXFocusedAttribute, kCFBooleanTrue) == kAXErrorSuccess;
+            }
+            parent = (AXUIElementRef)axAttribute(parent, kAXParentAttribute);
+        }
+        return false;
+    }
+
+    bool activateCapturedApp(AXUIElementRef app, const KnownField& target) {
         const auto front = frontmostPid();
         if (front == target.pid) return targetFocused(app, target);
-        if (front != getpid()) return false;
+        if (front != getpid() || target.token != m_token || !m_focused || !CFEqual(target.element, m_focused))
+            return false;
 
         @autoreleasepool {
             NSRunningApplication* application = [NSRunningApplication runningApplicationWithProcessIdentifier:target.pid];
             if (!application || !application.bundleIdentifier ||
                 QString::fromNSString(application.bundleIdentifier) != target.bundle) return false;
-            if (@available(macOS 14.0, *)) {
-                [NSApp yieldActivationToApplication:application];
-                [application activateFromApplication:[NSRunningApplication currentApplication] options:0];
-            } else {
+            // AX can return the already verified editor application to the
+            // foreground without selecting a window or an input on its behalf.
+            if (AXUIElementSetAttributeValue(app, kAXFrontmostAttribute, kCFBooleanTrue) != kAXErrorSuccess) {
+                if (@available(macOS 14.0, *)) {
+                    [NSApp yieldActivationToApplication:application];
+                    [application activateFromApplication:[NSRunningApplication currentApplication] options:0];
+                } else {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-                [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+                    [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
 #pragma clang diagnostic pop
+                }
             }
         }
-        // The app must return to the captured element on its own. Forcing focus
-        // to a previously captured field could write into a stale draft.
+        bool restoredWebFocus = false;
         for (int i = 0; i < 18; ++i) {
             const auto active = frontmostPid();
             if (active != getpid() && active != target.pid) return false;
             if (targetFocused(app, target)) return true;
+            if (!restoredWebFocus && active == target.pid)
+                restoredWebFocus = focusReturnedWebEditor(app, target);
             usleep(kPollMicros);
         }
         return false;
     }
 
+    static std::optional<QString> captureText(const KnownField& target) {
+        if (target.kind == FieldKind::GuiEditor) return guiText(target.element, isElectronBundle(target.bundle));
+        if (!isTerminalBundle(target.bundle)) {
+            const auto pane = xtermPane(target.element);
+            if (!pane || !target.pane || !CFEqual(pane, target.pane)) return std::nullopt;
+            return terminalRows(pane);
+        }
+        return readStringAttribute(target.element, kAXValueAttribute);
+    }
+
     static std::optional<QString> deliveryText(const KnownField& target, FieldKind kind) {
-        auto text = readStringAttribute(target.element, kAXValueAttribute);
-        if (!text) return std::nullopt;
-        if (kind == FieldKind::GuiEditor) return text;
-        const auto selection = readSelection(target.element);
+        auto text = captureText(target);
+        if (kind == FieldKind::GuiEditor || !text) return text;
+
+        const auto selection = target.pane ? std::nullopt : readSelection(target.element);
         const auto caret = selection ? std::min(selection->location, static_cast<CFIndex>(text->size())) : text->size();
         auto prefix = text->left(caret);
         prefix.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
@@ -683,9 +939,12 @@ private:
     }
 
     static bool exactText(AXUIElementRef app, const KnownField& target, FieldKind kind, const QString& expected) {
-        if (!targetFocused(app, target)) return false;
-        const auto current = deliveryText(target, kind);
-        return current && RangeInjectionPolicy::readbackMatches(expected, *current);
+        const bool focused = targetFocused(app, target);
+        const auto current = focused ? deliveryText(target, kind) : std::nullopt;
+        const bool matches = current && RangeInjectionPolicy::readbackMatches(expected, *current);
+        if (!matches && qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
+            qInfo() << "[MacAX] replacement precondition failed: focus=" << focused << "readable=" << current.has_value();
+        return matches;
     }
 
     static bool waitForText(AXUIElementRef app, const KnownField& target, FieldKind kind,
@@ -809,13 +1068,20 @@ private:
         if (subrole == QLatin1String("AXSecureTextField")) return InjectionOutcome::NotSupported;
         const auto current = deliveryText(*target, kind);
         if (!current) return InjectionOutcome::NotSupported;
-        if (!RangeInjectionPolicy::preconditionsHold(token, target->token, before, *current))
+        if (!RangeInjectionPolicy::preconditionsHold(token, target->token, before, *current)) {
+            if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
+                qInfo() << "[MacAX] captured draft changed before delivery";
             return InjectionOutcome::FieldChanged;
+        }
 
         const std::unique_ptr<std::remove_pointer_t<AXUIElementRef>, decltype(&CFRelease)>
             app(AXUIElementCreateApplication(target->pid), CFRelease);
-        if (!app || !activateCapturedApp(app.get(), *target) || !exactText(app.get(), *target, kind, before))
+        if (!app || !activateCapturedApp(app.get(), *target)) {
+            if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
+                qInfo() << "[MacAX] delivery refused: original field did not regain focus";
             return InjectionOutcome::FieldChanged;
+        }
+        if (!exactText(app.get(), *target, kind, before)) return InjectionOutcome::FieldChanged;
         return write(app.get(), *target);
     }
 
@@ -837,6 +1103,7 @@ private:
                         (!r.appIdentifier.isEmpty() && r.appIdentifier != target.bundle))
                         return InjectionOutcome::FieldChanged;
                     if (r.kind == FieldKind::Terminal) return replaceTerminalDraft(app, target, r);
+                    if (r.text.size() > kMaxReadChars) return InjectionOutcome::NotSupported;
                     return replaceGuiValue(app, target, r.expectedCurrentText, r.text);
                 });
             emit injectionFinished(r.requestId, outcome, deliveryDetail(outcome));
@@ -858,6 +1125,11 @@ private:
             }
             QString expected = r.expectedCurrentText;
             expected.replace(r.startOffset, r.endOffset - r.startOffset, r.replacementText);
+            if (expected.size() > kMaxReadChars) {
+                emit rangeInjectionFinished(r.requestId, InjectionOutcome::NotSupported,
+                    QStringLiteral("The replacement would exceed the verified capture limit."));
+                return;
+            }
             const auto outcome = withCapturedField(r.fieldToken, r.kind, r.expectedCurrentText,
                 [&](AXUIElementRef app, const KnownField& target) {
                     const CFRange range{r.startOffset, r.endOffset - r.startOffset};
@@ -901,13 +1173,16 @@ private:
     bool m_eligible{false};
     std::vector<KnownField> m_knownFields;
     quint64 m_token{0}, m_nextFieldToken{0};
-    QString m_lastSignature;
+    bool m_newFocus{true};
+    std::optional<ObservedField> m_lastField;
+    QString m_spellingText;
+    std::optional<Word> m_typo;
     CFRunLoopTimerRef m_pollTimer{nullptr};
     int m_consecutiveFocusMisses{0};
 };
 
 void axCallback(AXObserverRef, AXUIElementRef, CFStringRef notification, void* refcon) {
-    static_cast<MacAccessibilityBridge*>(refcon)->onNotification(notification);
+    @autoreleasepool { static_cast<MacAccessibilityBridge*>(refcon)->onNotification(notification); }
 }
 
 } // namespace

@@ -15,7 +15,7 @@ QtObject {
             required property int index
             title: "Roclint phrase mark"
             objectName: "wordMark_" + index
-            flags: (Qt.platform.os === "windows" ? Qt.Tool : Qt.ToolTip)
+            flags: (Qt.platform.os === "windows" || Qt.platform.os === "osx" ? Qt.Tool : Qt.ToolTip)
                    | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
             // Windows can pass clicks through zero-alpha pixels in a layered
             // window. Keep the entire narrow underline strip hit-testable.

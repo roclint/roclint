@@ -3877,7 +3877,7 @@ void HostController::detectWordRefinements(const ObservedField& field) {
     const int caret = (field.caretOffset >= 0 && field.caretOffset <= text.size()) ? field.caretOffset : text.size();
 
     auto span = wordSpanAtCaret(text, caret);
-    if (!field.wordRects.isEmpty()) {
+    if (field.wordStartOffset >= 0) {
         const auto observedSpan = wordSpanAtCaret(text, field.wordStartOffset);
         if (observedSpan && observedSpan->first == field.wordStartOffset && observedSpan->second == field.wordEndOffset)
             span = observedSpan;

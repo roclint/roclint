@@ -400,6 +400,9 @@ int main(int argc, char* argv[]) {
                 }
             });
         } else if (objUrl == companionUrl) {
+#ifdef Q_OS_MAC
+            roclint::host::configureNonActivatingPanel(window);
+#endif
             // The QML flags include WindowDoesNotAcceptFocus. Show without activating so the
             // destination editor keeps focus and the frozen target remains valid.
             const auto placeCompanion = [window, controller]() {

@@ -43,6 +43,7 @@ struct ObservedField {
     // Windows UIA uses physical pixels. The GUI thread normalizes exactly once
     // before storing the observation; macOS and test observations are logical.
     bool geometryInNativePixels{false};
+    bool operator==(const ObservedField&) const = default;
 };
 
 struct InjectionRequest {

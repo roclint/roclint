@@ -28,6 +28,22 @@ void testPageDocumentIsNotPromptComposer() {
     ROCLINT_CHECK(!isGuiCaptureEligible(GuiCaptureRole::ComboBox, false));
     ROCLINT_CHECK(isGuiCaptureEligible(GuiCaptureRole::Edit, false));
     ROCLINT_CHECK(!isGuiCaptureEligible(GuiCaptureRole::Other, true));
+    using roclint::host::verifiedMacGuiText;
+    const QString empty;
+    const QString hint = QStringLiteral("Type a prompt");
+    const QString full(16000, QLatin1Char('a'));
+    ROCLINT_CHECK(verifiedMacGuiText(full, true, 16000, {}, hint) == full);
+    ROCLINT_CHECK(!verifiedMacGuiText(full, true, 16001, {}, hint));
+    ROCLINT_CHECK(verifiedMacGuiText(full.left(10000), true, 16000, full, hint) == full);
+    ROCLINT_CHECK(!verifiedMacGuiText(full.left(10000), true, 16000, {}, hint));
+    ROCLINT_CHECK(!verifiedMacGuiText(QStringLiteral("stale"), true, 16000, full, hint));
+    ROCLINT_CHECK(!verifiedMacGuiText(full + QLatin1Char('a'), false, {}, {}, hint));
+    ROCLINT_CHECK(!verifiedMacGuiText({}, false, {}, {}, hint));
+    ROCLINT_CHECK(!verifiedMacGuiText(empty, true, 0, {}, hint));
+    ROCLINT_CHECK(verifiedMacGuiText(empty, true, 0, empty, hint) == empty);
+    ROCLINT_CHECK(!verifiedMacGuiText(empty, true, hint.size(), hint, hint));
+    ROCLINT_CHECK(verifiedMacGuiText(empty, true, 5, QStringLiteral("draft"), hint) == QStringLiteral("draft"));
+    ROCLINT_CHECK(!verifiedMacGuiText(empty, true, 5, QStringLiteral("dra"), hint));
     using roclint::host::isGuiCaptureTextReliable;
     // A falsely empty ValuePattern must not authorize overwriting a visible
     // nonempty composer. Real empty text ranges and normal edit fields still work.

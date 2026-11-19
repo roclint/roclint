@@ -1,6 +1,7 @@
 #include "TerminalAdapter.hpp"
 
 #include <QStringList>
+#include <QSysInfo>
 
 namespace roclint::host {
 
@@ -33,10 +34,24 @@ QString stripFrame(QStringView line) {
     return line.mid(begin, end - begin).toString();
 }
 
+// The macOS login shell uses "user@host directory % ". Plain zsh also
+// uses "hostname% ". Require a shell-shaped prefix to exclude percentages.
+bool isZshPrompt(QStringView prefix) {
+    if (prefix.isEmpty()) return true;
+    if (!prefix.back().isSpace()) {
+        static const QString host = QSysInfo::machineHostName().section(QLatin1Char('.'), 0, 0);
+        return !host.isEmpty() && prefix.compare(host, Qt::CaseInsensitive) == 0;
+    }
+    const auto login = prefix.left(prefix.indexOf(QLatin1Char(' ')));
+    const auto at = login.indexOf(QLatin1Char('@'));
+    return at > 0 && at + 1 < login.size();
+}
+
 // Offset (within line) of the first delimiter that is followed by a space or ends the line.
 qsizetype findDelimiter(QStringView line) {
     for (qsizetype i = 0; i < line.size(); ++i) {
-        if (!isDelimiter(line[i])) {
+        const bool zsh = line[i] == QLatin1Char('%') && isZshPrompt(line.first(i));
+        if (!zsh && !isDelimiter(line[i])) {
             continue;
         }
         if (i + 1 == line.size() || line[i + 1] == QLatin1Char(' ') || line[i + 1] == QChar(0x00A0)) {

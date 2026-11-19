@@ -2,6 +2,7 @@
 
 #if defined(Q_OS_MAC)
 #include <QGuiApplication>
+#include <QEvent>
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 
@@ -86,8 +87,24 @@ void showNonActivatingWindow(QWindow* window) {
     }
 }
 
+// Underlines are dynamic QML windows. Apply the same native panel setup
+// as the companion each time a segment becomes visible.
+class WordMarkWindowFilter final : public QObject {
+public:
+    using QObject::QObject;
+    bool eventFilter(QObject* object, QEvent* event) override {
+        if (event->type() == QEvent::Show) {
+            auto* window = qobject_cast<QWindow*>(object);
+            if (window && window->objectName().startsWith(QLatin1String("wordMark_")))
+                configureNonActivatingPanel(window);
+        }
+        return false;
+    }
+};
+
 void configureHostProcess() {
     if (!usesCocoa()) return;
+    qGuiApp->installEventFilter(new WordMarkWindowFilter(qGuiApp));
     @autoreleasepool {
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     }
