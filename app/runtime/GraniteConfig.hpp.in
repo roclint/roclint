@@ -2,9 +2,9 @@
 
 namespace roclint::runtime {
 // Bounded-thinking operation deadlines, shared by the host and owned helper.
-inline constexpr int kGraniteAnalysisTimeoutMs = 45000;
-inline constexpr int kGraniteRewriteTimeoutMs = 60000;
+inline constexpr int kGraniteAnalysisTimeoutMs = @ROCLINT_GRANITE_ANALYSIS_TIMEOUT_MS@;
+inline constexpr int kGraniteRewriteTimeoutMs = @ROCLINT_GRANITE_REWRITE_TIMEOUT_MS@;
 // Inline thinking and final JSON share one deadline and remain cancellable on edits.
-inline constexpr int kGraniteWordRefinementTimeoutMs = 45000;
+inline constexpr int kGraniteWordRefinementTimeoutMs = @ROCLINT_GRANITE_WORD_REFINEMENT_TIMEOUT_MS@;
 inline constexpr const char* kGraniteManifestJson = R"ROCLINT_MANIFEST(@ROCLINT_GRANITE_MANIFEST_JSON@)ROCLINT_MANIFEST";
 }

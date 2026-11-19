@@ -4,13 +4,17 @@
 
 namespace roclint::host {
 
-// Pure preconditions for a range write. The Windows accessibility bridge uses these before
-// selecting or pasting, so a failed selection or a stale snapshot can never trigger a
-// destructive full-field recovery based on old text.
+// Preconditions shared by the native accessibility bridges.
 struct RangeInjectionPolicy {
     // Offsets are UTF-16 indexes into the frozen field text.
     [[nodiscard]] static bool offsetsValid(const QString& expectedCurrentText, int startOffset, int endOffset) {
-        return startOffset >= 0 && endOffset > startOffset && endOffset <= expectedCurrentText.size();
+        if (startOffset < 0 || endOffset <= startOffset || endOffset > expectedCurrentText.size()) return false;
+        const auto splitsSurrogate = [&expectedCurrentText](int offset) {
+            return offset > 0 && offset < expectedCurrentText.size() &&
+                   expectedCurrentText.at(offset - 1).isHighSurrogate() &&
+                   expectedCurrentText.at(offset).isLowSurrogate();
+        };
+        return !splitsSurrogate(startOffset) && !splitsSurrogate(endOffset);
     }
 
     [[nodiscard]] static bool rangeMatches(const QString& expectedCurrentText, int startOffset, int endOffset,

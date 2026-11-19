@@ -20,6 +20,7 @@
 #include <QFileDialog>
 #include <QGuiApplication>
 #include <QRegularExpression>
+#include <QScopedValueRollback>
 #include <QSet>
 #include <QSettings>
 #include <QStandardPaths>
@@ -3880,7 +3881,8 @@ QVariantList HostController::creativeAlternatives() const {
 }
 
 void HostController::selectAlternative(int index) {
-    if (index < 0 || index >= static_cast<int>(m_creativeAlternatives.size()) || !m_currentProposal) {
+    if (m_candidateWriteInFlight || !m_revisionState || !m_currentProposal ||
+        index < 0 || index >= static_cast<int>(m_creativeAlternatives.size())) {
         return;
     }
     if (m_selectedAlternativeIndex == index) {
@@ -3888,45 +3890,35 @@ void HostController::selectAlternative(int index) {
     }
     m_selectedAlternativeIndex = index;
     const auto& alt = m_creativeAlternatives[static_cast<size_t>(index)];
-    m_currentProposal->rewrittenText = alt.rewrittenText;
-    m_currentProposal->diffText = alt.diffText;
+    auto proposal = *m_currentProposal;
+    proposal.rewrittenText = alt.rewrittenText;
+    proposal.diffText = alt.diffText;
 
     // F06: Recompute text-derived constraints for the selected text
     if (m_confirmedIntent) {
         if (const auto profile = rewrite::ProfileRegistry::getProfile(ss(m_rewriteProfile)); profile.has_value()) {
-            m_currentProposal->constraints = rewrite::RewriteValidator::deriveConstraints(
+            proposal.constraints = rewrite::RewriteValidator::deriveConstraints(
                 *m_confirmedIntent, *profile, alt.rewrittenText);
         }
     }
 
     // Assign a unique proposal ID on each candidate selection
-    m_currentProposal->id = newOpaqueId("prop_");
+    proposal.id = newOpaqueId("prop_");
+    proposal.auditResult.reset();
+    core::rewrite::ProposalHasher::seal(proposal);
+    m_currentProposal = proposal;
 
     // Clear stale audit presentation immediately so stale audit results
     // are not displayed while background audit is in progress for the new candidate
     m_lastAuditResult.reset();
 
-    // Invalidate prior review acknowledgments and advance state version
+    // Hide prior approval while the new selection is pending. The durable
+    // version and approval change together when the audited proposal is saved.
     m_acknowledgedConstraints.clear();
     m_currentApproval.reset();
-    const auto prevVersion = m_revisionState ? m_revisionState->stateVersion() : 0;
-    if (m_revisionState) {
-        (void)m_revisionState->advanceState(prevVersion);
-    }
-
-    core::rewrite::ProposalHasher::seal(*m_currentProposal);
     if (!m_activeGroundingProposalId.empty()) {
-        m_activeGroundingProposalId = m_currentProposal->id;
+        m_activeGroundingProposalId = proposal.id;
     }
-    const std::string candidateHash = m_currentProposal->proposalHash;
-
-    setProposalStatus(ProposalUiStatus::Generating,
-                      QStringLiteral("Auditing selected candidate rewrite..."));
-
-    emit selectedAlternativeChanged();
-    emit rewriteProposalChanged();
-    emit stateVersionChanged();
-    emit approvalChanged();
 
     // Prepare ticket for asynchronous selection audit
     PipelineTicket ticket = makeTicket();
@@ -3934,14 +3926,7 @@ void HostController::selectAlternative(int index) {
     if (m_confirmedIntent) {
         ticket.intentId = m_confirmedIntent->id;
     }
-    if (m_currentProposal) {
-        ticket.model.modelId = m_currentProposal->modelId;
-        ticket.model.digest = m_currentProposal->modelDigest;
-        ticket.model.quantization = m_currentProposal->quantization;
-        ticket.model.transport = m_currentProposal->transport;
-    } else if (m_graniteAdapter) {
-        ticket.model = m_graniteAdapter->modelInfo();
-    }
+    ticket.model = {proposal.modelId, proposal.modelDigest, proposal.quantization, proposal.transport};
 
     bridge::GraniteTransport auditTransport = nullptr;
 #ifdef ROCLINT_ENABLE_TEST_MOCKS
@@ -3951,16 +3936,22 @@ void HostController::selectAlternative(int index) {
 #endif
     if (!auditTransport) {
         auditTransport = currentTransport(bridge::goldfishAuditResponseSchema(), &ticket, QStringLiteral("granite_rewrite"),
-            qs(m_currentProposal->originalText), qs(m_confirmedIntent ? m_confirmedIntent->id : std::string()), m_rewriteProfile);
+            qs(proposal.originalText), qs(ticket.intentId), m_rewriteProfile);
     }
 
     bridge::GoldfishAuditRequest auditReq;
-    auditReq.originalPrompt = m_currentProposal->originalText;
-    auditReq.candidateRewrite = m_currentProposal->rewrittenText;
+    auditReq.originalPrompt = proposal.originalText;
+    auditReq.candidateRewrite = proposal.rewrittenText;
     if (m_confirmedIntent) {
-        auditReq.constraints = extractSessionConstraints(m_currentProposal->originalText, *m_confirmedIntent);
+        auditReq.constraints = extractSessionConstraints(proposal.originalText, *m_confirmedIntent);
     }
     auditReq.sessionId = currentSessionId();
+
+    setProposalStatus(ProposalUiStatus::Generating,
+                      QStringLiteral("Auditing selected candidate rewrite..."));
+    emit selectedAlternativeChanged();
+    emit approvalChanged();
+    if (!isAlternativeSelectionCurrent(ticket, proposal.id)) return;
 
     auto* watcher = new QFutureWatcher<core::ValidationResult>(this);
     ++m_inFlight;
@@ -3968,12 +3959,12 @@ void HostController::selectAlternative(int index) {
     if (nativeWork) ++m_nativeSemanticInFlight;
 
     connect(watcher, &QFutureWatcherBase::finished, this,
-        [this, watcher, ticket, index, candidateHash, prevVersion, nativeWork]() {
+        [this, watcher, ticket, index, proposal = std::move(proposal), nativeWork]() mutable {
             --m_inFlight;
             if (nativeWork) --m_nativeSemanticInFlight;
             core::ValidationResult result = watcher->result();
             watcher->deleteLater();
-            onAlternativeAuditFinished(ticket, index, candidateHash, prevVersion, std::move(result));
+            onAlternativeAuditFinished(ticket, index, std::move(proposal), std::move(result));
             finishQuitWhenRuntimesStopped();
         });
 
@@ -3984,26 +3975,19 @@ void HostController::selectAlternative(int index) {
         }));
 }
 
+bool HostController::isAlternativeSelectionCurrent(const PipelineTicket& ticket, const std::string& proposalId) const {
+    return isTicketCurrent(ticket, true) && m_currentProposal && m_currentProposal->id == proposalId &&
+           m_proposalWorkspaceEpoch == ticket.workspaceEpoch;
+}
+
 void HostController::onAlternativeAuditFinished(
-    PipelineTicket ticket, int index, std::string candidateHash, std::uint64_t prevVersion, core::ValidationResult auditVerdict) {
-    if (!isTicketCurrent(ticket, false) ||
-        !m_currentProposal ||
-        m_selectedAlternativeIndex != index ||
-        m_currentProposal->proposalHash != candidateHash ||
-        m_proposalWorkspaceEpoch != ticket.workspaceEpoch) {
-        return;
-    }
-
-    m_currentProposal->auditResult = auditVerdict;
-
-    // Capture an immutable RewriteProposal before enqueuing persistence
-    core::rewrite::RewriteProposal capturedProposal = *m_currentProposal;
-    capturedProposal.auditResult = auditVerdict;
-
+    PipelineTicket ticket, int index, rewrite::RewriteProposal proposal, core::ValidationResult auditVerdict) {
+    if (!isAlternativeSelectionCurrent(ticket, proposal.id)) return;
+    proposal.auditResult = std::move(auditVerdict);
     const auto cmdId = enqueueStorageCommand("persistSelectedAlternative",
-        [this, ticket = std::move(ticket), index, candidateHash = std::move(candidateHash), prevVersion, auditVerdict = std::move(auditVerdict), capturedProposal = std::move(capturedProposal)]() mutable {
-            return persistSelectedAlternativeOperation(std::move(ticket), index, std::move(candidateHash), prevVersion, std::move(auditVerdict), std::move(capturedProposal));
-        });
+        [this, ticket = std::move(ticket), index, proposal = std::move(proposal)]() mutable {
+            return persistSelectedAlternativeOperation(std::move(ticket), index, std::move(proposal));
+        }, true);
     if (cmdId == 0) {
         setProposalStatus(ProposalUiStatus::Failed, QStringLiteral("Storage command queue rejected save."));
         emit rewriteProposalChanged();
@@ -4012,17 +3996,8 @@ void HostController::onAlternativeAuditFinished(
 }
 
 AsyncTask<core::Status> HostController::persistSelectedAlternativeOperation(
-    PipelineTicket ticket, int index, std::string candidateHash, [[maybe_unused]] std::uint64_t prevVersion, core::ValidationResult auditVerdict, core::rewrite::RewriteProposal capturedProposal) {
-    auto isSelectionCurrent = [this, &ticket, index, &candidateHash, &capturedProposal]() -> bool {
-        return isTicketCurrent(ticket, false) &&
-               m_currentProposal.has_value() &&
-               m_selectedAlternativeIndex == index &&
-               m_currentProposal->proposalHash == candidateHash &&
-               m_currentProposal->id == capturedProposal.id &&
-               m_proposalWorkspaceEpoch == ticket.workspaceEpoch;
-    };
-
-    if (!isSelectionCurrent()) {
+    PipelineTicket ticket, int index, rewrite::RewriteProposal proposal) {
+    if (!isAlternativeSelectionCurrent(ticket, proposal.id)) {
         co_return makeError(ErrorCode::StaleVersion, "Candidate selection is stale");
     }
 
@@ -4033,68 +4008,49 @@ AsyncTask<core::Status> HostController::persistSelectedAlternativeOperation(
         co_return storageUnavailable();
     }
 
-    auto sessRes = co_await m_storage->call(&storage::PromptRepository::getSession, core::SessionId(currentSessionId()));
-    if (!sessRes.ok()) {
-        setProposalStatus(ProposalUiStatus::Failed, plainError(sessRes.error()));
-        setLastError(sessRes.error());
-        emit rewriteProposalChanged();
-        emit approvalChanged();
-        co_return sessRes.error();
+    Status status = Status::success();
+    {
+        // Draft edits can still update the editor while SQLite is writing.
+        // Hold their flush until the outcome determines their expected version.
+        QScopedValueRollback writing(m_candidateWriteInFlight, true);
+        status = co_await m_storage->call(&storage::PromptRepository::insertProposal,
+                                          proposal, nowMs(), std::optional{ticket.stateVersion});
     }
 
-    if (!isSelectionCurrent()) {
-        co_return makeError(ErrorCode::StaleVersion, "Candidate selection became stale during session fetch");
-    }
-
-    auto storedVer = sessRes.value().stateVersion;
-    const auto ts = nowMs();
-    while (storedVer + 1 < ticket.stateVersion) {
-        core::RevisionState intermediateState(
-            m_revisionState->currentRevision(),
-            m_revisionState->highestIssuedSequence(),
-            storedVer + 1,
-            m_revisionState->draftEditGeneration(),
-            m_revisionState->proposalEditGeneration());
-        auto advStatus = co_await m_storage->call(
-            &storage::PromptRepository::advanceSessionState,
-            intermediateState, storedVer, ts);
-        if (!advStatus.ok()) {
-            setProposalStatus(ProposalUiStatus::Failed, plainError(advStatus.error()));
-            setLastError(advStatus.error());
-            emit rewriteProposalChanged();
-            emit approvalChanged();
-            co_return advStatus;
+    const bool selectionCurrent = isAlternativeSelectionCurrent(ticket, proposal.id);
+    const bool sameRevision = m_revisionState && currentSessionId() == ticket.sessionId &&
+        m_revisionState->currentRevision().revisionId().value() == ticket.revisionId;
+    if (status.ok() && sameRevision) {
+        // A successful insert advanced SQLite by one. Preserve every edit
+        // made during the write, including its dirty state and generation.
+        (void)m_revisionState->advanceState(stateVersion());
+        if (m_pendingDraft) {
+            ++m_pendingDraft->expectedVersion;
+            m_pendingDraft->next = *m_revisionState;
         }
-        if (!isSelectionCurrent()) {
-            co_return makeError(ErrorCode::StaleVersion, "Candidate selection became stale during session state advance");
-        }
-        ++storedVer;
+    }
+    if (m_pendingDraft && !m_storageFault) {
+        QTimer::singleShot(0, this, [this]() { flushDraftEdits(); });
     }
 
-    auto status = co_await m_storage->call(
-        &storage::PromptRepository::insertProposal,
-        capturedProposal, ts,
-        storedVer > 0 ? std::optional<uint64_t>(storedVer) : std::nullopt);
+    if (!selectionCurrent) {
+        if (status.ok() && sameRevision) emit stateVersionChanged();
+        co_return makeError(ErrorCode::StaleVersion, "Candidate selection became stale during persistence");
+    }
 
     if (!status.ok()) {
         setProposalStatus(ProposalUiStatus::Failed, plainError(status.error()));
-        setLastError(status.error());
-        emit rewriteProposalChanged();
         emit approvalChanged();
         co_return status;
     }
 
-    if (!isSelectionCurrent()) {
-        co_return makeError(ErrorCode::StaleVersion, "Candidate selection became stale during persistence");
-    }
-
-    m_lastAuditResult = auditVerdict;
-    m_currentProposal->auditResult = auditVerdict;
+    m_lastAuditResult = proposal.auditResult;
+    m_currentProposal = std::move(proposal);
     if (index >= 0 && static_cast<size_t>(index) < m_creativeAlternatives.size()) {
-        m_creativeAlternatives[static_cast<size_t>(index)].auditOutcome = auditVerdict.outcome;
+        m_creativeAlternatives[static_cast<size_t>(index)].auditOutcome = m_lastAuditResult->outcome;
     }
     if (index >= 0 && static_cast<size_t>(index) < m_creativeAlternativeAuditExecutionStatuses.size()) {
-        m_creativeAlternativeAuditExecutionStatuses[static_cast<size_t>(index)] = auditVerdict.executionStatus;
+        m_creativeAlternativeAuditExecutionStatuses[static_cast<size_t>(index)] = m_lastAuditResult->executionStatus;
     }
 
     const auto currentValidation = validateCurrentProposal();
@@ -6612,6 +6568,8 @@ quint64 HostController::noteDraftEdited(quint64 expectedVersion) {
 quint64 HostController::noteDraftEditedInternal(quint64 expectedVersion, bool editedInHud) {
     if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) { setLastError(status.error()); return 0; }
     if (m_hostState == HostState::Quitting || m_nextStorageRequest == core::RevisionState::kMaxStateVersion) return 0;
+    // Leave room for the candidate transaction's version if it commits.
+    if (m_candidateWriteInFlight && expectedVersion >= core::RevisionState::kMaxStateVersion - 1) return 0;
     const auto id = ++m_nextStorageRequest; ++m_liveEditSerial;
     m_followAmbientDraft = false;
     if (editedInHud) m_widgetDraftEdited = true;
@@ -6655,6 +6613,7 @@ void HostController::publishDraftCompletions(std::shared_ptr<DraftCompletion> co
 }
 
 AsyncTask<Status> HostController::flushDraftEdits() {
+    if (m_candidateWriteInFlight) co_return Status::success();
     m_draftDebounce.stop(); m_draftMaxWait.stop();
     while (!m_storageFault) {
         if (m_draftFlushTask && !m_draftFlushTask->done()) {

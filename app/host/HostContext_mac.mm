@@ -1,10 +1,23 @@
 #include "HostContext.hpp"
 
 #if defined(Q_OS_MAC)
+#include <QGuiApplication>
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 
 namespace roclint::host {
+
+namespace {
+bool usesCocoa() {
+    return QGuiApplication::platformName() == QLatin1String("cocoa");
+}
+
+NSWindow* cocoaWindow(QWindow* window) {
+    if (!window || !usesCocoa()) return nil;
+    NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window->winId());
+    return [view window];
+}
+}
 
 HostContextObservation captureFrontmostNative() {
     @autoreleasepool {
@@ -33,8 +46,7 @@ HostContextObservation captureFrontmostNative() {
 void configureNonActivatingPanel(QWindow* window) {
     if (!window) return;
     @autoreleasepool {
-        NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window->winId());
-        NSWindow* nsWindow = [view window];
+        NSWindow* nsWindow = cocoaWindow(window);
         if (nsWindow) {
             [nsWindow setStyleMask:([nsWindow styleMask] | NSWindowStyleMaskNonactivatingPanel)];
             [nsWindow setCollectionBehavior:(NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary)];
@@ -49,6 +61,10 @@ void configureNonActivatingPanel(QWindow* window) {
 
 void showNonActivatingWindow(QWindow* window) {
     if (!window) return;
+    if (!usesCocoa()) {
+        window->show();
+        return;
+    }
     // Temporarily suppress Qt's default [NSApp activateIgnoringOtherApps:YES] and
     // makeKeyAndOrderFront during setVisible(true), then restore keyboard focus acceptance
     // so user controls (e.g. text inputs in FloatingCard) can receive key events when clicked.
@@ -56,8 +72,7 @@ void showNonActivatingWindow(QWindow* window) {
     window->setVisible(true);
     window->setFlag(Qt::WindowDoesNotAcceptFocus, false);
     @autoreleasepool {
-        NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window->winId());
-        NSWindow* nsWindow = [view window];
+        NSWindow* nsWindow = cocoaWindow(window);
         if (nsWindow) {
             [nsWindow setStyleMask:([nsWindow styleMask] | NSWindowStyleMaskNonactivatingPanel)];
             [nsWindow setCollectionBehavior:(NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary)];
@@ -72,6 +87,7 @@ void showNonActivatingWindow(QWindow* window) {
 }
 
 void configureHostProcess() {
+    if (!usesCocoa()) return;
     @autoreleasepool {
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
     }
@@ -80,14 +96,13 @@ void configureHostProcess() {
 static id g_outsideClickMonitor = nil;
 
 void installOutsideClickMonitor(QWindow* window, std::function<void()> onOutsideClick) {
-    if (!window) return;
+    if (!window || !usesCocoa()) return;
     @autoreleasepool {
         if (g_outsideClickMonitor != nil) {
             [NSEvent removeMonitor:g_outsideClickMonitor];
             g_outsideClickMonitor = nil;
         }
-        NSView* view = (__bridge NSView*)reinterpret_cast<void*>(window->winId());
-        NSWindow* nsWindow = [view window];
+        NSWindow* nsWindow = cocoaWindow(window);
         const NSTimeInterval installTime = [NSDate timeIntervalSinceReferenceDate];
         NSRunningApplication* hostApp = [[NSWorkspace sharedWorkspace] frontmostApplication];
         const pid_t hostPid = hostApp ? [hostApp processIdentifier] : 0;

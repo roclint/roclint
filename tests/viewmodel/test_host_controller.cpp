@@ -9,6 +9,7 @@
 #include <QElapsedTimer>
 #include <QEventLoop>
 #include <QGuiApplication>
+#include <QSemaphore>
 #include <QThread>
 #include <QTcpServer>
 #include <QTcpSocket>
@@ -1223,11 +1224,12 @@ void testF07ReviewReuseAndVersionAdvancement() {
     // Select alternative 1
     c.selectAlternative(1);
 
-    // F07: State version must advance, proposal hash must change, previous acknowledgments cleared, new model audit invoked
-    ROCLINT_CHECK(c.stateVersion() > prevVersion);
+    // The proposal changes immediately, but only a committed save advances the version.
+    ROCLINT_CHECK(c.stateVersion() == prevVersion);
     ROCLINT_CHECK(c.proposalForTesting()->proposalHash != prevHash);
     ROCLINT_CHECK(!c.canApprove());
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(c.stateVersion() == prevVersion + 1);
     ROCLINT_CHECK(c.pendingReviewCount() == 1);
     ROCLINT_CHECK(!c.canApprove());
     ROCLINT_CHECK(auditCalls.load() > prevCalls);
@@ -1272,6 +1274,7 @@ void testF08SelectionPersistenceAndApproval() {
     c.selectAlternative(1);
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
     const auto selectedHash = c.proposalForTesting()->proposalHash;
+    const auto selectedId = c.proposalForTesting()->id;
     ROCLINT_CHECK(selectedHash != baseHash);
     ROCLINT_CHECK(c.canApprove());
 
@@ -1282,8 +1285,11 @@ void testF08SelectionPersistenceAndApproval() {
 
     // Restore session and verify selected candidate is retained
     ROCLINT_CHECK(c.waitForCommandForTesting(c.restoreSession(session, c.stateVersion())));
+    ROCLINT_CHECK(c.proposalForTesting()->id == selectedId);
     ROCLINT_CHECK(c.proposalForTesting()->proposalHash == selectedHash);
     ROCLINT_CHECK(c.proposalForTesting()->proposalHash != baseHash);
+    ROCLINT_CHECK(c.auditOutcome() == QStringLiteral("Pass"));
+    ROCLINT_CHECK(c.auditExecutionStatus() == QStringLiteral("Completed"));
 
     std::cout << "  [PASS] F08: Selected alternative persisted, approved without FK error, and restored cleanly.\n";
 }
@@ -1445,21 +1451,108 @@ void testAsyncSelectionStaleSelectionRejection() {
     const auto alts = c.creativeAlternatives();
     ROCLINT_CHECK(alts.size() >= 2);
 
-    // Rapid selection: select 0 then immediately select 1.
-    c.selectAlternative(0);
-    const auto alt1Version = c.stateVersion();
+    // Select a different candidate, then return to the base while its audit is pending.
+    const auto version = c.stateVersion();
     c.selectAlternative(1);
-    const auto alt2Version = c.stateVersion();
-    ROCLINT_CHECK(alt2Version > alt1Version);
+    c.selectAlternative(0);
+    ROCLINT_CHECK(c.stateVersion() == version);
 
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(c.stateVersion() == version + 1);
 
     // The latest alternative should win; the earlier completion must be rejected as stale.
-    ROCLINT_CHECK(c.selectedAlternativeIndex() == 1);
-    ROCLINT_CHECK(c.proposalText() == alts[1].toMap().value("rewrittenText").toString());
+    ROCLINT_CHECK(c.selectedAlternativeIndex() == 0);
+    ROCLINT_CHECK(c.proposalText() == alts[0].toMap().value("rewrittenText").toString());
     ROCLINT_CHECK(c.canApprove());
 
     std::cout << "  [PASS] Async selection: Rapid selection rejects stale audit results.\n";
+}
+
+void testDraftEditDuringCandidateAudit() {
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    auto releaseAudit = std::make_shared<QSemaphore>();
+    auto auditCalls = std::make_shared<std::atomic<int>>(0);
+    c.setTransportOverrideForTesting([releaseAudit, auditCalls](std::string_view in) -> Result<std::string> {
+        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            if (++*auditCalls == 2) ROCLINT_CHECK(releaseAudit->tryAcquire(1, 5000));
+            return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+        }
+        if (in.find("<instructions>") != std::string_view::npos) return fx::rewriteReply(kVerifiedRewrite);
+        return kDiscoveryReply;
+    });
+    ROCLINT_CHECK(c.markModelReadyForTesting(modelInfo()));
+    analyzeAndAnswer(c);
+    synthesize(c);
+
+    const auto version = c.stateVersion();
+    c.selectAlternative(1);
+    ROCLINT_CHECK(c.stateVersion() == version && !c.canApprove());
+    const auto draft = c.noteDraftEdited(version);
+    const auto saved = c.waitForCommandForTesting(draft, 2000);
+    releaseAudit->release();
+    ROCLINT_CHECK(saved);
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(c.isStorageAvailable() && c.stateVersion() == version + 1);
+    ROCLINT_CHECK(!c.hasProposal() && !c.canApprove());
+    ROCLINT_CHECK(auditCalls->load() == 2);
+}
+
+void testDraftEditDuringCandidateSave(bool failCandidateSave) {
+    QTemporaryDir tempDir;
+    ROCLINT_CHECK(tempDir.isValid());
+    const auto dbPath = tempDir.filePath("candidate_and_draft.sqlite3");
+    HostController c(dbPath);
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
+        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos)
+            return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+        if (in.find("<instructions>") != std::string_view::npos) return fx::rewriteReply(kVerifiedRewrite);
+        return kDiscoveryReply;
+    });
+    ROCLINT_CHECK(c.markModelReadyForTesting(modelInfo()));
+    analyzeAndAnswer(c);
+    synthesize(c);
+    const auto version = c.stateVersion();
+    const SessionId session(c.currentSessionIdString().toStdString());
+    auto before = c.repositoryForTesting()->getSession(session).waitForTesting();
+    ROCLINT_CHECK(before.ok());
+
+    roclint::storage::Database writer(std::filesystem::path(dbPath.toStdString()));
+    if (failCandidateSave) {
+        ROCLINT_CHECK(writer.execute(
+            "CREATE TRIGGER reject_candidate BEFORE INSERT ON proposals "
+            "BEGIN SELECT RAISE(ABORT, 'simulated candidate save failure'); END;").ok());
+    }
+    ROCLINT_CHECK(writer.execute("BEGIN IMMEDIATE;").ok());
+    c.selectAlternative(1);
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (!c.candidateWriteInFlightForTesting() && elapsed.elapsed() < 2000) {
+        QCoreApplication::processEvents();
+        QThread::msleep(1);
+    }
+    ROCLINT_CHECK(c.candidateWriteInFlightForTesting() && !c.canApprove());
+    const auto firstDraft = c.noteDraftEdited(version);
+    const auto secondDraft = c.noteDraftEdited(c.stateVersion());
+    ROCLINT_CHECK(firstDraft && secondDraft);
+    // Let the draft debounce fire while SQLite is still waiting for the writer.
+    ROCLINT_CHECK(!c.waitForCommandForTesting(firstDraft, 250));
+    ROCLINT_CHECK(c.candidateWriteInFlightForTesting());
+    ROCLINT_CHECK(writer.execute("COMMIT;").ok());
+    ROCLINT_CHECK(c.waitForCommandForTesting(firstDraft));
+    ROCLINT_CHECK(c.waitForCommandForTesting(secondDraft));
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+
+    auto after = c.repositoryForTesting()->getSession(session).waitForTesting();
+    ROCLINT_CHECK(after.ok());
+    ROCLINT_CHECK(c.stateVersion() == version + (failCandidateSave ? 2 : 3));
+    ROCLINT_CHECK(after.value().stateVersion == c.stateVersion());
+    ROCLINT_CHECK(after.value().draftEditGeneration == before.value().draftEditGeneration + 2);
+    ROCLINT_CHECK(after.value().proposalEditGeneration == before.value().proposalEditGeneration);
+    ROCLINT_CHECK(c.isStorageAvailable() && !c.hasProposal() && !c.canApprove());
 }
 
 void testAsyncSelectionSaveFailurePreventsApproval() {
@@ -2064,6 +2157,9 @@ int main(int argc, char* argv[]) {
     testAsyncSelectionNativeTicketAndOffGuiExecution();
     testAsyncSelectionDelayedTransportResponsiveness();
     testAsyncSelectionStaleSelectionRejection();
+    testDraftEditDuringCandidateAudit();
+    testDraftEditDuringCandidateSave(false);
+    testDraftEditDuringCandidateSave(true);
     testAsyncSelectionSaveFailurePreventsApproval();
     testSessionRestoreUncertaintyPreservation();
     testExactIdAcknowledgmentBinding();

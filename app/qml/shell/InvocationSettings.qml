@@ -13,15 +13,7 @@ ColumnLayout {
     readonly property bool hc: typeof hostController !== "undefined" && hostController !== null
 
     property string currentTheme: "dark"
-    readonly property color bgColor: currentTheme === "light" ? "#F4F4F4" : currentTheme === "acid" ? "#070D08" : currentTheme === "amber" ? "#0F0902" : "#050505"
-    readonly property color fgColor: currentTheme === "light" ? "#050505" : currentTheme === "acid" ? "#4ADE80" : currentTheme === "amber" ? "#FBBF24" : "#C9D1D9"
-    readonly property color borderColor: currentTheme === "light" ? "#050505" : currentTheme === "acid" ? "#22C55E" : currentTheme === "amber" ? "#F59E0B" : "#6E7681"
-    readonly property color dimColor: currentTheme === "light" ? "#D1D5DB" : currentTheme === "acid" ? "#14331B" : currentTheme === "amber" ? "#3B2207" : "#262626"
-    readonly property color mutedTextColor: currentTheme === "light" ? "#4B5563" : currentTheme === "acid" ? "#4ADE80" : currentTheme === "amber" ? "#D97706" : "#8B949E"
-    readonly property color inputBgColor: currentTheme === "light" ? "#E5E7EB" : currentTheme === "acid" ? "#0A140B" : currentTheme === "amber" ? "#140D04" : "#09090B"
-    readonly property color okColor: currentTheme === "light" ? "#166534" : "#7EE787"
-    readonly property color warnColor: "#F59E0B"
-    readonly property color errorColor: "#FF7B72"
+    RocTheme { id: theme; mode: dashboardWindow.currentTheme }
 
     component SectionCard: Rectangle {
         id: card
@@ -30,8 +22,8 @@ ColumnLayout {
         Layout.fillWidth: true
         Layout.minimumWidth: 0
         implicitHeight: cardColumn.implicitHeight + 28
-        color: dashboardWindow.inputBgColor
-        border.color: dashboardWindow.borderColor
+        color: theme.inset
+        border.color: theme.border
         border.width: 1
         radius: 6
         ColumnLayout {
@@ -44,7 +36,7 @@ ColumnLayout {
                 font.family: dashboardWindow.sansFont
                 font.pixelSize: 13
                 font.bold: true
-                color: dashboardWindow.fgColor
+                color: theme.foreground
             }
         }
     }
@@ -55,7 +47,7 @@ ColumnLayout {
         wrapMode: Text.WordWrap
         font.family: dashboardWindow.sansFont
         font.pixelSize: 12
-        color: dashboardWindow.mutedTextColor
+        color: theme.muted
     }
 
     component ActionButton: Rectangle {
@@ -80,8 +72,8 @@ ColumnLayout {
         implicitWidth: btnText.implicitWidth + 22
         radius: 4
         opacity: active ? 1.0 : 0.4
-        color: primary || selected ? dashboardWindow.fgColor : (btnMouse.containsMouse && active ? dashboardWindow.dimColor : "transparent")
-        border.color: dashboardWindow.fgColor
+        color: primary || selected ? theme.foreground : (btnMouse.containsMouse && active ? theme.hover : "transparent")
+        border.color: theme.foreground
         border.width: activeFocus ? 3 : 1
         Text {
             id: btnText
@@ -90,7 +82,7 @@ ColumnLayout {
             font.family: dashboardWindow.sansFont
             font.pixelSize: 12
             font.bold: btn.primary || btn.selected
-            color: btn.primary || btn.selected ? dashboardWindow.bgColor : dashboardWindow.fgColor
+            color: btn.primary || btn.selected ? theme.background : theme.foreground
         }
         MouseArea {
             id: btnMouse
@@ -114,12 +106,12 @@ ColumnLayout {
                                     id: invocationShortcutInput
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    color: dashboardWindow.fgColor
-                                    placeholderTextColor: dashboardWindow.mutedTextColor
+                                    color: theme.foreground
+                                    placeholderTextColor: theme.muted
                                     font.family: dashboardWindow.monoFont
                                     background: Rectangle {
-                                        color: dashboardWindow.inputBgColor
-                                        border.color: invocationShortcutInput.activeFocus ? dashboardWindow.fgColor : dashboardWindow.borderColor
+                                        color: theme.inset
+                                        border.color: invocationShortcutInput.activeFocus ? theme.foreground : theme.border
                                         border.width: invocationShortcutInput.activeFocus ? 2 : 1
                                         radius: 4
                                     }
@@ -138,7 +130,7 @@ ColumnLayout {
                             }
                             Body {
                                 visible: text.length > 0
-                                color: dashboardWindow.warnColor
+                                color: theme.warning
                                 text: dashboardWindow.hc ? hostController.shortcutWarning : ""
                             }
                         }
@@ -151,11 +143,11 @@ ColumnLayout {
                                     implicitWidth: 18
                                     implicitHeight: 18
                                     y: (hostHintToggle.height - height) / 2
-                                    color: dashboardWindow.inputBgColor
-                                    border.color: dashboardWindow.fgColor
+                                    color: theme.inset
+                                    border.color: theme.foreground
                                     border.width: hostHintToggle.activeFocus ? 3 : 1
                                     radius: 2
-                                    Text { anchors.centerIn: parent; text: hostHintToggle.checked ? "✓" : ""; color: dashboardWindow.fgColor }
+                                    Text { anchors.centerIn: parent; text: hostHintToggle.checked ? "✓" : ""; color: theme.foreground }
                                 }
                                 text: qsTr("Include the frontmost app category when I invoke Roclint")
                                 Layout.fillWidth: true
@@ -165,7 +157,7 @@ ColumnLayout {
                                     leftPadding: hostHintToggle.indicator.width + hostHintToggle.spacing
                                     verticalAlignment: Text.AlignVCenter
                                     wrapMode: Text.WordWrap
-                                    color: dashboardWindow.fgColor
+                                    color: theme.foreground
                                     font.family: dashboardWindow.sansFont
                                     font.pixelSize: 12
                                 }
@@ -189,17 +181,17 @@ ColumnLayout {
             indicator: Rectangle {
                 implicitWidth: 18; implicitHeight: 18
                 y: (ambientCaptureToggle.height - height) / 2
-                color: dashboardWindow.inputBgColor
-                border.color: dashboardWindow.fgColor
+                color: theme.inset
+                border.color: theme.foreground
                 border.width: ambientCaptureToggle.activeFocus ? 3 : 1
                 radius: 2
-                Text { anchors.centerIn: parent; text: ambientCaptureToggle.checked ? "✓" : ""; color: dashboardWindow.fgColor }
+                Text { anchors.centerIn: parent; text: ambientCaptureToggle.checked ? "✓" : ""; color: theme.foreground }
             }
             contentItem: Text {
                 text: ambientCaptureToggle.text
                 leftPadding: ambientCaptureToggle.indicator.width + ambientCaptureToggle.spacing
                 wrapMode: Text.WordWrap
-                color: dashboardWindow.fgColor
+                color: theme.foreground
                 font.family: dashboardWindow.sansFont
                 font.pixelSize: 12
             }

@@ -19,6 +19,11 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 MAX_FRAME = 1024 * 1024
+DEADLINE_KEYS = {
+    "granite_analyze": "analysis_timeout_ms",
+    "granite_rewrite": "rewrite_timeout_ms",
+    "granite_word_refinement": "word_refinement_timeout_ms",
+}
 
 
 def digest(text):
@@ -98,11 +103,21 @@ class Worker:
         self.messages = queue.Queue()
         self.diagnostics = []
         self.diagnostic_unbounded = args.diagnostic_no_deadlines
+        self.operation_deadlines = {}
+        for operation, key in DEADLINE_KEYS.items():
+            value = manifest.get(key)
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"Missing or invalid {key}. Use granite-runtime-config.json from the current build.")
+            self.operation_deadlines[operation] = (
+                0 if self.diagnostic_unbounded and operation != "granite_word_refinement" else value
+            )
         command = [str(args.worker), "--model-dir", str(args.model_dir), "--quantization", quantization]
         if getattr(args, "temperature", None) is not None:
             command += ["--sampling-temperature", str(args.temperature)]
         if getattr(args, "cpu_reference", False):
             command.append("--cpu-reference")
+        if getattr(args, "no_thinking_reference", False):
+            command.append("--no-thinking-reference")
         if self.diagnostic_unbounded:
             command.append("--diagnostic-no-deadlines")
         self.process = subprocess.Popen(command,
@@ -142,19 +157,24 @@ class Worker:
         started = time.perf_counter()
         self.process.stdin.write((json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8"))
         self.process.stdin.flush()
-        analysis_timeout = 21 if platform.system() == "Darwin" else 15
-        timeout = 3 if operation == "hello" else 2 if operation == "shutdown" else analysis_timeout if operation == "granite_analyze" else 63 if operation == "granite_rewrite" else 185
-        if self.diagnostic_unbounded and operation in ("granite_analyze", "granite_rewrite"):
-            timeout = 300
-        response = self.messages.get(timeout=timeout)
-        if isinstance(response, Exception):
-            raise response
-        # Streaming frames arrive before the final result. The probe records only
-        # the complete typed response, never a partial stream as the reply.
-        while isinstance(response, dict) and response.get("type") == "partial_result":
-            response = self.messages.get(timeout=timeout)
+        if operation in self.operation_deadlines:
+            budget = self.operation_deadlines[operation]
+            timeout = budget / 1000 + 3 if budget else 300
+        else:
+            timeout = {"hello": 3, "shutdown": 2}.get(operation, 185)
+        deadline = started + timeout
+        while True:
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0:
+                raise TimeoutError(f"Native helper timed out during {operation}")
+            try:
+                response = self.messages.get(timeout=remaining)
+            except queue.Empty as error:
+                raise TimeoutError(f"Native helper timed out during {operation}") from error
             if isinstance(response, Exception):
                 raise response
+            if response.get("type") != "partial_result":
+                break
         for key, value in request.items():
             if key not in ("type", "payload") and response.get(key) != value:
                 raise RuntimeError("Native response binding mismatch: " + key)
@@ -165,11 +185,10 @@ class Worker:
             capabilities = response.get("result", {})
             if capabilities.get("diagnostic_unbounded") is not self.diagnostic_unbounded:
                 raise RuntimeError("Native diagnostic deadline mode did not match the explicit launch")
-            expected_analysis_timeout = 0 if self.diagnostic_unbounded else (18000 if platform.system() == "Darwin" else 12000)
-            if (capabilities.get("analysis_timeout_ms") != expected_analysis_timeout or
-                    capabilities.get("rewrite_timeout_ms") != (0 if self.diagnostic_unbounded else 60000)):
-                raise RuntimeError("Native operation deadline capabilities were incompatible")
-        if (operation in ("granite_analyze", "granite_rewrite") and response["ok"] and
+            for semantic_operation, key in DEADLINE_KEYS.items():
+                if capabilities.get(key) != self.operation_deadlines[semantic_operation]:
+                    raise RuntimeError(f"Native {key} did not match the generated runtime configuration")
+        if (operation in DEADLINE_KEYS and response["ok"] and
                 self.manifest.get("output_format") == "compact_json" and
                 not compact_json(response.get("result", {}).get("text"))):
             raise RuntimeError("Native helper violated the declared compact JSON output format")

@@ -360,6 +360,18 @@ TargetScopeResult evaluateTargetBoundScoping(
         "architecture", "structure", "function", "functions", "method", "methods",
         "file", "files", "data", "item", "items"
     };
+    static const std::unordered_set<std::string_view> kTargetModifiers = {
+        "a", "an", "the", "all", "any", "both", "each", "every", "this", "that",
+        "its", "their", "our", "your", "existing", "current", "old", "new",
+        "legacy", "original", "entire", "whole", "public", "internal", "only", "just"
+    };
+    static const std::unordered_set<std::string_view> kTargetPrepositions = {
+        "about", "at", "for", "from", "in", "of", "on", "regarding", "to"
+    };
+    static const std::unordered_set<std::string_view> kReferenceHeads = {
+        "documentation", "docs", "guide", "guides", "example", "examples",
+        "test", "tests", "specification", "specifications"
+    };
 
     bool anyMutated = false;
     bool anyPreserved = false;
@@ -415,12 +427,27 @@ TargetScopeResult evaluateTargetBoundScoping(
         auto preWords = extractWords(preContext);
         auto postWords = extractWords(postContext);
 
+        // A preceding verb binds to the target only when the intervening
+        // words modify the target rather than introduce another object.
+        std::size_t modifierStart = preWords.size();
+        while (modifierStart > 0) {
+            const auto& word = preWords[modifierStart - 1];
+            if (!kTargetModifiers.contains(word) && !kPreservationPredicates.contains(word) &&
+                !word.ends_with("ly")) break;
+            --modifierStart;
+        }
+        if ((modifierStart > 0 && kTargetPrepositions.contains(preWords[modifierStart - 1])) ||
+            (!postWords.empty() && kReferenceHeads.contains(postWords.front()))) {
+            anyAmbiguous = true;
+            continue;
+        }
+
         bool occMutated = false;
         bool occPreserved = false;
         bool prePreservationNegated = false;
 
         // Check preWords
-        for (size_t i = 0; i < preWords.size(); ++i) {
+        for (size_t i = modifierStart > 0 ? modifierStart - 1 : 0; i < preWords.size(); ++i) {
             const auto& w = preWords[i];
             if (kMutationWords.contains(w)) {
                 int negationCount = 0;

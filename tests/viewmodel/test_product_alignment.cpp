@@ -420,6 +420,126 @@ void testCaptureControlsEnableAmbientBadge() {
     std::cout << "  [PASS] Real QML capture settings enable observing and the amber badge; disable stops both.\n";
 }
 
+void testIntegrationSettingsFitAvailableWidth() {
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    bridge->accessValue = AccessibilityAccess::Granted;
+    HostController controller(QStringLiteral(":memory:"), std::move(bridge));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
+    controller.setAmbientModeEnabled(true);
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("hostController"), &controller);
+    engine.load(QUrl(QStringLiteral("qrc:/shell/DashboardWindow.qml")));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    ROCLINT_CHECK(window && window->setProperty("currentTab", 1));
+    window->show();
+    ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
+
+    const auto item = [window](const char* name) {
+        auto* found = findVisual(window->contentItem(), QString::fromLatin1(name));
+        ROCLINT_CHECK(found);
+        return found;
+    };
+    const auto inCard = [&](const char* cardName, const char* childName) {
+        auto* card = item(cardName);
+        auto* child = item(childName);
+        const auto content = card->boundingRect().adjusted(13, 13, -13, -13);
+        return child->isVisible() && content.contains(child->mapRectToItem(card, child->boundingRect()));
+    };
+    const auto textFits = [](QQuickItem* label) {
+        return label->property("contentWidth").toReal() <= label->width() + 1 &&
+            label->property("contentHeight").toReal() <= label->height() + 1;
+    };
+
+    for (const int width : {940, window->minimumWidth()}) {
+        window->resize(width, 620);
+        controller.setAmbientModeEnabled(width == 940);
+        QTest::qWait(100);
+        for (const auto* name : {"editorInjectionHeading", "ambientCaptureStatus", "editorInjectionHelp",
+                                 "ambientEnableAction", "ambientDisableAction"}) {
+            ROCLINT_CHECK(inCard("editorInjectionCard", name));
+        }
+        for (const auto* name : {"editorInjectionHeading", "ambientCaptureStatus", "editorInjectionHelp",
+                                 "settingsNavLabel0", "settingsNavLabel1", "settingsNavLabel2"}) {
+            ROCLINT_CHECK(textFits(item(name)));
+        }
+        for (const auto* name : {"settingsThemeChoice_dark", "settingsThemeChoice_acid",
+                                 "settingsThemeChoice_amber", "settingsThemeChoice_light"}) {
+            ROCLINT_CHECK(inCard("settingsThemeCard", name));
+        }
+        auto* scrollView = item("settingsScrollView");
+        auto* bar = item("settingsScrollBar");
+        ROCLINT_CHECK(bar->width() > 0 && bar->height() == scrollView->height());
+        ROCLINT_CHECK(bar->mapToItem(scrollView, QPointF(bar->width(), 0)).x() == scrollView->width());
+        ROCLINT_CHECK(bar->property("size").toReal() < 1);
+        auto* injection = item("editorInjectionCard");
+        const auto top = injection->mapToItem(scrollView, QPointF()).y();
+        ROCLINT_CHECK(bar->setProperty("position", 0.1));
+        QCoreApplication::processEvents();
+        ROCLINT_CHECK(injection->mapToItem(scrollView, QPointF()).y() < top);
+        ROCLINT_CHECK(bar->setProperty("position", 0.0));
+        savePreview(window, QStringLiteral("integration-settings-%1.png").arg(width));
+    }
+}
+
+void testModelsRewriteSettingsFitAvailableWidth() {
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    bridge->accessValue = AccessibilityAccess::Granted;
+    HostController controller(QStringLiteral(":memory:"), std::move(bridge));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("hostController"), &controller);
+    engine.load(QUrl(QStringLiteral("qrc:/shell/DashboardWindow.qml")));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    ROCLINT_CHECK(window && window->setProperty("currentTab", 0));
+    window->show();
+    ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
+
+    const auto item = [window](const char* name) {
+        auto* found = findVisual(window->contentItem(), QString::fromLatin1(name));
+        ROCLINT_CHECK(found);
+        return found;
+    };
+    const auto textFits = [](QQuickItem* label) {
+        return label->property("contentWidth").toReal() <= label->width() + 1 &&
+            label->property("contentHeight").toReal() <= label->height() + 1;
+    };
+
+    auto* scrollView = item("settingsScrollView");
+
+    for (const int width : {940, window->minimumWidth()}) {
+        window->resize(width, 620);
+        QTest::qWait(100);
+
+        for (const auto* name : {"settingsNavLabel0", "settingsNavLabel1", "settingsNavLabel2"}) {
+            ROCLINT_CHECK(textFits(item(name)));
+        }
+
+        for (const auto* name : {"settingsProfileDesc_generic", "settingsProfileDesc_anthropic_structured",
+                                 "settingsProfileDesc_openai_structured", "settingsProfileDesc_local_compact"}) {
+            ROCLINT_CHECK(textFits(item(name)));
+        }
+
+        for (const auto* name : {"settingsFolderStatusMessage", "settingsStorageDisclaimer"}) {
+            ROCLINT_CHECK(textFits(item(name)));
+        }
+
+        for (const auto* name : {"settingsRescanRuntimeAction", "settingsWarmModelAction",
+                                 "settingsRescanFolderAction", "settingsDownloadQ4Action",
+                                 "settingsDownloadQ8Action", "settingsDownloadQ5Action",
+                                 "settingsTestRuntimeAction"}) {
+            auto* btn = item(name);
+            ROCLINT_CHECK(btn->isVisible());
+            const qreal rightEdge = btn->mapToItem(scrollView, QPointF(btn->width(), 0)).x();
+            ROCLINT_CHECK(rightEdge <= scrollView->width() + 2);
+        }
+
+        savePreview(window, QStringLiteral("models-rewrite-settings-%1.png").arg(width));
+    }
+    std::cout << "  [PASS] Models & Rewrite settings fit available width without truncation across standard and minimum widths.\n";
+}
+
 void testCompactHudControlsStayInsideWindow() {
     QSettings().clear();
     auto bridge=std::make_unique<roclint::test::MockAccessibilityBridge>();
@@ -2112,6 +2232,8 @@ int main(int argc, char* argv[]) {
     if (qEnvironmentVariableIsSet("ROCLINT_NATIVE_UI_TEST")) {
         run("testCompactHudControlsStayInsideWindow", testCompactHudControlsStayInsideWindow);
         run("testCaptureControlsEnableAmbientBadge", testCaptureControlsEnableAmbientBadge);
+        run("testIntegrationSettingsFitAvailableWidth", testIntegrationSettingsFitAvailableWidth);
+        run("testModelsRewriteSettingsFitAvailableWidth", testModelsRewriteSettingsFitAvailableWidth);
         run("testOptionalPresentationFromPersistedV5", testOptionalPresentationFromPersistedV5);
         run("testReviewGeometryAndExplicitExpansion", testReviewGeometryAndExplicitExpansion);
         run("testProductionReviewPresentation", testProductionReviewPresentation);
@@ -2142,6 +2264,8 @@ int main(int argc, char* argv[]) {
     run("testNativeGlobalShortcutDispatch", testNativeGlobalShortcutDispatch);
     run("testCompactHudControlsStayInsideWindow", testCompactHudControlsStayInsideWindow);
     run("testCaptureControlsEnableAmbientBadge", testCaptureControlsEnableAmbientBadge);
+    run("testIntegrationSettingsFitAvailableWidth", testIntegrationSettingsFitAvailableWidth);
+    run("testModelsRewriteSettingsFitAvailableWidth", testModelsRewriteSettingsFitAvailableWidth);
     run("testCaptureAndSettings", testCaptureAndSettings);
     run("testHintChangeRejectsInFlightResult", testHintChangeRejectsInFlightResult);
     run("testModelSwitchDuringInference", testModelSwitchDuringInference);

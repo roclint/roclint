@@ -9,34 +9,59 @@ if(DEFINED MACDEPLOYQT)
     if(NOT DEFINED BUNDLE_DIR OR NOT EXISTS "${BUNDLE_DIR}")
         message(FATAL_ERROR "Target app bundle was not found: ${BUNDLE_DIR}")
     endif()
-    if(NOT DEFINED QML_DIR)
-        message(FATAL_ERROR "QML_DIR is required")
+    if(NOT IS_DIRECTORY "${QML_DIR}" OR NOT IS_DIRECTORY "${RUNTIME_DIR}")
+        message(FATAL_ERROR "QML_DIR and RUNTIME_DIR must point to existing directories")
     endif()
 
     set(_macdeploy_args "${BUNDLE_DIR}" "-qmldir=${QML_DIR}" "-always-overwrite" "-codesign=-")
-    if(DEFINED EXECUTABLE_1 AND EXISTS "${EXECUTABLE_1}")
-        list(APPEND _macdeploy_args "-executable=${EXECUTABLE_1}")
+    set(_runtime_files
+        "${RUNTIME_DIR}/julia_worker.py"
+        "${RUNTIME_DIR}/roclint_process_guardian"
+        "${RUNTIME_DIR}/roclint_workspace_helper")
+    list(APPEND _macdeploy_args "-executable=${RUNTIME_DIR}/roclint_workspace_helper")
+    if(DEFINED GRANITE_WORKER)
+        list(APPEND _runtime_files "${GRANITE_WORKER}")
+        list(APPEND _macdeploy_args "-executable=${GRANITE_WORKER}")
     endif()
-    if(DEFINED EXECUTABLE_2 AND EXISTS "${EXECUTABLE_2}")
-        list(APPEND _macdeploy_args "-executable=${EXECUTABLE_2}")
+    foreach(_file IN LISTS _runtime_files)
+        if(NOT EXISTS "${_file}")
+            message(FATAL_ERROR "Required runtime file missing from the bundle: ${_file}")
+        endif()
+    endforeach()
+
+    # Older setup runs put the virtualenv beside the Mach-O helpers.
+    # Keep its package directories outside the bundle's executable directory.
+    if(IS_DIRECTORY "${RUNTIME_DIR}/julia-python")
+        set(_python_dir "${BUNDLE_DIR}/Contents/runtime")
+        file(MAKE_DIRECTORY "${_python_dir}")
+        if(EXISTS "${_python_dir}/julia-python")
+            message(FATAL_ERROR "Two Julia Python environments were found in the bundle. Keep the intended one in ${_python_dir}.")
+        endif()
+        file(RENAME "${RUNTIME_DIR}/julia-python" "${_python_dir}/julia-python" RESULT _move_result)
+        if(NOT "${_move_result}" STREQUAL "0")
+            message(FATAL_ERROR "Could not move the legacy Julia Python environment into ${_python_dir}: ${_move_result}")
+        endif()
     endif()
 
-    execute_process(
-        COMMAND "${MACDEPLOYQT}" ${_macdeploy_args}
-        RESULT_VARIABLE _result
-        OUTPUT_VARIABLE _output
-        ERROR_VARIABLE _error)
-    if(NOT _result EQUAL 0)
-        message(STATUS "macdeployqt completed with notice: ${_error}")
-    endif()
+    function(roclint_run_deploy_step step)
+        execute_process(COMMAND ${ARGN}
+            RESULT_VARIABLE _result
+            OUTPUT_VARIABLE _output
+            ERROR_VARIABLE _error)
+        if(NOT "${_result}" STREQUAL "0")
+            message(FATAL_ERROR "${step} failed (${_result})\n${_output}\n${_error}")
+        endif()
+    endfunction()
 
-    # Re-sign with ad-hoc signature so Gatekeeper and TCC recognize the bundled helpers.
-    execute_process(
-        COMMAND codesign --force --deep --sign - "${BUNDLE_DIR}"
-        RESULT_VARIABLE _sign_result
-        OUTPUT_VARIABLE _sign_output
-        ERROR_VARIABLE _sign_error)
+    roclint_run_deploy_step(macdeployqt "${MACDEPLOYQT}" ${_macdeploy_args})
+    roclint_run_deploy_step("codesign signing" codesign --force --deep --sign - "${BUNDLE_DIR}")
+    roclint_run_deploy_step("codesign verification" codesign --verify --deep --strict "${BUNDLE_DIR}")
 
+    foreach(_file IN ITEMS "Frameworks/QtCore.framework/QtCore" "PlugIns/platforms/libqcocoa.dylib")
+        if(NOT EXISTS "${BUNDLE_DIR}/Contents/${_file}")
+            message(FATAL_ERROR "Qt deployment is incomplete: ${_file} is missing")
+        endif()
+    endforeach()
     message(STATUS "Self-contained Qt runtime staged in ${BUNDLE_DIR}")
     return()
 endif()

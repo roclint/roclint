@@ -12,12 +12,15 @@ void testExactUnicodeOffsets() {
     const int start = text.indexOf(QString::fromUtf8("🚀"));
     ROCLINT_CHECK(start > 0);
     ROCLINT_CHECK(RangeInjectionPolicy::offsetsValid(text, start, start + 2));
+    ROCLINT_CHECK(!RangeInjectionPolicy::offsetsValid(text, start + 1, start + 2));
+    ROCLINT_CHECK(!RangeInjectionPolicy::offsetsValid(text, start, start + 1));
     ROCLINT_CHECK(RangeInjectionPolicy::rangeMatches(text, start, start + 2, QString::fromUtf8("🚀")));
     ROCLINT_CHECK(!RangeInjectionPolicy::rangeMatches(text, start, start + 1, QString::fromUtf8("🚀")));
 
     // The same UTF-16 offsets must remain valid for a BMP replacement of different display width.
     const QString expected = text.left(start) + QString::fromUtf8("✨") + text.mid(start + 2);
     ROCLINT_CHECK(RangeInjectionPolicy::readbackMatches(expected, expected));
+    ROCLINT_CHECK(!RangeInjectionPolicy::readbackMatches(expected, expected + QLatin1Char(' ')));
 }
 
 void testStaleAndPartialWritesAbort() {

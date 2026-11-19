@@ -9,6 +9,15 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/app/runtime/granite-models.json" ROCLINT_GRANITE_MANIFEST_JSON)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/app/runtime/granite-models.json")
+set(ROCLINT_GRANITE_ANALYSIS_TIMEOUT_MS 45000)
+set(ROCLINT_GRANITE_REWRITE_TIMEOUT_MS 60000)
+set(ROCLINT_GRANITE_WORD_REFINEMENT_TIMEOUT_MS 45000)
+string(JSON ROCLINT_GRANITE_MANIFEST_JSON SET "${ROCLINT_GRANITE_MANIFEST_JSON}"
+    analysis_timeout_ms "${ROCLINT_GRANITE_ANALYSIS_TIMEOUT_MS}")
+string(JSON ROCLINT_GRANITE_MANIFEST_JSON SET "${ROCLINT_GRANITE_MANIFEST_JSON}"
+    rewrite_timeout_ms "${ROCLINT_GRANITE_REWRITE_TIMEOUT_MS}")
+string(JSON ROCLINT_GRANITE_MANIFEST_JSON SET "${ROCLINT_GRANITE_MANIFEST_JSON}"
+    word_refinement_timeout_ms "${ROCLINT_GRANITE_WORD_REFINEMENT_TIMEOUT_MS}")
 
 # -----------------------------------------------------------------------------
 # Warnings are errors on every first-party target.
@@ -574,8 +583,10 @@ if(BUILD_DESKTOP)
             endif()
         elseif(APPLE AND ROCLINT_DEPLOY_QT)
             set(_roclint_deploy_deps roclint_host roclint_runtime_files roclint_workspace_runtime_files)
+            set(_roclint_granite_deploy_arg)
             if(TARGET roclint_native_runtime_files)
                 list(APPEND _roclint_deploy_deps roclint_native_runtime_files)
+                set(_roclint_granite_deploy_arg "-DGRANITE_WORKER=$<TARGET_FILE_DIR:roclint_host>/runtime/roclint_granite_worker")
             endif()
             if(TARGET roclint_guardian_runtime_files)
                 list(APPEND _roclint_deploy_deps roclint_guardian_runtime_files)
@@ -586,8 +597,8 @@ if(BUILD_DESKTOP)
                         "-DMACDEPLOYQT=${MACDEPLOYQT_EXECUTABLE}"
                         "-DBUNDLE_DIR=$<TARGET_BUNDLE_DIR:roclint_host>"
                         "-DQML_DIR=${CMAKE_CURRENT_SOURCE_DIR}/app/qml"
-                        "-DEXECUTABLE_1=$<TARGET_FILE_DIR:roclint_host>/runtime/roclint_granite_worker"
-                        "-DEXECUTABLE_2=$<TARGET_FILE_DIR:roclint_host>/runtime/roclint_workspace_helper"
+                        "-DRUNTIME_DIR=$<TARGET_FILE_DIR:roclint_host>/runtime"
+                        ${_roclint_granite_deploy_arg}
                         -P "${CMAKE_CURRENT_SOURCE_DIR}/tools/deploy_qt.cmake"
                     DEPENDS ${_roclint_deploy_deps}
                     COMMENT "Staging self-contained Qt runtime in $<TARGET_BUNDLE_DIR:roclint_host>"

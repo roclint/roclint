@@ -1,4 +1,5 @@
 #include "IAccessibilityBridge.hpp"
+#include "RangeInjectionPolicy.hpp"
 #include "TerminalAdapter.hpp"
 
 #include <QDebug>
@@ -15,6 +16,7 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 namespace roclint::host {
@@ -23,9 +25,9 @@ namespace {
 
 constexpr CFTimeInterval kTrustPollSeconds = 2.0;
 constexpr CFTimeInterval kElectronWakeSeconds = 0.06;
-constexpr useconds_t kPasteSettleMicros = 150000;
-constexpr useconds_t kTerminalEchoMicros = 300000;
 constexpr CFIndex kMaxReadChars = 16000;
+constexpr int kReadbackPolls = 40;
+constexpr useconds_t kPollMicros = 30000;
 
 bool isElectronBundle(const QString& bundleId) {
     const QString b = bundleId.toLower();
@@ -53,12 +55,12 @@ bool isTerminalBundle(const QString& bundleId) {
            b == QLatin1String("com.mitchellh.ghostty") || b == QLatin1String("dev.warp.warp-stable");
 }
 
-QString copyStringAttribute(AXUIElementRef element, CFStringRef attribute) {
+std::optional<QString> readStringAttribute(AXUIElementRef element, CFStringRef attribute) {
     CFTypeRef value = nullptr;
     if (AXUIElementCopyAttributeValue(element, attribute, &value) != kAXErrorSuccess || value == nullptr) {
-        return {};
+        return std::nullopt;
     }
-    QString out;
+    std::optional<QString> out;
     if (CFGetTypeID(value) == CFStringGetTypeID()) {
         out = QString::fromCFString(static_cast<CFStringRef>(value));
     }
@@ -66,25 +68,54 @@ QString copyStringAttribute(AXUIElementRef element, CFStringRef attribute) {
     return out;
 }
 
-void postKey(CGKeyCode key, CGEventFlags flags, pid_t targetPid = 0) {
+QString copyStringAttribute(AXUIElementRef element, CFStringRef attribute) {
+    return readStringAttribute(element, attribute).value_or(QString{});
+}
+
+bool postKey(CGKeyCode key, CGEventFlags flags, pid_t targetPid) {
     CGEventRef down = CGEventCreateKeyboardEvent(nullptr, key, true);
     CGEventRef up = CGEventCreateKeyboardEvent(nullptr, key, false);
-    if (down != nullptr && up != nullptr) {
+    const bool ready = targetPid > 0 && down && up;
+    if (ready) {
         CGEventSetFlags(down, flags);
         CGEventSetFlags(up, flags);
-        if (targetPid > 0) {
-            CGEventPostToPid(targetPid, down);
-        }
-        CGEventPost(kCGHIDEventTap, down);
-        usleep(15000);
-        if (targetPid > 0) {
-            CGEventPostToPid(targetPid, up);
-        }
-        CGEventPost(kCGHIDEventTap, up);
-        usleep(15000);
+        CGEventPostToPid(targetPid, down);
+        CGEventPostToPid(targetPid, up);
     }
     if (down != nullptr) CFRelease(down);
     if (up != nullptr) CFRelease(up);
+    return ready;
+}
+
+std::optional<CFRange> readSelection(AXUIElementRef element) {
+    CFTypeRef value = nullptr;
+    if (AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute, &value) != kAXErrorSuccess || !value)
+        return std::nullopt;
+    CFRange range{};
+    const bool valid = CFGetTypeID(value) == AXValueGetTypeID() &&
+        AXValueGetValue(static_cast<AXValueRef>(value), static_cast<AXValueType>(kAXValueCFRangeType), &range) &&
+        range.location >= 0 && range.length >= 0;
+    CFRelease(value);
+    return valid ? std::optional{range} : std::nullopt;
+}
+
+bool canSet(AXUIElementRef element, CFStringRef attribute) {
+    Boolean settable = false;
+    return AXUIElementIsAttributeSettable(element, attribute, &settable) == kAXErrorSuccess && settable;
+}
+
+bool selectRange(AXUIElementRef element, CFRange range) {
+    AXValueRef value = AXValueCreate(static_cast<AXValueType>(kAXValueCFRangeType), &range);
+    if (!value) return false;
+    const bool selected = AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute, value) == kAXErrorSuccess;
+    CFRelease(value);
+    return selected;
+}
+
+pid_t frontmostPid() {
+    @autoreleasepool {
+        return [[NSWorkspace sharedWorkspace] frontmostApplication].processIdentifier;
+    }
 }
 
 class MacAccessibilityBridge;
@@ -122,6 +153,7 @@ public:
         }
         perform(^{
           this->applyObserving(false);
+          this->clearKnownFields();
           CFRunLoopStop(CFRunLoopGetCurrent());
         });
         if (m_thread.joinable()) {
@@ -149,6 +181,11 @@ public:
     void inject(const InjectionRequest& request) override {
         const InjectionRequest copy = request;
         perform(^{ this->performInjection(copy); });
+    }
+
+    void injectRange(const RangeInjectionRequest& request) override {
+        const RangeInjectionRequest copy = request;
+        perform(^{ this->performRangeInjection(copy); });
     }
 
     void refreshFocusedField(quint64 requestId = 0) override {
@@ -210,6 +247,8 @@ public:
     }
 
 private:
+    struct KnownField { AXUIElementRef element; pid_t pid; QString bundle; quint64 token; };
+
     void run() {
         {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -546,8 +585,15 @@ private:
                                 static_cast<int>(sz.width), static_cast<int>(sz.height));
         }
 
-        f.text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-        f.text.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+        if (f.kind == FieldKind::Terminal) {
+            const auto rawCaret = f.caretOffset;
+            const auto offset = rawCaret < 0 ? f.text.size() : std::min<qsizetype>(rawCaret, f.text.size());
+            auto prefix = f.text.left(offset);
+            prefix.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+            f.text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+            f.text.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+            if (rawCaret >= 0) f.caretOffset = static_cast<int>(prefix.size());
+        }
         if (f.caretOffset > f.text.size()) {
             f.caretOffset = static_cast<int>(f.text.size());
         }
@@ -575,238 +621,266 @@ private:
         emit fieldObserved(*field);
     }
 
-    QString currentDraft(const ObservedField& field) const {
-        if (field.kind == FieldKind::Terminal) {
-            const auto draft = TerminalAdapter::extractDraft(field.text, field.caretOffset);
-            return draft.has_value() ? draft->text : QString();
+    const KnownField* capturedField(quint64 token, FieldKind kind) const {
+        for (const auto& field : m_knownFields) {
+            if (field.token == token &&
+                isTerminalBundle(field.bundle) == (kind == FieldKind::Terminal)) return &field;
         }
-        return field.text;
+        return nullptr;
     }
 
-    bool verifyTargetFocus() const {
-        @autoreleasepool {
-            NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
-            if (!front || front.processIdentifier != m_pid) return false;
-            return true;
-        }
+    static bool targetFocused(AXUIElementRef app, const KnownField& target) {
+        if (frontmostPid() != target.pid) return false;
+        CFTypeRef focused = nullptr;
+        if (AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute, &focused) != kAXErrorSuccess || !focused)
+            return false;
+        const bool matches = CFEqual(focused, target.element);
+        CFRelease(focused);
+        return matches;
     }
 
-    bool activateTarget() {
+    static bool activateCapturedApp(AXUIElementRef app, const KnownField& target) {
+        const auto front = frontmostPid();
+        if (front == target.pid) return targetFocused(app, target);
+        if (front != getpid()) return false;
+
         @autoreleasepool {
-            NSRunningApplication* app = [NSRunningApplication runningApplicationWithProcessIdentifier:m_pid];
-            if (app == nil) {
-                return false;
-            }
+            NSRunningApplication* application = [NSRunningApplication runningApplicationWithProcessIdentifier:target.pid];
+            if (!application || !application.bundleIdentifier ||
+                QString::fromNSString(application.bundleIdentifier) != target.bundle) return false;
             if (@available(macOS 14.0, *)) {
-                [NSApp yieldActivationToApplication:app];
-                [app activateFromApplication:[NSRunningApplication currentApplication]
-                                     options:NSApplicationActivateAllWindows];
+                [NSApp yieldActivationToApplication:application];
+                [application activateFromApplication:[NSRunningApplication currentApplication] options:0];
             } else {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-                [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+                [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
 #pragma clang diagnostic pop
             }
         }
-        if (m_app != nullptr) {
-            AXUIElementSetAttributeValue(m_app, CFSTR("AXEnhancedUserInterface"), kCFBooleanTrue);
+        // The app must return to the captured element on its own. Forcing focus
+        // to a previously captured field could write into a stale draft.
+        for (int i = 0; i < 18; ++i) {
+            const auto active = frontmostPid();
+            if (active != getpid() && active != target.pid) return false;
+            if (targetFocused(app, target)) return true;
+            usleep(kPollMicros);
         }
-        if (m_focused != nullptr) {
-            CFTypeRef window = nullptr;
-            if (AXUIElementCopyAttributeValue(m_focused, kAXWindowAttribute, &window) == kAXErrorSuccess && window != nullptr) {
-                if (CFGetTypeID(window) == AXUIElementGetTypeID()) {
-                    AXUIElementPerformAction(static_cast<AXUIElementRef>(window), kAXRaiseAction);
-                    AXUIElementSetAttributeValue(m_app, kAXFocusedWindowAttribute, window);
-                }
-                CFRelease(window);
-            }
-            AXUIElementSetAttributeValue(m_focused, kAXFocusedAttribute, kCFBooleanTrue);
-        }
-        // Poll for target application becoming frontmost (up to 350ms)
-        for (int attempt = 0; attempt < 14; ++attempt) {
-            usleep(25000);
-            @autoreleasepool {
-                NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
-                if (front && front.processIdentifier == m_pid) {
-                    return true;
-                }
-            }
-        }
-        @autoreleasepool {
-            NSRunningApplication* app = [NSRunningApplication runningApplicationWithProcessIdentifier:m_pid];
-            if (app != nil) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-                [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
-#pragma clang diagnostic pop
-            }
-        }
-        for (int attempt = 0; attempt < 8; ++attempt) {
-            usleep(25000);
-            @autoreleasepool {
-                NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
-                if (front && front.processIdentifier == m_pid) {
-                    return true;
-                }
-            }
-        }
-        return verifyTargetFocus();
+        return false;
     }
 
-    bool paste(const QString& text) {
-        if (!verifyTargetFocus()) return false;
+    static std::optional<QString> deliveryText(const KnownField& target, FieldKind kind) {
+        auto text = readStringAttribute(target.element, kAXValueAttribute);
+        if (!text) return std::nullopt;
+        if (kind == FieldKind::GuiEditor) return text;
+        const auto selection = readSelection(target.element);
+        const auto caret = selection ? std::min(selection->location, static_cast<CFIndex>(text->size())) : text->size();
+        auto prefix = text->left(caret);
+        prefix.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+        prefix.replace(QLatin1Char('\r'), QLatin1Char('\n'));
+        const auto draft = TerminalAdapter::extractDraft(prefix, prefix.size());
+        return draft ? std::optional{draft->text} : std::nullopt;
+    }
+
+    static bool exactText(AXUIElementRef app, const KnownField& target, FieldKind kind, const QString& expected) {
+        if (!targetFocused(app, target)) return false;
+        const auto current = deliveryText(target, kind);
+        return current && RangeInjectionPolicy::readbackMatches(expected, *current);
+    }
+
+    static bool waitForText(AXUIElementRef app, const KnownField& target, FieldKind kind,
+                            const QString& expected, int polls = kReadbackPolls) {
+        for (int i = 0; i < polls; ++i) {
+            if (!targetFocused(app, target)) return false;
+            const auto text = deliveryText(target, kind);
+            if (text && RangeInjectionPolicy::readbackMatches(expected, *text)) return true;
+            usleep(kPollMicros);
+        }
+        return false;
+    }
+
+    static bool selectionMatches(AXUIElementRef element, CFRange expected) {
+        const auto current = readSelection(element);
+        return current && current->location == expected.location && current->length == expected.length;
+    }
+
+    static std::optional<InjectionOutcome> selectionError(AXUIElementRef app, const KnownField& target,
+                                                          const QString& before, CFRange range) {
+        // Chromium applies an AX selection asynchronously in the renderer.
+        for (int i = 0; i < 6; ++i) {
+            if (!exactText(app, target, FieldKind::GuiEditor, before)) return InjectionOutcome::FieldChanged;
+            if (selectionMatches(target.element, range)) return std::nullopt;
+            usleep(kPollMicros);
+        }
+        return InjectionOutcome::NotSupported;
+    }
+
+    static InjectionOutcome pasteAndVerify(AXUIElementRef app, const KnownField& target, FieldKind kind,
+                                           const QString& before, const QString& payload, const QString& expected,
+                                           std::optional<CFRange> selection = std::nullopt) {
         @autoreleasepool {
             NSPasteboard* board = [NSPasteboard generalPasteboard];
-            [board clearContents];
-            if (![board setString:text.toNSString() forType:NSPasteboardTypeString]) {
-                return false;
+            const NSInteger originalChange = board.changeCount;
+            NSMutableArray<NSPasteboardItem*>* saved = [NSMutableArray array];
+            for (NSPasteboardItem* item in board.pasteboardItems) {
+                NSPasteboardItem* copy = [[[NSPasteboardItem alloc] init] autorelease];
+                for (NSPasteboardType type in item.types) {
+                    NSData* data = [item dataForType:type];
+                    if (!data || ![copy setData:data forType:type]) return InjectionOutcome::NotSupported;
+                }
+                [saved addObject:copy];
             }
-            postKey(kVK_ANSI_V, kCGEventFlagMaskCommand, m_pid);
-            usleep(kPasteSettleMicros);
+            const auto validTarget = [&]() {
+                return exactText(app, target, kind, before) &&
+                    (!selection || selectionMatches(target.element, *selection));
+            };
+            if (!validTarget() || board.changeCount != originalChange) return InjectionOutcome::FieldChanged;
+            NSPasteboardItem* temporary = [[[NSPasteboardItem alloc] init] autorelease];
+            if (![temporary setString:payload.toNSString() forType:NSPasteboardTypeString])
+                return InjectionOutcome::Failed;
+            const NSInteger clearedChange = [board clearContents];
+            if (board.changeCount != clearedChange) return InjectionOutcome::FieldChanged;
+            const bool copied = [board writeObjects:@[temporary]];
+            // writeObjects does not claim ownership after clearContents. A
+            // different change count belongs to someone else.
+            const bool owned = board.changeCount == clearedChange;
+            InjectionOutcome outcome = InjectionOutcome::Failed;
+            if (owned && copied) {
+                if (!validTarget() || board.changeCount != clearedChange) {
+                    outcome = InjectionOutcome::FieldChanged;
+                } else if (postKey(kVK_ANSI_V, kCGEventFlagMaskCommand, target.pid) &&
+                           waitForText(app, target, kind, expected)) {
+                    outcome = InjectionOutcome::Injected;
+                }
+            }
+            if (board.changeCount == clearedChange) {
+                const NSInteger restoreChange = [board clearContents];
+                if (saved.count && board.changeCount == restoreChange) [board writeObjects:saved];
+            }
+            return outcome;
         }
-        return true;
+    }
+
+    static InjectionOutcome replaceGuiValue(AXUIElementRef app, const KnownField& target,
+                                            const QString& before, const QString& expected) {
+        if (!exactText(app, target, FieldKind::GuiEditor, before)) return InjectionOutcome::FieldChanged;
+        if (!isElectronBundle(target.bundle) && canSet(target.element, kAXValueAttribute)) {
+            if (!exactText(app, target, FieldKind::GuiEditor, before)) return InjectionOutcome::FieldChanged;
+            AXUIElementSetAttributeValue(target.element, kAXValueAttribute, (__bridge CFTypeRef)expected.toNSString());
+            return waitForText(app, target, FieldKind::GuiEditor, expected)
+                ? InjectionOutcome::Injected : InjectionOutcome::Failed;
+        }
+
+        const CFRange whole{0, static_cast<CFIndex>(before.size())};
+        // Select-all is safe only when this provider can show us what it selected.
+        if (!readSelection(target.element)) return InjectionOutcome::NotSupported;
+        if (!exactText(app, target, FieldKind::GuiEditor, before)) return InjectionOutcome::FieldChanged;
+        if (!selectRange(target.element, whole) && !postKey(kVK_ANSI_A, kCGEventFlagMaskCommand, target.pid))
+            return InjectionOutcome::Failed;
+        if (const auto error = selectionError(app, target, before, whole)) return *error;
+        return pasteAndVerify(app, target, FieldKind::GuiEditor, before, expected, expected, whole);
+    }
+
+    static InjectionOutcome replaceTerminalDraft(AXUIElementRef app, const KnownField& target, const InjectionRequest& r) {
+        for (const auto key : TerminalAdapter::replacementKeys(r.terminalVimMode)) {
+            if (!targetFocused(app, target)) return InjectionOutcome::FieldChanged;
+            bool posted = false;
+            switch (key) {
+                case TerminalAdapter::Key::Escape: posted = postKey(kVK_Escape, 0, target.pid); break;
+                case TerminalAdapter::Key::AppendAtLineEnd: posted = postKey(kVK_ANSI_A, kCGEventFlagMaskShift, target.pid); break;
+                case TerminalAdapter::Key::LineEnd: posted = postKey(kVK_ANSI_E, kCGEventFlagMaskControl, target.pid); break;
+                case TerminalAdapter::Key::ClearLine: posted = postKey(kVK_ANSI_U, kCGEventFlagMaskControl, target.pid); break;
+                case TerminalAdapter::Key::Paste:
+                    if (!waitForText(app, target, FieldKind::Terminal, QString{}, 10)) return InjectionOutcome::Failed;
+                    return pasteAndVerify(app, target, FieldKind::Terminal, QString{}, r.text, r.text);
+            }
+            if (!posted) return InjectionOutcome::Failed;
+            usleep(kPollMicros);
+        }
+        return InjectionOutcome::Failed;
+    }
+
+    template<class Write>
+    InjectionOutcome withCapturedField(quint64 token, FieldKind kind, const QString& before, Write write) {
+        if (!m_observing || !AXIsProcessTrusted()) return InjectionOutcome::NotSupported;
+        const auto* target = capturedField(token, kind);
+        if (!target) return InjectionOutcome::FieldChanged;
+        const auto subrole = copyStringAttribute(target->element, kAXSubroleAttribute);
+        if (subrole == QLatin1String("AXSecureTextField")) return InjectionOutcome::NotSupported;
+        const auto current = deliveryText(*target, kind);
+        if (!current) return InjectionOutcome::NotSupported;
+        if (!RangeInjectionPolicy::preconditionsHold(token, target->token, before, *current))
+            return InjectionOutcome::FieldChanged;
+
+        const std::unique_ptr<std::remove_pointer_t<AXUIElementRef>, decltype(&CFRelease)>
+            app(AXUIElementCreateApplication(target->pid), CFRelease);
+        if (!app || !activateCapturedApp(app.get(), *target) || !exactText(app.get(), *target, kind, before))
+            return InjectionOutcome::FieldChanged;
+        return write(app.get(), *target);
+    }
+
+    static QString deliveryDetail(InjectionOutcome outcome) {
+        switch (outcome) {
+            case InjectionOutcome::Injected: return {};
+            case InjectionOutcome::FieldChanged: return QStringLiteral("The captured target or its text changed.");
+            case InjectionOutcome::NotSupported: return QStringLiteral("This field does not support verified replacement.");
+            case InjectionOutcome::Failed: return QStringLiteral("The editor did not confirm the exact replacement. Check the field before retrying.");
+        }
+        return {};
     }
 
     void performInjection(const InjectionRequest& r) {
-        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
-            qInfo() << "[MacAX] performInjection starting: requestId=" << r.requestId
-                    << "fieldToken=" << r.fieldToken << "pid=" << r.processId
-                    << "app=" << r.appIdentifier << "text=" << r.text.left(30);
+        @autoreleasepool {
+            const auto outcome = withCapturedField(r.fieldToken, r.kind, r.expectedCurrentText,
+                [&](AXUIElementRef app, const KnownField& target) {
+                    if ((r.processId > 0 && r.processId != target.pid) ||
+                        (!r.appIdentifier.isEmpty() && r.appIdentifier != target.bundle))
+                        return InjectionOutcome::FieldChanged;
+                    if (r.kind == FieldKind::Terminal) return replaceTerminalDraft(app, target, r);
+                    return replaceGuiValue(app, target, r.expectedCurrentText, r.text);
+                });
+            emit injectionFinished(r.requestId, outcome, deliveryDetail(outcome));
         }
-        if (m_focused == nullptr || m_token != r.fieldToken) {
-            for (const auto& kf : m_knownFields) {
-                if (kf.token == r.fieldToken) {
-                    m_focused = kf.element;
-                    m_token = kf.token;
-                    m_pid = kf.pid;
-                    m_bundleId = kf.bundle;
-                    m_eligible = true;
-                    break;
-                }
-            }
-        }
-        if (m_pid <= 0 && r.processId > 0) {
-            m_pid = static_cast<pid_t>(r.processId);
-        }
-        if (m_bundleId.isEmpty() && !r.appIdentifier.isEmpty()) {
-            m_bundleId = r.appIdentifier;
-        }
+    }
 
-        if (m_app == nullptr && m_pid > 0) {
-            m_app = AXUIElementCreateApplication(m_pid);
-            if (m_app != nullptr) {
-                AXUIElementSetAttributeValue(m_app, CFSTR("AXEnhancedUserInterface"), kCFBooleanTrue);
-            }
-        }
-
-        if (m_pid <= 0 || !activateTarget()) {
-            emit injectionFinished(r.requestId, InjectionOutcome::Failed, QStringLiteral("Couldn't bring the app to the front."));
-            return;
-        }
-
-        // After target application is activated and frontmost, if m_focused is null or stale,
-        // rebind directly to the target application's active focused element.
-        auto before = readField();
-        if (!before.has_value() && m_app != nullptr) {
-            CFTypeRef focusedVal = nullptr;
-            if (AXUIElementCopyAttributeValue(m_app, kAXFocusedUIElementAttribute, &focusedVal) == kAXErrorSuccess && focusedVal != nullptr) {
-                AXUIElementRef newFocused = static_cast<AXUIElementRef>(focusedVal);
-                const QString role = copyStringAttribute(newFocused, kAXRoleAttribute);
-                if (role == QLatin1String("AXTextArea") || role == QLatin1String("AXTextField") ||
-                    role == QLatin1String("AXComboBox") || isTerminalBundle(m_bundleId)) {
-                    if (m_focused != nullptr) CFRelease(m_focused);
-                    m_focused = newFocused;
-                    m_token = tokenFor(newFocused);
-                    m_eligible = true;
-                    before = readField();
-                } else {
-                    CFRelease(focusedVal);
-                }
-            }
-        }
-
-        if (m_focused == nullptr) {
-            emit injectionFinished(r.requestId, InjectionOutcome::FieldChanged, QStringLiteral("Focus moved to a different field."));
-            return;
-        }
-
-        if (!before.has_value() || before->isPassword) {
-            emit injectionFinished(r.requestId, InjectionOutcome::NotSupported, QStringLiteral("That field can't be written to."));
-            return;
-        }
-
-        auto norm = [](QString s) {
-            s.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
-            s.replace(QLatin1Char('\r'), QLatin1Char('\n'));
-            return s;
-        };
-
-        if (r.kind == FieldKind::Terminal) {
-            const QString currentText = currentDraft(*before);
-            if (!currentText.trimmed().isEmpty() &&
-                norm(currentText).trimmed() != norm(r.expectedCurrentText).trimmed() &&
-                norm(currentText) != norm(r.expectedCurrentText)) {
-                emit injectionFinished(r.requestId, InjectionOutcome::FieldChanged,
-                                       QStringLiteral("The text changed after Roclint captured it."));
+    void performRangeInjection(const RangeInjectionRequest& r) {
+        @autoreleasepool {
+            if (r.kind != FieldKind::GuiEditor) {
+                emit rangeInjectionFinished(r.requestId, InjectionOutcome::NotSupported,
+                    QStringLiteral("Inline replacement is unavailable in terminal buffers."));
                 return;
             }
-            bool pasted = true;
-            for (const auto key : TerminalAdapter::replacementKeys(r.terminalVimMode)) {
-                switch (key) {
-                    case TerminalAdapter::Key::Escape: postKey(kVK_Escape, 0, m_pid); break;
-                    case TerminalAdapter::Key::AppendAtLineEnd: postKey(kVK_ANSI_A, kCGEventFlagMaskShift, m_pid); break;
-                    case TerminalAdapter::Key::LineEnd: postKey(kVK_ANSI_E, kCGEventFlagMaskControl, m_pid); break;
-                    case TerminalAdapter::Key::ClearLine: postKey(kVK_ANSI_U, kCGEventFlagMaskControl, m_pid); break;
-                    case TerminalAdapter::Key::Paste: pasted = paste(r.text); break;
-                }
+            if (!RangeInjectionPolicy::rangeMatches(r.expectedCurrentText, r.startOffset, r.endOffset, r.originalRangeText) ||
+                r.replacementText.isEmpty()) {
+                emit rangeInjectionFinished(r.requestId, InjectionOutcome::FieldChanged,
+                    QStringLiteral("The captured text range is invalid."));
+                return;
             }
-            usleep(kTerminalEchoMicros);
-            const auto after = readField();
-            const bool ok = pasted && after.has_value() && currentDraft(*after) == r.text;
-            emit injectionFinished(r.requestId, ok ? InjectionOutcome::Injected : InjectionOutcome::Failed,
-                                   ok ? QString() : QStringLiteral("The terminal didn't show the new text."));
-            return;
-        }
-
-        // Try direct AXValue write first for native Cocoa controls (NSTextView, etc.)
-        if (!isElectronBundle(m_bundleId)) {
-            @autoreleasepool {
-                if (AXUIElementSetAttributeValue(m_focused, kAXValueAttribute, (__bridge CFTypeRef)r.text.toNSString()) ==
-                    kAXErrorSuccess) {
-                    usleep(30000);
-                    const auto after = readField();
-                    if (after.has_value() && (norm(after->text) == norm(r.text) || norm(after->text).trimmed() == norm(r.text).trimmed())) {
-                        emit injectionFinished(r.requestId, InjectionOutcome::Injected, QString());
-                        return;
+            QString expected = r.expectedCurrentText;
+            expected.replace(r.startOffset, r.endOffset - r.startOffset, r.replacementText);
+            const auto outcome = withCapturedField(r.fieldToken, r.kind, r.expectedCurrentText,
+                [&](AXUIElementRef app, const KnownField& target) {
+                    const CFRange range{r.startOffset, r.endOffset - r.startOffset};
+                    if (!selectRange(target.element, range)) {
+                        // Selection alone doesn't write text. The whole-field
+                        // route checks the original value and focus again.
+                        return replaceGuiValue(app, target, r.expectedCurrentText, expected);
                     }
-                }
-            }
+                    if (const auto error = selectionError(app, target, r.expectedCurrentText, range)) return *error;
+                    // Chromium exposes a settable AXSelectedText and can return
+                    // success from its setter without editing the actual field.
+                    if (!isElectronBundle(target.bundle) && canSet(target.element, kAXSelectedTextAttribute)) {
+                        if (!exactText(app, target, r.kind, r.expectedCurrentText) ||
+                            !selectionMatches(target.element, range)) return InjectionOutcome::FieldChanged;
+                        AXUIElementSetAttributeValue(target.element, kAXSelectedTextAttribute,
+                            (__bridge CFTypeRef)r.replacementText.toNSString());
+                        return waitForText(app, target, r.kind, expected)
+                            ? InjectionOutcome::Injected : InjectionOutcome::Failed;
+                    }
+                    return pasteAndVerify(app, target, r.kind, r.expectedCurrentText, r.replacementText, expected, range);
+                });
+            emit rangeInjectionFinished(r.requestId, outcome, deliveryDetail(outcome));
         }
-
-        // Electron editors (Monaco, VS Code, Antigravity, Cursor) and rich web editors:
-        // Re-focus target field, select all (Cmd+A), and paste replacement (Cmd+V).
-        AXUIElementSetAttributeValue(m_focused, kAXFocusedAttribute, kCFBooleanTrue);
-        usleep(40000);
-        postKey(kVK_ANSI_A, kCGEventFlagMaskCommand, m_pid);
-        usleep(80000);
-        const bool pasted = paste(r.text);
-        if (!pasted) {
-            emit injectionFinished(r.requestId, InjectionOutcome::Failed, QStringLiteral("Couldn't paste into the editor."));
-            return;
-        }
-
-        bool confirmedByReadback = false;
-        for (int attempt = 0; attempt < 8; ++attempt) {
-            usleep(30000);
-            const auto after = readField();
-            if (after.has_value() && (norm(after->text) == norm(r.text) || norm(after->text).trimmed() == norm(r.text).trimmed())) {
-                confirmedByReadback = true;
-                break;
-            }
-        }
-        const bool ok = confirmedByReadback || isElectronBundle(m_bundleId) || pasted;
-        emit injectionFinished(r.requestId, ok ? InjectionOutcome::Injected : InjectionOutcome::Failed,
-                               ok ? QString() : QStringLiteral("The field didn't accept the new text."));
     }
 
     std::thread m_thread;
@@ -825,7 +899,6 @@ private:
     AXObserverRef m_observer{nullptr};
     AXUIElementRef m_focused{nullptr};
     bool m_eligible{false};
-    struct KnownField { AXUIElementRef element; pid_t pid; QString bundle; quint64 token; };
     std::vector<KnownField> m_knownFields;
     quint64 m_token{0}, m_nextFieldToken{0};
     QString m_lastSignature;

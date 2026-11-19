@@ -1,0 +1,976 @@
+{
+  "benchmark_version": 3,
+  "contract": "granite.discovery.intent_aware.v3",
+  "total_passed": 24,
+  "total_cases": 24,
+  "pass_rate_pct": 100.0,
+  "categories": {
+    "open_ended_aesthetic": {
+      "total": 4,
+      "passed": 4,
+      "latencies": [
+        14309.061288833618,
+        9283.293962478638,
+        9739.829063415527,
+        9750.436067581177
+      ]
+    },
+    "open_ended_engineering": {
+      "total": 4,
+      "passed": 4,
+      "latencies": [
+        8058.3391189575195,
+        9393.708944320679,
+        10525.197982788086,
+        8584.666967391968
+      ]
+    },
+    "settled_explicit": {
+      "total": 4,
+      "passed": 4,
+      "latencies": [
+        1722.5759029388428,
+        1728.7778854370117,
+        1731.85396194458,
+        1667.618989944458
+      ]
+    },
+    "deliberate_delegation": {
+      "total": 4,
+      "passed": 4,
+      "latencies": [
+        1576.8060684204102,
+        1751.7480850219727,
+        1618.2289123535156,
+        4648.765087127686
+      ]
+    },
+    "direct_conflict": {
+      "total": 4,
+      "passed": 4,
+      "latencies": [
+        2536.273241043091,
+        4184.290170669556,
+        1790.2262210845947,
+        1788.9471054077148
+      ]
+    },
+    "boundary_composition": {
+      "total": 4,
+      "passed": 4,
+      "latencies": [
+        8988.400936126709,
+        1743.0610656738281,
+        1619.3211078643799,
+        1709.9111080169678
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "OE-A1",
+      "category": "open_ended_aesthetic",
+      "prompt": "Make the landing page feel like an 80s retro synthwave arcade game.",
+      "passed": true,
+      "latency_ms": 14309.061288833618,
+      "response": {
+        "status": "options_generated",
+        "choice_groups": [
+          {
+            "dimension": "design_style",
+            "question": "How should the landing page reflect 80s retro synthwave arcade aesthetics?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Neon grid background with pixelated elements",
+                "why_material": "Strong retro synthwave visual cue",
+                "evidence": [
+                  "Make the landing page feel like an 80s retro synthwave arcade game"
+                ]
+              },
+              {
+                "label": "Arcade cabinet silhouette overlay with glowing edges",
+                "why_material": "Highlights arcade game feel",
+                "evidence": [
+                  "Make the landing page feel like an 80s retro synthwave arcade game"
+                ]
+              },
+              {
+                "label": "Let agent decide based on workspace conventions",
+                "why_material": "Uses existing design patterns",
+                "evidence": [
+                  "Make the landing page feel like an 80s retro synthwave arcade game"
+                ]
+              }
+            ]
+          },
+          {
+            "dimension": "interaction_design",
+            "question": "What level of interactivity should match the arcade vibe?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Basic hover animations for buttons",
+                "why_material": "Simple, lightweight arcade feel",
+                "evidence": [
+                  "Make the landing page feel like an 80s retro synthwave arcade game"
+                ]
+              },
+              {
+                "label": "Full touchscreen-style touch controls if applicable",
+                "why_material": "Enhances arcade immersion",
+                "evidence": [
+                  "Make the landing page feel like an 80s retro synthwave arcade game"
+                ]
+              },
+              {
+                "label": "Let agent decide based on workspace conventions",
+                "why_material": "Follows established UI conventions",
+                "evidence": [
+                  "Make the landing page feel like an 80s retro synthwave arcade game"
+                ]
+              }
+            ]
+          }
+        ],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "OE-A2",
+      "category": "open_ended_aesthetic",
+      "prompt": "Make the dashboard look more modern and clean.",
+      "passed": true,
+      "latency_ms": 9283.293962478638,
+      "response": {
+        "status": "options_generated",
+        "choice_groups": [
+          {
+            "dimension": "aesthetic",
+            "question": "How should the dashboard be modernized?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Minimalist layout with ample whitespace",
+                "why_material": "Enhances readability and focus",
+                "evidence": [
+                  "Make the dashboard look more modern and clean"
+                ]
+              },
+              {
+                "label": "Card-based sections with subtle hover effects",
+                "why_material": "Improves visual hierarchy and interaction",
+                "evidence": [
+                  "Make the dashboard look more modern and clean"
+                ]
+              },
+              {
+                "label": "Let agent decide based on workspace conventions",
+                "why_material": "Follows existing UI patterns and preferences",
+                "evidence": [
+                  "Make the dashboard look more modern and clean"
+                ]
+              }
+            ]
+          },
+          {
+            "dimension": "layout",
+            "question": "What scope should the modernization cover?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Focus on header, navigation, and main content panels",
+                "why_material": "Ensures core usability improves quickly",
+                "evidence": [
+                  "Make the dashboard look more modern and clean"
+                ]
+              },
+              {
+                "label": "Comprehensive redesign of all dashboard elements",
+                "why_material": "Provides deeper modernization effort",
+                "evidence": [
+                  "Make the dashboard look more modern and clean"
+                ]
+              },
+              {
+                "label": "Let agent decide based on workspace conventions",
+                "why_material": "Follows existing layout conventions",
+                "evidence": [
+                  "Make the dashboard look more modern and clean"
+                ]
+              }
+            ]
+          }
+        ],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "OE-A3",
+      "category": "open_ended_aesthetic",
+      "prompt": "Redesign the profile card with a sleek futuristic aesthetic.",
+      "passed": true,
+      "latency_ms": 9739.829063415527,
+      "response": {
+        "status": "options_generated",
+        "choice_groups": [
+          {
+            "dimension": "aesthetic",
+            "question": "How should the profile card achieve a sleek futuristic look?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Minimalist geometric lines and neon accents",
+                "why_material": "Strong futuristic vibe with clean visual hierarchy",
+                "evidence": [
+                  "Redesign the profile card with a sleek futuristic aesthetic"
+                ]
+              },
+              {
+                "label": "Transparent panels with subtle holographic effects",
+                "why_material": "Immersive, high-tech feel",
+                "evidence": [
+                  "Redesign the profile card with a sleek futuristic aesthetic"
+                ]
+              },
+              {
+                "label": "Let agent decide based on workspace conventions",
+                "why_material": "Follows existing UI patterns and project standards",
+                "evidence": [
+                  "Redesign the profile card with a sleek futuristic aesthetic"
+                ]
+              }
+            ]
+          },
+          {
+            "dimension": "scope",
+            "question": "What aspects of the profile card should be redesigned?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Entire card layout and visual style",
+                "why_material": "Comprehensive modernization for consistent experience",
+                "evidence": [
+                  "Redesign the profile card with a sleek futuristic aesthetic"
+                ]
+              },
+              {
+                "label": "Only the border, icons, and text elements",
+                "why_material": "Incremental changes with minimal impact",
+                "evidence": [
+                  "Redesign the profile card with a sleek futuristic aesthetic"
+                ]
+              },
+              {
+                "label": "Let agent decide based on workspace conventions",
+                "why_material": "Adapts to existing design tokens and context",
+                "evidence": [
+                  "Redesign the profile card with a sleek futuristic aesthetic"
+                ]
+              }
+            ]
+          }
+        ],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "OE-A4",
+      "category": "open_ended_aesthetic",
+      "prompt": "Give the checkout page an elegant, high-end boutique atmosphere.",
+      "passed": true,
+      "latency_ms": 9750.436067581177,
+      "response": {
+        "status": "options_generated",
+        "choice_groups": [
+          {
+            "dimension": "atmosphere",
+            "question": "How to achieve an elegant, high-end boutique atmosphere on the checkout page?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Minimalist layout with luxury typography",
+                "why_material": "Fits boutique aesthetic",
+                "evidence": [
+                  "Give the checkout page an elegant, high-end boutique atmosphere"
+                ]
+              },
+              {
+                "label": "Subtle accent colors and refined spacing",
+                "why_material": "Enhances premium feel",
+                "evidence": [
+                  "Give the checkout page an elegant, high-end boutique atmosphere"
+                ]
+              },
+              {
+                "label": "Let agent decide based on workspace conventions",
+                "why_material": "Follows existing design patterns",
+                "evidence": [
+                  "Give the checkout page an elegant, high-end boutique atmosphere"
+                ]
+              }
+            ]
+          },
+          {
+            "dimension": "scope",
+            "question": "Which aspects of the checkout experience should focus on boutique atmosphere?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Main checkout form styling and spacing",
+                "why_material": "Highlights form usability in premium context",
+                "evidence": [
+                  "Give the checkout page an elegant, high-end boutique atmosphere"
+                ]
+              },
+              {
+                "label": "Footer and branding elements",
+                "why_material": "Reinforces brand sophistication",
+                "evidence": [
+                  "Give the checkout page an elegant, high-end boutique atmosphere"
+                ]
+              },
+              {
+                "label": "Let agent decide based on workspace conventions",
+                "why_material": "Uses existing layout conventions",
+                "evidence": [
+                  "Give the checkout page an elegant, high-end boutique atmosphere"
+                ]
+              }
+            ]
+          }
+        ],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "OE-P1",
+      "category": "open_ended_engineering",
+      "prompt": "Improve the loading performance.",
+      "passed": true,
+      "latency_ms": 8058.3391189575195,
+      "response": {
+        "status": "options_generated",
+        "choice_groups": [
+          {
+            "dimension": "approach",
+            "question": "How should we improve loading performance?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Optimize asset loading sequence",
+                "why_material": "Reduces time to first byte",
+                "evidence": [
+                  "Improve the loading performance"
+                ]
+              },
+              {
+                "label": "Implement lazy loading for non-critical assets",
+                "why_material": "Delays heavy resources until needed",
+                "evidence": [
+                  "Improve the loading performance"
+                ]
+              },
+              {
+                "label": "Let agent decide based on workspace conventions",
+                "why_material": "Follows existing patterns",
+                "evidence": [
+                  "Improve the loading performance"
+                ]
+              }
+            ]
+          },
+          {
+            "dimension": "scope",
+            "question": "What aspects of loading should focus on?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Frontend bundle size and parse time",
+                "why_material": "Affects initial page render",
+                "evidence": [
+                  "Improve the loading performance"
+                ]
+              },
+              {
+                "label": "Network request and caching strategy",
+                "why_material": "Improves real-world loading times",
+                "evidence": [
+                  "Improve the loading performance"
+                ]
+              },
+              {
+                "label": "Let agent decide based on workspace conventions",
+                "why_material": "Tailors to project context",
+                "evidence": [
+                  "Improve the loading performance"
+                ]
+              }
+            ]
+          }
+        ],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "OE-P2",
+      "category": "open_ended_engineering",
+      "prompt": "Make the search page faster and more responsive.",
+      "passed": true,
+      "latency_ms": 9393.708944320679,
+      "response": {
+        "status": "options_generated",
+        "choice_groups": [
+          {
+            "dimension": "optimization_strategy",
+            "question": "How should we improve the search page's speed and responsiveness?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Optimize database queries for search terms",
+                "why_material": "Reduces latency from data retrieval",
+                "evidence": [
+                  "Make the search page faster and more responsive"
+                ]
+              },
+              {
+                "label": "Implement client-side caching for search results",
+                "why_material": "Lowers server load and speeds up page load",
+                "evidence": [
+                  "Make the search page faster and more responsive"
+                ]
+              },
+              {
+                "label": "Let agent decide based on workspace conventions",
+                "why_material": "Follows existing search implementation patterns",
+                "evidence": [
+                  "Make the search page faster and more responsive"
+                ]
+              }
+            ]
+          },
+          {
+            "dimension": "user_experience",
+            "question": "What aspects of user experience should be prioritized?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Prioritize instant search results on keystroke",
+                "why_material": "Improves perceived performance",
+                "evidence": [
+                  "Make the search page faster and more responsive"
+                ]
+              },
+              {
+                "label": "Prioritize advanced filtering and sorting options",
+                "why_material": "Enhances usability for complex queries",
+                "evidence": [
+                  "Make the search page faster and more responsive"
+                ]
+              },
+              {
+                "label": "Let agent decide based on typical user workflows",
+                "why_material": "Balances performance with usability needs",
+                "evidence": [
+                  "Make the search page faster and more responsive"
+                ]
+              }
+            ]
+          }
+        ],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "OE-P3",
+      "category": "open_ended_engineering",
+      "prompt": "Refactor the authentication flow for better maintainability.",
+      "passed": true,
+      "latency_ms": 10525.197982788086,
+      "response": {
+        "status": "options_generated",
+        "choice_groups": [
+          {
+            "dimension": "flow_design",
+            "question": "How should the authentication flow be refactored for maintainability?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Separate credential validation and session management into distinct functions",
+                "why_material": "Improves testability and reuse of validation logic",
+                "evidence": [
+                  "Refactor the authentication flow for better maintainability"
+                ]
+              },
+              {
+                "label": "Introduce a layered strategy: login handler, auth service, and guard utilities",
+                "why_material": "Encourages clear separation of concerns and easier future extensions",
+                "evidence": [
+                  "Refactor the authentication flow for better maintainability"
+                ]
+              },
+              {
+                "label": "Let the coding agent decide based on workspace conventions",
+                "why_material": "Follows existing project structure and team practices",
+                "evidence": [
+                  "Refactor the authentication flow for better maintainability"
+                ]
+              }
+            ]
+          },
+          {
+            "dimension": "implementation_detail",
+            "question": "Which specific design pattern or component hierarchy aligns best with typical maintainability goals?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Use dependency injection for auth components",
+                "why_material": "Reduces coupling and simplifies mocking in tests",
+                "evidence": [
+                  "Refactor the authentication flow for better maintainability"
+                ]
+              },
+              {
+                "label": "Implement centralized error handling and logging",
+                "why_material": "Centralizes issue detection and aids debugging",
+                "evidence": [
+                  "Refactor the authentication flow for better maintainability"
+                ]
+              },
+              {
+                "label": "Let agent follow workspace conventions for structuring modules",
+                "why_material": "Optimizes for existing codebase patterns",
+                "evidence": [
+                  "Refactor the authentication flow for better maintainability"
+                ]
+              }
+            ]
+          }
+        ],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "OE-P4",
+      "category": "open_ended_engineering",
+      "prompt": "Optimize memory usage in the background data synchronization worker.",
+      "passed": true,
+      "latency_ms": 8584.666967391968,
+      "response": {
+        "status": "options_generated",
+        "choice_groups": [
+          {
+            "dimension": "approach",
+            "question": "How should we optimize memory usage?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Profile and reduce object churn",
+                "why_material": "Identifies heavy allocations",
+                "evidence": [
+                  "Optimize memory usage in the background data synchronization worker"
+                ]
+              },
+              {
+                "label": "Implement streaming instead of full buffering",
+                "why_material": "Reduces peak memory",
+                "evidence": [
+                  "Optimize memory usage in the background data synchronization worker"
+                ]
+              },
+              {
+                "label": "Let agent decide based on workspace conventions",
+                "why_material": "Follows existing patterns",
+                "evidence": [
+                  "Optimize memory usage in the background data synchronization worker"
+                ]
+              }
+            ]
+          },
+          {
+            "dimension": "scope",
+            "question": "What part of the worker should focus on?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Worker's data buffering stage",
+                "why_material": "Direct memory hotspot",
+                "evidence": [
+                  "Optimize memory usage in the background data synchronization worker"
+                ]
+              },
+              {
+                "label": "Full worker lifecycle optimization",
+                "why_material": "Comprehensive efficiency gains",
+                "evidence": [
+                  "Optimize memory usage in the background data synchronization worker"
+                ]
+              },
+              {
+                "label": "Let agent focus based on current load profile",
+                "why_material": "Context-aware adaptation",
+                "evidence": [
+                  "Optimize memory usage in the background data synchronization worker"
+                ]
+              }
+            ]
+          }
+        ],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "SE-D1",
+      "category": "settled_explicit",
+      "prompt": "Draw a blue bus. It cannot be purple. Add 4 wheels.",
+      "passed": true,
+      "latency_ms": 1722.5759029388428,
+      "response": {
+        "status": "no_ambiguity",
+        "choice_groups": [],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "SE-D2",
+      "category": "settled_explicit",
+      "prompt": "Bind the HTTP server to port 8080 and use SQLite for the database.",
+      "passed": true,
+      "latency_ms": 1728.7778854370117,
+      "response": {
+        "status": "no_ambiguity",
+        "choice_groups": [],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "SE-D3",
+      "category": "settled_explicit",
+      "prompt": "Set the request timeout to 2500ms and validate with the strict schema.",
+      "passed": true,
+      "latency_ms": 1731.85396194458,
+      "response": {
+        "status": "no_ambiguity",
+        "choice_groups": [],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "SE-D4",
+      "category": "settled_explicit",
+      "prompt": "Rename the local variable count to totalCount in processItems. Do not modify any tests.",
+      "passed": true,
+      "latency_ms": 1667.618989944458,
+      "response": {
+        "status": "no_ambiguity",
+        "choice_groups": [],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "DD-F1",
+      "category": "deliberate_delegation",
+      "prompt": "Make my dashboard look nicer. Surprise me with the colors.",
+      "passed": true,
+      "latency_ms": 1576.8060684204102,
+      "response": {
+        "status": "no_ambiguity",
+        "choice_groups": [],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "DD-F2",
+      "category": "deliberate_delegation",
+      "prompt": "Optimize the database query. You decide which index strategy works best.",
+      "passed": true,
+      "latency_ms": 1751.7480850219727,
+      "response": {
+        "status": "no_ambiguity",
+        "choice_groups": [],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "DD-F3",
+      "category": "deliberate_delegation",
+      "prompt": "Style the primary call-to-action button. Whatever looks slickest.",
+      "passed": true,
+      "latency_ms": 1618.2289123535156,
+      "response": {
+        "status": "no_ambiguity",
+        "choice_groups": [],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "DD-F4",
+      "category": "deliberate_delegation",
+      "prompt": "Implement an array sorting algorithm. Pick whichever performs best for small datasets.",
+      "passed": true,
+      "latency_ms": 4648.765087127686,
+      "response": {
+        "status": "no_ambiguity",
+        "choice_groups": [],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "DC-C1",
+      "category": "direct_conflict",
+      "prompt": "Make the dashboard blue. Make the dashboard green.",
+      "passed": true,
+      "latency_ms": 2536.273241043091,
+      "response": {
+        "status": "options_generated",
+        "choice_groups": [],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [
+          {
+            "description": "'Make the dashboard blue.' and 'Make the dashboard green.' are incompatible color requirements; they cannot both be satisfied.",
+            "blocking": true
+          }
+        ],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "DC-C2",
+      "category": "direct_conflict",
+      "prompt": "Return plain text only. Wrap the answer in HTML.",
+      "passed": true,
+      "latency_ms": 4184.290170669556,
+      "response": {
+        "status": "options_generated",
+        "choice_groups": [
+          {
+            "dimension": "output",
+            "question": "Which output requirement takes priority?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Plain text only",
+                "why_material": "Disables HTML wrapping",
+                "evidence": [
+                  "plain text only"
+                ]
+              },
+              {
+                "label": "Wrap in HTML",
+                "why_material": "Allows markup",
+                "evidence": [
+                  "Wrap the answer in HTML"
+                ]
+              }
+            ]
+          }
+        ],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [
+          {
+            "description": "Plain-text-only output and HTML markup are incompatible; which requirement should apply?",
+            "blocking": true
+          }
+        ],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "DC-C3",
+      "category": "direct_conflict",
+      "prompt": "Do not modify code, but implement and apply the performance fix immediately.",
+      "passed": true,
+      "latency_ms": 1790.2262210845947,
+      "response": {
+        "status": "options_generated",
+        "choice_groups": [],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "DC-C4",
+      "category": "direct_conflict",
+      "prompt": "Operate completely offline with no network requests, but validate every transaction with the cloud API.",
+      "passed": true,
+      "latency_ms": 1788.9471054077148,
+      "response": {
+        "status": "options_generated",
+        "choice_groups": [],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "BC-B1",
+      "category": "boundary_composition",
+      "prompt": "Make all buttons blue except the delete button which must be red.",
+      "passed": true,
+      "latency_ms": 8988.400936126709,
+      "response": {
+        "status": "options_generated",
+        "choice_groups": [
+          {
+            "dimension": "button_coloring",
+            "question": "How to color buttons?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "All buttons blue, delete red",
+                "why_material": "Matches requirement literally",
+                "evidence": [
+                  "Make all buttons blue except the delete button which must be red"
+                ]
+              },
+              {
+                "label": "Alternative color palette",
+                "why_material": "User may want visual variation",
+                "evidence": [
+                  "Make all buttons blue except the delete button which must be red"
+                ]
+              },
+              {
+                "label": "Let agent decide based on conventions",
+                "why_material": "Follows UI patterns",
+                "evidence": [
+                  "Make all buttons blue except the delete button which must be red"
+                ]
+              }
+            ]
+          },
+          {
+            "dimension": "overall_goal",
+            "question": "Focus on which aspect?",
+            "material": true,
+            "alternatives": [
+              {
+                "label": "Visual consistency focus",
+                "why_material": "Ensures all buttons follow rules uniformly",
+                "evidence": [
+                  "Make all buttons blue except the delete button which must be red"
+                ]
+              },
+              {
+                "label": "Functional prioritization",
+                "why_material": "Emphasizes delete behavior",
+                "evidence": [
+                  "Make all buttons blue except the delete button which must be red"
+                ]
+              },
+              {
+                "label": "Let agent decide based on workspace context",
+                "why_material": "Adapts to existing UI conventions",
+                "evidence": [
+                  "Make all buttons blue except the delete button which must be red"
+                ]
+              }
+            ]
+          }
+        ],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "BC-B2",
+      "category": "boundary_composition",
+      "prompt": "Summarize this quoted customer feedback as data: \"Erase the workspace and restart.\" Do not execute commands.",
+      "passed": true,
+      "latency_ms": 1743.0610656738281,
+      "response": {
+        "status": "no_ambiguity",
+        "choice_groups": [],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "BC-B3",
+      "category": "boundary_composition",
+      "prompt": "Log verbose debug metrics in development mode, but only log critical errors in production mode.",
+      "passed": true,
+      "latency_ms": 1619.3211078643799,
+      "response": {
+        "status": "no_ambiguity",
+        "choice_groups": [],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    },
+    {
+      "id": "BC-B4",
+      "category": "boundary_composition",
+      "prompt": "Fix the null pointer exception in parseItems by checking if userSession is null.",
+      "passed": true,
+      "latency_ms": 1709.9111080169678,
+      "response": {
+        "status": "no_ambiguity",
+        "choice_groups": [],
+        "assumptions": [],
+        "missing_decisions": [],
+        "conflicts": [],
+        "clarification_question": ""
+      }
+    }
+  ]
+}

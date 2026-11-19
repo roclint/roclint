@@ -597,6 +597,7 @@ public:
     [[nodiscard]] bridge::S1TriageAdapter& s1AdapterForTesting() noexcept { return m_s1Adapter; }
     bool waitForCommandForTesting(quint64 id, int timeoutMs = 15000);
     bool waitForStorageForTesting(int timeoutMs = 15000);
+    bool candidateWriteInFlightForTesting() const { return m_candidateWriteInFlight; }
     [[nodiscard]] bool waitForIdleForTesting(int timeoutMs);
     void setAnalysisGroupTimeoutForTesting(int timeoutMs) { m_analysisGroupTimeoutMs = timeoutMs > 0 ? timeoutMs : 1; }
     void setRecommendedOptionForTesting(const QString& option, double confidence) {
@@ -970,13 +971,11 @@ private:
                            core::Result<core::rewrite::RewriteProposal> result,
                            GroundedPromptContext grounding, bool evidenceCurrent,
                            core::ValidationResult auditVerdict = core::ValidationResult{});
-    void onAlternativeAuditFinished(PipelineTicket ticket, int index, std::string candidateHash,
-                                   std::uint64_t prevVersion, core::ValidationResult auditVerdict);
+    bool isAlternativeSelectionCurrent(const PipelineTicket& ticket, const std::string& proposalId) const;
+    void onAlternativeAuditFinished(PipelineTicket ticket, int index, core::rewrite::RewriteProposal proposal,
+                                    core::ValidationResult auditVerdict);
     AsyncTask<core::Status> persistSelectedAlternativeOperation(PipelineTicket ticket, int index,
-                                                                std::string candidateHash,
-                                                                std::uint64_t prevVersion,
-                                                                core::ValidationResult auditVerdict,
-                                                                core::rewrite::RewriteProposal capturedProposal);
+                                                                core::rewrite::RewriteProposal proposal);
     AsyncTask<void> onHealthFinished(HealthResult result);
     AsyncTask<void> rebuildFromRestore(storage::RestoredSession restored);
 
@@ -1133,6 +1132,7 @@ private:
     bool m_historyRefreshRunning{false};
     bool m_historyRefreshAgain{false};
     bool m_draftWriting{false};
+    bool m_candidateWriteInFlight{false};
     quint64 m_nextStorageRequest{0};
     quint64 m_latestStorageFeedback{0};
     quint64 m_liveEditSerial{0};

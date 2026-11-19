@@ -163,7 +163,7 @@ void testDeterministicPreGateFastFail() {
     int transportCalls = 0;
     GraniteTransport countingTransport = [&](std::string_view) -> Result<std::string> {
         ++transportCalls;
-        return std::string(R"({"outcome": "Pass"})");
+        return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
     };
 
     // The candidate explicitly violates the negative prohibition.
@@ -175,6 +175,13 @@ void testDeterministicPreGateFastFail() {
     ROCLINT_CHECK(result.violations.size() == 1);
     ROCLINT_CHECK(result.violations[0].constraintId == "c_neg_01");
     ROCLINT_CHECK(transportCalls == 0); // Fast-fail: model was never invoked!
+
+    req.candidateRewrite = "Update the documentation for token validation.";
+    const auto reference = adapter.audit(req, countingTransport);
+    ROCLINT_CHECK(transportCalls == 1);
+    ROCLINT_CHECK(reference.outcome == ValidationOutcome::Unresolved);
+    ROCLINT_CHECK(reference.violations.empty());
+    ROCLINT_CHECK(reference.executionStatus == AuditExecutionStatus::Completed);
 }
 
 void testAdvisoryZeroVetoPower() {

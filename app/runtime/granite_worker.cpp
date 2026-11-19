@@ -235,7 +235,7 @@ int main(int argc, char** argv) {
                             {QStringLiteral("gpu_layers"), initialStatus.value(QStringLiteral("gpu_layers"))},
                             {QStringLiteral("analysis_timeout_ms"), diagnosticUnbounded ? 0 : roclint::runtime::kGraniteAnalysisTimeoutMs},
                             {QStringLiteral("rewrite_timeout_ms"), diagnosticUnbounded ? 0 : roclint::runtime::kGraniteRewriteTimeoutMs},
-                            {QStringLiteral("word_refinement_timeout_ms"), diagnosticUnbounded ? 0 : roclint::runtime::kGraniteWordRefinementTimeoutMs},
+                            {QStringLiteral("word_refinement_timeout_ms"), roclint::runtime::kGraniteWordRefinementTimeoutMs},
                             {QStringLiteral("operations"), QJsonArray{
                             QStringLiteral("load"), QStringLiteral("warm"), QStringLiteral("granite_analyze"), QStringLiteral("granite_rewrite"),
                             QStringLiteral("granite_word_refinement"),

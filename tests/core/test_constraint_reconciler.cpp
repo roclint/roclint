@@ -117,6 +117,21 @@ void testNegativeBoundaryPreservation() {
     ROCLINT_CHECK(scopedFailRes.outcome == ValidationOutcome::Fail);
     ROCLINT_CHECK(!scopedFailRes.violations.empty());
     ROCLINT_CHECK(scopedFailRes.violations[0].constraintId == "c_prohibit_token");
+
+    for (const auto* reference : {
+             "Update the documentation for token validation.",
+             "Update token validation documentation.",
+             "Keep the documentation for token validation unchanged.",
+             "The guide for token validation was rewritten."}) {
+        const auto result = reconciler.reconcile("original", constraints, reference);
+        ROCLINT_CHECK(result.outcome == ValidationOutcome::Unresolved);
+        ROCLINT_CHECK(result.violations.empty());
+    }
+    const auto direct = reconciler.reconcile("original", constraints, "Update the existing token validation.");
+    ROCLINT_CHECK(direct.outcome == ValidationOutcome::Fail);
+    const auto preserved = reconciler.reconcile("original", constraints,
+        "Update the documentation for token validation. Keep the existing token validation unchanged.");
+    ROCLINT_CHECK(preserved.outcome == ValidationOutcome::Pass);
 }
 
 void testHonestUnknownsOutcome() {

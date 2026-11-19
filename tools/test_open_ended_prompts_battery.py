@@ -97,8 +97,8 @@ def main():
     # 1. Start Granite worker
     print("\n[1/3] Initializing IBM Granite 3B resident worker...")
     proc = subprocess.Popen(
-        [WORKER_BIN, "--model-dir", MODEL_DIR, "--quantization", "Q8_0"],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
+        [WORKER_BIN, "--model-dir", MODEL_DIR, "--quantization", "Q8_0", "--no-thinking-reference"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1
     )
 
     manifest_file = ROOT / "build" / "generated" / "GraniteConfig.hpp"
@@ -133,8 +133,11 @@ def main():
             "quantization": "Q8_0",
             "weights_sha256": "fbe986738041418e26de9e123ba740cb654931f85bf572a71bd01f9e6b85e53d",
             "input_hash": hashlib.sha256(payload.get("prompt", "").encode("utf-8")).hexdigest(),
+            "thinking_enabled": False,
             "payload": payload
         }
+        if "thinking_enabled" not in payload:
+            payload["thinking_enabled"] = False
         req.update(extra)
         proc.stdin.write(json.dumps(req) + "\n")
         proc.stdin.flush()

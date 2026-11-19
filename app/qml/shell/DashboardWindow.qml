@@ -355,7 +355,7 @@ Window {
 
                     // LEFT SIDEBAR: TAB SELECTION MATRIX
                     Rectangle {
-                        Layout.preferredWidth: 200
+                        Layout.preferredWidth: 220
                         Layout.fillHeight: true
                         color: dashboardWindow.inputBgColor
                         border.color: dashboardWindow.borderColor
@@ -393,7 +393,7 @@ Window {
                                     id: navTabBtn
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    Layout.preferredHeight: 34
+                                    Layout.preferredHeight: Math.max(34, navLabel.implicitHeight + 12)
                                     color: dashboardWindow.currentTab === modelData.index
                                         ? dashboardWindow.fgColor
                                         : (tabMouse.containsMouse ? dashboardWindow.dimColor : "transparent")
@@ -417,6 +417,8 @@ Window {
                                         }
 
                                         Text {
+                                            id: navLabel
+                                            objectName: "settingsNavLabel" + modelData.index
                                             Layout.fillWidth: true
                                             Layout.minimumWidth: 0
                                             text: modelData.label
@@ -426,7 +428,7 @@ Window {
                                             color: dashboardWindow.currentTab === modelData.index
                                                 ? dashboardWindow.bgColor
                                                 : dashboardWindow.fgColor
-                                            elide: Text.ElideRight
+                                            wrapMode: Text.WordWrap
                                         }
                                     }
 
@@ -477,14 +479,25 @@ Window {
 
                     // RIGHT CONTENT AREA
                     ScrollView {
-                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                    ScrollBar.vertical: HudScrollBar {}
                         id: rightScrollView
+                        objectName: "settingsScrollView"
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         Layout.fillHeight: true
                         clip: true
+                        rightPadding: settingsScrollBar.width + 8
                         contentWidth: availableWidth
+                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                        ScrollBar.vertical: HudScrollBar {
+                            id: settingsScrollBar
+                            objectName: "settingsScrollBar"
+                            parent: rightScrollView
+                            orientation: Qt.Vertical
+                            x: rightScrollView.width - width
+                            y: 0
+                            width: implicitWidth
+                            height: rightScrollView.height
+                        }
 
                         ColumnLayout {
                             width: rightScrollView.availableWidth
@@ -741,9 +754,12 @@ Window {
                                                 ]
 
                                                 delegate: RowLayout {
+                                                    Layout.fillWidth: true
+                                                    Layout.minimumWidth: 0
                                                     spacing: 10
 
                                                     Rectangle {
+                                                        objectName: "settingsProfileButton_" + modelData.id
                                                         implicitWidth: profBtnTxt.contentWidth + 14
                                                         height: 22
                                                         color: (typeof hostController !== "undefined" && hostController.rewriteProfile.toLowerCase().indexOf(modelData.id) !== -1) ? dashboardWindow.fgColor : "transparent"
@@ -773,10 +789,14 @@ Window {
                                                     }
 
                                                     Text {
+                                                        objectName: "settingsProfileDesc_" + modelData.id
+                                                        Layout.fillWidth: true
+                                                        Layout.minimumWidth: 0
                                                         text: modelData.desc
                                                         font.family: dashboardWindow.monoFont
                                                         font.pixelSize: 11
                                                         color: dashboardWindow.commentColor
+                                                        wrapMode: Text.WordWrap
                                                     }
                                                 }
                                             }
@@ -800,14 +820,18 @@ Window {
                                         spacing: 12
 
                                         RowLayout {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
                                             Text {
+                                                Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
                                                 text: "IBM GRANITE SLM :: LOCAL INFERENCE & WEIGHTS MANAGER"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 10
                                                 font.bold: true
                                                 color: dashboardWindow.fgColor
+                                                wrapMode: Text.WordWrap
                                             }
-                                            Item { Layout.fillWidth: true }
                                             Text {
                                                 text: (typeof hostController !== "undefined" && hostController.useLiveWeights)
                                                       ? ((typeof hostController !== "undefined" && hostController.inferenceSpeed.length > 0)
@@ -830,10 +854,14 @@ Window {
                                         }
 
                                         // Row 1: Engine Mode Toggle
-                                        RowLayout {
+                                        Flow {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            width: parent ? parent.width : undefined
                                             spacing: 10
 
                                             Rectangle {
+                                                objectName: "settingsRescanRuntimeAction"
                                                 implicitWidth: nativeBtnTxt.contentWidth + 16
                                                 height: 26
                                                 color: "transparent"
@@ -862,6 +890,7 @@ Window {
                                             }
 
                                             Rectangle {
+                                                objectName: "settingsWarmModelAction"
                                                 implicitWidth: liveBtnTxt.contentWidth + 16
                                                 height: 26
                                                 color: (typeof hostController !== "undefined" && hostController.useLiveWeights) ? dashboardWindow.fgColor : "transparent"
@@ -876,7 +905,7 @@ Window {
                                                           : (typeof hostController !== "undefined" && hostController.isCheckingModel)
                                                             ? "[ ⟳ WARMING INTO GPU MEMORY... ]"
                                                             : (typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
-                                                              ? "[ ⏸ WEIGHTS ON DISK (CLICK TO WARM) ]"
+                                                              ? "[ ⏵ WARM MODEL INTO GPU ]"
                                                               : "[ ○ NO WEIGHTS ON DISK (DOWNLOAD BELOW) ]"
                                                     font.family: dashboardWindow.monoFont
                                                     font.pixelSize: 12
@@ -926,6 +955,7 @@ Window {
                                                 }
 
                                                 Text {
+                                                    objectName: "settingsModelEngineStatus"
                                                     Layout.fillWidth: true
                                                     Layout.minimumWidth: 0
                                                     text: typeof hostController !== "undefined" ? hostController.modelEngineStatus : "LOADING STATUS..."
@@ -1036,6 +1066,7 @@ Window {
                                                 }
 
                                                 Rectangle {
+                                                    objectName: "settingsRescanFolderAction"
                                                     implicitWidth: refreshBtnTxt.contentWidth + 14
                                                     height: 28
                                                     color: refreshMouse.containsMouse ? dashboardWindow.fgColor : "transparent"
@@ -1045,7 +1076,7 @@ Window {
                                                     Text {
                                                         id: refreshBtnTxt
                                                         anchors.centerIn: parent
-                                                        text: "[ ⟳ RESCAN ]"
+                                                        text: "[ ⟳ RESCAN FOLDER ]"
                                                         font.family: dashboardWindow.monoFont
                                                         font.pixelSize: 11
                                                         font.bold: true
@@ -1068,6 +1099,10 @@ Window {
                                             }
 
                                             Text {
+                                                objectName: "settingsFolderStatusMessage"
+                                                Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
+                                                wrapMode: Text.WordWrap
                                                 text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
                                                       ? (hostController.isNativeGraniteInstalled
                                                          ? "✓ Model weights verified on disk in this folder. Ready to load into " + (typeof hostController !== "undefined" ? hostController.acceleratorName : "GPU") + " GPU memory."
@@ -1099,9 +1134,10 @@ Window {
                                                 model: (typeof hostController !== "undefined") ? hostController.availableModels : []
 
                                                 delegate: Rectangle {
+                                                    objectName: "detectedModelRow_" + index
                                                     Layout.fillWidth: true
                                                     Layout.minimumWidth: 0
-                                                    height: 26
+                                                    implicitHeight: Math.max(28, modelRowLayout.implicitHeight + 8)
                                                     color: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name)
                                                            ? dashboardWindow.dimColor
                                                            : "transparent"
@@ -1111,6 +1147,7 @@ Window {
                                                     border.width: 1
 
                                                     RowLayout {
+                                                        id: modelRowLayout
                                                         anchors.fill: parent
                                                         anchors.leftMargin: 8
                                                         anchors.rightMargin: 8
@@ -1137,10 +1174,14 @@ Window {
                                                         }
 
                                                         Text {
+                                                            objectName: "detectedModelDetails_" + index
+                                                            Layout.fillWidth: true
+                                                            Layout.minimumWidth: 0
                                                             text: "(" + modelData.size + ", " + modelData.source + ", " + modelData.quantization + ") · [✓ Verified on disk]"
                                                             font.family: dashboardWindow.monoFont
                                                             font.pixelSize: 11
                                                             color: dashboardWindow.commentColor
+                                                            elide: Text.ElideRight
                                                         }
 
                                                         Item { Layout.fillWidth: true }
@@ -1253,12 +1294,15 @@ Window {
 
                                             // Download Action Buttons
                                             Flow {
+                                                id: modelDownloadActionsFlow
                                                 visible: typeof hostController === "undefined" || !hostController.isDownloadingModel
                                                 Layout.fillWidth: true
                                                 Layout.minimumWidth: 0
+                                                width: parent ? parent.width : undefined
                                                 spacing: 8
 
                                                 Rectangle {
+                                                    objectName: "settingsDownloadQ4Action"
                                                     implicitWidth: dl0Txt.contentWidth + 14
                                                     height: 24
                                                     color: dl0Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
@@ -1285,15 +1329,16 @@ Window {
                                                         hoverEnabled: true
                                                         cursorShape: Qt.PointingHandCursor
                                                         onClicked: {
-                                                            if (typeof hostController !== "undefined") {
-                                                                hostController.downloadModel(hostController.nativeGraniteSelected ? "native-granite:Q4_K_M" : "granite4.2:3b-q4_k_m");
-                                                                dashboardWindow.showToast("DOWNLOADING GRANITE 4.2 3B (Q4_K_M)...");
-                                                            }
+                                                             if (typeof hostController !== "undefined") {
+                                                                 hostController.downloadModel(hostController.nativeGraniteSelected ? "native-granite:Q4_K_M" : "granite4.2:3b-q4_k_m");
+                                                                 dashboardWindow.showToast("DOWNLOADING GRANITE 4.2 3B (Q4_K_M)...");
+                                                             }
                                                         }
                                                     }
                                                 }
 
                                                 Rectangle {
+                                                    objectName: "settingsDownloadQ8Action"
                                                     implicitWidth: dl1Txt.contentWidth + 14
                                                     height: 24
                                                     color: dl1Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
@@ -1305,9 +1350,9 @@ Window {
                                                         anchors.centerIn: parent
                                                         text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
                                                               ? (hostController.isNativeGraniteQ8Installed
-                                                                 ? "[ ✓ Q8_0 INSTALLED (3.89 GiB) · RE-DOWNLOAD ]"
-                                                                 : "[ ⬇ DOWNLOAD GRANITE 4.2 Q8_0 (3.62 GiB) ]")
-                                                              : "[ ⬇ PULL GRANITE 4.2 3B (3.9 GB) ]"
+                                                                 ? "[ ✓ Q8_0 INSTALLED (3.63 GiB) · RE-DOWNLOAD ]"
+                                                                 : "[ ⬇ DOWNLOAD GRANITE 4.2 Q8_0 (3.63 GiB) ]")
+                                                              : "[ ⬇ PULL GRANITE 4.2 3B (3.63 GiB) ]"
                                                         font.family: dashboardWindow.monoFont
                                                         font.pixelSize: 11
                                                         font.bold: true
@@ -1320,15 +1365,16 @@ Window {
                                                         hoverEnabled: true
                                                         cursorShape: Qt.PointingHandCursor
                                                         onClicked: {
-                                                            if (typeof hostController !== "undefined") {
-                                                                hostController.downloadModel(hostController.nativeGraniteSelected ? "native-granite:Q8_0" : "granite4.2:3b-q8_0");
-                                                                dashboardWindow.showToast("DOWNLOADING GRANITE 4.2 3B (Q8_0)...");
-                                                            }
+                                                             if (typeof hostController !== "undefined") {
+                                                                 hostController.downloadModel(hostController.nativeGraniteSelected ? "native-granite:Q8_0" : "granite4.2:3b-q8_0");
+                                                                 dashboardWindow.showToast("DOWNLOADING GRANITE 4.2 3B (Q8_0)...");
+                                                             }
                                                         }
                                                     }
                                                 }
 
                                                 Rectangle {
+                                                    objectName: "settingsDownloadQ5Action"
                                                     implicitWidth: dl2Txt.contentWidth + 14
                                                     height: 24
                                                     color: dl2Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
@@ -1355,15 +1401,16 @@ Window {
                                                         hoverEnabled: true
                                                         cursorShape: Qt.PointingHandCursor
                                                         onClicked: {
-                                                            if (typeof hostController !== "undefined") {
-                                                                hostController.downloadModel(hostController.nativeGraniteSelected ? "native-granite:Q5_K_M" : "granite3.1-dense:2b");
-                                                                dashboardWindow.showToast(hostController.nativeGraniteSelected ? "DOWNLOADING PINNED GRANITE 4.2 (Q5_K_M)..." : "DOWNLOADING GRANITE 3.1 2B...");
-                                                            }
+                                                             if (typeof hostController !== "undefined") {
+                                                                 hostController.downloadModel(hostController.nativeGraniteSelected ? "native-granite:Q5_K_M" : "granite3.1-dense:2b");
+                                                                 dashboardWindow.showToast(hostController.nativeGraniteSelected ? "DOWNLOADING PINNED GRANITE 4.2 (Q5_K_M)..." : "DOWNLOADING GRANITE 3.1 2B...");
+                                                             }
                                                         }
                                                     }
                                                 }
 
                                                 Rectangle {
+                                                    objectName: "settingsTestRuntimeAction"
                                                     implicitWidth: testInfTxt.contentWidth + 14
                                                     height: 24
                                                     color: testInfMouse.containsMouse ? dashboardWindow.fgColor : "transparent"
@@ -1377,7 +1424,7 @@ Window {
                                                               ? "[ WORKING... ]"
                                                               : (typeof hostController !== "undefined" && hostController.useLiveWeights)
                                                                 ? "[ ● MODEL READY (GPU) ]"
-                                                                : "[ CHECK & WARM MODEL ]"
+                                                                : "[ ⟳ TEST MODEL RUNTIME ]"
                                                         font.family: dashboardWindow.monoFont
                                                         font.pixelSize: 11
                                                         font.bold: true
@@ -1390,16 +1437,19 @@ Window {
                                                         hoverEnabled: true
                                                         cursorShape: Qt.PointingHandCursor
                                                         onClicked: {
-                                                            if (typeof hostController !== "undefined") {
-                                                                dashboardWindow.showToast("CHECKING AND WARMING THE SELECTED MODEL...");
-                                                                hostController.warmSelectedModel();
-                                                            }
+                                                             if (typeof hostController !== "undefined") {
+                                                                 dashboardWindow.showToast("CHECKING AND WARMING THE SELECTED MODEL...");
+                                                                 hostController.warmSelectedModel();
+                                                             }
                                                         }
                                                     }
                                                 }
                                             }
 
                                             Text {
+                                                objectName: "settingsStorageDisclaimer"
+                                                Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
                                                 text: "Storage: Models are stored in your configured folder (S1 in /s1, S2 in /s2). Click '[ 📂 CONNECT FOLDER... ]' above to use existing models from any directory."
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 11
@@ -1416,7 +1466,8 @@ Window {
                             // =================================================
                             ColumnLayout {
                                 visible: dashboardWindow.currentTab === 1
-                                width: rightScrollView.availableWidth
+                                Layout.fillWidth: true
+                                Layout.minimumWidth: 0
                                 spacing: 14
 
                                 Text {
@@ -1429,29 +1480,37 @@ Window {
 
                                 // Direct Editor Injection
                                 Rectangle {
+                                    objectName: "editorInjectionCard"
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    Layout.preferredHeight: 140
+                                    implicitHeight: injectionLayout.implicitHeight + 28
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
                                     border.width: 1
 
                                     ColumnLayout {
+                                        id: injectionLayout
                                         anchors.fill: parent
                                         anchors.margins: 14
                                         spacing: 10
 
                                         RowLayout {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
                                             Text {
+                                                objectName: "editorInjectionHeading"
+                                                Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
                                                 text: "DIRECT IN-PLACE EDITOR INJECTION (ACCESSIBILITY API)"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 10
                                                 font.bold: true
                                                 color: dashboardWindow.fgColor
+                                                wrapMode: Text.WordWrap
                                             }
-                                            Item { Layout.fillWidth: true }
                                             Text {
                                                 objectName: "ambientCaptureStatus"
+                                                Layout.alignment: Qt.AlignTop
                                                 text: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? "[STATUS: ENABLED]" : "[STATUS: DISABLED]"
                                                 font.family: dashboardWindow.monoFont
                                                 font.pixelSize: 12
@@ -1460,7 +1519,9 @@ Window {
                                             }
                                         }
 
-                                        RowLayout {
+                                        Flow {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
                                             spacing: 10
                                             Rectangle {
                                                 implicitWidth: injEnTxt.contentWidth + 14
@@ -1522,26 +1583,32 @@ Window {
                                         }
 
                                         Text {
+                                            objectName: "editorInjectionHelp"
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
                                             text: (typeof hostController !== "undefined" && hostController.accessibilityTrusted)
                                                 ? "Live capture watches the focused editable field. Insert replaces that captured draft after approval."
                                                 : "Accessibility is unavailable. Copy the approved prompt, then paste it into your editor."
                                             font.family: dashboardWindow.monoFont
                                             font.pixelSize: 12
                                             color: dashboardWindow.commentColor
+                                            wrapMode: Text.WordWrap
                                         }
                                     }
                                 }
 
                                 // Color Palette Theme
                                 Rectangle {
+                                    objectName: "settingsThemeCard"
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    Layout.preferredHeight: 120
+                                    implicitHeight: themeLayout.implicitHeight + 28
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
                                     border.width: 1
 
                                     ColumnLayout {
+                                        id: themeLayout
                                         anchors.fill: parent
                                         anchors.margins: 14
                                         spacing: 10
@@ -1554,7 +1621,9 @@ Window {
                                             color: dashboardWindow.fgColor
                                         }
 
-                                        RowLayout {
+                                        Flow {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
                                             spacing: 10
                                             Repeater {
                                                 model: [
@@ -1564,6 +1633,7 @@ Window {
                                                     { id: "light", label: "[ CLEAN LIGHT ]", sample: "#F4F4F4" }
                                                 ]
                                                 delegate: Rectangle {
+                                                    objectName: "settingsThemeChoice_" + modelData.id
                                                     implicitWidth: thmTxt.contentWidth + 20
                                                     height: 34
                                                     color: modelData.sample

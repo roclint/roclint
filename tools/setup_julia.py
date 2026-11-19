@@ -31,8 +31,11 @@ def main():
     subprocess.run([str(python), "-m", "pip", "install", "-r",
                     str(root / "app/runtime/julia-requirements.txt")], check=True)
     if sys.platform == "darwin":
-        bundle_env = build / "Roclint.app" / "Contents" / "MacOS" / "runtime" / "julia-python"
-        if bundle_env.parent.exists() and not bundle_env.exists():
+        contents = build / "Roclint.app" / "Contents"
+        bundle_env = contents / "runtime" / "julia-python"
+        legacy_env = contents / "MacOS" / "runtime" / "julia-python"
+        if contents.is_dir() and not bundle_env.exists() and not legacy_env.exists():
+            bundle_env.parent.mkdir(exist_ok=True)
             subprocess.run(["cp", "-R", "-c", str(environment), str(bundle_env)], check=False)
     print(f"Julia Python environment: {python}")
     print("Build the host, then select this Python executable in Julia settings if it is not detected automatically.")
