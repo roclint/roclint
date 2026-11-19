@@ -8,11 +8,15 @@
         <file>AmbientBadge.qml</file>
         <file>IntentReviewPanel.qml</file>
         <file>WordCompanion.qml</file>
+        <file>WordMarks.qml</file>
         <file>JuliaSettings.qml</file>
         <file>InvocationSettings.qml</file>
         <file>HudMouseArea.qml</file>
         <file>HudScrollBar.qml</file>
         <file>RocTheme.qml</file>
+        <file>CompanionContract.qml</file>
+        <file>CompanionInterview.qml</file>
+        <file>ComprehensionReview.qml</file>
         <file>GenerationMeter.qml</file>
         <file>RocButton.qml</file>
         <file>assets/roc-mark.png</file>

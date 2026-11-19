@@ -10,8 +10,10 @@ Window {
     minimumWidth: 780
     minimumHeight: 520
     visible: false
-    flags: Qt.FramelessWindowHint
-    color: "transparent"
+    flags: Qt.Window
+    color: dashboardWindow.bgColor
+    property bool openedOnce: false
+    property bool restoreMaximizedAfterFullscreen: false
 
     readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property string monoFont: isMac ? "Menlo" : "Consolas"
@@ -74,9 +76,35 @@ Window {
         }
     }
 
+    function present(startMaximized) {
+        if (openedOnce) {
+            show();
+            return;
+        }
+        openedOnce = true;
+        if (startMaximized) showMaximized();
+        else showFullScreen();
+    }
+
+    function toggleFullscreen() {
+        if (visibility === Window.FullScreen) {
+            if (restoreMaximizedAfterFullscreen) showMaximized();
+            else showNormal();
+        } else {
+            restoreMaximizedAfterFullscreen = visibility === Window.Maximized;
+            showFullScreen();
+        }
+    }
+
+    Shortcut {
+        sequence: "F11"
+        onActivated: dashboardWindow.toggleFullscreen()
+    }
+
     Shortcut {
         sequence: "Escape"
-        onActivated: dashboardWindow.dismissDashboard()
+        enabled: dashboardWindow.visibility === Window.FullScreen
+        onActivated: dashboardWindow.toggleFullscreen()
     }
 
     Shortcut {
@@ -84,109 +112,13 @@ Window {
         onActivated: dashboardWindow.dismissDashboard()
     }
 
-    // =========================================================================
-    // POSTER BOARD CONTAINER (Matching FloatingCard.qml Double Bounding Box)
-    // =========================================================================
     Rectangle {
-        id: posterBoard
         anchors.fill: parent
-        anchors.margins: 6
         color: dashboardWindow.bgColor
-        border.color: dashboardWindow.borderColor
-        border.width: 1
-        radius: dashboardWindow.visibility === Window.Maximized ? 0 : 16
 
-        MouseArea {
-            id: windowDragArea
+        Item {
             anchors.fill: parent
-            acceptedButtons: Qt.LeftButton
-            onPressed: dashboardWindow.startSystemMove()
-            onDoubleClicked: function(mouse) {
-                if (mouse.y <= 48) {
-                    if (dashboardWindow.visibility === Window.Maximized) {
-                        dashboardWindow.showNormal();
-                        dashboardWindow.showToast("WINDOW RESTORED");
-                    } else {
-                        dashboardWindow.showMaximized();
-                        dashboardWindow.showToast("WINDOW MAXIMIZED");
-                    }
-                }
-            }
-        }
-
-        // =====================================================================
-        // FRAMELESS WINDOW RESIZE HANDLES
-        // =====================================================================
-        MouseArea {
-            id: resizeBottomRight
-            anchors.right: parent.right; anchors.bottom: parent.bottom
-            width: 14; height: 14; z: 100
-            cursorShape: Qt.SizeFDiagCursor
-            onPressed: dashboardWindow.startSystemResize(Qt.RightEdge | Qt.BottomEdge)
-        }
-        MouseArea {
-            id: resizeBottomLeft
-            anchors.left: parent.left; anchors.bottom: parent.bottom
-            width: 14; height: 14; z: 100
-            cursorShape: Qt.SizeBDiagCursor
-            onPressed: dashboardWindow.startSystemResize(Qt.LeftEdge | Qt.BottomEdge)
-        }
-        MouseArea {
-            id: resizeTopRight
-            anchors.right: parent.right; anchors.top: parent.top
-            width: 14; height: 14; z: 100
-            cursorShape: Qt.SizeBDiagCursor
-            onPressed: dashboardWindow.startSystemResize(Qt.RightEdge | Qt.TopEdge)
-        }
-        MouseArea {
-            id: resizeTopLeft
-            anchors.left: parent.left; anchors.top: parent.top
-            width: 14; height: 14; z: 100
-            cursorShape: Qt.SizeFDiagCursor
-            onPressed: dashboardWindow.startSystemResize(Qt.LeftEdge | Qt.TopEdge)
-        }
-        MouseArea {
-            id: resizeRight
-            anchors.right: parent.right; anchors.top: parent.top; anchors.bottom: parent.bottom
-            anchors.topMargin: 14; anchors.bottomMargin: 14
-            width: 6; z: 100
-            cursorShape: Qt.SizeHorCursor
-            onPressed: dashboardWindow.startSystemResize(Qt.RightEdge)
-        }
-        MouseArea {
-            id: resizeBottom
-            anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
-            anchors.leftMargin: 14; anchors.rightMargin: 14
-            height: 6; z: 100
-            cursorShape: Qt.SizeVerCursor
-            onPressed: dashboardWindow.startSystemResize(Qt.BottomEdge)
-        }
-        MouseArea {
-            id: resizeLeft
-            anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom
-            anchors.topMargin: 14; anchors.bottomMargin: 14
-            width: 6; z: 100
-            cursorShape: Qt.SizeHorCursor
-            onPressed: dashboardWindow.startSystemResize(Qt.LeftEdge)
-        }
-        MouseArea {
-            id: resizeTop
-            anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
-            anchors.leftMargin: 14; anchors.rightMargin: 14
-            height: 6; z: 100
-            cursorShape: Qt.SizeVerCursor
-            onPressed: dashboardWindow.startSystemResize(Qt.TopEdge)
-        }
-
-        // Drop shadow inset border
-        Rectangle {
-            id: subBorderInset
-            anchors.fill: parent
-            anchors.margins: 5
-            color: "transparent"
-            border.color: dashboardWindow.borderColor
-            border.width: 0
-            radius: dashboardWindow.visibility === Window.Maximized ? 0 : 12
+            anchors.margins: 6
 
             ColumnLayout {
                 anchors.fill: parent
@@ -249,91 +181,12 @@ Window {
                         }
                     }
 
-                    // Window Minimize [-]
-                    Rectangle {
-                        id: minButton
-                        width: 22
-                        height: 20
-                        color: minMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
-                        border.color: dashboardWindow.borderColor
-                        border.width: 1
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "[-]"
-                            font.family: dashboardWindow.monoFont
-                            font.pixelSize: 12
-                            color: dashboardWindow.fgColor
-                        }
-                        HudMouseArea {
-                            id: minMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (dashboardWindow.isMac) {
-                                    dashboardWindow.dismissDashboard();
-                                } else {
-                                    dashboardWindow.showMinimized();
-                                }
-                            }
-                        }
-                    }
-
-                    // Window Maximize [+] / [=]
-                    Rectangle {
-                        id: maxButton
-                        width: 22
-                        height: 20
-                        color: maxMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
-                        border.color: dashboardWindow.borderColor
-                        border.width: 1
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: dashboardWindow.visibility === Window.Maximized ? "[=]" : "[+]"
-                            font.family: dashboardWindow.monoFont
-                            font.pixelSize: 12
-                            color: dashboardWindow.fgColor
-                        }
-                        HudMouseArea {
-                            id: maxMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (dashboardWindow.visibility === Window.Maximized) {
-                                    dashboardWindow.showNormal();
-                                } else {
-                                    dashboardWindow.showMaximized();
-                                }
-                            }
-                        }
-                    }
-
-                    // Window Close [x]
-                    Rectangle {
-                        id: closeButton
-                        width: 22
-                        height: 20
-                        color: closeMouse.containsMouse ? "#8B1E1E" : "transparent"
-                        border.color: dashboardWindow.borderColor
-                        border.width: 1
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "[x]"
-                            font.family: dashboardWindow.monoFont
-                            font.pixelSize: 12
-                            color: dashboardWindow.fgColor
-                        }
-                        HudMouseArea {
-                            id: closeMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: dashboardWindow.dismissDashboard()
-                        }
+                    RocButton {
+                        visible: dashboardWindow.visibility === Window.FullScreen
+                        label: qsTr("Exit full screen")
+                        compact: true
+                        currentTheme: dashboardWindow.currentTheme
+                        onClicked: dashboardWindow.toggleFullscreen()
                     }
                 }
 
@@ -1970,34 +1823,6 @@ Window {
                             font.pixelSize: 12
                             font.bold: true
                             color: dashboardWindow.fgColor
-                        }
-                    }
-
-                    Item { Layout.fillWidth: true }
-
-                    // [ CLOSE ]
-                    Rectangle {
-                        implicitWidth: closeBtnTxt.contentWidth + 18
-                        height: 24
-                        color: closeBtnMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
-                        border.color: dashboardWindow.borderColor
-                        border.width: 1
-
-                        Text {
-                            id: closeBtnTxt
-                            anchors.centerIn: parent
-                            text: "[ CLOSE ]"
-                            font.family: dashboardWindow.monoFont
-                            font.bold: true
-                            font.pixelSize: 12
-                            color: dashboardWindow.fgColor
-                        }
-                        HudMouseArea {
-                            id: closeBtnMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: dashboardWindow.dismissDashboard()
                         }
                     }
                 }

@@ -1,6 +1,7 @@
 #include "roclint/analysis/MaterialityPolicy.hpp"
 #include "roclint/bridge/GraniteAdapter.hpp"
 #include "roclint/bridge/GraniteRewriteAdapter.hpp"
+#include "roclint/bridge/GraniteGoldfishAdapter.hpp"
 #include "roclint/bridge/S1TriageAdapter.hpp"
 #include "roclint/intent/ConfirmedIntent.hpp"
 #include "roclint/rewrite/RewriteValidator.hpp"
@@ -232,11 +233,109 @@ int main(int argc, char** argv) {
     QCoreApplication app(argc, argv);
     const bool validate = argc == 3 && std::string_view(argv[1]) == "--validate";
     const bool rewriteFixture = argc == 3 && std::string_view(argv[1]) == "--rewrite-fixture";
-    if (argc != 2 && !validate && !rewriteFixture) { std::cerr << "Usage: roclint_granite_contracts <fixtures.json> | --validate <benchmark-report.json> | --rewrite-fixture <fixture.json>\n"; return 2; }
+    const bool discoveryFixture = argc == 3 && std::string_view(argv[1]) == "--discovery-fixture";
+    const bool wordFixture = argc == 3 && std::string_view(argv[1]) == "--word-fixture";
+    const bool auditFixture = argc == 3 && std::string_view(argv[1]) == "--audit-fixture";
+    if (argc != 2 && !validate && !rewriteFixture && !discoveryFixture && !auditFixture && !wordFixture) { std::cerr << "Usage: roclint_granite_contracts <fixtures.json> | --validate <benchmark-report.json> | --rewrite-fixture <fixture.json> | --discovery-fixture <fixture.json> | --audit-fixture <fixture.json>\n"; return 2; }
     try {
-        QFile file(QString::fromLocal8Bit(argv[validate || rewriteFixture ? 2 : 1]));
+        QFile file(QString::fromLocal8Bit(argv[validate || rewriteFixture || discoveryFixture || auditFixture || wordFixture ? 2 : 1]));
         if (!file.open(QIODevice::ReadOnly)) throw std::runtime_error("Could not read the frozen fixture corpus");
         const auto fixtures = QJsonDocument::fromJson(file.readAll()).object();
+        if (wordFixture) {
+            if (!fixtures.value("synthetic").toBool()) throw std::runtime_error("Only synthetic word fixtures are supported");
+            roclint::bridge::WordRefinementRequest request;
+            request.sessionId = kSession; request.revisionId = kRevision;
+            const auto prompt = fixtures.value("prompt").toString(), selected = fixtures.value("selected").toString();
+            const int start = fixtures.contains("start") ? fixtures.value("start").toInt(-1) : prompt.indexOf(selected);
+            if (prompt.isEmpty() || selected.isEmpty() || start < 0 || prompt.mid(start, selected.size()) != selected)
+                throw std::runtime_error("Invalid synthetic word selection");
+            request.draftText = ss(prompt); request.selectedText = ss(selected); request.selectionStart = start; request.selectionEnd = start + static_cast<int>(selected.size());
+            for (const auto& value : fixtures.value("approved_decisions").toArray()) request.approvedDecisions.push_back(ss(value.toString()));
+            if (!request.approvedDecisions.empty()) request.intervention = roclint::bridge::WordIntervention::Rewrite;
+            std::string instructions = roclint::bridge::buildWordRefinementPrompt(request);
+            std::string schema = roclint::bridge::wordRefinementResponseSchema(request.draftText);
+            if (fixtures.contains("model_response") && !fixtures.value("check_answer").toBool()) {
+                auto parsed = roclint::bridge::parseWordRefinementResponse(ss(fixtures.value("model_response").toString()), request);
+                if (!parsed.ok()) throw std::runtime_error(parsed.error().message);
+                if (fixtures.value("export_audit").toBool()) {
+                    instructions = roclint::bridge::buildWordRefinementAuditPrompt(request, parsed.value());
+                    schema = roclint::bridge::wordRefinementAuditResponseSchema();
+                } else {
+                    QJsonArray choices, replacements;
+                    for (const auto& value : parsed.value().clarificationChoices) choices.append(qs(value));
+                    for (const auto& value : parsed.value().candidates) replacements.append(qs(value.replacement));
+                    std::cout << QJsonDocument(QJsonObject{{"needs_clarification", parsed.value().needsClarification},
+                        {"question", qs(parsed.value().clarificationQuestion)}, {"choices", choices}, {"replacements", replacements}}).toJson(QJsonDocument::Compact).toStdString() << '\n';
+                    return 0;
+                }
+            }
+            if (fixtures.value("check_answer").toBool()) {
+                roclint::bridge::ClarificationCheckRequest check;
+                check.prompt = request.draftText; check.question = ss(fixtures.value("question").toString()); check.answer = ss(fixtures.value("answer").toString());
+                if (fixtures.contains("model_response")) {
+                    const auto verdict = roclint::bridge::parseClarificationCheckResponse(ss(fixtures.value("model_response").toString()));
+                    if (!verdict.ok()) throw std::runtime_error(verdict.error().message);
+                    std::cout << QJsonDocument(QJsonObject{{"accepted", verdict.value().accepted}, {"feedback", qs(verdict.value().feedback)}}).toJson(QJsonDocument::Compact).toStdString() << '\n';
+                    return 0;
+                }
+                instructions = roclint::bridge::buildClarificationCheckPrompt(check);
+                schema = roclint::bridge::clarificationCheckResponseSchema();
+            }
+            std::cout << QJsonDocument(QJsonObject{{"id", fixtures.value("id")}, {"op", "granite_word_refinement"},
+                {"prompt", prompt}, {"instructions", qs(instructions)}, {"schema", qs(schema)}}).toJson(QJsonDocument::Compact).toStdString() << '\n';
+            return 0;
+        }
+        if (auditFixture) {
+            if (!fixtures.value(QStringLiteral("synthetic")).toBool())
+                throw std::runtime_error("Only explicitly synthetic fixtures are supported");
+            const auto prompt = fixtures.value(QStringLiteral("prompt")).toString();
+            roclint::bridge::GoldfishAuditRequest request;
+            request.originalPrompt = ss(prompt);
+            request.candidateRewrite = ss(fixtures.value(QStringLiteral("candidate")).toString());
+            request.sessionId = kSession;
+            request.constraints = roclint::host::HostController::extractSessionConstraints(request.originalPrompt, {});
+            if (fixtures.contains(QStringLiteral("model_response"))) {
+                const auto reply = ss(fixtures.value(QStringLiteral("model_response")).toString());
+                const auto verdict = roclint::bridge::GraniteGoldfishAdapter().audit(request,
+                    [reply](std::string_view) -> roclint::core::Result<std::string> { return reply; });
+                QJsonArray violations, unresolved;
+                for (const auto& finding : verdict.violations)
+                    violations.append(QJsonObject{{"id", qs(finding.constraintId)}, {"explanation", qs(finding.explanation)}});
+                for (const auto& finding : verdict.unresolved)
+                    unresolved.append(QJsonObject{{"id", qs(finding.constraintId)}, {"explanation", qs(finding.explanation)}});
+                const QJsonObject result{{"outcome", qs(roclint::core::toString(verdict.outcome))},
+                    {"violations", violations}, {"unresolved", unresolved}};
+                std::cout << QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString() << '\n';
+                return 0;
+            }
+            const QJsonObject result{{QStringLiteral("id"), fixtures.value(QStringLiteral("id"))},
+                {QStringLiteral("op"), QStringLiteral("granite_rewrite")}, {QStringLiteral("prompt"), prompt},
+                {QStringLiteral("intent_id"), QStringLiteral("intent_synthetic_task_audit")},
+                {QStringLiteral("rewrite_profile_id"), QStringLiteral("GENERIC@1")},
+                {QStringLiteral("instructions"), qs(roclint::bridge::buildGoldfishAuditPrompt(request))},
+                {QStringLiteral("schema"), qs(roclint::bridge::goldfishAuditResponseSchema())}};
+            std::cout << QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString() << '\n';
+            return 0;
+        }
+        if (discoveryFixture) {
+            if (!fixtures.value(QStringLiteral("synthetic")).toBool())
+                throw std::runtime_error("Only explicitly synthetic fixtures are supported");
+            const auto prompt = fixtures.value(QStringLiteral("prompt")).toString();
+            if (prompt.trimmed().isEmpty()) throw std::runtime_error("Empty discovery fixture");
+            roclint::bridge::GraniteOptionDiscoveryRequest request{kSession, kRevision, ss(prompt), "UNKNOWN"};
+            request.reviewTrigger = fixtures.value(QStringLiteral("explicit_review")).toBool(true)
+                ? roclint::core::analysis::ReviewTrigger::ExplicitReview
+                : roclint::core::analysis::ReviewTrigger::Automatic;
+            request.maximumQuestions = 1;
+            request.substantialInterview = fixtures.value(QStringLiteral("substantial_interview")).toBool();
+            request.isNonTechnicalPrompt = fixtures.value(QStringLiteral("non_technical")).toBool(true);
+            const QJsonObject result{{QStringLiteral("id"), fixtures.value(QStringLiteral("id"))},
+                {QStringLiteral("op"), QStringLiteral("granite_analyze")}, {QStringLiteral("prompt"), prompt},
+                {QStringLiteral("instructions"), qs(roclint::bridge::buildDiscoveryPrompt(request))},
+                {QStringLiteral("schema"), qs(roclint::bridge::discoveryResponseSchema(request.promptString, 1))}};
+            std::cout << QJsonDocument(result).toJson(QJsonDocument::Compact).toStdString() << '\n';
+            return 0;
+        }
         if (rewriteFixture) {
             if (!fixtures.value(QStringLiteral("synthetic")).toBool())
                 throw std::runtime_error("Only explicitly synthetic fixtures are supported");

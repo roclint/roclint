@@ -14,6 +14,6 @@ QtObject {
     readonly property color focus: light ? "#345CFF" : "#A8BCFF"
     readonly property color warning: light ? "#94640B" : "#EBC47C"
     readonly property color success: light ? "#227B62" : "#92D4BB"
-    readonly property string sansFont: "Inter Variable"
+    readonly property string sansFont: Qt.platform.os === "osx" ? "Helvetica Neue" : "Segoe UI"
     readonly property string monoFont: Qt.platform.os === "osx" ? "Menlo" : "Consolas"
 }

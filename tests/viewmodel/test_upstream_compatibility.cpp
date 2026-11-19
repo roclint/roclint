@@ -491,7 +491,7 @@ void testExplicitSelectiveReview() {
             }
             ++calls;
             if (instruction.find("granite.rewrite.format.") != std::string_view::npos)
-                return fx::rewriteReply(item.prompt);
+                return fx::rewriteReply(item.prompt + std::string(" Keep the existing behavior clear."));
             ROCLINT_CHECK(instruction.find("explicitly requested deeper review") != std::string_view::npos);
             return std::string(item.reply);
         });

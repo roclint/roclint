@@ -6,6 +6,7 @@
 #include "roclint/core/constraint_reconciler.hpp"
 #include "roclint/core/scoped_constraint.hpp"
 #include "roclint/core/validation_result.hpp"
+#include "roclint/review/ComprehensionReview.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -17,8 +18,12 @@
 namespace roclint::bridge {
 
 inline constexpr std::size_t kMaxAuditResponseBytes = 64 * 1024;
+inline constexpr std::size_t kMaxComprehensionReviewResponseBytes = 64 * 1024;
 
 struct GoldfishAuditRequest {
+    // Reserved for semantic retention of originalPrompt's task. Callers must not
+    // reuse this ID for an independently supplied constraint.
+    static constexpr std::string_view originalTaskConstraintId = "original_task";
     std::string originalPrompt{};
     std::string candidateRewrite{};
     std::vector<core::ScopedConstraint> constraints{};
@@ -46,10 +51,10 @@ struct GoldfishDiscoveryAuditResult {
     std::vector<GoldfishDiscoveryFinding> unresolved{};
 };
 
-// Builds the cold, zero-memory adversarial audit prompt for Granite (contract: granite.goldfish_audit.v1).
+// Builds the cold, zero-memory adversarial audit prompt for Granite (contract: granite.goldfish_audit.v2).
 [[nodiscard]] std::string buildGoldfishAuditPrompt(const GoldfishAuditRequest& request);
 
-// Returns the JSON schema for granite.goldfish_audit.v1 responses.
+// Returns the JSON schema for granite.goldfish_audit.v2 responses.
 [[nodiscard]] const std::string& goldfishAuditResponseSchema();
 
 // Parses the model's JSON response envelope into a ValidationResult.
@@ -135,6 +140,17 @@ public:
     [[nodiscard]] GoldfishClarificationAuditResult auditClarification(
         const GoldfishClarificationAuditRequest& request,
         const GraniteTransport& transport = nullptr) const;
+
+    // Fresh-context comprehension/constraint review for substantial rewrites. The prompt sees
+    // only the candidate, original source, authoritative confirmed decisions, source-linked
+    // constraints, verbatim source evidence and task kind. One transport call at most, no repair
+    // loop, and no side effects. Deterministic prechecks can add grounded negative-boundary
+    // findings but cannot create requirements. The free function in
+    // roclint/review/ComprehensionReview.hpp is the canonical entry point; this member uses the
+    // adapter's registered applicability predicates.
+    [[nodiscard]] ComprehensionReviewResult reviewComprehension(
+        const ComprehensionReviewRequest& request,
+        const ComprehensionReviewTransport& transport = {}) const;
 
     // Repairs/prunes proposed analysis using audit findings (e.g. removing false conflicts).
     [[nodiscard]] static core::analysis::NormalizedAnalysis repairDiscovery(

@@ -76,6 +76,15 @@ struct GraniteOptionDiscoveryRequest {
     // All recovery shares the host's original deadline and cancellation check.
     std::function<bool()> canContinue{};
     std::size_t maximumQuestions{2};
+    // Substantial-interview follow-up context. Only authoritative confirmed wording and
+    // the still-open topic questions are sent; no generated summary is treated as truth.
+    // The automatic HUD discovery path leaves these empty.
+    std::vector<std::string> settledDecisions{};
+    std::vector<std::string> openChoices{};
+    bool interviewFollowUp{false};
+    // True for the substantial interview's first question as well as follow-ups.
+    // It selects the richer, still-bounded question/option wording contract.
+    bool substantialInterview{false};
 };
 
 enum class DiscoveryOutcome {
@@ -124,7 +133,7 @@ struct ClarificationCheckResponse {
 [[nodiscard]] core::Result<ClarificationCheckResponse> parseClarificationCheckResponse(std::string_view response);
 
 // ---------------------------------------------------------------------------------------------
-// Contextual local word/phrase refinement (contract: granite.word_refinement.v2).
+// Contextual local word/phrase refinement (contract: granite.word_refinement.v4).
 // ---------------------------------------------------------------------------------------------
 
 enum class WordIntervention {
@@ -168,6 +177,7 @@ struct WordRefinementResponse {
     bool needsClarification{false};
     std::string clarificationQuestion{};
     std::vector<WordRefinementCandidate> candidates{};
+    std::vector<std::string> clarificationChoices{}; // Model-proposed answers, never confirmed automatically
 };
 
 [[nodiscard]] std::string buildWordRefinementPrompt(const WordRefinementRequest& request);

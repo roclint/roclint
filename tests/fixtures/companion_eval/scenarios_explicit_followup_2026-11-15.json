@@ -1,0 +1,32 @@
+{
+  "schema": "roclint.companion_eval.scenarios.v1",
+  "created": "2026-11-15",
+  "notes": [
+    "Follow-up to the primary 12-scenario baseline, not a replacement.",
+    "These prompts are run with reviewPrompt (explicit review) because the primary automatic run either routed Original or the answer-handling surface was never reached.",
+    "Keeping the same prompt and planned answer separates the routing failure from the Granite interview/rewrite quality."
+  ],
+  "scenarios": [
+    {
+      "id": "music_app_typography_explicit",
+      "class": "development",
+      "surface": "explicit_review_followup",
+      "prompt": "I'm building a music app. I want compact typography, a fusion of 1990s and 1960s/Revolver-era references, and easy browsing.",
+      "explicit_review": true,
+      "answers": [
+        {
+          "type": "custom",
+          "text": "Compact typography means smaller type sizes and tighter line spacing for dense lists, not fewer features or shortened labels. Keep browsing one tap away and keep artist and track names readable."
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "criteria": {
+        "question_addresses_typography": "The question and options discuss type size, density, hierarchy or legibility rather than deleting UI or shortening labels.",
+        "answer_carried": "The rewrite reflects the custom typography answer without turning it into UI removal.",
+        "browsing_preserved": "The rewrite retains easy browsing.",
+        "no_invented_reference_facts": "No unverified claim about 1990s music or Revolver-era artwork, songs or design facts is stated as source fact."
+      }
+    }
+  ]
+}

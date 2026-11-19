@@ -58,6 +58,7 @@ set(ROCLINT_CORE_SOURCES
     src/intent/InterventionStateMachine.cpp
     src/intent/ConfirmedIntent.cpp
     src/bridge/GraniteAdapter.cpp
+    src/bridge/WordSurfaceCheck.cpp
     src/bridge/S1TriageAdapter.cpp
     src/bridge/GraniteRewriteAdapter.cpp
     src/bridge/GraniteGoldfishAdapter.cpp
@@ -199,6 +200,11 @@ roclint_add_storage_library(roclint_storage roclint_core)
 add_executable(roclint_ast_evaluator tools/ast_grounding_evaluator.cpp)
 target_link_libraries(roclint_ast_evaluator PRIVATE roclint_storage)
 roclint_apply_warnings(roclint_ast_evaluator)
+
+# Evaluation-only sources are intentionally not product targets. The probe has
+# its own standalone CMakeLists and the code project is synthetic fixture data:
+# tools/companion_probe/companion_probe.cpp
+# tests/fixtures/companion_eval/code_project/src/metrics.cpp
 
 include(CTest)
 if(BUILD_TESTING)
@@ -476,12 +482,16 @@ if(BUILD_DESKTOP)
             add_executable(roclint_granite_worker
                 app/runtime/granite_worker.cpp
                 app/runtime/GraniteEngine.cpp
+                app/runtime/GraniteModelHash.cpp
                 app/runtime/GraniteJsonGrammar.hpp
                 app/runtime/GraniteEngine.hpp)
             target_include_directories(roclint_granite_worker PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
             target_include_directories(roclint_granite_worker SYSTEM PRIVATE
                 "${ROCLINT_LLAMA_SOURCE_DIR}/common" "${ROCLINT_LLAMA_SOURCE_DIR}/include")
             target_link_libraries(roclint_granite_worker PRIVATE roclint_core Qt6::Core llama-common)
+            if(WIN32)
+                target_link_libraries(roclint_granite_worker PRIVATE bcrypt)
+            endif()
             roclint_apply_warnings(roclint_granite_worker)
             add_dependencies(roclint_host roclint_granite_worker)
         endif()
@@ -746,6 +756,12 @@ if(BUILD_TESTING)
         find_package(Qt6 6.2 REQUIRED COMPONENTS Test)
         roclint_add_test(roclint_granite_reasoning_policy tests/bridge/test_granite_reasoning_policy.cpp Qt6::Core)
         target_include_directories(roclint_granite_reasoning_policy_tests PRIVATE tests app/runtime "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        roclint_add_test(roclint_granite_model_hash tests/bridge/test_granite_model_hash.cpp Qt6::Core)
+        target_sources(roclint_granite_model_hash_tests PRIVATE app/runtime/GraniteModelHash.cpp)
+        target_include_directories(roclint_granite_model_hash_tests PRIVATE tests app/runtime)
+        if(WIN32)
+            target_link_libraries(roclint_granite_model_hash_tests PRIVATE bcrypt)
+        endif()
         roclint_add_test(roclint_native_granite tests/bridge/test_native_granite_runtime.cpp roclint_host_lib_testing Qt6::Core Qt6::Network Qt6::Concurrent)
         target_compile_definitions(roclint_native_granite_tests PRIVATE
             ROCLINT_GRANITE_SOURCE_MANIFEST="${CMAKE_CURRENT_SOURCE_DIR}/app/runtime/granite-models.json")
@@ -903,4 +919,18 @@ if(BUILD_DESKTOP OR BUILD_TESTING)
     target_include_directories(roclint_retrieval_benchmark PRIVATE tests)
     target_link_libraries(roclint_retrieval_benchmark PRIVATE roclint_retrieval Threads::Threads)
     roclint_apply_warnings(roclint_retrieval_benchmark)
+endif()
+
+# Explicit verification build: all test executables, with no ALL_BUILD runtime
+# copying/deployment targets. Dependencies can compile in parallel under MSBuild.
+if(BUILD_TESTING)
+    get_property(_roclint_local_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    set(_roclint_test_binaries)
+    foreach(_roclint_target IN LISTS _roclint_local_targets)
+        get_target_property(_roclint_target_type ${_roclint_target} TYPE)
+        if(_roclint_target_type STREQUAL "EXECUTABLE" AND _roclint_target MATCHES "_tests$")
+            list(APPEND _roclint_test_binaries ${_roclint_target})
+        endif()
+    endforeach()
+    add_custom_target(roclint_test_binaries DEPENDS ${_roclint_test_binaries})
 endif()

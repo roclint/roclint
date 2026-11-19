@@ -161,8 +161,23 @@ void installScriptedRewrite(HostController& controller, const std::string& rewri
                             std::function<void()> beforeRewriteReply = {},
                             std::function<void()> beforeDiscoveryReply = {}) {
     controller.setLegacyDiscoveryForTesting(true);
+    // An unchanged rewrite is no longer presented as an applicable proposal. The
+    // AST-freshness tests care about binding, not golden wording, so make the mock
+    // response genuinely different while preserving its requested action.
+    const auto distinct = [](const std::string& reply) {
+        auto parsed = roclint::core::json::parse(reply);
+        if (!parsed.ok()) return reply;
+        const auto* rewritten = parsed.value().find("rewritten_prompt");
+        if (rewritten == nullptr || !rewritten->isString()) return reply;
+        roclint::core::json::Value value = roclint::core::json::Value::object();
+        value.set("status", roclint::core::json::Value::string("rewritten"));
+        value.set("rewritten_prompt", roclint::core::json::Value::string(
+            rewritten->asString() + " Keep the requested change explicit."));
+        return roclint::core::json::serialize(value);
+    };
+    const std::string resolvedRewrite = distinct(rewrite);
     controller.setTransportOverrideForTesting(
-        [rewrite, beforeRewriteReply = std::move(beforeRewriteReply),
+        [resolvedRewrite, beforeRewriteReply = std::move(beforeRewriteReply),
          beforeDiscoveryReply = std::move(beforeDiscoveryReply)](std::string_view instruction) -> Result<std::string> {
             // Audit prompts also contain <instructions>; they must not fire rewrite-side
             // mutations before the actual synthesis has captured its AST evidence.
@@ -171,7 +186,7 @@ void installScriptedRewrite(HostController& controller, const std::string& rewri
             }
             if (instruction.find("granite.rewrite.format.") != std::string_view::npos) {
                 if (beforeRewriteReply) beforeRewriteReply();
-                return rewrite;
+                return resolvedRewrite;
             }
             if (instruction.find("granite.discovery.selective.") != std::string_view::npos) {
                 if (beforeDiscoveryReply) beforeDiscoveryReply();
@@ -180,6 +195,21 @@ void installScriptedRewrite(HostController& controller, const std::string& rewri
             return makeError(ErrorCode::InvalidInput, "Unexpected AST freshness test operation");
         });
     ROCLINT_CHECK(controller.markModelReadyForTesting(testModelInfo()));
+}
+
+void ensureApprovingReview(HostController& controller) {
+    if (controller.canApplyReviewedOutput()) return;
+    controller.setComprehensionReviewForTesting(
+        [](const roclint::bridge::ComprehensionReviewRequest&) {
+            roclint::bridge::ComprehensionReviewResult result;
+            result.status = roclint::bridge::ComprehensionReviewStatus::Completed;
+            result.interpretedOutcome = "The rewrite preserves the requested rename.";
+            result.readyForTask = true;
+            return result;
+        });
+    ROCLINT_CHECK(controller.requestComprehensionReview(controller.stateVersion()) != 0);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(10000));
+    ROCLINT_CHECK(controller.comprehensionReviewState() == "ready");
 }
 
 void acknowledgePendingConstraints(HostController& controller) {
@@ -195,6 +225,7 @@ void acknowledgePendingConstraints(HostController& controller) {
 
 void approveCurrentProposal(HostController& controller) {
     if (!controller.canApprove()) acknowledgePendingConstraints(controller);
+    ensureApprovingReview(controller);
     ROCLINT_CHECK(controller.canApprove());
     if (auto* clipboard = QGuiApplication::clipboard()) clipboard->setText(QStringLiteral("before"));
     ROCLINT_CHECK(controller.waitForCommandForTesting(
@@ -1137,6 +1168,7 @@ void testDelayedFailedRevalidationCannotClearNewerProposal() {
     ROCLINT_CHECK(controller.proposalForTesting().has_value());
     ROCLINT_CHECK(controller.proposalForTesting()->id == secondId);
     if (!controller.canApprove()) acknowledgePendingConstraints(controller);
+    ensureApprovingReview(controller);
     ROCLINT_CHECK(controller.canApprove());
     ROCLINT_CHECK(controller.groundingStatus() != QStringLiteral("STALE"));
 

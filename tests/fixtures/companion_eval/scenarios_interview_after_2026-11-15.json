@@ -1,0 +1,106 @@
+{
+  "schema": "roclint.companion_eval.scenarios.v1",
+  "created": "2026-11-15",
+  "notes": [
+    "Combined-build after-run for the connected interview/review path.",
+    "interview=true uses openInterviewFromCompanion and submitInterviewResponse, not the legacy clarification commands.",
+    "review=true requests the independent fresh-context review after the rewrite and records its state/findings; nothing is approved or inserted.",
+    "These are development scenarios, not held-out quality scores."
+  ],
+  "scenarios": [
+    {
+      "id": "music_typography_interview_after",
+      "class": "development",
+      "surface": "word_or_review_explore",
+      "prompt": "I'm building a music app. I want compact typography, a fusion of 1990s and 1960s/Revolver-era references, and easy browsing.",
+      "interview": true,
+      "review": true,
+      "answers": [
+        {
+          "type": "custom",
+          "text": "Compact typography means smaller type sizes and tighter line spacing for dense lists, not fewer features or shortened labels. Keep browsing one tap away and keep artist and track names readable."
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "criteria": {
+        "question_addresses_typography": "The question/options discuss type size, density, hierarchy or legibility rather than deleting UI or shortening labels.",
+        "answer_carried": "The rewrite reflects the custom typography answer without turning it into UI removal.",
+        "browsing_preserved": "The rewrite retains easy browsing.",
+        "negative_constraint_preserved": "The rewrite preserves 'not fewer features or shortened labels' or the review surfaces it as a finding.",
+        "no_invented_reference_facts": "No unverified claim about 1990s music or Revolver-era artwork, songs or design facts is stated as source fact.",
+        "review_before_apply": "can_apply_reviewed_output is false until a completed fresh review with no unresolved blocking/required findings."
+      }
+    },
+    {
+      "id": "cinematic_interview_after",
+      "class": "unseen",
+      "surface": "word_or_review_explore",
+      "prompt": "Make the product photo look cinematic.",
+      "interview": true,
+      "review": true,
+      "answers": [
+        {
+          "type": "choice",
+          "pick": "light"
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "criteria": {
+        "contextual_choices": "The options describe concrete photographic choices (lighting, depth of field, grading, framing) rather than a generic mood synonym."
+      }
+    },
+    {
+      "id": "already_clear_500ms_auto",
+      "class": "unseen",
+      "surface": "automatic",
+      "prompt": "Make the search API respond within 500 milliseconds for 95% of requests without changing the response schema.",
+      "interview": false,
+      "review": false,
+      "rewrite": false,
+      "max_turns": 0,
+      "criteria": {
+        "no_false_clarification": "No question is shown merely because S1 emitted RULE_CONFLICT; the exact values and schema remain unchanged.",
+        "exact_values_preserved": "500 milliseconds, 95% and the response schema remain in the recorded brief."
+      }
+    },
+    {
+      "id": "custom_unknown_skip_after",
+      "class": "unseen",
+      "surface": "interview",
+      "prompt": "Organize the photo gallery by mood.",
+      "interview": true,
+      "review": false,
+      "answers": [
+        {"type": "unknown", "text": "I don't know"},
+        {"type": "skip"},
+        {"type": "custom", "text": "Start with calm and playful, and keep it easy to scan."}
+      ],
+      "rewrite": true,
+      "max_turns": 3,
+      "criteria": {
+        "unknown_not_confirmed": "I don't know leaves an open/uncertain item, not a selected category.",
+        "skip_not_confirmed": "Skip leaves the topic open and does not select a default.",
+        "custom_answer_carried": "The later custom answer is the only confirmed category wording."
+      }
+    },
+    {
+      "id": "changed_preference_after",
+      "class": "unseen",
+      "surface": "interview",
+      "prompt": "Redesign the landing page with a bold hero and a retro palette.",
+      "interview": true,
+      "review": false,
+      "answers": [
+        {"type": "choice", "pick": "visual hierarchy"},
+        {"type": "change", "item": "grp_0", "text": "Use a muted 1970s palette, not neon."}
+      ],
+      "rewrite": true,
+      "max_turns": 3,
+      "criteria": {
+        "supersession": "The earlier 80s choice is retained as replaced provenance, and the current preference is the muted 1970s palette."
+      }
+    }
+  ]
+}

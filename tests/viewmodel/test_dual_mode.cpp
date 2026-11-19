@@ -58,7 +58,7 @@ struct Harness {
         const std::string rewrite = fx::rewriteReply(kRewrite);
         controller->setTransportOverrideForTesting(
             [c, r, discoveryReply, rewrite](std::string_view instruction) -> Result<std::string> {
-                if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+                if (instruction.find("granite.goldfish_audit.v2") != std::string_view::npos) {
                     return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
                 }
                 ++*c;
@@ -264,7 +264,77 @@ void testDismissedBadgeStaysDismissed() {
     std::cout << "  [PASS] A dismissed badge doesn't come back for the same text.\n";
 }
 
+void testQuietBadgeSurvivesTypingAndSameWindowReadGaps() {
+    int hiddenUpdates = 0;
+    Harness h;
+    h.c().setLegacyDiscoveryForTesting(false);
+    h.c().setAmbientModeEnabled(true);
+    auto field = cursorField(kPrompt);
+    field.fieldRect = QRect(480, 370, 310, 110);
+    h.bridge->observe(field);
+    ROCLINT_CHECK(h.c().isAmbientBadgeVisible());
+    h.c().setAmbientBadgeSuggestionsOnly(true);
+    ROCLINT_CHECK(!h.c().isAmbientBadgeVisible());
+    h.c().setAmbientBadgeSuggestionsOnly(false);
+    ROCLINT_CHECK(h.c().isAmbientBadgeVisible());
+    const QPoint initialPosition(h.c().ambientBadgeX(), h.c().ambientBadgeY());
+    // A queued click on an expired underline must never open the full HUD.
+    h.c().activateAmbientIndicator();
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(3000));
+    ROCLINT_CHECK(!h.c().isCardVisible() && !h.c().wordCompanionVisible());
+    const auto updates = QObject::connect(&h.c(), &HostController::ambientBadgeChanged, &h.c(), [&]() {
+        if (!h.c().isAmbientBadgeVisible()) ++hiddenUpdates;
+    });
+    field.text += QStringLiteral(" Keep the API unchanged.");
+    field.caretOffset = static_cast<int>(field.text.size());
+    h.bridge->observe(field);
+    ROCLINT_CHECK(h.c().isAmbientBadgeVisible());
+    ROCLINT_CHECK(QPoint(h.c().ambientBadgeX(), h.c().ambientBadgeY()) == initialPosition);
+
+    emit h.bridge->fieldReadInterrupted();
+    ROCLINT_CHECK(h.c().isAmbientBadgeVisible());
+    ROCLINT_CHECK(h.c().applyWordRefinement(h.c().stateVersion()) == 0);
+    h.c().activateAmbientIndicator();
+    ROCLINT_CHECK(!h.c().isCardVisible() && !h.c().wordCompanionVisible());
+    ++field.fieldToken; // The provider may recreate a composer node with the same text.
+    h.bridge->observe(field);
+    ROCLINT_CHECK(h.c().isAmbientBadgeVisible() && hiddenUpdates == 0);
+    QObject::disconnect(updates);
+
+    emit h.bridge->fieldReadInterrupted();
+    pumpFor(400);
+    emit h.bridge->fieldReadInterrupted();
+    ROCLINT_CHECK(pumpUntil([&]() { return !h.c().isAmbientBadgeVisible(); }, 450));
+    h.bridge->observe(field);
+    ROCLINT_CHECK(h.c().isAmbientBadgeVisible());
+    emit h.bridge->fieldReadInterrupted();
+    h.bridge->lose();
+    ROCLINT_CHECK(!h.c().isAmbientBadgeVisible());
+    h.bridge->observe(field);
+    h.bridge->observe(cursorField(QString(), field.fieldToken + 1));
+    ROCLINT_CHECK(!h.c().isAmbientBadgeVisible());
+    h.bridge->observe(field);
+    h.c().dismissAmbientBadge();
+    h.bridge->observe(field);
+    ROCLINT_CHECK(!h.c().isAmbientBadgeVisible());
+    std::cout << "  [PASS] The quiet badge stays anchored through edits and short read interruptions.\n";
+}
+
 // Opens the card from Cursor, answers the question and produces an approvable rewrite.
+void completeApprovingReview(HostController& controller) {
+    controller.setComprehensionReviewForTesting(
+        [](const roclint::bridge::ComprehensionReviewRequest&) {
+            roclint::bridge::ComprehensionReviewResult result;
+            result.status = roclint::bridge::ComprehensionReviewStatus::Completed;
+            result.interpretedOutcome = "The rewrite preserves the requested parser refactor.";
+            result.readyForTask = true;
+            return result;
+        });
+    ROCLINT_CHECK(controller.requestComprehensionReview(controller.stateVersion()) != 0);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(controller.comprehensionReviewState() == "ready");
+}
+
 void reachApprovableRewrite(Harness& h) {
     h.c().setAmbientModeEnabled(true);
     observeAndWaitForBadge(h);
@@ -273,6 +343,7 @@ void reachApprovableRewrite(Harness& h) {
     ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().confirmChoice(QStringLiteral("alt_0_0"), h.c().stateVersion())));
     ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().synthesizeRewrite(h.c().stateVersion())));
     ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
+    completeApprovingReview(h.c());
     ROCLINT_CHECK(h.c().canApprove());
 }
 
@@ -311,6 +382,7 @@ void testConnectingEditorPreservesManualRewriteAndAnswers() {
     ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().confirmChoice(QStringLiteral("alt_0_0"), h.c().stateVersion())));
     ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().synthesizeRewrite(h.c().stateVersion())));
     ROCLINT_CHECK(h.c().waitForIdleForTesting(3000));
+    completeApprovingReview(h.c());
     ROCLINT_CHECK(h.c().canApprove() && !h.c().isAmbientCapture());
     const auto version = h.c().stateVersion();
     const auto proposal = *h.c().proposalForTesting();
@@ -798,6 +870,7 @@ int main(int argc, char* argv[]) {
     testIneligibleFieldsAreNeverRead();
     testClearPromptShowsNoBadge();
     testDismissedBadgeStaysDismissed();
+    testQuietBadgeSurvivesTypingAndSameWindowReadGaps();
     testApprovedRewriteIsInjectedInPlace();
     testConnectingEditorPreservesManualRewriteAndAnswers();
     testInjectionFailureFallsBackToClipboard();

@@ -1,6 +1,7 @@
 #include "NativeGraniteRuntimeWorker.hpp"
 #include "GraniteConfig.hpp"
 #include "OwnedProcessJob.hpp"
+#include "../runtime/GraniteTimingTrace.hpp"
 #include "roclint/core/Json.hpp"
 #include "roclint/rewrite/RewriteProfile.hpp"
 
@@ -15,6 +16,7 @@
 #include <QThread>
 #include <QTimer>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -32,6 +34,45 @@ constexpr int kShutdownMs = 2000;
 std::string ss(const QString& value) { return value.toUtf8().toStdString(); }
 core::Error unavailable(const char* message) { return core::makeError(core::ErrorCode::ProviderUnavailable, message); }
 core::Error stale() { return core::makeError(core::ErrorCode::StaleVersion, "The native model request was cancelled because its prompt or configuration changed."); }
+
+// D00 surface values. "granite_analyze" is used by discovery, interview and
+// review paths; without an explicit surface we leave it empty rather than guess.
+QString traceSurface(const QString& operation, const QString& declared) {
+    if (!declared.isEmpty()) return declared;
+    if (operation == QLatin1String("granite_word_refinement")) return QStringLiteral("word");
+    if (operation == QLatin1String("granite_rewrite")) return QStringLiteral("rewrite");
+    return {};
+}
+void traceEvent(const QString& stage, const QString& phase, const QString& traceId, const QString& requestId,
+                const QString& revisionId, const QString& surface, double elapsedMs, QJsonObject detail = {}) {
+    roclint::runtime::GraniteTimingTrace::instance().event(stage, phase, traceId, requestId, revisionId,
+        surface, elapsedMs, detail);
+}
+QJsonObject traceBinding(const QJsonObject& envelope) {
+    return {{QStringLiteral("operation"), envelope.value(QStringLiteral("op"))},
+        {QStringLiteral("wire_request_id"), envelope.value(QStringLiteral("request_id"))},
+        {QStringLiteral("attempt_id"), envelope.value(QStringLiteral("attempt_id"))},
+        {QStringLiteral("group_id"), envelope.value(QStringLiteral("request_group_id"))}};
+}
+QJsonObject measuredPrepare(const QJsonObject& source) {
+    QJsonObject detail;
+    for (const auto* key : {"prepare_ms", "verify_ms", "model_load_ms", "context_init_ms", "warmup_ms"}) {
+        const auto value = source.value(QLatin1String(key));
+        if (value.isDouble()) detail.insert(QLatin1String(key), value);
+    }
+    return detail;
+}
+}
+
+void NativeGraniteRuntimeWorker::beginReadyTrace(const QString& reason) {
+    readyTraceStart_ = std::chrono::steady_clock::now();
+    readyTraceReason_ = reason;
+    traceEvent(QStringLiteral("model_ready"), QStringLiteral("start"), QStringLiteral("runtime"), {}, {}, {}, 0.0,
+        {{QStringLiteral("runtime"), QStringLiteral("granite")},
+         {QStringLiteral("reason"), reason},
+         {QStringLiteral("quantization"), identity_.value(QStringLiteral("quantization"))},
+         {QStringLiteral("backend"), manifest().value(QStringLiteral("backend"))},
+         {QStringLiteral("residency_before"), residency_}});
 }
 
 struct NativeGraniteRuntimeWorker::Call {
@@ -103,6 +144,7 @@ NativeGraniteRuntimeWorker::NativeGraniteRuntimeWorker(QObject* parent, QString 
         worker_ += QStringLiteral(".exe");
 #endif
     }
+    roclint::runtime::GraniteTimingTrace::instance().identify(QStringLiteral("native_runtime"));
     clock_.start();
 }
 
@@ -164,6 +206,14 @@ void NativeGraniteRuntimeWorker::stop() {
 void NativeGraniteRuntimeWorker::killWorker() { if (job_ && job_->terminate()) return; if (process_) process_->kill(); }
 
 void NativeGraniteRuntimeWorker::beginStop(bool failure, const QString& reason) {
+    if (readyTraceStart_) {
+        traceEvent(QStringLiteral("model_ready"), QStringLiteral("mark"), QStringLiteral("runtime"), {}, {}, {},
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - *readyTraceStart_).count(),
+            {{QStringLiteral("event"), failure ? QStringLiteral("failed") : QStringLiteral("stopped")},
+             {QStringLiteral("reason"), readyTraceReason_}});
+        readyTraceStart_.reset();
+        readyTraceReason_.clear();
+    }
     ready_ = false;
     warmAfterResidency_ = false;
     failure_ = failure;
@@ -226,6 +276,7 @@ void NativeGraniteRuntimeWorker::load(const QString& directory, const QString& q
     if (process_ && !stopping_ && hello_ && launch_ && launch_->directory == directory && launch_->quantization == quantization &&
         (residency_ == QLatin1String("IDLE_MAPPED") || residency_ == QLatin1String("UNLOADED"))) {
         ready_ = false; state(QStringLiteral("LOADING"), QStringLiteral("Warming the selected native Granite model."));
+        beginReadyTrace(QStringLiteral("warm_context"));
         static_cast<void>(send(QStringLiteral("warm"), {}, kLoadMs)); return;
     }
     next_ = Launch{directory, quantization};
@@ -234,6 +285,8 @@ void NativeGraniteRuntimeWorker::load(const QString& directory, const QString& q
 
 void NativeGraniteRuntimeWorker::startWorker() {
     launch_ = std::exchange(next_, std::nullopt);
+    readyTraceStart_ = std::chrono::steady_clock::now();
+    readyTraceReason_ = QStringLiteral("cold_process");
     ready_ = false; hello_ = false; stopping_ = false; failure_ = false;
     cancelled_.clear(); quiescing_.clear(); modelMetadata_ = {};
     if (!launch_ || !QFileInfo(worker_).isExecutable()) { fail(QStringLiteral("The native Granite helper is missing. Build the pinned native runtime first.")); return; }
@@ -246,6 +299,14 @@ void NativeGraniteRuntimeWorker::startWorker() {
         {QStringLiteral("model_revision"), config.value(QStringLiteral("model_revision"))}, {QStringLiteral("runtime_revision"), config.value(QStringLiteral("runtime_revision"))},
         {QStringLiteral("configuration_id"), config.value(QStringLiteral("configuration_id"))}, {QStringLiteral("quantization"), launch_->quantization},
         {QStringLiteral("weights_sha256"), candidate.value(QStringLiteral("sha256"))}};
+    // The cold-start clock begins before launch; publish the start event once the
+    // identity is known so the event is joinable, without shortening the span.
+    traceEvent(QStringLiteral("model_ready"), QStringLiteral("start"), QStringLiteral("runtime"), {}, {}, {}, 0.0,
+        {{QStringLiteral("runtime"), QStringLiteral("granite")},
+         {QStringLiteral("reason"), readyTraceReason_},
+         {QStringLiteral("quantization"), identity_.value(QStringLiteral("quantization"))},
+         {QStringLiteral("backend"), config.value(QStringLiteral("backend"))},
+         {QStringLiteral("residency_before"), residency_}});
     job_ = std::make_unique<OwnedProcessJob>();
     if (!job_->valid()) { fail(QStringLiteral("Native Granite process ownership could not be established.")); return; }
     process_ = new QProcess(this);
@@ -301,6 +362,14 @@ quint64 NativeGraniteRuntimeWorker::send(const QString& operation, const QJsonOb
     const auto profile = context ? core::rewrite::ProfileRegistry::getProfile(ss(context->profileId)) : std::nullopt;
     envelope.insert(QStringLiteral("rewrite_profile_version"), profile ? static_cast<qint64>(profile->version) : 0);
     envelope.insert(QStringLiteral("input_hash"), QString::fromLatin1(QCryptographicHash::hash(context ? context->prompt.toUtf8() : QByteArray(), QCryptographicHash::Sha256).toHex()));
+    if (context && !context->surface.isEmpty()) envelope.insert(QStringLiteral("surface"), context->surface);
+    // The helper's single inference loop may make this request wait behind older
+    // work. Report the budget the caller will still accept so the helper can reject
+    // obsolete queued work instead of starting a generation that cannot be used.
+    if (call) {
+        const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(call->deadline - acceptedAt).count();
+        envelope.insert(QStringLiteral("remaining_budget_ms"), std::clamp<qint64>(remaining, 0, 3600000));
+    }
     auto object = envelope; object.insert(QStringLiteral("payload"), payload);
     const auto frame = QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n';
     if (frame.size() > kMaxFrame) return 0;
@@ -309,7 +378,7 @@ quint64 NativeGraniteRuntimeWorker::send(const QString& operation, const QJsonOb
     }
     const auto deadline = call ? call->deadline : timeoutMs > 0 ? acceptedAt + std::chrono::milliseconds(timeoutMs) :
         std::chrono::steady_clock::time_point::max();
-    pending_.insert(id, Pending{envelope, std::move(call), deadline});
+    pending_.insert(id, Pending{envelope, std::move(call), deadline, acceptedAt});
     if (process_->state() == QProcess::Running) process_->write(frame); else outgoing_.append(frame);
     if (timeoutMs > 0) QTimer::singleShot(timeoutMs, this, [this, id]() {
         const auto it = pending_.constFind(id);
@@ -317,7 +386,7 @@ quint64 NativeGraniteRuntimeWorker::send(const QString& operation, const QJsonOb
         if (it->call) {
             const auto call = it->call;
             call->finish(core::makeError(core::ErrorCode::ValidationFailed, "NATIVE_TIMEOUT: Native Granite exceeded its operation deadline."));
-            cancelCall(call);
+            cancelCall(call, "deadline_expired");
         } else fail(QStringLiteral("The native helper exceeded its control/loading deadline."));
     });
     return id;
@@ -427,10 +496,16 @@ void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
     if (pending != pending_.cend() && std::chrono::steady_clock::now() >= pending->deadline) {
         if (pending->call) {
             const auto call = pending->call;
+            auto detail = traceBinding(pending->envelope);
+            detail.insert(QStringLiteral("outcome"), QStringLiteral("late_discarded"));
+            traceEvent(QStringLiteral("generate"), QStringLiteral("end"), pending->envelope.value(QStringLiteral("request_group_id")).toString(),
+                pending->envelope.value(QStringLiteral("attempt_id")).toString(), pending->envelope.value(QStringLiteral("draft_revision_id")).toString(),
+                traceSurface(pending->envelope.value(QStringLiteral("op")).toString(), pending->envelope.value(QStringLiteral("surface")).toString()),
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - pending->traceStart).count(), detail);
             if (id == metricsRequestId_) resetSpeedMetrics();
             call->finish(core::makeError(core::ErrorCode::ValidationFailed, "NATIVE_TIMEOUT: Native reply arrived after its deadline."));
             pending_.remove(id);
-            state(QStringLiteral("READY"), QStringLiteral("The late native result was discarded."));
+            settleReady(QStringLiteral("The late native result was discarded."));
         } else fail(QStringLiteral("The native helper exceeded its control/loading deadline."));
         return;
     }
@@ -446,7 +521,7 @@ void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
     if (response.value(QStringLiteral("type")) != type) { fail(QStringLiteral("Native reply message type was incompatible.")); return; }
     if (cancelled != cancelled_.cend()) {
         quiescing_.remove(id);
-        if (quiescing_.isEmpty() && !stopping_) { ready_ = true; state(QStringLiteral("READY"), QStringLiteral("Cancelled native work has stopped.")); }
+        if (quiescing_.isEmpty() && !stopping_) settleReady(QStringLiteral("Cancelled native work has stopped."));
         return;
     }
     const auto request = pending_.take(id);
@@ -454,13 +529,20 @@ void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
         if (request.call) {
             if (id == metricsRequestId_) resetSpeedMetrics();
             const auto code = response.value(QStringLiteral("error_code")).toString();
+            auto detail = traceBinding(request.envelope);
+            detail.insert(QStringLiteral("outcome"), code == QLatin1String("TIMEOUT") ? QStringLiteral("timeout") : QStringLiteral("error"));
+            if (!code.isEmpty()) detail.insert(QStringLiteral("error_code"), code);
+            traceEvent(QStringLiteral("generate"), QStringLiteral("end"), request.envelope.value(QStringLiteral("request_group_id")).toString(),
+                request.envelope.value(QStringLiteral("attempt_id")).toString(), request.envelope.value(QStringLiteral("draft_revision_id")).toString(),
+                traceSurface(request.envelope.value(QStringLiteral("op")).toString(), request.envelope.value(QStringLiteral("surface")).toString()),
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - request.traceStart).count(), detail);
             const bool tooLarge = code == QLatin1String("INPUT_TOO_LARGE");
             request.call->finish(core::makeError(tooLarge ? core::ErrorCode::PreconditionFailed : core::ErrorCode::ValidationFailed,
                 tooLarge ? "The exact request exceeds the native token budget. Shorten it or continue manually; nothing was truncated." :
                 code == QLatin1String("TIMEOUT") ? "NATIVE_TIMEOUT: Native Granite exceeded its operation deadline; no partial result was accepted." :
                 code == QLatin1String("OUTPUT_TOO_LARGE") ? "NATIVE_OUTPUT_LIMIT: Native Granite exceeded its output budget; no partial result was accepted." :
                            "Native Granite could not complete this operation within its bounded output/deadline contract."));
-            state(QStringLiteral("READY"), QStringLiteral("The request failed; manual editing remains available."));
+            settleReady(QStringLiteral("The request failed; manual editing remains available."));
         } else {
             const auto code = response.value(QStringLiteral("error_code")).toString();
             if (code == QLatin1String("ACCELERATOR_UNAVAILABLE"))
@@ -488,10 +570,22 @@ void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
     if (op == QLatin1String("cancel")) return;
     if (request.call) {
         const auto output = result.value(QStringLiteral("text"));
+        const bool outputValid = output.isString() && output.toString().toUtf8().size() <= 64 * 1024;
+        auto detail = traceBinding(request.envelope);
+        detail.insert(QStringLiteral("outcome"), outputValid ? QStringLiteral("ok") : QStringLiteral("rejected_output"));
+        if (!outputValid) detail.insert(QStringLiteral("error_code"), QStringLiteral("OUTPUT_INVALID"));
+        if (result.value(QStringLiteral("output_tokens")).isDouble())
+            detail.insert(QStringLiteral("output_tokens"), result.value(QStringLiteral("output_tokens")));
+        if (response.value(QStringLiteral("latency_ms")).isDouble())
+            detail.insert(QStringLiteral("helper_latency_ms"), response.value(QStringLiteral("latency_ms")));
+        traceEvent(QStringLiteral("generate"), QStringLiteral("end"), request.envelope.value(QStringLiteral("request_group_id")).toString(),
+            request.envelope.value(QStringLiteral("attempt_id")).toString(), request.envelope.value(QStringLiteral("draft_revision_id")).toString(),
+            traceSurface(request.envelope.value(QStringLiteral("op")).toString(), request.envelope.value(QStringLiteral("surface")).toString()),
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - request.traceStart).count(), detail);
         if (id == metricsRequestId_ && !updateSpeedMetrics(id, result, *request.call)) resetSpeedMetrics(id);
-        if (!output.isString() || output.toString().toUtf8().size() > 64 * 1024) request.call->finish(core::makeError(core::ErrorCode::ValidationFailed, "Native output was absent or oversized."));
+        if (!outputValid) request.call->finish(core::makeError(core::ErrorCode::ValidationFailed, "Native output was absent or oversized."));
         else request.call->finish(ss(output.toString()));
-        state(QStringLiteral("READY"), QStringLiteral("Native Granite completed this request locally."));
+        settleReady(QStringLiteral("Native Granite completed this request locally."));
         emit speedMetricsChanged();
         return;
     }
@@ -503,20 +597,60 @@ void NativeGraniteRuntimeWorker::receive(const QJsonObject& response) {
     }
     modelMetadata_ = result;
     residency_ = resource; ready_ = resource == QLatin1String("HOT");
+    if (readyTraceStart_) {
+        auto detail = measuredPrepare(result);
+        detail.insert(QStringLiteral("runtime"), QStringLiteral("granite"));
+        detail.insert(QStringLiteral("reason"), readyTraceReason_);
+        detail.insert(QStringLiteral("quantization"), identity_.value(QStringLiteral("quantization")));
+        detail.insert(QStringLiteral("backend"), manifest().value(QStringLiteral("backend")));
+        detail.insert(QStringLiteral("residency"), resource);
+        detail.insert(QStringLiteral("state"), readiness);
+        detail.insert(QStringLiteral("event"), readyTraceReason_);
+        detail.insert(QStringLiteral("load_ms"),
+            detail.value(QStringLiteral("prepare_ms")).isDouble()
+                ? detail.value(QStringLiteral("prepare_ms")).toDouble()
+                : std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - *readyTraceStart_).count());
+        traceEvent(QStringLiteral("model_ready"), QStringLiteral("end"), QStringLiteral("runtime"), {}, {}, {},
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - *readyTraceStart_).count(), detail);
+        readyTraceStart_.reset();
+        readyTraceReason_.clear();
+    }
     const bool warmRequested = std::exchange(warmAfterResidency_, false);
     state(ready_ ? QStringLiteral("READY") : QStringLiteral("UNLOADED"), ready_ ? QStringLiteral("Pinned native Granite is ready (%1).").arg(manifest().value(QStringLiteral("backend")).toString()) :
           resource == QLatin1String("IDLE_MAPPED") ? QStringLiteral("Native weights remain mapped; the context will warm on demand.") : QStringLiteral("Native model resources were released."));
     if (warmRequested && !ready_ && !stopping_) {
+        beginReadyTrace(QStringLiteral("warm_context"));
         state(QStringLiteral("LOADING"), QStringLiteral("Warming native Granite for the requested operation."));
         static_cast<void>(send(QStringLiteral("warm"), {}, kLoadMs));
     }
 }
 
-void NativeGraniteRuntimeWorker::cancelCall(const std::shared_ptr<Call>& call) {
+void NativeGraniteRuntimeWorker::settleReady(const QString& readyDetail) {
+    if (!quiescing_.isEmpty()) return; // A CANCELLING transition is already published.
+    const bool busy = std::any_of(pending_.begin(), pending_.end(),
+        [](const Pending& item) { return item.call != nullptr; });
+    ready_ = true;
+    if (busy) state(QStringLiteral("BUSY"), QStringLiteral("Native Granite is processing the frozen request locally."));
+    else state(QStringLiteral("READY"), readyDetail);
+}
+
+void NativeGraniteRuntimeWorker::cancelCall(const std::shared_ptr<Call>& call, const char* reason) {
+    bool traced = false;
     const auto ids = pending_.keys();
     for (const auto id : ids) {
         const auto it = pending_.find(id);
         if (it == pending_.end() || it->call != call) continue;
+        const auto ageMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - it->traceStart).count();
+        auto detail = traceBinding(it->envelope);
+        detail.insert(QStringLiteral("event"), QStringLiteral("cancelled"));
+        detail.insert(QStringLiteral("reason"), QString::fromLatin1(reason));
+        detail.insert(QStringLiteral("dispatched"), true);
+        detail.insert(QStringLiteral("age_ms"), ageMs);
+        traceEvent(QStringLiteral("generate"), QStringLiteral("mark"), it->envelope.value(QStringLiteral("request_group_id")).toString(),
+            it->envelope.value(QStringLiteral("attempt_id")).toString(), it->envelope.value(QStringLiteral("draft_revision_id")).toString(),
+            traceSurface(it->envelope.value(QStringLiteral("op")).toString(), it->envelope.value(QStringLiteral("surface")).toString()),
+            ageMs, detail);
+        traced = true;
         if (id == metricsRequestId_) resetSpeedMetrics();
         cancelled_.insert(id, it->envelope); pending_.erase(it);
         quiescing_.insert(id);
@@ -527,6 +661,15 @@ void NativeGraniteRuntimeWorker::cancelCall(const std::shared_ptr<Call>& call) {
             }
         });
         static_cast<void>(send(QStringLiteral("cancel"), {{QStringLiteral("target_request_id"), QString::number(id)}}, kHelloMs));
+    }
+    if (!traced && !call->done()) {
+        // The call was created but never dispatched (for example a superseded
+        // transport whose invocation is skipped); no model work existed to cancel.
+        traceEvent(QStringLiteral("generate"), QStringLiteral("mark"), {}, {}, {}, {},
+            0.0, {{QStringLiteral("event"), QStringLiteral("cancelled")},
+                  {QStringLiteral("reason"), QString::fromLatin1(reason)},
+                  {QStringLiteral("dispatched"), false},
+                  {QStringLiteral("age_ms"), 0.0}});
     }
     if (!quiescing_.isEmpty() && !stopping_) { ready_ = false; state(QStringLiteral("CANCELLING"), QStringLiteral("Waiting for cancelled native work to stop.")); }
     // Publish CANCELLING before waking the caller; its latest-request replay must
@@ -539,7 +682,7 @@ void NativeGraniteRuntimeWorker::cancelAll() {
     ++requestEpoch_;
     mailbox_->cancel(false);
     const auto pending = pending_;
-    for (const auto& item : pending) if (item.call) cancelCall(item.call);
+    for (const auto& item : pending) if (item.call) cancelCall(item.call, "cancel_all");
 }
 
 void NativeGraniteRuntimeWorker::setResidency(const QString& tier) {
@@ -547,6 +690,7 @@ void NativeGraniteRuntimeWorker::setResidency(const QString& tier) {
     for (const auto& item : pending_) if (item.call) return;
     if (tier == residency_) return;
     ready_ = false;
+    if (tier == QLatin1String("HOT")) beginReadyTrace(QStringLiteral("apply_residency"));
     state(QStringLiteral("LOADING"), QStringLiteral("Applying native Granite resource policy."));
     static_cast<void>(send(QStringLiteral("set_residency"), {{QStringLiteral("tier"), tier}}, kLoadMs));
 }
@@ -572,6 +716,27 @@ void NativeGraniteRuntimeWorker::submit(const RequestContext& context, const QSt
     const auto timeout = std::max(1, static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(call->deadline - std::chrono::steady_clock::now()).count()));
     const auto id = send(operation, payload, timeout, &context, call);
     if (id == 0) { call->finish(unavailable("Native Granite could not accept this request.")); return; }
+    const auto surface = traceSurface(operation, context.surface);
+    const auto inputBytes = context.prompt.toUtf8().size() + instructions.toUtf8().size() + schema.toUtf8().size();
+    const auto pendingCalls = static_cast<qint64>(std::count_if(pending_.begin(), pending_.end(),
+        [](const Pending& item) { return item.call != nullptr; }));
+    auto detail = QJsonObject{{QStringLiteral("operation"), operation},
+        {QStringLiteral("wire_request_id"), QString::number(id)},
+        {QStringLiteral("attempt_id"), context.attemptId},
+        {QStringLiteral("group_id"), context.groupId},
+        {QStringLiteral("input_bytes"), static_cast<qint64>(inputBytes)},
+        {QStringLiteral("pending_calls"), pendingCalls},
+        {QStringLiteral("pending_requests"), static_cast<qint64>(pending_.size())}};
+    traceEvent(QStringLiteral("generate"), QStringLiteral("start"), context.groupId, context.attemptId,
+        context.revisionId, surface, 0.0, detail);
+    if (pendingCalls > 1)
+        traceEvent(QStringLiteral("queue"), QStringLiteral("mark"), context.groupId, context.attemptId,
+            context.revisionId, surface, 0.0,
+            {{QStringLiteral("event"), QStringLiteral("submitted_behind_local_work")},
+             {QStringLiteral("reason"), QStringLiteral("busy")},
+             {QStringLiteral("depth"), pendingCalls},
+             {QStringLiteral("pending_calls"), pendingCalls},
+             {QStringLiteral("pending_requests"), static_cast<qint64>(pending_.size())}});
     resetSpeedMetrics(id);
     state(QStringLiteral("BUSY"), QStringLiteral("Native Granite is processing the frozen request locally."));
 }
@@ -593,7 +758,14 @@ bridge::GraniteTransport NativeGraniteRuntimeWorker::transportFor(const RequestC
             return core::makeError(core::ErrorCode::ValidationFailed, "NATIVE_TIMEOUT: Shared request budget expired.");
         const auto prompt = QString::fromUtf8(instructions.data(), static_cast<qsizetype>(instructions.size()));
         if (!mailbox->post([context, operation, schema, prompt, call, generation, epoch](NativeGraniteRuntimeWorker* runtime) {
-            if (runtime->generation_ != generation || runtime->requestEpoch_ != epoch) { call->finish(stale()); return; }
+            if (runtime->generation_ != generation || runtime->requestEpoch_ != epoch) {
+                traceEvent(QStringLiteral("generate"), QStringLiteral("mark"), context.groupId, context.attemptId,
+                    context.revisionId, traceSurface(operation, context.surface), 0.0,
+                    {{QStringLiteral("event"), QStringLiteral("superseded_before_dispatch")},
+                     {QStringLiteral("operation"), operation},
+                     {QStringLiteral("dispatched"), false}});
+                call->finish(stale()); return;
+            }
             runtime->submit(context, operation, prompt, schema, call);
         }, call)) return unavailable("Native runtime could not accept this request.");
         std::unique_lock lock(call->mutex);
@@ -602,7 +774,7 @@ bridge::GraniteTransport NativeGraniteRuntimeWorker::transportFor(const RequestC
             if (!cancellationPosted && context.cancellation && context.cancellation->load()) {
                 cancellationPosted = true;
                 lock.unlock();
-                if (!mailbox->post([call](NativeGraniteRuntimeWorker* runtime) { runtime->cancelCall(call); }))
+                if (!mailbox->post([call](NativeGraniteRuntimeWorker* runtime) { runtime->cancelCall(call, "caller_cancelled"); }))
                     call->finish(stale());
                 lock.lock();
                 continue;
@@ -610,7 +782,7 @@ bridge::GraniteTransport NativeGraniteRuntimeWorker::transportFor(const RequestC
             if (std::chrono::steady_clock::now() >= call->deadline) {
                 lock.unlock();
                 call->finish(core::makeError(core::ErrorCode::ValidationFailed, "NATIVE_TIMEOUT: Native request exceeded its monotonic deadline."));
-                mailbox->post([call](NativeGraniteRuntimeWorker* runtime) { runtime->cancelCall(call); });
+                mailbox->post([call](NativeGraniteRuntimeWorker* runtime) { runtime->cancelCall(call, "deadline_expired"); });
                 lock.lock();
                 break;
             }

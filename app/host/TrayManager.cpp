@@ -44,10 +44,10 @@ bool TrayManager::initTray() {
 void TrayManager::createActions() {
     m_trayMenu = std::make_unique<QMenu>();
 
-    m_openAction = m_trayMenu->addAction(QStringLiteral("Open Roclint"));
+    m_openAction = m_trayMenu->addAction(tr("Open prompt HUD"));
     connect(m_openAction, &QAction::triggered, m_controller, &HostController::showCard);
 
-    m_settingsAction = m_trayMenu->addAction(QStringLiteral("Settings..."));
+    m_settingsAction = m_trayMenu->addAction(tr("Settings"));
     connect(m_settingsAction, &QAction::triggered, m_controller, &HostController::showDashboard);
 
     m_trayMenu->addSeparator();

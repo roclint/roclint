@@ -1,7 +1,10 @@
+#include "roclint/rewrite/StructuredEntityExtractor.hpp"
 #include "HostController.hpp"
 #include "support/check.hpp"
 #include "support/fixtures.hpp"
 #include "support/MockAccessibilityBridge.hpp"
+
+#include <roclint/core/crypto/Sha256.hpp>
 
 #include <QClipboard>
 #include <QCoreApplication>
@@ -46,7 +49,15 @@ const std::string kUnverifiedRewrite = "Make the parser quicker for single reque
 struct ScriptedRuntime {
     std::string rewriteText{kVerifiedRewrite};
     std::string wordRefinementReply{};
+    std::string wordSurfaceReply{R"({"status":"clean","replacement":"","explanation":"","source":""})"};
+    std::string discoveryReply{kDiscoveryReply};
+    std::shared_ptr<std::vector<std::string>> discoveryReplies =
+        std::make_shared<std::vector<std::string>>();
+    std::shared_ptr<std::vector<std::string>> followUpReplies =
+        std::make_shared<std::vector<std::string>>(std::initializer_list<std::string>{"{\"kind\":\"none\"}"});
     std::chrono::milliseconds discoveryDelay{0};
+    std::chrono::milliseconds followUpDelay{0};
+    std::shared_ptr<std::atomic_bool> rejectCustom = std::make_shared<std::atomic_bool>(false);
     std::shared_ptr<std::mutex> mutex = std::make_shared<std::mutex>();
     std::shared_ptr<std::vector<std::string>> sent = std::make_shared<std::vector<std::string>>();
 
@@ -55,16 +66,25 @@ struct ScriptedRuntime {
         auto log = sent;
         const std::string rewrite = fx::rewriteReply(rewriteText);
         const auto delay = discoveryDelay;
+        const auto followUpDelayCopy = followUpDelay;
         const std::string wordReply = wordRefinementReply;
-        return [m, log, rewrite, delay, wordReply](std::string_view instruction) -> Result<std::string> {
+        const std::string surfaceReply = wordSurfaceReply;
+        const std::string discovery = discoveryReply;
+        auto replies = followUpReplies;
+        auto baseReplies = discoveryReplies;
+        auto reject = rejectCustom;
+        return [m, log, rewrite, delay, followUpDelayCopy, wordReply, surfaceReply, discovery, replies, baseReplies, reject]
+               (std::string_view instruction) -> Result<std::string> {
             {
                 std::lock_guard<std::mutex> lock(*m);
                 log->emplace_back(instruction);
             }
-            if (instruction.find("granite.word_refinement.v2") != std::string_view::npos && !wordReply.empty()) {
+            if (instruction.find("granite.word_surface_check.v1") != std::string_view::npos)
+                return surfaceReply;
+            if (instruction.find("granite.word_refinement.v4") != std::string_view::npos && !wordReply.empty()) {
                 return wordReply;
             }
-            if (instruction.find("granite.goldfish_word_audit.v2") != std::string_view::npos) {
+            if (instruction.find("granite.goldfish_word_audit.v3") != std::string_view::npos) {
                 const bool second = instruction.find("wcand_2") != std::string_view::npos;
                 return std::string(second
                     ? R"({"verdicts":[{"id":"wcand_1","grammar":"Pass","preservation":"Pass","usefulness":"Pass"},{"id":"wcand_2","grammar":"Pass","preservation":"Pass","usefulness":"Pass"}]})"
@@ -73,19 +93,52 @@ struct ScriptedRuntime {
             if (instruction.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
                 return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
             }
-            if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            if (instruction.find("granite.goldfish_audit.v2") != std::string_view::npos) {
                 return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
             }
-            if (instruction.find("granite.clarification_check.v1") != std::string_view::npos)
+            if (instruction.find("granite.clarification_check.v1") != std::string_view::npos) {
+                if (reject->load()) {
+                    return std::string(R"({"meaning":"The answer does not address the question.","answers_question":false,"compatible":true,"feedback":"That answer doesn't settle this question yet."})");
+                }
                 return std::string(R"({"meaning":"The answer settles the question.","answers_question":true,"compatible":true,"feedback":""})");
+            }
+            if (instruction.find("interview follow-up") != std::string_view::npos) {
+                if (followUpDelayCopy.count() > 0) {
+                    std::this_thread::sleep_for(followUpDelayCopy);
+                }
+                std::lock_guard<std::mutex> lock(*m);
+                if (replies->empty()) return std::string("{\"kind\":\"none\"}");
+                std::string reply = replies->front();
+                replies->erase(replies->begin());
+                return reply;
+            }
+            if (!baseReplies->empty() &&
+                instruction.find("substantial interview") != std::string_view::npos) {
+                std::lock_guard<std::mutex> lock(*m);
+                if (!baseReplies->empty()) {
+                    std::string reply = baseReplies->front();
+                    baseReplies->erase(baseReplies->begin());
+                    return reply;
+                }
+            }
             if (instruction.find("<instructions>") != std::string_view::npos) {
                 return rewrite;
             }
             if (delay.count() > 0) {
                 std::this_thread::sleep_for(delay);
             }
-            return kDiscoveryReply;
+            return discovery;
         };
+    }
+
+    void queueFollowUps(std::initializer_list<std::string> replies) const {
+        std::lock_guard<std::mutex> lock(*mutex);
+        followUpReplies->assign(replies);
+    }
+
+    void queueDiscoveries(std::initializer_list<std::string> replies) const {
+        std::lock_guard<std::mutex> lock(*mutex);
+        discoveryReplies->assign(replies);
     }
 
     std::vector<std::string> requests() const {
@@ -195,6 +248,39 @@ void synthesize(HostController& c) {
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
     ROCLINT_CHECK(c.proposalStatus() == "READY_FOR_REVIEW");
     ROCLINT_CHECK(c.hasProposal());
+}
+
+bridge::ComprehensionReviewResult approvingReviewResult() {
+    bridge::ComprehensionReviewResult result;
+    result.status = bridge::ComprehensionReviewStatus::Completed;
+    result.interpretedOutcome =
+        "The rewrite asks for a lower-latency parser refactor while keeping the original target.";
+    result.interpretedRequirements = {"Keep the parser target", "Improve single-request latency"};
+    result.readyForTask = true;
+    result.rationale = "Fresh-context test review: the candidate preserves the confirmed decision.";
+    return result;
+}
+
+void waitForReviewState(HostController& c, const QString& expected, int timeoutMs = 5000) {
+    // The review is a queued command plus a worker; wait for both before judging
+    // the state so a previous same-state review cannot mask the new result.
+    ROCLINT_CHECK(c.waitForIdleForTesting(timeoutMs));
+    QElapsedTimer timer;
+    timer.start();
+    while (c.comprehensionReviewState() != expected && timer.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(2);
+    }
+    ROCLINT_CHECK(c.comprehensionReviewState() == expected);
+}
+
+void completeReview(HostController& c) {
+    c.setComprehensionReviewForTesting([](const bridge::ComprehensionReviewRequest&) {
+        return approvingReviewResult();
+    });
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+    waitForReviewState(c, QStringLiteral("ready"));
+    ROCLINT_CHECK(c.canApplyReviewedOutput());
 }
 
 void setClipboard(const QString& text) {
@@ -358,6 +444,7 @@ void testApproveAndCopyPersistsBeforeCopying() {
     ROCLINT_CHECK(!c.waitForCommandForTesting(c.acknowledgeConstraint(QStringLiteral("rewrite_nonempty"), true, c.stateVersion())));
     ROCLINT_CHECK(c.waitForCommandForTesting(c.acknowledgeConstraint(QStringLiteral("intent_item_grp_0"), true, c.stateVersion())));
     ROCLINT_CHECK(c.pendingReviewCount() == 0);
+    completeReview(c);
     ROCLINT_CHECK(c.canApprove());
 
     const auto session = SessionId(c.currentSessionIdString().toStdString());
@@ -455,6 +542,7 @@ void testApprovalSurvivesReopen() {
         ROCLINT_CHECK(c.waitForCommandForTesting(c.discardProposal(c.stateVersion())));
         synthesize(c);
         ROCLINT_CHECK(c.pendingReviewCount() == 0);
+        completeReview(c);
         ROCLINT_CHECK(c.waitForCommandForTesting(c.approveAndCopyRewrite(c.stateVersion())));
         sessionId = c.currentSessionIdString();
         proposalHash = c.proposalForTesting()->proposalHash;
@@ -663,6 +751,7 @@ void testDelayedCommandsCannotMutateTheNewState() {
     ROCLINT_CHECK(!c.waitForCommandForTesting(c.synthesizeRewrite(beforeChoice)));
     ROCLINT_CHECK(c.stateVersion() == beforeChoice + 1 && *c.confirmedIntentForTesting() == intent);
     synthesize(c);
+    completeReview(c);
     const auto beforeApproval = c.stateVersion();
     ROCLINT_CHECK(!c.waitForCommandForTesting(c.approveAndCopyRewrite(beforeChoice)));
     ROCLINT_CHECK(!c.hasApproval());
@@ -1092,7 +1181,7 @@ void testGoldfishAuditPipelineGating() {
         // Now mock a rewrite that breaches the negative prohibition!
         const std::string breachingRewrite = "Refactor the query builder for lower latency per call and modify the token validation logic for efficiency.";
         c.setTransportOverrideForTesting([&](std::string_view instruction) -> Result<std::string> {
-            if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            if (instruction.find("granite.goldfish_audit.v2") != std::string_view::npos) {
                 return std::string(R"({"outcome": "Fail", "violations": [{"constraint_id": "prohibit_boundary_1", "explanation": "Candidate rewrite modifies token validation logic"}]})");
             }
             return fx::rewriteReply(breachingRewrite);
@@ -1111,7 +1200,7 @@ void testGoldfishAuditPipelineGating() {
         // Now mock a compliant rewrite that preserves the negative boundary!
         const std::string compliantRewrite = "Refactor the query builder for lower latency per call, without touching the token validation logic.";
         c.setTransportOverrideForTesting([&](std::string_view instruction) -> Result<std::string> {
-            if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            if (instruction.find("granite.goldfish_audit.v2") != std::string_view::npos) {
                 return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
             }
             return fx::rewriteReply(compliantRewrite);
@@ -1194,7 +1283,7 @@ void testF07ReviewReuseAndVersionAdvancement() {
 
     std::atomic<int> auditCalls{0};
     c.setTransportOverrideForTesting([&](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             ++auditCalls;
             return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"intent_grp_0","explanation":"Manual review required"}]})");
         }
@@ -1215,6 +1304,7 @@ void testF07ReviewReuseAndVersionAdvancement() {
         }
     }
     ROCLINT_CHECK(c.pendingReviewCount() == 0);
+    completeReview(c);
     ROCLINT_CHECK(c.canApprove());
 
     const auto prevVersion = c.stateVersion();
@@ -1253,7 +1343,7 @@ void testF08SelectionPersistenceAndApproval() {
         discovery.replace(at, std::string("Lower latency per call").size(), "lower call latency");
     }
     c.setTransportOverrideForTesting([&](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             ++auditCalls;
             return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
         }
@@ -1276,6 +1366,7 @@ void testF08SelectionPersistenceAndApproval() {
     const auto selectedHash = c.proposalForTesting()->proposalHash;
     const auto selectedId = c.proposalForTesting()->id;
     ROCLINT_CHECK(selectedHash != baseHash);
+    completeReview(c);
     ROCLINT_CHECK(c.canApprove());
 
     // Approve and copy rewrite
@@ -1300,7 +1391,7 @@ void testF09UnresolvedHardAuditGating() {
     c.setLegacyDiscoveryForTesting(true);
 
     c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"intent_grp_0","explanation":"Cannot verify the hard performance requirement"}]})");
         }
         if (in.find("<instructions>") != std::string_view::npos) {
@@ -1330,6 +1421,7 @@ void testF09UnresolvedHardAuditGating() {
     }
     ROCLINT_CHECK(acknowledged);
     ROCLINT_CHECK(c.pendingReviewCount() == 0);
+    completeReview(c);
     ROCLINT_CHECK(c.canApprove());
 
     std::cout << "  [PASS] F09: Hard unresolved audit findings gate approval until explicitly acknowledged.\n";
@@ -1344,7 +1436,7 @@ void testAsyncSelectionNativeTicketAndOffGuiExecution() {
     auto workerAudits = std::make_shared<std::atomic<int>>(0);
 
     c.setTransportOverrideForTesting([guiAudits, workerAudits](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             if (QThread::currentThread() == QCoreApplication::instance()->thread()) {
                 ++(*guiAudits);
             } else {
@@ -1379,6 +1471,7 @@ void testAsyncSelectionNativeTicketAndOffGuiExecution() {
     ROCLINT_CHECK(guiAudits->load() == 0);
     ROCLINT_CHECK(workerAudits->load() == 2);
     ROCLINT_CHECK(c.proposalStatus() == QStringLiteral("READY_FOR_REVIEW"));
+    completeReview(c);
     ROCLINT_CHECK(c.canApprove());
     ROCLINT_CHECK(c.auditExecutionStatus() == QStringLiteral("Completed"));
 
@@ -1396,7 +1489,7 @@ void testAsyncSelectionDelayedTransportResponsiveness() {
     c.setLegacyDiscoveryForTesting(true);
 
     c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             QThread::msleep(100);
             return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
         }
@@ -1421,6 +1514,7 @@ void testAsyncSelectionDelayedTransportResponsiveness() {
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
     ROCLINT_CHECK(c.proposalStatus() == QStringLiteral("READY_FOR_REVIEW"));
     ROCLINT_CHECK(c.hasProposal());
+    completeReview(c);
     ROCLINT_CHECK(c.canApprove());
 
     std::cout << "  [PASS] Async selection: Delayed transport keeps UI responsive and blocks approval until complete.\n";
@@ -1433,7 +1527,7 @@ void testAsyncSelectionStaleSelectionRejection() {
 
     std::atomic<int> auditCount{0};
     c.setTransportOverrideForTesting([&](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             ++auditCount;
             QThread::msleep(80);
             return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
@@ -1461,8 +1555,9 @@ void testAsyncSelectionStaleSelectionRejection() {
     ROCLINT_CHECK(c.stateVersion() == version + 1);
 
     // The latest alternative should win; the earlier completion must be rejected as stale.
-    ROCLINT_CHECK(c.selectedAlternativeIndex() == 0);
-    ROCLINT_CHECK(c.proposalText() == alts[0].toMap().value("rewrittenText").toString());
+    ROCLINT_CHECK(c.selectedAlternativeIndex() == 1);
+    ROCLINT_CHECK(c.proposalText() == alts[1].toMap().value("rewrittenText").toString());
+    completeReview(c);
     ROCLINT_CHECK(c.canApprove());
 
     std::cout << "  [PASS] Async selection: Rapid selection rejects stale audit results.\n";
@@ -1565,7 +1660,7 @@ void testAsyncSelectionSaveFailurePreventsApproval() {
     c.setLegacyDiscoveryForTesting(true);
 
     c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
         }
         if (in.find("<instructions>") != std::string_view::npos) {
@@ -1577,6 +1672,7 @@ void testAsyncSelectionSaveFailurePreventsApproval() {
     ROCLINT_CHECK(c.markModelReadyForTesting(modelInfo()));
     analyzeAndAnswer(c);
     synthesize(c);
+    completeReview(c);
     ROCLINT_CHECK(c.canApprove());
 
     // Corrupt / drop proposals table behind the scenes
@@ -1610,7 +1706,7 @@ void testSessionRestoreUncertaintyPreservation() {
         c.setLegacyDiscoveryForTesting(true);
 
         c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
-            if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+            if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
                 return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"intent_grp_0","explanation":"Cannot verify the hard performance requirement"}]})");
             }
             if (in.find("<instructions>") != std::string_view::npos) {
@@ -1626,6 +1722,11 @@ void testSessionRestoreUncertaintyPreservation() {
         ROCLINT_CHECK(c.auditOutcome() == QStringLiteral("Unresolved"));
         ROCLINT_CHECK(!c.canApprove());
         ROCLINT_CHECK(c.pendingReviewCount() == 1);
+        for (const auto& value : c.proposalConstraints()) {
+            const auto item = value.toMap();
+            ROCLINT_CHECK(item.value("evidence").toString() != item.value("id").toString());
+            ROCLINT_CHECK(!item.value("description").toString().startsWith("Audit uncertainty:"));
+        }
 
         session = c.currentSessionIdString();
         version = c.stateVersion();
@@ -1672,7 +1773,7 @@ void testExactIdAcknowledgmentBinding() {
     c.setLegacyDiscoveryForTesting(true);
 
     c.setTransportOverrideForTesting([](std::string_view in) -> Result<std::string> {
-        if (in.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (in.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             return std::string(R"({"outcome":"Unresolved","violations":[],"unresolved":[{"constraint_id":"intent_grp_0","explanation":"Hard latency invariant"}]})");
         }
         if (in.find("<instructions>") != std::string_view::npos) {
@@ -1700,6 +1801,7 @@ void testExactIdAcknowledgmentBinding() {
     // Exact ID "intent_grp_0" or canonically mapped "intent_item_grp_0" succeeds
     ROCLINT_CHECK(c.waitForCommandForTesting(c.acknowledgeConstraint(QStringLiteral("intent_grp_0"), true, c.stateVersion())));
     ROCLINT_CHECK(c.pendingReviewCount() == 0);
+    completeReview(c);
     ROCLINT_CHECK(c.canApprove());
 
     std::cout << "  [PASS] Exact ID binding: Substrings do not conflate; exact & canonical mapping binds correctly.\n";
@@ -1778,7 +1880,7 @@ void testRecommendationCannotCrossDecisionGroups() {
     ROCLINT_CHECK(c.waitForStorageForTesting());
     c.setLegacyDiscoveryForTesting(true);
     c.setTransportOverrideForTesting([twoGroups](std::string_view instruction) -> Result<std::string> {
-        if (instruction.find("granite.goldfish_audit.v1") != std::string_view::npos)
+        if (instruction.find("granite.goldfish_audit.v2") != std::string_view::npos)
             return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
         if (instruction.find("granite.discovery.selective.v11") != std::string_view::npos)
             return twoGroups;
@@ -1939,6 +2041,285 @@ void testWordCompanionBindsSelectedCandidateAndRejectsStaleRequests() {
     std::cout << "  [PASS] Word companion applies the selected candidate and rejects stale/mismatched requests.\n";
 }
 
+void testFeedbackOpinionsAreNotMutationProhibitions() {
+    using roclint::core::Polarity;
+    const roclint::core::intent::ConfirmedIntent intent;
+    for (const auto& prompt : {
+        "I don't like how this UI interrupts my typing.",
+        "I dont like this cluttered UI; improve its layout.",
+        "I do not enjoy these intrusive popups. Make them less distracting."
+    }) {
+        const auto constraints = HostController::extractSessionConstraints(prompt, intent);
+        ROCLINT_CHECK(std::none_of(constraints.begin(), constraints.end(), [](const auto& c) {
+            return c.polarity == Polarity::Prohibit && c.aspect == "boundary";
+        }));
+    }
+    for (const auto& prompt : {
+        "I don't like the layout, but do not change the API.",
+        "I don't like the layout and don't change public signatures.",
+        "I don't want the API changed.",
+        "Do not like or share any posts.",
+        "Improve this UI without changing its keyboard shortcuts."
+    }) {
+        const auto constraints = HostController::extractSessionConstraints(prompt, intent);
+        ROCLINT_CHECK(std::any_of(constraints.begin(), constraints.end(), [](const auto& c) {
+            return c.polarity == Polarity::Prohibit && c.aspect == "boundary";
+        }));
+    }
+}
+
+void testWordApplyFeedbackIsReadbackBoundAndFollowsGeometry() {
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    auto* native = bridge.get(); native->autoCompleteRangeInjection = false;
+    HostController c(QStringLiteral(":memory:"), std::move(bridge));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    ScriptedRuntime runtime;
+    runtime.wordRefinementReply = R"({"action":"replace","options":[{"text":"quicker to load","effect":"Specifies loading","assume":""}]})";
+    connectRuntime(c, runtime); c.setAmbientModeEnabled(true);
+    roclint::host::ObservedField field;
+    field.fieldToken = 7491; field.processId = 1234;
+    field.appIdentifier = "Code.exe"; field.appDisplayName = "Visual Studio Code";
+    field.text = "Make the dashboard feel faster"; field.caretOffset = field.text.size();
+    field.caretRect = QRect(200, 160, 2, 20); field.fieldRect = QRect(80, 100, 620, 180);
+    native->observe(field);
+    ROCLINT_CHECK(waitForWordSuggestion(c, 5000));
+    ROCLINT_CHECK(c.wordCompanionState() == "ready");
+    c.setAmbientBadgeSuggestionsOnly(true);
+    ROCLINT_CHECK(c.wordReplacementReady() && c.isAmbientBadgeVisible());
+    c.setAmbientBadgeSuggestionsOnly(false);
+    ROCLINT_CHECK(!c.wordCompanionVisible() && c.isAmbientBadgeVisible() && !c.isCardVisible());
+    ROCLINT_CHECK(native->rangeInjections.empty());
+    c.activateAmbientIndicator();
+    ROCLINT_CHECK(c.wordCompanionVisible() && !c.isAmbientBadgeVisible() && !c.isCardVisible());
+    // A geometry-only observation moves the existing suggestion, without a new model request.
+    field.caretRect.translate(400, 200); field.fieldRect.translate(400, 200);
+    native->observe(field); QCoreApplication::processEvents();
+    ROCLINT_CHECK(c.wordRefinementAnchorRect() == field.caretRect);
+    const auto first = c.applyWordRefinement(c.stateVersion());
+    ROCLINT_CHECK(first && c.wordCompanionState() == "applying" && c.wordCompanionVisible());
+    ROCLINT_CHECK(c.wordCompanionMessage().contains("Applying"));
+    ROCLINT_CHECK(c.applyWordRefinement(c.stateVersion()) == 0 && native->rangeInjections.size() == 1);
+    emit native->rangeInjectionFinished(first + 99, roclint::host::InjectionOutcome::Injected, {});
+    ROCLINT_CHECK(c.wordCompanionState() == "applying");
+    emit native->rangeInjectionFinished(first, roclint::host::InjectionOutcome::Failed, "Readback mismatch.");
+    ROCLINT_CHECK(c.wordCompanionState() == "failed" && c.wordCompanionVisible());
+    ROCLINT_CHECK(c.wordCompanionMessage() == "Readback mismatch.");
+    ROCLINT_CHECK(!c.hasWordRefinement());
+    c.retryWordRefinement();
+    ROCLINT_CHECK(waitForWordSuggestion(c, 5000));
+    ROCLINT_CHECK(c.wordCompanionState() == "ready" && c.wordCompanionMessage().isEmpty());
+    ROCLINT_CHECK(native->rangeInjections.size() == 1); // Retry checks; it never writes.
+    const auto second = c.applyWordRefinement(c.stateVersion()); ROCLINT_CHECK(second);
+    const auto request = native->rangeInjections.back();
+    field.text = request.expectedCurrentText.left(request.startOffset) + request.replacementText + request.expectedCurrentText.mid(request.endOffset);
+    field.caretOffset = field.text.size(); native->observe(field);
+    ROCLINT_CHECK(c.wordCompanionState() == "applying"); // A text echo alone is not success.
+    emit native->rangeInjectionFinished(second, roclint::host::InjectionOutcome::Injected, {});
+    ROCLINT_CHECK(c.wordCompanionState() == "applied" && c.wordCompanionVisible() && !c.hasWordRefinement());
+    ROCLINT_CHECK(c.wordCompanionMessage() == "Applied to your draft.");
+    native->observe(field); ROCLINT_CHECK(c.wordCompanionState() == "applied");
+    field.text = "Please make the dashboard feel faster"; field.caretOffset = field.text.size();
+    native->observe(field); ROCLINT_CHECK(waitForWordSuggestion(c, 5000));
+    ROCLINT_CHECK(!c.wordCompanionVisible() && c.isAmbientBadgeVisible());
+    c.activateAmbientIndicator();
+    QThread::msleep(1900); QCoreApplication::processEvents();
+    ROCLINT_CHECK(c.hasWordRefinement() && c.wordCompanionState() == "ready"); // Old success timer is stale.
+    const auto third = c.applyWordRefinement(c.stateVersion()); ROCLINT_CHECK(third);
+    ++field.fieldToken; native->observe(field);
+    emit native->rangeInjectionFinished(third, roclint::host::InjectionOutcome::Injected, {});
+    ROCLINT_CHECK(c.wordCompanionState() != "applied" && !c.wordCompanionVisible());
+    native->observe(field); ROCLINT_CHECK(waitForWordSuggestion(c, 5000));
+    const auto fourth = c.applyWordRefinement(c.stateVersion()); ROCLINT_CHECK(fourth);
+    c.dismissWordRefinement();
+    emit native->rangeInjectionFinished(fourth, roclint::host::InjectionOutcome::Injected, {});
+    ROCLINT_CHECK(!c.wordCompanionVisible()); // Dismissal is not undone by late completion.
+}
+
+void testWordQuestionCanRecoverToAnAuditedCorrection() {
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    auto* observed = bridge.get();
+    HostController c(QStringLiteral(":memory:"), std::move(bridge));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    ScriptedRuntime runtime;
+    runtime.wordRefinementReply = R"({"action":"ask","question":"Was that spelling intentional?"})";
+    runtime.wordSurfaceReply = R"({"status":"repair","replacement":"unchanged","explanation":"Correct spelling","source":""})";
+    connectRuntime(c, runtime);
+    c.setAmbientModeEnabled(true);
+    roclint::host::ObservedField field;
+    field.fieldToken = 4299; field.appIdentifier = "Code.exe";
+    field.appDisplayName = "Visual Studio Code"; field.kind = roclint::host::FieldKind::GuiEditor;
+    field.text = "Keep all existing tests unchnaged on Windows.";
+    field.caretOffset = field.text.size(); field.fieldRect = QRect(60, 120, 620, 120);
+    field.wordStartOffset = field.text.indexOf("unchnaged");
+    field.wordEndOffset = field.wordStartOffset + 9;
+    field.wordRects = {QRect(250, 125, 80, 18)};
+    observed->observe(field);
+    ROCLINT_CHECK(waitForWordSuggestion(c, 5000));
+    ROCLINT_CHECK(!c.wordRefinementNeedsClarification());
+    ROCLINT_CHECK(c.wordRefinementReplacement() == "unchanged");
+    {
+        std::lock_guard<std::mutex> lock(*runtime.mutex);
+        ROCLINT_CHECK(std::count_if(runtime.sent->begin(), runtime.sent->end(), [](const auto& prompt) {
+            return prompt.find("granite.word_surface_check.v1") != std::string::npos;
+        }) == 1);
+        ROCLINT_CHECK(std::any_of(runtime.sent->begin(), runtime.sent->end(), [](const auto& prompt) {
+            return prompt.find("granite.goldfish_word_audit.v3") != std::string::npos &&
+                   prompt.find("Keep all existing tests unchanged") != std::string::npos;
+        }));
+    }
+    ROCLINT_CHECK(observed->rangeInjections.empty());
+    ROCLINT_CHECK(c.applyWordRefinement(c.stateVersion(), "wcand_1") != 0);
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(observed->rangeInjections.size() == 1);
+}
+
+void testPhraseFlowChecksAnswersAndSupportsGuardedUndo() {
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    auto* observed = bridge.get();
+    HostController host(":memory:", std::move(bridge));
+    ROCLINT_CHECK(host.waitForStorageForTesting());
+    ScriptedRuntime runtime;
+    runtime.wordRefinementReply = R"({"action":"ask","question":"Which interaction feels slow?","choices":["Initial loading","Data refresh"]})";
+    auto fallback = runtime.transport();
+    host.setTransportOverrideForTesting([fallback](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("granite.word_refinement.v4") != std::string_view::npos &&
+            prompt.find("Which interaction feels slow? -> Data refresh") != std::string_view::npos)
+            return std::string(R"({"action":"replace","options":[{"text":"quicker to refresh","effect":"Specifies refresh responsiveness","assume":""}]})");
+        return fallback(prompt);
+    });
+    ROCLINT_CHECK(host.markModelReadyForTesting(modelInfo()));
+    host.setAmbientModeEnabled(true);
+    roclint::host::ObservedField field;
+    field.fieldToken = 7612; field.processId = 123; field.appIdentifier = "Code.exe";
+    field.text = "Make the dashboard feel faster.";
+    const int start = field.text.indexOf("faster");
+    field.caretOffset = static_cast<int>(field.text.size()); // Caret after terminal punctuation.
+    field.fieldRect = QRect(40, 100, 500, 160); field.caretRect = QRect(220, 140, 2, 20);
+    observed->observe(field);
+    ROCLINT_CHECK(waitForWordSuggestion(host, 5000));
+    ROCLINT_CHECK(host.wordClarificationChoices() == QStringList({"Initial loading", "Data refresh"}));
+    ROCLINT_CHECK(!host.wordMarkVisible()); // No provider range: honest badge fallback.
+    field.wordStartOffset = start; field.wordEndOffset = start + 6; field.wordRects = {QRect(170, 140, 50, 20)};
+    observed->observe(field); QCoreApplication::processEvents();
+    ROCLINT_CHECK(!host.wordMarkVisible() && host.wordRefinementAnchorRect() == field.wordRects.constFirst());
+    field.wordStartOffset = start - 1;
+    observed->observe(field); QCoreApplication::processEvents();
+    ROCLINT_CHECK(!host.wordMarkVisible()); // Another span's bounds cannot label this suggestion.
+    field.wordStartOffset = start; observed->observe(field);
+    host.activateAmbientIndicator();
+    ROCLINT_CHECK(host.wordCompanionVisible() && !host.wordMarkVisible()); // A question is not an inline replacement.
+    runtime.rejectCustom->store(true);
+    ROCLINT_CHECK(!host.submitWordClarification("Data refresh", host.stateVersion() + 1));
+    ROCLINT_CHECK(host.submitWordClarification("iondwfwoefneiofneionfeio", host.stateVersion()));
+    ROCLINT_CHECK(host.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(host.wordRefinementNeedsClarification() && host.wordCompanionState() == "ready");
+    ROCLINT_CHECK(!host.wordCompanionMessage().isEmpty() && observed->rangeInjections.empty() && !host.isInterviewActive());
+    runtime.rejectCustom->store(false);
+    ROCLINT_CHECK(host.submitWordClarification("Data refresh", host.stateVersion()));
+    ROCLINT_CHECK(host.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(host.hasWordRefinement() && !host.wordRefinementNeedsClarification());
+    ROCLINT_CHECK(host.wordRefinementReplacement() == "quicker to refresh" && observed->rangeInjections.empty());
+    ROCLINT_CHECK(host.wordMarkVisible() && host.wordRefinementAnchorRect() == field.wordRects.constFirst());
+    ROCLINT_CHECK(host.applyWordRefinement(host.stateVersion()) != 0);
+    QCoreApplication::processEvents();
+    const QString before = field.text;
+    field.text.replace(start, 6, "quicker to refresh"); field.caretOffset = start + 18;
+    observed->observe(field); QCoreApplication::processEvents();
+    ROCLINT_CHECK(host.wordCanUndo());
+    ROCLINT_CHECK(host.undoWordRefinement(host.stateVersion() + 1) == 0);
+    ROCLINT_CHECK(host.undoWordRefinement(host.stateVersion()) != 0);
+    ROCLINT_CHECK(observed->rangeInjections.size() == 2);
+    const auto undo = observed->rangeInjections.back();
+    ROCLINT_CHECK(undo.expectedCurrentText == field.text && undo.originalRangeText == "quicker to refresh" && undo.replacementText == "faster");
+    QCoreApplication::processEvents();
+    ROCLINT_CHECK(host.wordCompanionState() == "undone" && !host.wordCanUndo());
+    ROCLINT_CHECK(observed->injections.empty());
+}
+
+void testAcceptedWordAnswerSurvivesLocalFailureAndStaysDraftBound() {
+    for (int mode = 0; mode < 6; ++mode) {
+        auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+        auto* observed = bridge.get();
+        HostController host(":memory:", std::move(bridge));
+        ROCLINT_CHECK(host.waitForStorageForTesting());
+        host.setLegacyDiscoveryForTesting(true);
+        ScriptedRuntime runtime;
+        runtime.discoveryReply = R"({"status":"no_ambiguity","choice_groups":[]})";
+        runtime.discoveryDelay = std::chrono::milliseconds(40); // Handoff precedes analysis completion.
+        runtime.wordRefinementReply = R"({"action":"ask","question":"Which interaction feels slow?"})";
+        runtime.rejectCustom->store(mode == 4);
+        auto fallback = runtime.transport();
+        host.setTransportOverrideForTesting([fallback, mode](std::string_view prompt) -> Result<std::string> {
+            if (mode == 5 && prompt.find("granite.goldfish_word_audit.v3") != std::string_view::npos)
+                return std::string(R"({"verdicts":[{"id":"wcand_1","grammar":"Pass","preservation":"Fail","usefulness":"Fail"}]})");
+            if (prompt.find("granite.word_refinement.v4") != std::string_view::npos &&
+                prompt.find("Which interaction feels slow? -> Data refresh") != std::string_view::npos) {
+                if (mode == 0 || mode == 3) return makeError(ErrorCode::ProviderUnavailable, "Synthetic infill failure");
+                if (mode == 1) return std::string(R"({"action":"ask","question":"Which interaction feels slow?"})");
+                if (mode == 5) return std::string(R"({"action":"replace","options":[{"text":"quicker to refresh","effect":"Refresh response","assume":""}]})");
+                return std::string("malformed synthetic output");
+            }
+            return fallback(prompt);
+        });
+        ROCLINT_CHECK(host.markModelReadyForTesting(modelInfo()));
+        host.setAmbientModeEnabled(true);
+        roclint::host::ObservedField field;
+        field.fieldToken = 7800 + mode; field.processId = 345; field.appIdentifier = "Code.exe";
+        field.text = "Make the dashboard feel faster.";
+        field.caretOffset = field.text.indexOf("faster") + 6;
+        field.fieldRect = QRect(40, 100, 500, 160);
+        observed->observe(field);
+        ROCLINT_CHECK(waitForWordSuggestion(host, 5000));
+        host.activateAmbientIndicator();
+        const QString answer = mode == 4 ? "iondwfwoefneiofneionfeio" : "Data refresh";
+        ROCLINT_CHECK(host.submitWordClarification(answer, host.stateVersion()));
+        ROCLINT_CHECK(host.waitForIdleForTesting(5000));
+        ROCLINT_CHECK(observed->rangeInjections.empty() && observed->injections.empty());
+        ROCLINT_CHECK(host.interviewRecordsForTesting().empty()); // No implicit full interview or confirmation.
+        if (mode == 4) {
+            ROCLINT_CHECK(host.wordRefinementNeedsClarification());
+        } else {
+            ROCLINT_CHECK(host.wordCompanionState() == "failed" && !host.hasWordRefinement());
+            ROCLINT_CHECK(!host.wordRefinementNeedsClarification() && host.wordRefinementReplacement().isEmpty());
+            ROCLINT_CHECK(host.wordCompanionMessage().contains("Your answer is kept"));
+        }
+        ROCLINT_CHECK(host.applyWordRefinement(host.stateVersion()) == 0);
+        if (mode == 3) {
+            field.text = "Make the dashboard feel faster. Keep the existing colors.";
+            field.caretOffset = field.text.indexOf("faster") + 6;
+            observed->observe(field);
+            ROCLINT_CHECK(waitForWordSuggestion(host, 5000));
+        }
+        ROCLINT_CHECK(host.openRewriteFromCompanion(host.stateVersion() + 1) == 0);
+        const auto command = host.openRewriteFromCompanion(host.stateVersion());
+        ROCLINT_CHECK(command != 0 && host.waitForCommandForTesting(command));
+        ROCLINT_CHECK(host.waitForIdleForTesting(5000));
+        ROCLINT_CHECK(host.hasConfirmedIntent() && !host.isInterviewActive());
+        const bool shouldCarryAnswer = mode < 3 || mode == 5;
+        const auto& records = host.interviewRecordsForTesting();
+        ROCLINT_CHECK(records.size() == (shouldCarryAnswer ? 1 : 0));
+        if (shouldCarryAnswer) {
+            ROCLINT_CHECK(records[0].question == "Which interaction feels slow?");
+            ROCLINT_CHECK(records[0].rawAnswer == "Data refresh" && records[0].origin == "word_clarification");
+            const auto decision = host.confirmedIntentForTesting()->getDecision(records[0].id);
+            ROCLINT_CHECK(decision && decision->customText == "Data refresh");
+        }
+        if (mode == 0) {
+            const auto rewriteCommand = host.rewriteWithoutQuestions(host.stateVersion());
+            ROCLINT_CHECK(rewriteCommand && host.waitForCommandForTesting(rewriteCommand));
+            ROCLINT_CHECK(host.waitForIdleForTesting(5000));
+            std::lock_guard<std::mutex> lock(*runtime.mutex);
+            ROCLINT_CHECK(std::any_of(runtime.sent->begin(), runtime.sent->end(), [](const auto& prompt) {
+                return prompt.find("granite.rewrite.format.v9") != std::string::npos &&
+                    prompt.find("Data refresh") != std::string::npos &&
+                    prompt.find("Which interaction feels slow?") != std::string::npos;
+            }));
+        }
+        ROCLINT_CHECK(observed->rangeInjections.empty() && observed->injections.empty());
+    }
+    std::cout << "  [PASS] Accepted phrase answers survive failed/repeated/invalid infill; rejected and stale answers never carry over.\n";
+}
+
 void testWordCompanionNoopClearingAndClarification() {
     auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
     auto* observed = bridge.get();
@@ -2008,7 +2389,7 @@ void testWordAuditFailureNeverOffersAnEdit() {
     ROCLINT_CHECK(c.waitForStorageForTesting());
     std::atomic<int> audited{0};
     c.setTransportOverrideForTesting([&](std::string_view prompt)->Result<std::string>{
-        if(prompt.find("granite.goldfish_word_audit.v2")!=std::string_view::npos) {
+        if(prompt.find("granite.goldfish_word_audit.v3")!=std::string_view::npos) {
             ROCLINT_CHECK(prompt.find("Apply an a clear atmosphere treatment")!=std::string_view::npos);
             ++audited;
             return std::string(R"({"verdicts":[{"id":"wcand_1","grammar":"Fail","preservation":"Fail","usefulness":"Fail"}]})");
@@ -2038,7 +2419,7 @@ void testWordCompanionCoalescesAndDropsStaleWork() {
     std::atomic<int> calls{0}, active{0}, peak{0};
     const auto fallback = runtime.transport();
     c.setTransportOverrideForTesting([&](std::string_view prompt) -> roclint::core::Result<std::string> {
-        if (prompt.find("granite.word_refinement.v2") == std::string_view::npos) return fallback(prompt);
+        if (prompt.find("granite.word_refinement.v4") == std::string_view::npos) return fallback(prompt);
         ++calls;
         const int current = ++active;
         peak.store(std::max(peak.load(), current));
@@ -2119,6 +2500,1122 @@ void testIdleWaitIncludesDeferredModelWork() {
     std::cout << "  [PASS] Idle waiting includes work dispatched by a queued UI/model command.\n";
 }
 
+// ----------------------------------------------------------------------------------------------
+// Shared intent brief, substantial interview and comprehension review
+// ----------------------------------------------------------------------------------------------
+
+const QString kInterviewPrompt =
+    QStringLiteral("Make the dashboard feel faster for people on slow laptops, and keep browsing easy.");
+
+const std::string kPerformanceDiscovery = R"({"status": "options_generated",
+  "choice_groups": [{"dimension": "performance", "question": "What should faster mean?", "material": true,
+    "alternatives": [
+      {"label": "Lower latency per click", "why_material": "Each interaction feels immediate", "evidence": ["slow laptops"]},
+      {"label": "Higher throughput", "why_material": "More updates complete at once", "evidence": ["slow laptops"]}]}]})";
+
+const std::string kTwoGroupInterviewDiscovery = R"({"status": "options_generated",
+  "choice_groups": [
+    {"dimension": "performance", "question": "What should faster mean?", "material": true,
+     "alternatives": [
+       {"label": "Lower latency per click", "why_material": "Each interaction feels immediate", "evidence": ["slow laptops"]},
+       {"label": "Higher throughput", "why_material": "More updates complete at once", "evidence": ["slow laptops"]}]},
+    {"dimension": "navigation", "question": "What should keep browsing easy mean?", "material": true,
+     "alternatives": [
+       {"label": "Fast A-Z jump list", "why_material": "One click to an artist", "evidence": ["keep browsing easy"]},
+       {"label": "Search-first layout", "why_material": "Type to find anything", "evidence": ["keep browsing easy"]}]}]})";
+
+const std::string kAdaptiveFollowUp = R"({"kind":"creative","groups":[
+  {"focus":"layout","question":"Should the dashboard stay dense or become airier?","source":"dashboard",
+   "options":[
+     {"text":"Denser overview","effect":"More content visible at once","assume":""},
+     {"text":"Airier spacing","effect":"Less content but easier scanning","assume":""}]}]})";
+
+const char* kInterviewRewrite =
+    "Make the dashboard respond with lower latency per click, keep browsing easy with a fast A-Z jump list, "
+    "use airier spacing, and keep the dashboard understandable.";
+
+void waitForInterviewQuestion(HostController& c, const QString& fragment, int timeoutMs = 8000) {
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        if (c.interviewQuestion().contains(fragment) && !c.isInterviewBusy()) return;
+        QThread::msleep(2);
+    }
+    ROCLINT_CHECK(c.interviewQuestion().contains(fragment));
+}
+
+void waitForInterviewIdle(HostController& c, int timeoutMs = 8000) {
+    ROCLINT_CHECK(c.waitForIdleForTesting(timeoutMs));
+    QElapsedTimer timer;
+    timer.start();
+    while (c.isInterviewBusy() && timer.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        QThread::msleep(2);
+    }
+    ROCLINT_CHECK(!c.isInterviewBusy());
+}
+
+void waitForAnalysisSettled(HostController& c, int timeoutMs = 8000) {
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < timeoutMs) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        if (c.analysisStatus() != "ANALYZING" && c.analysisStatus() != "IDLE") return;
+        QThread::msleep(2);
+    }
+    ROCLINT_CHECK(c.analysisStatus() != "ANALYZING");
+}
+
+void openInterview(HostController& c) {
+    const quint64 accepted = c.openInterviewFromCompanion(c.stateVersion());
+    ROCLINT_CHECK(accepted != 0);
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    ROCLINT_CHECK(c.isInterviewActive());
+}
+
+void answerInterview(HostController& c, const QString& text, const QString& disposition = QStringLiteral("answer")) {
+    const quint64 accepted = c.submitInterviewResponse(text, disposition, c.stateVersion());
+    ROCLINT_CHECK(accepted != 0);
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    waitForInterviewIdle(c);
+}
+
+void testInterviewConnectedFlowCarriesDecisionsIntoRewriteAndReview() {
+    ScriptedRuntime runtime;
+    runtime.discoveryReply = kTwoGroupInterviewDiscovery;
+    runtime.rewriteText = kInterviewRewrite;
+    runtime.queueFollowUps({kAdaptiveFollowUp, "{\"kind\":\"none\"}"});
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    connectRuntime(c, runtime);
+
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kInterviewPrompt, 0)));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    ROCLINT_CHECK(c.interventionVerdict() == "CLARIFY");
+    ROCLINT_CHECK(c.interviewTurnsCompleted() == 0);
+
+    openInterview(c);
+    waitForInterviewQuestion(c, QStringLiteral("What should faster mean?"));
+    ROCLINT_CHECK(c.interviewChoices().size() == 2);
+    ROCLINT_CHECK(c.interviewConsequence().contains(QStringLiteral("immediate")));
+    ROCLINT_CHECK(c.intentOpenChoiceIds().contains(QStringLiteral("grp_0")));
+
+    answerInterview(c, QStringLiteral("Lower latency per click"));
+    waitForInterviewQuestion(c, QStringLiteral("What should keep browsing easy mean?"));
+    ROCLINT_CHECK(c.interviewTurnsCompleted() == 1);
+    ROCLINT_CHECK(c.workingIntentForTesting().confirmedAlternatives.at("grp_0") == "alt_0_0");
+    const auto afterFirst = c.intentBriefItems();
+    bool sawDecision = false;
+    bool sawRequirement = false;
+    for (const auto& item : afterFirst) {
+        const auto map = item.toMap();
+        if (map.value("id").toString() == "grp_0") {
+            sawDecision = map.value("kind").toString() == "confirmed_decision" &&
+                          map.value("status").toString() == "confirmed";
+        }
+        if (map.value("kind").toString() == "source_requirement" &&
+            map.value("sourceExcerpt").toString().contains("slow laptops")) {
+            sawRequirement = true;
+        }
+    }
+    ROCLINT_CHECK(sawDecision);
+    ROCLINT_CHECK(sawRequirement);
+
+    answerInterview(c, QStringLiteral("Fast A-Z jump list"));
+    waitForInterviewQuestion(c, QStringLiteral("dense or become airier"));
+    ROCLINT_CHECK(c.interviewTurnsCompleted() == 2);
+    // The follow-up was asked with the current brief, not a fresh questionnaire.
+    const auto requests = runtime.requests();
+    bool sawBrief = false;
+    for (const auto& request : requests) {
+        if (request.find("interview follow-up") == std::string::npos) continue;
+        sawBrief = request.find("Lower latency per click") != std::string::npos &&
+                   request.find("Fast A-Z jump list") != std::string::npos;
+    }
+    ROCLINT_CHECK(sawBrief);
+
+    answerInterview(c, QStringLiteral("Airier spacing"));
+    waitForInterviewIdle(c);
+    ROCLINT_CHECK(c.interviewTurnsCompleted() == 3);
+    ROCLINT_CHECK(c.hasConfirmedIntent());
+    const auto payload = c.getConfirmedIntentPayload();
+    bool sawFollowUpDecision = false;
+    for (const auto& item : payload.value("items").toList()) {
+        const auto map = item.toMap();
+        if (map.value("itemId").toString().startsWith("iv_q_")) {
+            sawFollowUpDecision = true;
+            ROCLINT_CHECK(map.value("customText").toString() == "Airier spacing");
+        }
+    }
+    ROCLINT_CHECK(sawFollowUpDecision);
+    // Re-entry must not restart the explanation or drop answers.
+    const auto turns = c.interviewTurnsCompleted();
+    const auto reentryVersion = c.openInterviewFromCompanion(c.stateVersion());
+    ROCLINT_CHECK(reentryVersion == c.stateVersion());
+    ROCLINT_CHECK(c.interviewTurnsCompleted() == turns);
+    ROCLINT_CHECK(c.isInterviewActive());
+
+    // Rewrite is produced from the same confirmed decisions.
+    c.waitForCommandForTesting(c.setRewriteProfile(QStringLiteral("GENERIC@1"), c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    ROCLINT_CHECK(c.proposalStatus() == "READY_FOR_REVIEW");
+    ROCLINT_CHECK(c.comprehensionReviewState() == "not_run");
+    ROCLINT_CHECK(!c.canApplyReviewedOutput());
+    ROCLINT_CHECK(!c.canApprove());
+
+    struct CapturedReview {
+        bridge::ComprehensionReviewRequest request;
+        int calls{0};
+    };
+    auto captured = std::make_shared<CapturedReview>();
+    c.setComprehensionReviewForTesting([captured](const bridge::ComprehensionReviewRequest& request) {
+        captured->request = request;
+        ++captured->calls;
+        return approvingReviewResult();
+    });
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+    waitForReviewState(c, QStringLiteral("ready"));
+    ROCLINT_CHECK(captured->calls == 1);
+    ROCLINT_CHECK(captured->request.candidatePrompt == kInterviewRewrite);
+    ROCLINT_CHECK(captured->request.originalPrompt == kInterviewPrompt.toStdString());
+    ROCLINT_CHECK(captured->request.taskKind == "performance");
+    ROCLINT_CHECK(!captured->request.sessionId.empty());
+    ROCLINT_CHECK(!captured->request.revisionId.empty());
+    const auto decisions = captured->request.confirmedDecisions;
+    ROCLINT_CHECK(std::find(decisions.begin(), decisions.end(), "Lower latency per click") != decisions.end());
+    ROCLINT_CHECK(std::find(decisions.begin(), decisions.end(), "Fast A-Z jump list") != decisions.end());
+    ROCLINT_CHECK(std::find(decisions.begin(), decisions.end(), "Airier spacing") != decisions.end());
+    const auto excerpts = captured->request.sourceExcerpts;
+    ROCLINT_CHECK(!excerpts.empty());
+    bool sawSourceEvidence = false;
+    for (const auto& excerpt : excerpts) {
+        if (excerpt.find("slow laptops") != std::string::npos ||
+            excerpt.find("keep browsing easy") != std::string::npos) {
+            sawSourceEvidence = true;
+        }
+    }
+    ROCLINT_CHECK(sawSourceEvidence);
+    ROCLINT_CHECK(c.canApplyReviewedOutput());
+    ROCLINT_CHECK(c.canApprove());
+    setClipboard(QStringLiteral("before"));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.approveAndCopyRewrite(c.stateVersion())));
+    ROCLINT_CHECK(c.hasApproval());
+    ROCLINT_CHECK(clipboardText() == QString::fromUtf8(kInterviewRewrite));
+
+    std::cout << "  [PASS] Interview: local answer -> adaptive follow-up -> rewrite -> fresh review gate.\n";
+}
+
+void testInterviewCustomUnknownAndSkipNeverConfirm() {
+    {
+        ScriptedRuntime runtime;
+        runtime.discoveryReply = kPerformanceDiscovery;
+        runtime.queueFollowUps({"{\"kind\":\"none\"}"});
+        HostController c(QStringLiteral(":memory:"));
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+        connectRuntime(c, runtime);
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kInterviewPrompt, 0)));
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        openInterview(c);
+        waitForInterviewQuestion(c, QStringLiteral("What should faster mean?"));
+
+        // An unusual spelling is accepted by the relevance check; the host has no
+        // word-to-answer menu and does not reject unusual wording by itself.
+        answerInterview(c, QStringLiteral("latensy-focussed clicks"), QStringLiteral("custom"));
+        ROCLINT_CHECK(c.workingIntentForTesting().customResolutions.at("grp_0") == "latensy-focussed clicks");
+        ROCLINT_CHECK(c.workingIntentForTesting().confirmedAlternatives.empty());
+        ROCLINT_CHECK(c.interviewTurnsCompleted() == 1);
+        ROCLINT_CHECK(!c.isInterviewBusy());
+        bool sawRaw = false;
+        for (const auto& item : c.intentBriefItems()) {
+            const auto map = item.toMap();
+            if (map.value("id").toString() != "grp_0") continue;
+            sawRaw = map.value("rawAnswer").toString() == "latensy-focussed clicks";
+        }
+        ROCLINT_CHECK(sawRaw);
+    }
+
+    {
+        ScriptedRuntime runtime;
+        runtime.discoveryReply = kTwoGroupInterviewDiscovery;
+        runtime.queueFollowUps({"{\"kind\":\"none\"}"});
+        HostController c(QStringLiteral(":memory:"));
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+        connectRuntime(c, runtime);
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kInterviewPrompt, 0)));
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        openInterview(c);
+        waitForInterviewQuestion(c, QStringLiteral("What should faster mean?"));
+
+        answerInterview(c, QStringLiteral("I don't know yet"), QStringLiteral("unknown"));
+        ROCLINT_CHECK(c.workingIntentForTesting().hasUncertainty("grp_0"));
+        ROCLINT_CHECK(!c.workingIntentForTesting().isResolved("grp_0"));
+        waitForInterviewQuestion(c, QStringLiteral("keep browsing easy"));
+        answerInterview(c, QString(), QStringLiteral("skip"));
+        ROCLINT_CHECK(c.workingIntentForTesting().isSkipped("grp_1"));
+        ROCLINT_CHECK(!c.workingIntentForTesting().isResolved("grp_1"));
+        ROCLINT_CHECK(c.interviewTurnsCompleted() == 2);
+        ROCLINT_CHECK(c.hasConfirmedIntent());
+        ROCLINT_CHECK(c.confirmedItems().isEmpty());
+        const auto unresolved = c.unresolvedItems();
+        ROCLINT_CHECK(unresolved.contains(QStringLiteral("grp_0")));
+        ROCLINT_CHECK(unresolved.contains(QStringLiteral("grp_1")));
+        const auto open = c.intentOpenChoiceIds();
+        ROCLINT_CHECK(open.contains(QStringLiteral("grp_0")));
+        ROCLINT_CHECK(open.contains(QStringLiteral("grp_1")));
+        bool sawUnknownRaw = false;
+        for (const auto& item : c.intentBriefItems()) {
+            const auto map = item.toMap();
+            if (map.value("id").toString() == "grp_0") {
+                sawUnknownRaw = map.value("rawAnswer").toString() == "I don't know yet" &&
+                                map.value("status").toString() == "open";
+            }
+        }
+        ROCLINT_CHECK(sawUnknownRaw);
+        ROCLINT_CHECK(!c.canApprove());
+    }
+
+    {
+        ScriptedRuntime runtime;
+        runtime.discoveryReply = kPerformanceDiscovery;
+        runtime.rejectCustom->store(true);
+        runtime.queueFollowUps({"{\"kind\":\"none\"}"});
+        HostController c(QStringLiteral(":memory:"));
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+        connectRuntime(c, runtime);
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kInterviewPrompt, 0)));
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        openInterview(c);
+        waitForInterviewQuestion(c, QStringLiteral("What should faster mean?"));
+
+        const auto beforeFeedbackVersion = c.stateVersion();
+        const quint64 accepted = c.submitInterviewResponse(QStringLiteral("zzzz qqqq"),
+                                                           QStringLiteral("custom"), c.stateVersion());
+        ROCLINT_CHECK(accepted != 0);
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        waitForInterviewIdle(c);
+        ROCLINT_CHECK(c.stateVersion() == beforeFeedbackVersion); // no decision was published
+        ROCLINT_CHECK(c.workingIntentForTesting().customResolutions.empty());
+        ROCLINT_CHECK(!c.interviewFeedback().isEmpty());
+        ROCLINT_CHECK(c.interviewQuestion().contains(QStringLiteral("What should faster mean?")));
+        ROCLINT_CHECK(c.interviewTurnsCompleted() == 0);
+        ROCLINT_CHECK(!c.hasConfirmedIntent());
+
+        runtime.rejectCustom->store(false);
+        answerInterview(c, QStringLiteral("Lower latency per click"), QStringLiteral("custom"));
+        ROCLINT_CHECK(c.workingIntentForTesting().customResolutions.at("grp_0") == "Lower latency per click");
+        ROCLINT_CHECK(c.interviewTurnsCompleted() == 1);
+    }
+
+    std::cout << "  [PASS] Custom answers are relevance-checked; unknown and skip never confirm a value.\n";
+}
+
+void testChangeIntentDecisionSupersedesAndInvalidatesReview() {
+    ScriptedRuntime runtime;
+    runtime.discoveryReply = kPerformanceDiscovery;
+    runtime.rewriteText = kInterviewRewrite;
+    runtime.queueFollowUps({"{\"kind\":\"none\"}"});
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    connectRuntime(c, runtime);
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kInterviewPrompt, 0)));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    openInterview(c);
+    waitForInterviewQuestion(c, QStringLiteral("What should faster mean?"));
+    answerInterview(c, QStringLiteral("Lower latency per click"));
+    c.waitForCommandForTesting(c.setRewriteProfile(QStringLiteral("GENERIC@1"), c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    completeReview(c);
+    ROCLINT_CHECK(c.canApprove());
+
+    const quint64 accepted = c.changeIntentDecision(QStringLiteral("grp_0"),
+                                                    QStringLiteral("Hier throughput"),
+                                                    c.stateVersion());
+    ROCLINT_CHECK(accepted != 0);
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    ROCLINT_CHECK(c.workingIntentForTesting().supersededDecisions.size() == 1);
+    ROCLINT_CHECK(c.workingIntentForTesting().supersededDecisions[0].previousValue == "Lower latency per click");
+    ROCLINT_CHECK(c.workingIntentForTesting().customResolutions.at("grp_0") == "Hier throughput");
+    ROCLINT_CHECK(!c.hasProposal());
+    ROCLINT_CHECK(!c.canApprove());
+    ROCLINT_CHECK(c.comprehensionReviewState() == "stale");
+    bool sawSuperseded = false;
+    bool sawCurrent = false;
+    for (const auto& item : c.intentBriefItems()) {
+        const auto map = item.toMap();
+        if (map.value("kind").toString() == "superseded_decision") {
+            sawSuperseded = map.value("rawAnswer").toString() == "Lower latency per click";
+        }
+        if (map.value("id").toString() == "grp_0") {
+            sawCurrent = map.value("status").toString() == "confirmed" &&
+                         map.value("rawAnswer").toString() == "Hier throughput";
+        }
+    }
+    ROCLINT_CHECK(sawSuperseded);
+    ROCLINT_CHECK(sawCurrent);
+
+    // A stale expectedVersion is refused without changing state.
+    const auto version = c.stateVersion();
+    ROCLINT_CHECK(c.changeIntentDecision(QStringLiteral("grp_0"), QStringLiteral("Again"), version + 1) == 0);
+    ROCLINT_CHECK(c.stateVersion() == version);
+
+    std::cout << "  [PASS] Changed preference supersedes the prior decision and invalidates the proposal/review.\n";
+}
+
+void testComprehensionReviewGatingFindingsAndReturnToInterview() {
+    ScriptedRuntime runtime;
+    runtime.discoveryReply = kPerformanceDiscovery;
+    runtime.rewriteText = kInterviewRewrite;
+    runtime.queueFollowUps({"{\"kind\":\"none\"}"});
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    connectRuntime(c, runtime);
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kInterviewPrompt, 0)));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    openInterview(c);
+    waitForInterviewQuestion(c, QStringLiteral("What should faster mean?"));
+    answerInterview(c, QStringLiteral("Lower latency per click"));
+    c.waitForCommandForTesting(c.setRewriteProfile(QStringLiteral("GENERIC@1"), c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+
+    // Missing reviewer seam: failed closed, never authorizes apply.
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+    waitForReviewState(c, QStringLiteral("failed"));
+    ROCLINT_CHECK(!c.canApplyReviewedOutput());
+    ROCLINT_CHECK(!c.canApprove());
+
+    bridge::ComprehensionReviewResult drift;
+    drift.status = bridge::ComprehensionReviewStatus::Completed;
+    drift.interpretedOutcome = "The rewrite keeps the speed change but drops support for slow laptops.";
+    drift.readyForTask = false;
+    bridge::ComprehensionFinding finding;
+    finding.id = "finding_drift_1";
+    finding.kind = bridge::ReviewFindingKind::MeaningDrift;
+    finding.severity = bridge::ReviewFindingSeverity::Required;
+    finding.summary = "The rewrite drops the slow-laptop target.";
+    finding.sourceRef = "grp_0";
+    finding.sourceExcerpt = "slow laptops";
+    finding.requiresUserDecision = true;
+    finding.proposedRepair = "Keep support for people on slow laptops in the rewritten prompt.";
+    drift.findings.push_back(finding);
+    c.setComprehensionReviewForTesting([drift](const bridge::ComprehensionReviewRequest&) { return drift; });
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+    waitForReviewState(c, QStringLiteral("ready"));
+    ROCLINT_CHECK(!c.canApplyReviewedOutput());
+    ROCLINT_CHECK(!c.canApprove());
+    ROCLINT_CHECK(c.comprehensionFindings().size() == 1);
+    const auto findingMap = c.comprehensionFindings().front().toMap();
+    ROCLINT_CHECK(findingMap.value("id").toString() == "finding_drift_1");
+    ROCLINT_CHECK(findingMap.value("severity").toString() == "required");
+    ROCLINT_CHECK(findingMap.value("kind").toString() == "meaning_drift");
+    ROCLINT_CHECK(findingMap.value("requiresUserDecision").toBool());
+    ROCLINT_CHECK(findingMap.value("proposedRepair").toString().contains("slow laptops"));
+    ROCLINT_CHECK(c.comprehensionInterpretation().contains("drops support"));
+
+    // A finding that needs a user decision cannot be acknowledged into applicability.
+    ROCLINT_CHECK(c.resolveComprehensionFinding(QStringLiteral("finding_drift_1"),
+                                                QStringLiteral("acknowledge"), c.stateVersion()) == 0);
+    const quint64 returned = c.resolveComprehensionFinding(QStringLiteral("finding_drift_1"),
+                                                           QStringLiteral("return_to_interview"), c.stateVersion());
+    ROCLINT_CHECK(returned != 0);
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    ROCLINT_CHECK(c.isInterviewActive());
+    ROCLINT_CHECK(c.interviewQuestion() == "What should the rewrite say here?");
+    ROCLINT_CHECK(c.interviewChoices().isEmpty());
+    ROCLINT_CHECK(c.comprehensionReviewState() == "waiting_for_answer");
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) == 0);
+    ROCLINT_CHECK(!c.canApplyReviewedOutput());
+
+    // Skip leaves the review choice open and apply blocked.
+    answerInterview(c, QString(), QStringLiteral("skip"));
+    bool sawOpenReviewChoice = false;
+    for (const auto& id : c.intentOpenChoiceIds()) {
+        if (id.startsWith(QStringLiteral("iv_review_"))) sawOpenReviewChoice = true;
+    }
+    ROCLINT_CHECK(sawOpenReviewChoice);
+    ROCLINT_CHECK(!c.canApplyReviewedOutput());
+    ROCLINT_CHECK(!c.canApprove());
+
+    // Only the user's own wording becomes a decision.
+    const QString repairLabel = QStringLiteral("Keep support for people on slow laptops.");
+    answerInterview(c, repairLabel, QStringLiteral("custom"));
+    ROCLINT_CHECK(!c.hasProposal());
+    bool sawRepairDecision = false;
+    for (const auto& item : c.getConfirmedIntentPayload().value("items").toList()) {
+        const auto map = item.toMap();
+        if (map.value("itemId").toString().startsWith("iv_review_")) {
+            sawRepairDecision = map.value("customText").toString() == repairLabel;
+        }
+    }
+    ROCLINT_CHECK(sawRepairDecision);
+
+    std::cout << "  [PASS] Review findings gate apply; require-decision findings return to the interview.\n";
+}
+
+void testComprehensionReviewMalformedAndAdvisoryHandling() {
+    ScriptedRuntime runtime;
+    runtime.discoveryReply = kPerformanceDiscovery;
+    runtime.rewriteText = kInterviewRewrite;
+    runtime.queueFollowUps({"{\"kind\":\"none\"}"});
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    connectRuntime(c, runtime);
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kInterviewPrompt, 0)));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    openInterview(c);
+    waitForInterviewQuestion(c, QStringLiteral("What should faster mean?"));
+    answerInterview(c, QStringLiteral("Lower latency per click"));
+    c.waitForCommandForTesting(c.setRewriteProfile(QStringLiteral("GENERIC@1"), c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+
+    bridge::ComprehensionReviewResult unavailable;
+    unavailable.status = bridge::ComprehensionReviewStatus::Unavailable;
+    c.setComprehensionReviewForTesting([unavailable](const auto&) { return unavailable; });
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+    waitForReviewState(c, QStringLiteral("failed"));
+    ROCLINT_CHECK(!c.canApplyReviewedOutput());
+
+    bridge::ComprehensionReviewResult emptyInterpretation;
+    emptyInterpretation.status = bridge::ComprehensionReviewStatus::Completed;
+    emptyInterpretation.readyForTask = true;
+    c.setComprehensionReviewForTesting([emptyInterpretation](const auto&) { return emptyInterpretation; });
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+    waitForReviewState(c, QStringLiteral("failed"));
+
+    bridge::ComprehensionReviewResult duplicate;
+    duplicate.status = bridge::ComprehensionReviewStatus::Completed;
+    duplicate.interpretedOutcome = "A plausible reading.";
+    duplicate.readyForTask = true;
+    bridge::ComprehensionFinding duplicateFinding;
+    duplicateFinding.id = "dup";
+    duplicateFinding.summary = "First";
+    duplicate.findings.push_back(duplicateFinding);
+    duplicateFinding.summary = "Second";
+    duplicate.findings.push_back(duplicateFinding);
+    c.setComprehensionReviewForTesting([duplicate](const auto&) { return duplicate; });
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+    waitForReviewState(c, QStringLiteral("failed"));
+
+    bridge::ComprehensionReviewResult advisory;
+    advisory.status = bridge::ComprehensionReviewStatus::Completed;
+    advisory.interpretedOutcome = "The rewrite preserves the requested outcome.";
+    advisory.readyForTask = true;
+    bridge::ComprehensionFinding advisoryFinding;
+    advisoryFinding.id = "advisory_1";
+    advisoryFinding.kind = bridge::ReviewFindingKind::Readiness;
+    advisoryFinding.severity = bridge::ReviewFindingSeverity::Advisory;
+    advisoryFinding.summary = "No file paths are needed for this creative task.";
+    advisory.findings.push_back(advisoryFinding);
+    c.setComprehensionReviewForTesting([advisory](const auto&) { return advisory; });
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+    waitForReviewState(c, QStringLiteral("ready"));
+    ROCLINT_CHECK(c.canApplyReviewedOutput());
+    ROCLINT_CHECK(c.canApprove());
+
+    bridge::ComprehensionReviewResult required;
+    required.status = bridge::ComprehensionReviewStatus::Completed;
+    required.interpretedOutcome = "The rewrite preserves the requested outcome with one gap.";
+    required.readyForTask = true;
+    bridge::ComprehensionFinding requiredFinding;
+    requiredFinding.id = "required_1";
+    requiredFinding.kind = bridge::ReviewFindingKind::Omission;
+    requiredFinding.severity = bridge::ReviewFindingSeverity::Required;
+    requiredFinding.summary = "The rewrite does not mention the navigation requirement.";
+    requiredFinding.requiresUserDecision = false;
+    required.findings.push_back(requiredFinding);
+    c.setComprehensionReviewForTesting([required](const auto&) { return required; });
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+    waitForReviewState(c, QStringLiteral("ready"));
+    ROCLINT_CHECK(!c.canApplyReviewedOutput());
+    ROCLINT_CHECK(!c.canApprove());
+    ROCLINT_CHECK(c.resolveComprehensionFinding(QStringLiteral("required_1"),
+                                                QStringLiteral("acknowledge"), c.stateVersion()) != 0);
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(c.canApplyReviewedOutput());
+    ROCLINT_CHECK(c.canApprove());
+
+    bridge::ComprehensionReviewResult blocking;
+    blocking.status = bridge::ComprehensionReviewStatus::Completed;
+    blocking.interpretedOutcome = "The rewrite targets a different feature.";
+    blocking.readyForTask = true;
+    bridge::ComprehensionFinding blockingFinding;
+    blockingFinding.id = "blocking_1";
+    blockingFinding.kind = bridge::ReviewFindingKind::ComprehensionGap;
+    blockingFinding.severity = bridge::ReviewFindingSeverity::Blocking;
+    blockingFinding.summary = "The requested feature is missing.";
+    blocking.findings.push_back(blockingFinding);
+    c.setComprehensionReviewForTesting([blocking](const auto&) { return blocking; });
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+    waitForReviewState(c, QStringLiteral("ready"));
+    ROCLINT_CHECK(!c.canApplyReviewedOutput());
+    ROCLINT_CHECK(c.resolveComprehensionFinding("blocking_1", "confirm_intent", c.stateVersion()) == 0);
+    ROCLINT_CHECK(c.resolveComprehensionFinding(QStringLiteral("blocking_1"),
+                                                QStringLiteral("acknowledge"), c.stateVersion()) == 0);
+    ROCLINT_CHECK(c.resolveComprehensionFinding(QStringLiteral("blocking_1"),
+                                                QStringLiteral("keep_original"), c.stateVersion()) != 0);
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(!c.hasProposal());
+    ROCLINT_CHECK(!c.canApprove());
+
+    std::cout << "  [PASS] Review fails closed on malformed/missing output; required and blocking gates stay strict.\n";
+}
+
+void testWaterBottleReviewDoesNotRequireUnspecifiedDesignDetails() {
+    const QString draft = QStringLiteral(
+        "I want to make a website that is about a water bottle company it is innovative it will use "
+        "modern designs and also the water bottle will use copper and aluminum for the cap and the bottle "
+        "is glass and the price is 5.99 the website should also focus on being minialistic while feeling "
+        "like a tech company depsite being a water bottle company this website/water botttle company "
+        "is aimed at selling a premium product to tech bros");
+    ScriptedRuntime runtime;
+    runtime.discoveryReply = R"({"status":"no_ambiguity","choice_groups":[]})";
+    runtime.rewriteText = "Build a product website for an innovative water bottle company selling a "
+        "premium glass bottle with a copper and aluminum cap for $5.99. The audience is tech bros. "
+        "Keep the visual design minimalist and modern, with a tech-company feel.";
+    HostController c(":memory:");
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    connectRuntime(c, runtime);
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.reviewPrompt(draft, c.stateVersion())));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.setRewriteProfile("GENERIC@1", c.stateVersion())));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.rewriteWithoutQuestions(c.stateVersion())));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    ROCLINT_CHECK(c.hasProposal());
+    const auto& candidate = c.proposalForTesting()->rewrittenText;
+    for (const auto* requirement : {"glass", "copper", "aluminum", "$5.99", "tech bros", "minimalist"})
+        ROCLINT_CHECK(candidate.find(requirement) != std::string::npos);
+
+    auto candidateReview = approvingReviewResult();
+    candidateReview.readyForTask = false;
+    bridge::ComprehensionFinding optionalDesign;
+    optionalDesign.id = "water_bottle_design";
+    optionalDesign.kind = bridge::ReviewFindingKind::Readiness;
+    optionalDesign.severity = bridge::ReviewFindingSeverity::Blocking;
+    optionalDesign.summary = "The minimalist design does not specify exact fonts and colors.";
+    optionalDesign.sourceRef = "candidate";
+    optionalDesign.sourceExcerpt = "Keep the visual design minimalist and modern, with a tech-company feel.";
+    optionalDesign.requiresUserDecision = true;
+    optionalDesign.proposedRepair = "Ask the user to specify a color palette.";
+    candidateReview.findings = {optionalDesign};
+    c.setComprehensionReviewForTesting([candidateReview](const auto&) { return candidateReview; });
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+    waitForReviewState(c, QStringLiteral("ready"));
+    ROCLINT_CHECK(!c.canApprove());
+    ROCLINT_CHECK(c.resolveComprehensionFinding("water_bottle_design", "confirm_intent", c.stateVersion()) != 0);
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(c.canApprove() && c.comprehensionFindings().isEmpty());
+
+    ROCLINT_CHECK(!c.isInterviewActive() && !c.hasApproval());
+    std::cout << "  [PASS] Water bottle review keeps product facts and accepts the user's design confirmation.\n";
+}
+
+void testInterviewStaleResultAndWorkspaceSwitchInvalidate() {
+    ScriptedRuntime runtime;
+    runtime.discoveryReply = kPerformanceDiscovery;
+    runtime.followUpDelay = std::chrono::milliseconds(250);
+    runtime.queueFollowUps({kAdaptiveFollowUp});
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    connectRuntime(c, runtime);
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kInterviewPrompt, 0)));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    openInterview(c);
+    waitForInterviewQuestion(c, QStringLiteral("What should faster mean?"));
+    answerInterview(c, QStringLiteral("Lower latency per click"));
+    // The adaptive follow-up is now in flight with a delay. Editing the draft must
+    // invalidate it without publishing a stale question.
+    const auto editVersion = c.stateVersion();
+    c.noteDraftEdited(editVersion);
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    QThread::msleep(400);
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+    ROCLINT_CHECK(!c.isInterviewActive());
+    ROCLINT_CHECK(c.interviewQuestion().isEmpty());
+
+    // A ready review becomes stale when the workspace identity changes.
+    ScriptedRuntime runtime2;
+    runtime2.discoveryReply = kPerformanceDiscovery;
+    runtime2.rewriteText = kInterviewRewrite;
+    HostController w(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(w.waitForStorageForTesting());
+    w.setLegacyDiscoveryForTesting(true);
+    connectRuntime(w, runtime2);
+    ROCLINT_CHECK(w.waitForCommandForTesting(w.analyzePrompt(kInterviewPrompt, 0)));
+    ROCLINT_CHECK(w.waitForIdleForTesting(8000));
+    openInterview(w);
+    waitForInterviewQuestion(w, QStringLiteral("What should faster mean?"));
+    answerInterview(w, QStringLiteral("Lower latency per click"));
+    w.waitForCommandForTesting(w.setRewriteProfile(QStringLiteral("GENERIC@1"), w.stateVersion()));
+    ROCLINT_CHECK(w.waitForCommandForTesting(w.synthesizeRewrite(w.stateVersion())));
+    ROCLINT_CHECK(w.waitForIdleForTesting(8000));
+    completeReview(w);
+    ROCLINT_CHECK(w.canApplyReviewedOutput());
+    QTemporaryDir workspace;
+    ROCLINT_CHECK(workspace.isValid());
+    w.startCodebaseRefreshForTesting(workspace.path());
+    ROCLINT_CHECK(w.waitForIdleForTesting(8000));
+    ROCLINT_CHECK(!w.canApplyReviewedOutput());
+    ROCLINT_CHECK(!w.canApprove());
+
+    std::cout << "  [PASS] Stale follow-ups and workspace switches invalidate derived interview/review state.\n";
+}
+
+const QString kExactPrompt =
+    QStringLiteral("Respond to 95% of requests within 500 ms and keep the schema unchanged.");
+
+const std::string kExactDiscovery = R"({"status": "options_generated",
+  "choice_groups": [{"dimension": "response path", "question": "Which response path should serve the 500 ms target?", "material": true,
+    "alternatives": [
+      {"label": "Prefer cached responses", "why_material": "Reuses recent results to hold the target", "evidence": ["500 ms"]},
+      {"label": "Prefer fresh requests", "why_material": "Always recomputes at the target", "evidence": ["500 ms"]}]}]})";
+
+void testExplicitInterviewRevivesQuietOrOriginalRoute() {
+    {
+        // Automatic discovery says no question (an empty ORIGINAL/QUIET snapshot).
+        // Opening the interview must start a fresh explicit discovery, not fall
+        // through to a dead end.
+        ScriptedRuntime runtime;
+        runtime.discoveryReply = R"({"kind":"none"})";
+        runtime.queueDiscoveries({kPerformanceDiscovery});
+        runtime.queueFollowUps({"{\"kind\":\"none\"}"});
+        HostController c(QStringLiteral(":memory:"));
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+        connectRuntime(c, runtime);
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kInterviewPrompt, 0)));
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        ROCLINT_CHECK(c.interventionVerdict() == "QUIET");
+        ROCLINT_CHECK(c.interviewQuestion().isEmpty());
+        openInterview(c);
+        waitForInterviewQuestion(c, QStringLiteral("What should faster mean?"));
+        ROCLINT_CHECK(c.isInterviewActive());
+        bool explicitDiscovery = false;
+        bool richContract = false;
+        for (const auto& request : runtime.requests()) {
+            if (request.find("granite.discovery.selective.v11") == std::string::npos) continue;
+            if (request.find("interview follow-up") != std::string::npos) continue;
+            if (request.find("This is the first question of the substantial interview") != std::string::npos) {
+                explicitDiscovery = true;
+                richContract = request.find("at most 32 words") != std::string::npos &&
+                               request.find("at most 9 words") == std::string::npos;
+            }
+        }
+        ROCLINT_CHECK(explicitDiscovery);
+        ROCLINT_CHECK(richContract);
+        answerInterview(c, QStringLiteral("Lower latency per click"));
+        ROCLINT_CHECK(c.interviewTurnsCompleted() == 1);
+    }
+    {
+        // No automatic analysis at all (Granite never called): opening the explicit
+        // interview starts a bounded analysis for the captured draft.
+        ScriptedRuntime runtime;
+        runtime.discoveryReply = kPerformanceDiscovery;
+        runtime.queueFollowUps({"{\"kind\":\"none\"}"});
+        HostController c(QStringLiteral(":memory:"));
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+        connectRuntime(c, runtime);
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(kInterviewPrompt, 0)));
+        ROCLINT_CHECK(c.currentRevisionText() == kInterviewPrompt);
+        ROCLINT_CHECK(c.analysisStatus() != "READY");
+        openInterview(c);
+        waitForAnalysisSettled(c, 10000);
+        waitForInterviewIdle(c, 10000);
+        waitForInterviewQuestion(c, QStringLiteral("What should faster mean?"));
+        ROCLINT_CHECK(c.analysisStatus() == "READY");
+        ROCLINT_CHECK(c.interviewFrozenWordForTesting().isEmpty());
+        answerInterview(c, QStringLiteral("Lower latency per click"));
+        ROCLINT_CHECK(c.workingIntentForTesting().confirmedAlternatives.at("grp_0") == "alt_0_0");
+    }
+    std::cout << "  [PASS] Explicit interview revives a QUIET/ORIGINAL route with bounded rich discovery.\n";
+}
+
+void testExactRequirementsSurviveOrBlockTheRewrite() {
+    {
+        ScriptedRuntime runtime;
+        runtime.discoveryReply = kExactDiscovery;
+        runtime.rewriteText = "Respond quickly to requests and keep the schema unchanged.";
+        runtime.queueFollowUps({"{\"kind\":\"none\"}"});
+        HostController c(QStringLiteral(":memory:"));
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+        connectRuntime(c, runtime);
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kExactPrompt, 0)));
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        openInterview(c);
+        waitForInterviewQuestion(c, QStringLiteral("500 ms target"));
+        answerInterview(c, QStringLiteral("Prefer cached responses"));
+        c.waitForCommandForTesting(c.setRewriteProfile(QStringLiteral("GENERIC@1"), c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        ROCLINT_CHECK(!c.hasProposal());
+        ROCLINT_CHECK(c.proposalStatus() == "VALIDATION_FAILED");
+        ROCLINT_CHECK(c.proposalMessage().contains(QStringLiteral("exact requirement")));
+        ROCLINT_CHECK(!c.canApprove());
+        // The exact requirement remains a source requirement in the brief.
+        bool sawExact = false;
+        for (const auto& item : c.intentBriefItems()) {
+            const auto map = item.toMap();
+            if (map.value("sourceExcerpt").toString().contains("500 ms") &&
+                map.value("sourceExcerpt").toString().contains("95%")) {
+                sawExact = true;
+            }
+        }
+        ROCLINT_CHECK(sawExact);
+    }
+    {
+        ScriptedRuntime runtime;
+        runtime.discoveryReply = kExactDiscovery;
+        runtime.rewriteText =
+            "Respond to 95% of requests within 500 ms, keep the schema unchanged, and prefer cached responses.";
+        runtime.queueFollowUps({"{\"kind\":\"none\"}"});
+        HostController c(QStringLiteral(":memory:"));
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+        connectRuntime(c, runtime);
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kExactPrompt, 0)));
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        openInterview(c);
+        waitForInterviewQuestion(c, QStringLiteral("500 ms target"));
+        answerInterview(c, QStringLiteral("Prefer cached responses"));
+        c.waitForCommandForTesting(c.setRewriteProfile(QStringLiteral("GENERIC@1"), c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        ROCLINT_CHECK(c.proposalStatus() == "READY_FOR_REVIEW");
+        completeReview(c);
+        ROCLINT_CHECK(c.canApprove());
+        setClipboard(QStringLiteral("before"));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.approveAndCopyRewrite(c.stateVersion())));
+        const auto copied = clipboardText();
+        ROCLINT_CHECK(copied.contains("500 ms"));
+        ROCLINT_CHECK(copied.contains("95%"));
+    }
+    {
+        // An identical rewrite is not presented as a proposal.
+        ScriptedRuntime runtime;
+        runtime.discoveryReply = kExactDiscovery;
+        runtime.rewriteText = kExactPrompt.toStdString();
+        runtime.queueFollowUps({"{\"kind\":\"none\"}"});
+        HostController c(QStringLiteral(":memory:"));
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+        connectRuntime(c, runtime);
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kExactPrompt, 0)));
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        openInterview(c);
+        waitForInterviewQuestion(c, QStringLiteral("500 ms target"));
+        answerInterview(c, QStringLiteral("Prefer cached responses"));
+        c.waitForCommandForTesting(c.setRewriteProfile(QStringLiteral("GENERIC@1"), c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        ROCLINT_CHECK(!c.hasProposal());
+        ROCLINT_CHECK(c.proposalText().isEmpty());
+        ROCLINT_CHECK(!c.canApprove());
+        ROCLINT_CHECK(c.proposalStatus() == "VALIDATION_FAILED" || c.proposalStatus() == "FAILED");
+    }
+    std::cout << "  [PASS] Exact values survive or block the rewrite; identical output is not a proposal.\n";
+}
+
+const QString kMusicPrompt = QStringLiteral(
+    "Design a music app with compact text, a fusion of 1990s and 1960s Beatles/Revolver-era references, "
+    "and easy browsing.");
+
+const std::string kMusicDiscovery = R"({"status": "options_generated",
+  "choice_groups": [{"dimension": "typography", "question": "What should compact text mean?", "material": true,
+    "alternatives": [
+      {"label": "Smaller type sizes", "why_material": "Shows more text without removing features", "evidence": ["compact text"]},
+      {"label": "Fewer visible controls", "why_material": "Shows less interface at once", "evidence": ["compact text"]}]}]})";
+
+const char* kMusicCustomAnswer =
+    "smaller type sizes and tighter line spacing, not fewer features or shortened labels; keep browsing one tap away";
+
+void testMusicCustomAnswerAndNegativeConstraintReachReview() {
+    ScriptedRuntime runtime;
+    runtime.discoveryReply = kMusicDiscovery;
+    runtime.rewriteText =
+        "Design a music app with smaller type sizes and tighter line spacing, a fusion of 1990s and 1960s "
+        "Beatles/Revolver-era references, and easy browsing with one-tap access.";
+    runtime.queueFollowUps({"{\"kind\":\"none\"}"});
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    connectRuntime(c, runtime);
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(kMusicPrompt, 0)));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    openInterview(c);
+    waitForInterviewQuestion(c, QStringLiteral("compact text"));
+    answerInterview(c, QString::fromUtf8(kMusicCustomAnswer), QStringLiteral("custom"));
+    ROCLINT_CHECK(c.workingIntentForTesting().customResolutions.at("grp_0") == kMusicCustomAnswer);
+    bool rawExact = false;
+    for (const auto& item : c.intentBriefItems()) {
+        const auto map = item.toMap();
+        if (map.value("id").toString() == "grp_0") {
+            rawExact = map.value("rawAnswer").toString() == QString::fromUtf8(kMusicCustomAnswer);
+        }
+    }
+    ROCLINT_CHECK(rawExact);
+    const auto payload = c.getConfirmedIntentPayload();
+    bool intentExact = false;
+    for (const auto& item : payload.value("items").toList()) {
+        const auto map = item.toMap();
+        if (map.value("itemId").toString() == "grp_0") {
+            intentExact = map.value("customText").toString() == QString::fromUtf8(kMusicCustomAnswer);
+        }
+    }
+    ROCLINT_CHECK(intentExact);
+    c.waitForCommandForTesting(c.setRewriteProfile(QStringLiteral("GENERIC@1"), c.stateVersion()));
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    ROCLINT_CHECK(c.proposalStatus() == "READY_FOR_REVIEW");
+    // The confirmed negative wording was supplied to the rewrite request verbatim.
+    bool rewriteSawAnswer = false;
+    for (const auto& request : runtime.requests()) {
+        if (request.find("<instructions>") == std::string::npos) continue;
+        if (request.find(kMusicCustomAnswer) != std::string::npos) rewriteSawAnswer = true;
+    }
+    ROCLINT_CHECK(rewriteSawAnswer);
+
+    struct Captured {
+        bridge::ComprehensionReviewRequest request;
+        int calls{0};
+    };
+    auto captured = std::make_shared<Captured>();
+    bridge::ComprehensionReviewResult drift;
+    drift.status = bridge::ComprehensionReviewStatus::Completed;
+    drift.interpretedOutcome = "The rewrite makes the interface denser and may drop features or labels.";
+    drift.readyForTask = false;
+    bridge::ComprehensionFinding omission;
+    omission.id = "music_negative_1";
+    omission.kind = bridge::ReviewFindingKind::NegativeConstraint;
+    omission.severity = bridge::ReviewFindingSeverity::Blocking;
+    omission.summary = "The rewrite does not preserve 'not fewer features or shortened labels'.";
+    omission.sourceRef = "grp_0";
+    omission.sourceExcerpt = kMusicCustomAnswer;
+    omission.requiresUserDecision = true;
+    omission.proposedRepair =
+        "Keep every feature and full labels; use smaller type and tighter spacing instead.";
+    drift.findings.push_back(omission);
+    c.setComprehensionReviewForTesting([captured, drift](const bridge::ComprehensionReviewRequest& request) {
+        captured->request = request;
+        ++captured->calls;
+        return drift;
+    });
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+    waitForReviewState(c, QStringLiteral("ready"));
+    ROCLINT_CHECK(captured->calls == 1);
+    ROCLINT_CHECK(std::find(captured->request.confirmedDecisions.begin(),
+                            captured->request.confirmedDecisions.end(), kMusicCustomAnswer) !=
+                  captured->request.confirmedDecisions.end());
+    ROCLINT_CHECK(!c.canApplyReviewedOutput());
+    ROCLINT_CHECK(!c.canApprove());
+    bool sawBlocking = false;
+    for (const auto& item : c.comprehensionFindings()) {
+        const auto map = item.toMap();
+        if (map.value("kind").toString() == "negative_constraint" &&
+            map.value("severity").toString() == "blocking") {
+            sawBlocking = true;
+        }
+    }
+    ROCLINT_CHECK(sawBlocking);
+    // A blocking/required contradiction that needs a decision returns to the interview.
+    ROCLINT_CHECK(c.resolveComprehensionFinding(QStringLiteral("music_negative_1"),
+                                                QStringLiteral("acknowledge"), c.stateVersion()) == 0);
+    ROCLINT_CHECK(c.resolveComprehensionFinding(QStringLiteral("music_negative_1"),
+                                                QStringLiteral("return_to_interview"), c.stateVersion()) != 0);
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    ROCLINT_CHECK(c.isInterviewActive());
+    ROCLINT_CHECK(c.interviewQuestion() == "What should the rewrite say here?");
+    ROCLINT_CHECK(!c.canApplyReviewedOutput());
+
+    std::cout << "  [PASS] Music custom answer/negative constraint reach rewrite and review; drift blocks apply.\n";
+}
+
+roclint::core::analysis::PromptTriage sealedRuleConflictTriage(HostController& c, const QString& prompt) {
+    roclint::core::analysis::PromptTriage triage;
+    triage.sessionId = c.currentSessionIdString().toStdString();
+    triage.revisionId = c.currentRevisionId().toStdString();
+    triage.revisionTextHash = crypto::Sha256::hexDigest(prompt.toStdString());
+    triage.stateVersion = c.stateVersion();
+    triage.requestGroupId = "grp_test_triage";
+    triage.attemptId = "att_test_triage";
+    triage.provider = "julia_local";
+    triage.modelId = "julia-test";
+    triage.modelRevision = "test-revision";
+    triage.weightsSha256 = std::string(64, 'a');
+    triage.configurationId = "test-config";
+    triage.execution = roclint::core::analysis::TriageExecution::Mock;
+    triage.categoryScores = {0.10, 0.12, 0.20, 0.9999};
+    auto sealed = roclint::core::analysis::sealPromptTriage(triage, prompt.toStdString());
+    ROCLINT_CHECK(sealed.ok());
+    return std::move(sealed).value();
+}
+
+void testNumericConflictCannotBypassDiscovery() {
+    const QString prompt = QStringLiteral(
+        "Set the timeout to exactly 500 ms. The timeout must be at least 1 second.");
+    ROCLINT_CHECK(rewrite::StructuredEntityExtractor::analyze(prompt.toStdString())
+                      .detectedExplicitConflicts.empty());
+    ScriptedRuntime runtime;
+    runtime.discoveryReply = R"({"kind":"conflict","description":
+      "The same timeout cannot be exactly 500 ms and at least 1 second."})";
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    connectRuntime(c, runtime);
+    ROCLINT_CHECK(c.waitForCommandForTesting(c.commitPrompt(prompt, 0)));
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    const auto triage = sealedRuleConflictTriage(c, prompt);
+    ROCLINT_CHECK(c.startDiscoveryWithTriageForTesting(triage) != 0);
+    ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+    bool discoveryCalled = false;
+    for (const auto& request : runtime.requests()) {
+        if (request.find("granite.discovery.selective.v11") != std::string::npos)
+            discoveryCalled = true;
+    }
+    ROCLINT_CHECK(discoveryCalled);
+    ROCLINT_CHECK(c.analysisStatus() == "READY");
+    ROCLINT_CHECK(c.analysisForTesting().has_value());
+    ROCLINT_CHECK(!c.analysisForTesting()->conflicts.empty());
+    ROCLINT_CHECK(c.interventionVerdict() != "QUIET");
+    std::cout << "  [PASS] Exact quantities do not silence a numeric conflict missed by deterministic extraction.\n";
+}
+
+void testTaskParaphrasesReachReviewAndMetaOutputRemainsBlocked() {
+    struct Case { const char* original; const char* candidate; bool meta; };
+    for (const auto& item : {
+             Case{"Find and fix the route causing duplicate orders.",
+                  "Identify which endpoint produces duplicate orders and fix it.", false},
+             Case{"Explain the retry logic in this code.",
+                  "Identify which failures are retried and explain the backoff policy.", false},
+             Case{"Make this dashboard faster.",
+                  "Determine the specific mood categories for the user.", true}}) {
+        ScriptedRuntime runtime;
+        runtime.discoveryReply = R"({"status":"options_generated","choice_groups":[{
+          "dimension":"scope","question":"Which scope should this task cover?","material":true,
+          "alternatives":[
+            {"label":"Only the requested task","why_material":"Keeps the scope focused","evidence":[")" +
+            std::string(item.original) + R"("]},
+            {"label":"Include related behavior","why_material":"Expands the scope","evidence":[")" +
+            std::string(item.original) + R"("]}]}]})";
+        runtime.rewriteText = item.candidate;
+        HostController c(QStringLiteral(":memory:"));
+        ROCLINT_CHECK(c.waitForStorageForTesting());
+        c.setLegacyDiscoveryForTesting(true);
+        connectRuntime(c, runtime);
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.analyzePrompt(QString::fromUtf8(item.original), 0)));
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.confirmChoice(QStringLiteral("alt_0_0"), c.stateVersion())));
+        c.waitForCommandForTesting(c.setRewriteProfile(QStringLiteral("GENERIC@1"), c.stateVersion()));
+        ROCLINT_CHECK(c.waitForCommandForTesting(c.synthesizeRewrite(c.stateVersion())));
+        ROCLINT_CHECK(c.waitForIdleForTesting(8000));
+        // Both are unapproved previews; vocabulary alone cannot decide task meaning.
+        ROCLINT_CHECK(c.hasProposal());
+        ROCLINT_CHECK(c.proposalText() == QString::fromUtf8(item.candidate));
+        ROCLINT_CHECK(!c.canApprove() && !c.canApplyReviewedOutput());
+        c.setComprehensionReviewForTesting([item](const bridge::ComprehensionReviewRequest& request) {
+            ROCLINT_CHECK(request.originalPrompt == item.original && request.candidatePrompt == item.candidate);
+            auto result = approvingReviewResult();
+            result.interpretedOutcome = item.candidate;
+            if (item.meta) {
+                result.readyForTask = false;
+                bridge::ComprehensionFinding finding;
+                finding.id = "task_replaced_by_meta";
+                finding.kind = bridge::ReviewFindingKind::MeaningDrift;
+                finding.severity = bridge::ReviewFindingSeverity::Blocking;
+                finding.summary = "Asks for unrelated clarification instead of the requested dashboard improvement.";
+                finding.sourceRef = "candidate";
+                finding.sourceExcerpt = item.candidate;
+                result.findings.push_back(std::move(finding));
+            }
+            return result;
+        });
+        ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+        waitForReviewState(c, QStringLiteral("ready"));
+        ROCLINT_CHECK(c.canApplyReviewedOutput() == !item.meta);
+        if (item.meta) {
+            ROCLINT_CHECK(!c.canApprove());
+            ROCLINT_CHECK(!c.comprehensionFindings().isEmpty());
+        }
+    }
+    std::cout << "  [PASS] Task paraphrases reach semantic review; blocking meta findings cannot authorize apply.\n";
+}
+
+void testWordPopupExpandsIntoInterviewWithoutRestarting() {
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    auto* bridgePtr = bridge.get();
+    HostController c(QStringLiteral(":memory:"), std::move(bridge));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    ScriptedRuntime runtime;
+    runtime.discoveryReply = kPerformanceDiscovery;
+    runtime.wordRefinementReply = R"({
+      "needs_clarification": false,
+      "clarification_question": "",
+      "candidates": [
+        {"original_span": "faster", "replacement": "snappier on first paint",
+         "explanation": "Improves how quickly the first useful view appears.",
+         "assumption": "", "requires_clarification": false}
+      ]})";
+    connectRuntime(c, runtime);
+    c.setAmbientModeEnabled(true);
+    QString text = kInterviewPrompt;
+    const int wordStart = text.indexOf(QStringLiteral("faster"));
+    ROCLINT_CHECK(wordStart > 0);
+    roclint::host::ObservedField field;
+    field.fieldToken = 9191;
+    field.appIdentifier = QStringLiteral("Code.exe");
+    field.appDisplayName = QStringLiteral("Visual Studio Code");
+    field.processId = 4321;
+    field.kind = roclint::host::FieldKind::GuiEditor;
+    field.text = text;
+    field.caretOffset = wordStart + 6;
+    field.caretRect = QRect(120, 160, 2, 18);
+    field.fieldRect = QRect(60, 120, 620, 120);
+    bridgePtr->observe(field);
+    ROCLINT_CHECK(waitForWordSuggestion(c, 8000));
+    c.exploreInCompanion();
+    ROCLINT_CHECK(c.waitForIdleForTesting(10000));
+    waitForInterviewIdle(c, 10000);
+    ROCLINT_CHECK(c.isInterviewActive());
+    waitForInterviewQuestion(c, QStringLiteral("What should faster mean?"));
+    ROCLINT_CHECK(c.interviewFrozenWordForTesting() ==
+                  QStringLiteral("faster|%1|%2").arg(wordStart).arg(wordStart + 6));
+    bool sawWordContext = false;
+    for (const auto& item : c.intentBriefItems()) {
+        const auto map = item.toMap();
+        if (map.value("id").toString() != "word_selection") continue;
+        sawWordContext = map.value("kind").toString() == "proposed_assumption" &&
+                         map.value("status").toString() == "proposed" &&
+                         map.value("sourceExcerpt").toString() == "faster" &&
+                         map.value("text").toString().contains("snappier on first paint") &&
+                         map.value("sourceRef").toString() ==
+                             QStringLiteral("word:%1-%2").arg(wordStart).arg(wordStart + 6);
+    }
+    ROCLINT_CHECK(sawWordContext);
+    const auto question = c.interviewQuestion();
+    const auto turns = c.interviewTurnsCompleted();
+    const auto reentry = c.openInterviewFromCompanion(c.stateVersion());
+    ROCLINT_CHECK(reentry == c.stateVersion());
+    ROCLINT_CHECK(c.interviewQuestion() == question);
+    ROCLINT_CHECK(c.interviewTurnsCompleted() == turns);
+    answerInterview(c, QStringLiteral("Lower latency per click"));
+    ROCLINT_CHECK(c.workingIntentForTesting().confirmedAlternatives.at("grp_0") == "alt_0_0");
+
+    std::cout << "  [PASS] Word popup expands into the interview without losing the frozen span or restarting.\n";
+}
+
 } // namespace
 
 int main(int argc, char* argv[]) {
@@ -2164,10 +3661,28 @@ int main(int argc, char* argv[]) {
     testSessionRestoreUncertaintyPreservation();
     testExactIdAcknowledgmentBinding();
     testWordCompanionBindsSelectedCandidateAndRejectsStaleRequests();
+    testPhraseFlowChecksAnswersAndSupportsGuardedUndo();
+    testAcceptedWordAnswerSurvivesLocalFailureAndStaysDraftBound();
     testWordCompanionNoopClearingAndClarification();
+    testWordQuestionCanRecoverToAnAuditedCorrection();
+    testFeedbackOpinionsAreNotMutationProhibitions();
+    testWordApplyFeedbackIsReadbackBoundAndFollowsGeometry();
     testWordCompanionCoalescesAndDropsStaleWork();
     testWordAuditFailureNeverOffersAnEdit();
     testIdleWaitIncludesDeferredModelWork();
+    testInterviewConnectedFlowCarriesDecisionsIntoRewriteAndReview();
+    testInterviewCustomUnknownAndSkipNeverConfirm();
+    testChangeIntentDecisionSupersedesAndInvalidatesReview();
+    testComprehensionReviewGatingFindingsAndReturnToInterview();
+    testComprehensionReviewMalformedAndAdvisoryHandling();
+    testWaterBottleReviewDoesNotRequireUnspecifiedDesignDetails();
+    testInterviewStaleResultAndWorkspaceSwitchInvalidate();
+    testExplicitInterviewRevivesQuietOrOriginalRoute();
+    testExactRequirementsSurviveOrBlockTheRewrite();
+    testMusicCustomAnswerAndNegativeConstraintReachReview();
+    testNumericConflictCannotBypassDiscovery();
+    testTaskParaphrasesReachReviewAndMetaOutputRemainsBlocked();
+    testWordPopupExpandsIntoInterviewWithoutRestarting();
     testUnavailableBridgeReportsExplicitRangeResult();
     testMechanicallyExactEditDoesNotAcquireAConfirmationQuestion();
     testRecommendationCannotCrossDecisionGroups();

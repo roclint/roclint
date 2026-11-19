@@ -19,11 +19,13 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlExpression>
 #include <QQmlProperty>
 #include <QQuickItem>
 #include <QQuickWindow>
+#include <QScreen>
 #include <QSettings>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -32,11 +34,36 @@
 #include "roclint/storage/Database.hpp"
 #include <QtTest/QTest>
 
+#ifdef Q_OS_WIN
+#include <qt_windows.h>
+#endif
+
 #include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <thread>
+
+namespace {
+
+void setApprovingReview(roclint::host::HostController& controller) {
+    controller.setComprehensionReviewForTesting(
+        [](const roclint::bridge::ComprehensionReviewRequest&) {
+            roclint::bridge::ComprehensionReviewResult result;
+            result.status = roclint::bridge::ComprehensionReviewStatus::Completed;
+            result.interpretedOutcome = "The rewrite preserves the requested outcome.";
+            result.readyForTask = true;
+            return result;
+        });
+}
+
+void completeApprovingReview(roclint::host::HostController& controller) {
+    setApprovingReview(controller);
+    ROCLINT_CHECK(controller.requestComprehensionReview(controller.stateVersion()) != 0);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(5000));
+}
+
+} // namespace
 
 using namespace roclint::host;
 using namespace roclint::core;
@@ -54,9 +81,11 @@ void prepare(HostController& c, std::atomic<int>& calls, int delayMs = 0) {
         if (prompt.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
-        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (prompt.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
+        if (prompt.find("granite.comprehension_review.v1") != std::string_view::npos)
+            return makeError(ErrorCode::ProviderUnavailable, "No scripted reread is configured.");
         ++calls;
         if (delayMs > 0) std::this_thread::sleep_for(std::chrono::milliseconds(delayMs));
         return prompt.find("<instructions>") == std::string_view::npos
@@ -130,6 +159,829 @@ void seedOptionalReview(HostController& c) {
     ROCLINT_CHECK(c.isOptionalHelp() && c.isClarifying() && c.finalSnapshotForTesting()->payloadVersion == 5);
 }
 
+// ---------------------------------------------------------------------------
+// Companion / interview / comprehension-review interaction fixtures.
+//
+// TEST-ONLY SEAM: CompanionMockController.qml mirrors the frozen Host/UI v1
+// names and records invocations. Production QML binds the real hostController;
+// these helpers exist only because the host implementation lives in Agent 2's
+// worktree. The legacy-guard case additionally loads the real HostController.
+// ---------------------------------------------------------------------------
+QObject* createCompanionTestDouble(QQmlEngine& engine, const QString& fileName) {
+    QString path = QFINDTESTDATA(fileName);
+    if (path.isEmpty() || !QFileInfo::exists(path)) {
+        // Fallback for generators that pass a source-relative __FILE__: the
+        // test binary runs from <worktree>/build/<config>.
+        path = QDir(QCoreApplication::applicationDirPath())
+                   .absoluteFilePath(QStringLiteral("../../tests/viewmodel/") + fileName);
+    }
+    ROCLINT_CHECK(QFileInfo::exists(path));
+    QQmlComponent component(&engine, QUrl::fromLocalFile(path));
+    if (component.isError()) {
+        for (const auto& error : component.errors())
+            std::cerr << "  [mock] " << error.toString().toStdString() << '\n';
+    }
+    ROCLINT_CHECK(!component.isError());
+    QObject* object = component.create();
+    ROCLINT_CHECK(object != nullptr);
+    return object;
+}
+
+QQuickItem* requireVisual(QQuickWindow* window, const QString& objectName) {
+    auto* item = window->findChild<QQuickItem*>(objectName);
+    // Repeater/list delegates may be parented only in the visual item tree.
+    if (!item) item = findVisual(window->contentItem(), objectName);
+    if (!item) std::cerr << "  [missing] " << objectName.toStdString() << '\n';
+    ROCLINT_CHECK(item != nullptr);
+    return item;
+}
+
+QString visualText(QQuickWindow* window, const QString& objectName) {
+    return requireVisual(window, objectName)->property("text").toString();
+}
+
+QPoint visualCenter(QQuickItem* item) {
+    return item->mapToScene(QPointF(item->width() / 2.0, item->height() / 2.0)).toPoint();
+}
+
+void clickVisual(QQuickWindow* window, QQuickItem* item) {
+    ROCLINT_CHECK(item != nullptr);
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, visualCenter(item));
+}
+
+void activateWithKeyboard(QQuickWindow* window, QQuickItem* item) {
+    ROCLINT_CHECK(item != nullptr);
+    window->requestActivate();
+    item->forceActiveFocus(Qt::TabFocusReason);
+    QTest::qWait(20);
+    QTest::keyClick(window, Qt::Key_Space);
+}
+
+QString lastMockCall(QObject* mock) {
+    QVariant result;
+    ROCLINT_CHECK(QMetaObject::invokeMethod(mock, "lastCallKind", Q_RETURN_ARG(QVariant, result)));
+    return result.toString();
+}
+QVariantMap lastMockDetail(QObject* mock) {
+    QVariant result;
+    ROCLINT_CHECK(QMetaObject::invokeMethod(mock, "lastCallDetail", Q_RETURN_ARG(QVariant, result)));
+    return result.toMap();
+}
+
+QVariantMap wordCandidate(const QString& id, const QString& label, const QString& replacement,
+                          const QString& explanation, const QString& assumption = {},
+                          bool requiresClarification = false) {
+    return QVariantMap{{"id", id}, {"label", label}, {"replacement", replacement},
+                       {"explanation", explanation}, {"assumption", assumption},
+                       {"requiresClarification", requiresClarification}};
+}
+
+QVariantMap briefItem(const QString& id, const QString& kind, const QString& text, const QString& status,
+                      const QString& excerpt = {}, const QString& rawAnswer = {},
+                      bool consequential = false, const QString& sourceRef = {},
+                      const QString& analysisItemId = {}) {
+    return QVariantMap{{"id", id}, {"kind", kind}, {"text", text},
+                       {"sourceExcerpt", excerpt}, {"sourceRef", sourceRef},
+                       {"rawAnswer", rawAnswer}, {"status", status},
+                       {"consequential", consequential}, {"analysisItemId", analysisItemId}};
+}
+
+QVariantMap interviewChoice(const QString& id, const QString& label, const QString& consequence) {
+    return QVariantMap{{"id", id}, {"label", label}, {"consequence", consequence}};
+}
+
+QVariantMap reviewFinding(const QString& id, const QString& severity, const QString& kind,
+                          const QString& summary, const QString& excerpt, bool requiresDecision,
+                          const QString& repair = {}, const QString& sourceRef = {}) {
+    return QVariantMap{{"id", id}, {"severity", severity}, {"kind", kind}, {"summary", summary},
+                       {"sourceRef", sourceRef}, {"sourceExcerpt", excerpt},
+                       {"requiresUserDecision", requiresDecision}, {"proposedRepair", repair}};
+}
+
+void configureWordFixture(QObject* mock) {
+    mock->setProperty("hasWordRefinement", true);
+    mock->setProperty("wordRefinementOriginal", QStringLiteral("faster"));
+    mock->setProperty("wordRefinementReplacement", QStringLiteral("with lower enqueue latency"));
+    mock->setProperty("wordRefinementExplanation",
+                      QStringLiteral("Names the latency you care about instead of general speed."));
+    mock->setProperty("wordRefinementAssumption", QStringLiteral("the queue is the bottleneck"));
+    mock->setProperty("wordRefinementSelectedCandidateId", QStringLiteral("latency"));
+    mock->setProperty("wordRefinementCandidates", QVariantList{
+        wordCandidate(QStringLiteral("latency"), QStringLiteral("Lower latency"),
+                      QStringLiteral("with lower enqueue latency"),
+                      QStringLiteral("Names the latency you care about instead of general speed."),
+                      QStringLiteral("the queue is the bottleneck")),
+        wordCandidate(QStringLiteral("throughput"), QStringLiteral("Higher throughput"),
+                      QStringLiteral("with higher batch throughput"),
+                      QStringLiteral("Optimizes batches rather than a single request.")),
+        wordCandidate(QStringLiteral("vague"), QStringLiteral("Faster overall"),
+                      QStringLiteral("faster"),
+                      QStringLiteral("Keeps the vague word and leaves the target open."),
+                      QString(), true)});
+    mock->setProperty("wordRefinementNeedsClarification", false);
+    mock->setProperty("wordRefinementClarificationQuestion", QString());
+    mock->setProperty("wordRefinementApplying", false);
+}
+
+QVariantList interviewBriefItems(bool includeAnswer) {
+    QVariantList items{
+        briefItem(QStringLiteral("src_browse"), QStringLiteral("source_requirement"),
+                  QStringLiteral("easy browsing"), QStringLiteral("confirmed"),
+                  QStringLiteral("easy browsing"), QString(), true, QStringLiteral("draft")),
+        briefItem(QStringLiteral("dec_type"), QStringLiteral("preference"),
+                  QStringLiteral("Typography should feel like 1960s record sleeves, not 1990s grunge."),
+                  QStringLiteral("confirmed"),
+                  QStringLiteral("a fusion of 1990s and 1960s Beatles/Revolver-era references"),
+                  QStringLiteral("1960s sleeve type, not 90s grunge"), true, QStringLiteral("draft")),
+        briefItem(QStringLiteral("assume_mobile"), QStringLiteral("proposed_assumption"),
+                  QStringLiteral("The app is mobile-first."), QStringLiteral("proposed"),
+                  QString(), QString(), false),
+        briefItem(QStringLiteral("open_nav"), QStringLiteral("open_choice"),
+                  QStringLiteral("Should browsing be infinite scroll or paged?"), QStringLiteral("open"),
+                  QString(), QString(), true),
+        briefItem(QStringLiteral("old_type"), QStringLiteral("superseded_decision"),
+                  QStringLiteral("Use 1990s grunge type."), QStringLiteral("superseded"),
+                  QString(), QStringLiteral("90s grunge"), false),
+        briefItem(QStringLiteral("ev_queue"), QStringLiteral("evidence"),
+                  QStringLiteral("queue.cpp:88"), QStringLiteral("confirmed"),
+                  QStringLiteral("push() is the contended call"), QString(), false,
+                  QStringLiteral("queue.cpp:88"))};
+    if (includeAnswer) {
+        items.append(briefItem(QStringLiteral("dec_answer"), QStringLiteral("confirmed_decision"),
+                               QStringLiteral("Sleeve lettering with a clean sans body"), QStringLiteral("confirmed"),
+                               QStringLiteral("fusion of 1990s and 1960s references"),
+                               QStringLiteral("Sleeve lettering with a clean sans body"), true,
+                               QStringLiteral("draft")));
+    }
+    return items;
+}
+
+void configureInterviewFixture(QObject* mock) {
+    configureWordFixture(mock);
+    mock->setProperty("hasIntentBrief", true);
+    mock->setProperty("intentBriefSummary", QStringLiteral("1960s sleeve typography, easy browsing, no album trivia."));
+    mock->setProperty("intentBriefItems", interviewBriefItems(false));
+    mock->setProperty("intentOpenChoiceIds", QStringList{QStringLiteral("open_nav")});
+    mock->setProperty("isInterviewActive", true);
+    mock->setProperty("canExploreInterview", true);
+    mock->setProperty("interviewTurnsCompleted", 2);
+    mock->setProperty("interviewQuestion", QStringLiteral("Which typography direction should lead?"));
+    mock->setProperty("interviewConsequence",
+                      QStringLiteral("Sleeve lettering keeps the 1960s reference readable; grunge makes it read as 1990s."));
+    mock->setProperty("interviewChoices", QVariantList{
+        interviewChoice(QStringLiteral("sleeve"), QStringLiteral("1960s sleeve lettering"),
+                        QStringLiteral("Bold display type for headings with a clean sans body, so browsing stays easy.")),
+        interviewChoice(QStringLiteral("grunge"), QStringLiteral("1990s grunge type"),
+                        QStringLiteral("Distressed display type; stronger 1990s reference, harder to read at small sizes.")),
+        interviewChoice(QStringLiteral("blend"), QStringLiteral("Blend both eras"),
+                        QStringLiteral("Sleeve structure with a restrained grunge texture; both references stay visible."))});
+    mock->setProperty("isInterviewBusy", false);
+    mock->setProperty("interviewFeedback", QString());
+    mock->setProperty("comprehensionReviewState", QStringLiteral("not_run"));
+    mock->setProperty("comprehensionInterpretation", QString());
+    mock->setProperty("comprehensionFindings", QVariantList{});
+    mock->setProperty("canApplyReviewedOutput", false);
+}
+
+QQuickWindow* createCompanionHarness(QQmlEngine& engine, const QString& typeName,
+                                     int width, int height, QStringList* warnings = nullptr,
+                                     bool fillHeight = true) {
+    if (warnings) {
+        QObject::connect(&engine, &QQmlEngine::warnings, &engine,
+                         [warnings](const QList<QQmlError>& list) {
+            for (const auto& error : list) warnings->append(error.description());
+        });
+    }
+    QQmlComponent component(&engine);
+    const QString child = fillHeight
+        ? QStringLiteral("%1 { objectName: \"componentUnderTest\"; anchors.fill: parent }").arg(typeName)
+        : QStringLiteral("%1 { objectName: \"componentUnderTest\"; width: parent.width; height: implicitHeight }").arg(typeName);
+    const QString source = QStringLiteral(
+        "import QtQuick\n"
+        "Window {\n"
+        "    width: %1; height: %2; visible: true; color: \"#09132E\"\n"
+        "    %3\n"
+        "}\n").arg(width).arg(height).arg(child);
+    component.setData(source.toUtf8(), QUrl(QStringLiteral("qrc:/shell/__companion_test_harness.qml")));
+    if (component.isError()) {
+        for (const auto& error : component.errors())
+            std::cerr << "  [harness] " << error.toString().toStdString() << '\n';
+    }
+    ROCLINT_CHECK(!component.isError());
+    auto* window = qobject_cast<QQuickWindow*>(component.create());
+    ROCLINT_CHECK(window != nullptr);
+    window->show();
+    (void)QTest::qWaitForWindowExposed(window);
+    QTest::qWait(60);
+    return window;
+}
+
+void assertNoBindingFailures(const QStringList& warnings) {
+    for (const auto& warning : warnings) {
+        const bool bindingFailure = warning.contains(QStringLiteral("is not defined")) ||
+                                    warning.contains(QStringLiteral("Unable to assign")) ||
+                                    warning.contains(QStringLiteral("TypeError")) ||
+                                    warning.contains(QStringLiteral("Cannot read property"));
+        if (bindingFailure)
+            std::cerr << "  [qml warning] " << warning.toStdString() << '\n';
+        ROCLINT_CHECK(!bindingFailure);
+    }
+}
+
+void testCompanionWordSurfaceCompactAndActionable() {
+    QQmlApplicationEngine engine;
+    QStringList warnings;
+    auto* mock = createCompanionTestDouble(engine, "CompanionMockController.qml");
+    configureWordFixture(mock);
+    engine.rootContext()->setContextProperty("hostController", mock);
+    QObject::connect(&engine, &QQmlEngine::warnings, &engine, [&warnings](const QList<QQmlError>& list) {
+        for (const auto& warning : list) { warnings.append(warning.toString()); std::cerr << warning.toString().toStdString() << '\n'; }
+    });
+    engine.load(QUrl("qrc:/shell/WordCompanion.qml"));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+    ROCLINT_CHECK(window && window->flags().testFlag(Qt::WindowDoesNotAcceptFocus));
+    window->show(); QTest::qWait(120);
+    ROCLINT_CHECK(window->width() <= 380 && window->height() <= 460);
+    ROCLINT_CHECK(requireVisual(window, "wordCompanionApplyControl")->isVisible());
+    ROCLINT_CHECK(!requireVisual(window, "wordCompanionExplanationLabel")->isVisible());
+    ROCLINT_CHECK(window->width() <= 280);
+    ROCLINT_CHECK(!requireVisual(window, "wordCompanionRewriteControl")->isVisible());
+    ROCLINT_CHECK(requireVisual(window, "wordCompanionAssumptionLabel")->isVisible());
+    ROCLINT_CHECK(!requireVisual(window, "wordCompanionCandidates")->isVisible());
+    ROCLINT_CHECK(!requireVisual(window, "wordCompanionStatusLabel")->isVisible());
+    savePreview(window, "phrase_card_wording.png");
+    clickVisual(window, requireVisual(window, "wordCompanionApplyControl"));
+    ROCLINT_CHECK(lastMockCall(mock) == "applyWord");
+    ROCLINT_CHECK(lastMockDetail(mock).value("candidateId").toString() == "latency");
+    clickVisual(window, requireVisual(window, "wordCompanionCandidate_0"));
+    ROCLINT_CHECK(lastMockCall(mock) == "applyWord");
+    ROCLINT_CHECK(lastMockDetail(mock).value("candidateId").toString() == "throughput");
+    ROCLINT_CHECK(!findVisual(window->contentItem(), "wordCompanionCandidate_1"));
+    clickVisual(window, requireVisual(window, "wordCompanionDetailsControl")); QTest::qWait(50);
+    ROCLINT_CHECK(window->property("detailsExpanded").toBool());
+    ROCLINT_CHECK(requireVisual(window, "wordCompanionExplanationLabel")->isVisible());
+    clickVisual(window, requireVisual(window, "wordCompanionRewriteControl"));
+    ROCLINT_CHECK(lastMockCall(mock) == "fullRewrite");
+    clickVisual(window, requireVisual(window, "wordCompanionExploreControl"));
+    ROCLINT_CHECK(lastMockCall(mock) == "openInterview");
+    clickVisual(window, requireVisual(window, "wordCompanionKeepOriginalControl"));
+    ROCLINT_CHECK(lastMockCall(mock) == "dismissWord");
+
+    // A word question stays in this card: choosing a meaning checks it, never
+    // opens the interview or writes the source field automatically.
+    mock->setProperty("wordRefinementNeedsClarification", true);
+    mock->setProperty("wordRefinementClarificationQuestion", "What should faster mean here?");
+    mock->setProperty("wordClarificationChoices", QStringList{"Lower enqueue latency", "Higher throughput"});
+    QTest::qWait(80);
+    ROCLINT_CHECK(!requireVisual(window, "wordCompanionApplyControl")->isVisible());
+    auto* choice = requireVisual(window, "wordCompanionChoice_0");
+    clickVisual(window, choice);
+    ROCLINT_CHECK(lastMockCall(mock) == "answerWord");
+    ROCLINT_CHECK(lastMockDetail(mock).value("answer").toString() == "Lower enqueue latency");
+    ROCLINT_CHECK(lastMockDetail(mock).value("version").toInt() == 11);
+    savePreview(window, "phrase_card_question.png");
+    clickVisual(window, requireVisual(window, "wordCompanionCustomAnswerControl")); QTest::qWait(80);
+    auto* input = requireVisual(window, "wordCompanionAnswerInput");
+    ROCLINT_CHECK(input->isVisible() && window->property("answerEditing").toBool());
+    input->setProperty("text", "Improve keyboard interaction response time");
+    clickVisual(window, requireVisual(window, "wordCompanionAnswerControl")); QTest::qWait(50);
+    ROCLINT_CHECK(lastMockCall(mock) == "answerWord");
+    ROCLINT_CHECK(lastMockDetail(mock).value("answer").toString() == "Improve keyboard interaction response time");
+    ROCLINT_CHECK(!window->property("answerEditing").toBool());
+    assertNoBindingFailures(warnings);
+}
+
+void testWordMarksOnlyUseAttestedGeometry() {
+    QQmlApplicationEngine engine;
+    auto* mock = createCompanionTestDouble(engine, "CompanionMockController.qml");
+    configureWordFixture(mock);
+    engine.rootContext()->setContextProperty("hostController", mock);
+    engine.load(QUrl("qrc:/shell/WordMarks.qml"));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* root = engine.rootObjects().constFirst();
+    ROCLINT_CHECK(root->findChildren<QQuickWindow*>().isEmpty());
+    mock->setProperty("wordMarkRects", QVariantList{QVariantMap{{"x", 140}, {"y", 180}, {"width", 60}, {"height", 20}}});
+    mock->setProperty("wordMarkVisible", true); QTest::qWait(100);
+    const auto windows = root->findChildren<QQuickWindow*>();
+    ROCLINT_CHECK(windows.size() == 1);
+    auto* mark = windows.constFirst();
+    ROCLINT_CHECK(mark->isVisible() && mark->x() == 140 && mark->y() == 199 && mark->width() == 60 && mark->height() == 7);
+    ROCLINT_CHECK(mark->flags().testFlag(Qt::WindowDoesNotAcceptFocus));
+    QTest::mousePress(mark, Qt::LeftButton, Qt::NoModifier, QPoint(20, 5));
+    ROCLINT_CHECK(lastMockCall(mock) == "openIndicator");
+    QTest::mouseRelease(mark, Qt::LeftButton, Qt::NoModifier, QPoint(20, 5));
+#ifdef Q_OS_WIN
+    if (QGuiApplication::platformName() == QStringLiteral("windows")) {
+        const auto handle = reinterpret_cast<HWND>(mark->winId());
+        const auto scale = mark->devicePixelRatio();
+        const auto point = MAKELPARAM(qRound(20 * scale), qRound(5 * scale));
+        ROCLINT_CHECK(PostMessageW(handle, WM_RBUTTONDOWN, MK_RBUTTON, point));
+        ROCLINT_CHECK(PostMessageW(handle, WM_RBUTTONUP, 0, point));
+        ROCLINT_CHECK(QTest::qWaitFor([&] {
+            return mock->property("calls").value<QJSValue>().toVariant().toList().size() == 2;
+        }));
+    } else
+#endif
+    {
+        QTest::mouseClick(mark, Qt::RightButton, Qt::NoModifier, QPoint(20, 5));
+    }
+    ROCLINT_CHECK(lastMockCall(mock) == "openIndicator");
+    ROCLINT_CHECK(mock->property("calls").value<QJSValue>().toVariant().toList().size() == 2);
+    mock->setProperty("wordMarkVisible", false); QTest::qWait(50);
+    ROCLINT_CHECK(root->findChildren<QQuickWindow*>().isEmpty());
+}
+
+void testQuietAmbientIndicatorIsSmallAndExplicit() {
+    QQmlApplicationEngine engine;
+    auto* mock = createCompanionTestDouble(engine, QStringLiteral("CompanionMockController.qml"));
+    configureWordFixture(mock);
+    engine.rootContext()->setContextProperty("hostController", mock);
+    engine.load(QUrl("qrc:/shell/AmbientBadge.qml"));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+    ROCLINT_CHECK(window && window->width() == 28 && window->height() == 28);
+    ROCLINT_CHECK(window->flags().testFlag(Qt::WindowDoesNotAcceptFocus));
+    window->show(); QTest::qWait(100);
+    auto* indicator = requireVisual(window, "ambientIndicatorControl");
+    clickVisual(window, indicator);
+    ROCLINT_CHECK(lastMockCall(mock) == "openFullHud");
+    auto* dot = requireVisual(window, "suggestionDot");
+    mock->setProperty("wordReplacementReady", false);
+    ROCLINT_CHECK(!dot->isVisible());
+    mock->setProperty("wordReplacementReady", true);
+    ROCLINT_CHECK(dot->isVisible() && window->property("hint").toString().contains("suggestion ready"));
+    savePreview(window, "roc_indicator_suggestion.png");
+    mock->setProperty("wordReplacementReady", false);
+    ROCLINT_CHECK(!dot->isVisible() && window->property("hint").toString() == "Review prompt");
+    mock->setProperty("wordReplacementReady", true);
+    clickVisual(window, indicator);
+    ROCLINT_CHECK(lastMockCall(mock) == "openFullHud");
+    const QPoint center = indicator->mapToItem(window->contentItem(), indicator->boundingRect().center()).toPoint();
+    QTest::mouseClick(window, Qt::RightButton, Qt::NoModifier, center);
+    ROCLINT_CHECK(lastMockCall(mock) == "dismissIndicator");
+    ROCLINT_CHECK(mock->property("calls").value<QJSValue>().toVariant().toList().size() == 3);
+    savePreview(window, "quiet_roc_indicator.png");
+}
+
+void testWordCompanionShowsHonestApplyFeedback() {
+    QQmlApplicationEngine engine;
+    auto* mock = createCompanionTestDouble(engine, QStringLiteral("CompanionMockController.qml"));
+    configureWordFixture(mock);
+    engine.rootContext()->setContextProperty("hostController", mock);
+    engine.load(QUrl("qrc:/shell/WordCompanion.qml"));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+    ROCLINT_CHECK(window); window->show(); QTest::qWait(100);
+    mock->setProperty("wordRefinementApplying", true);
+    mock->setProperty("wordCompanionMessage", "Applying to your draft…"); QTest::qWait(40);
+    ROCLINT_CHECK(visualText(window, "wordCompanionStatusLabel") == "APPLYING");
+    ROCLINT_CHECK(!requireVisual(window, "wordCompanionApplyControl")->property("enabled").toBool());
+    ROCLINT_CHECK(requireVisual(window, "wordCompanionBusyLabel")->isVisible());
+    savePreview(window, "word_companion_applying.png");
+    mock->setProperty("wordRefinementApplying", false); mock->setProperty("hasWordRefinement", false);
+    mock->setProperty("wordCompanionState", "applied"); mock->setProperty("wordCompanionMessage", "Applied to your draft.");
+    QTest::qWait(50);
+    ROCLINT_CHECK(visualText(window, "wordCompanionStatusLabel") == "APPLIED");
+    ROCLINT_CHECK(!requireVisual(window, "wordCompanionApplyControl")->isVisible());
+    ROCLINT_CHECK(visualText(window, "wordCompanionFeedbackLabel") == "Applied to your draft.");
+    ROCLINT_CHECK(requireVisual(window, "wordCompanionDoneControl")->isVisible());
+    savePreview(window, "word_companion_applied.png");
+    mock->setProperty("wordCompanionState", "failed"); mock->setProperty("wordCompanionMessage", "Your draft changed. Check it again.");
+    QTest::qWait(50);
+    ROCLINT_CHECK(visualText(window, "wordCompanionStatusLabel") == "CHECK DRAFT");
+    ROCLINT_CHECK(!requireVisual(window, "wordCompanionApplyControl")->isVisible());
+    auto* retry = requireVisual(window, "wordCompanionRetryControl"); ROCLINT_CHECK(retry->isVisible());
+    clickVisual(window, retry); ROCLINT_CHECK(lastMockCall(mock) == "retryWord");
+    savePreview(window, "word_companion_failed.png");
+    // Even if previous recommendation fields linger during a state transition,
+    // checking cannot present them as the result of the pending request.
+    mock->setProperty("wordCompanionState", "checking");
+    mock->setProperty("wordCompanionMessage", "Loading the local model…");
+    QTest::qWait(50);
+    ROCLINT_CHECK(visualText(window, "wordCompanionStatusLabel") == "CHECKING");
+    ROCLINT_CHECK(visualText(window, "wordCompanionBusyLabel") == "Loading the local model…");
+    ROCLINT_CHECK(!requireVisual(window, "wordCompanionApplyControl")->isVisible());
+    ROCLINT_CHECK(!window->property("showReplacement").toBool());
+    ROCLINT_CHECK(!requireVisual(window, "wordCompanionAssumptionLabel")->isVisible());
+    ROCLINT_CHECK(!requireVisual(window, "wordCompanionDetailsControl")->isVisible());
+    savePreview(window, "word_companion_loading.png");
+    mock->setProperty("wordCompanionState", "failed");
+    mock->setProperty("wordCompanionMessage", "Your answer is kept. Use Full rewrite to include it; your draft is unchanged.");
+    mock->setProperty("hasWordRefinement", false);
+    QTest::qWait(60);
+    ROCLINT_CHECK(!window->property("showReplacement").toBool());
+    ROCLINT_CHECK(!requireVisual(window, "wordCompanionAssumptionLabel")->isVisible());
+    ROCLINT_CHECK(requireVisual(window, "wordCompanionRewriteControl")->isVisible());
+    ROCLINT_CHECK(requireVisual(window, "wordCompanionRewriteControl")->isEnabled());
+    clickVisual(window, requireVisual(window, "wordCompanionRewriteControl"));
+    ROCLINT_CHECK(lastMockCall(mock) == "fullRewrite");
+    savePreview(window, "phrase_card_failed_answer_kept.png");
+}
+
+void testWordCompanionOpensFullRewriteWithoutInterview() {
+    QSettings().clear();
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    auto* observed = bridge.get();
+    HostController controller(":memory:", std::move(bridge));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
+    controller.setLegacyDiscoveryForTesting(true);
+    controller.setAmbientModeEnabled(true);
+    std::atomic<int> rewrites{0};
+    controller.setTransportOverrideForTesting([&](std::string_view request) -> Result<std::string> {
+        if (request.find("granite.goldfish_word_audit.v3") != std::string_view::npos)
+            return std::string(R"({"verdicts":[{"id":"wcand_1","grammar":"Pass","preservation":"Pass","usefulness":"Pass"}]})");
+        if (request.find("granite.word_refinement.v4") != std::string_view::npos)
+            return std::string(R"({"needs_clarification":false,"clarification_question":"","candidates":[{"original_span":"faster","replacement":"quicker to load","explanation":"Specifies initial loading","assumption":"","requires_clarification":false}]})");
+        if (request.find("granite.goldfish_") != std::string_view::npos)
+            return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+        if (request.find("granite.comprehension_review.v1") != std::string_view::npos)
+            return makeError(ErrorCode::ProviderUnavailable, "Script only supplies a rewrite.");
+        if (request.find("<instructions>") != std::string_view::npos) {
+            ++rewrites;
+            return fx::rewriteReply("Make the dashboard feel quicker to load.");
+        }
+        return std::string(R"({"status":"no_ambiguity","choice_groups":[]})");
+    });
+    ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("hostController", &controller);
+    engine.load(QUrl("qrc:/shell/FloatingCard.qml"));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    ObservedField field;
+    field.fieldToken = 87531;
+    field.appIdentifier = "Code.exe";
+    field.kind = FieldKind::GuiEditor;
+    field.text = "Make the dashboard feel faster.";
+    field.caretOffset = field.text.indexOf("faster") + 6;
+    field.fieldRect = QRect(60, 120, 620, 120);
+    observed->observe(field);
+    QTRY_VERIFY_WITH_TIMEOUT(controller.hasWordRefinement(), 5000);
+    ROCLINT_CHECK(controller.openRewriteFromCompanion(controller.stateVersion() + 1) == 0);
+    const auto command = controller.openRewriteFromCompanion(controller.stateVersion());
+    ROCLINT_CHECK(command != 0 && controller.waitForCommandForTesting(command));
+    QTRY_VERIFY_WITH_TIMEOUT(controller.hasProposal(), 5000);
+    ROCLINT_CHECK(controller.currentRevisionText() == field.text && controller.isAmbientCapture());
+    ROCLINT_CHECK(rewrites == 1 && !controller.isInterviewActive());
+    ROCLINT_CHECK(!controller.hasApproval() && !controller.canApplyReviewedOutput());
+    ROCLINT_CHECK(observed->rangeInjections.empty() && observed->injections.empty());
+    ROCLINT_CHECK(controller.openRewriteFromCompanion(controller.stateVersion()) == 0);
+    std::cout << "  [PASS] Word companion opens one bound full rewrite without interview, insertion or approval.\n";
+}
+
+void testCompanionInterviewContextCorrectionsAndBusy() {
+    QQmlEngine engine;
+    QStringList warnings;
+    auto* mock = createCompanionTestDouble(engine, QStringLiteral("CompanionMockController.qml"));
+    configureInterviewFixture(mock);
+    engine.rootContext()->setContextProperty(QStringLiteral("hostController"), mock);
+    auto* window = createCompanionHarness(engine, QStringLiteral("CompanionInterview"), 780, 880, &warnings);
+
+    // Expansion carries the phrase and the confirmed/open history.
+    ROCLINT_CHECK(visualText(window, "interviewQuestionLabel").contains(QStringLiteral("typography")));
+    ROCLINT_CHECK(visualText(window, "interviewConsequenceLabel").contains(QStringLiteral("1960s")));
+    ROCLINT_CHECK(visualText(window, "interviewTurnsLabel").contains(QStringLiteral("2")));
+    ROCLINT_CHECK(visualText(window, "interviewDraftExcerpt").contains(QStringLiteral("faster")));
+    ROCLINT_CHECK(visualText(window, "interviewChoiceConsequence_0").contains(QStringLiteral("browsing")));
+    ROCLINT_CHECK(visualText(window, "interviewItemText_dec_type").contains(QStringLiteral("sleeves")));
+    ROCLINT_CHECK(requireVisual(window, "interviewItemStatus_dec_type")->property("text").toString()
+                  == QStringLiteral("CONFIRMED"));
+    ROCLINT_CHECK(requireVisual(window, "interviewProposed_assume_mobile")->isVisible());
+    ROCLINT_CHECK(visualText(window, "interviewItemStatus_assume_mobile").contains(QStringLiteral("NOT CONFIRMED")));
+    ROCLINT_CHECK(requireVisual(window, "interviewOpen_open_nav")->isVisible());
+    ROCLINT_CHECK(visualText(window, "interviewCountsLabel").contains(QStringLiteral("1 confirmed")));
+    ROCLINT_CHECK(requireVisual(window, "interviewSkipNote")->property("text").toString()
+                  .contains(QStringLiteral("does not confirm")));
+    savePreview(window, QStringLiteral("interview_question.png"));
+
+    // Busy is distinct from answered: controls are unavailable and the status
+    // says the host is thinking, not that an answer was accepted.
+    mock->setProperty("isInterviewBusy", true);
+    QTest::qWait(80);
+    ROCLINT_CHECK(requireVisual(window, "interviewBusyLabel")->isVisible());
+    ROCLINT_CHECK(!requireVisual(window, "interviewChoice_0")->isVisible());
+    ROCLINT_CHECK(!requireVisual(window, "interviewCustomAnswer")->property("enabled").toBool());
+    mock->setProperty("isInterviewBusy", false);
+    QTest::qWait(80);
+
+    // Keyboard activation of a choice submits the authoritative label.
+    auto* choice = requireVisual(window, "interviewChoice_0");
+    activateWithKeyboard(window, choice);
+    ROCLINT_CHECK(lastMockCall(mock) == QStringLiteral("submitInterview"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("disposition")).toString() == QStringLiteral("answer"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("text")).toString()
+                  == QStringLiteral("1960s sleeve lettering"));
+
+    // Custom answer.
+    auto* custom = requireVisual(window, "interviewCustomAnswer");
+    window->requestActivate();
+    custom->forceActiveFocus(Qt::TabFocusReason);
+    custom->setProperty("text", QStringLiteral("Sleeve lettering with a clean sans body"));
+    QTest::qWait(30);
+    QTest::keyClick(window, Qt::Key_Return);
+    QTest::qWait(50);
+    ROCLINT_CHECK(lastMockCall(mock) == QStringLiteral("submitInterview"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("disposition")).toString() == QStringLiteral("custom"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("text")).toString()
+                  == QStringLiteral("Sleeve lettering with a clean sans body"));
+
+    // Explicit uncertainty and skip are separate dispositions.
+    activateWithKeyboard(window, requireVisual(window, "interviewUnknownControl"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("disposition")).toString() == QStringLiteral("unknown"));
+    activateWithKeyboard(window, requireVisual(window, "interviewSkipControl"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("disposition")).toString() == QStringLiteral("skip"));
+
+    // Host advances the interview: the saved state is visibly distinct.
+    mock->setProperty("interviewTurnsCompleted", 3);
+    mock->setProperty("interviewQuestion", QStringLiteral("Should browsing use infinite scroll or pages?"));
+    mock->setProperty("interviewConsequence",
+                      QStringLiteral("Paged browsing makes the record-sleeve index easier to scan; infinite scroll keeps one long wall."));
+    mock->setProperty("interviewChoices", QVariantList{
+        interviewChoice(QStringLiteral("pages"), QStringLiteral("Paged browsing"),
+                        QStringLiteral("Adds a clear index and keeps the sequence deliberate.")),
+        interviewChoice(QStringLiteral("infinite"), QStringLiteral("Infinite scroll"),
+                        QStringLiteral("Keeps one continuous wall of sleeves; harder to revisit a specific item."))});
+    mock->setProperty("intentBriefItems", interviewBriefItems(true));
+    QTest::qWait(100);
+    ROCLINT_CHECK(visualText(window, "interviewTurnsLabel").contains(QStringLiteral("3")));
+    ROCLINT_CHECK(requireVisual(window, "interviewSavedLabel")->isVisible());
+    ROCLINT_CHECK(visualText(window, "interviewQuestionLabel").contains(QStringLiteral("browsing")));
+    ROCLINT_CHECK(visualText(window, "interviewItemText_dec_answer").contains(QStringLiteral("Sleeve")));
+    savePreview(window, QStringLiteral("interview_understanding.png"));
+
+    // Correcting a preference supersedes through the contract invokable.
+    auto* change = requireVisual(window, "interviewChangeControl_dec_type");
+    activateWithKeyboard(window, change);
+    QTest::qWait(60);
+    auto* field = requireVisual(window, "interviewChangeField_dec_type");
+    ROCLINT_CHECK(field->isVisible());
+    field->forceActiveFocus(Qt::TabFocusReason);
+    QTest::qWait(30);
+    QTest::keyClick(window, Qt::Key_A, Qt::ControlModifier);
+    const QString replacement = QStringLiteral("1960s sleeve lettering only; no grunge texture.");
+    for (const QChar ch : replacement)
+        QTest::keyClick(window, ch.toLatin1());
+    QTest::qWait(40);
+    activateWithKeyboard(window, requireVisual(window, "interviewSaveChange_dec_type"));
+    QTest::qWait(60);
+    ROCLINT_CHECK(lastMockCall(mock) == QStringLiteral("changeDecision"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("itemId")).toString() == QStringLiteral("dec_type"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("text")).toString()
+                  == QStringLiteral("1960s sleeve lettering only; no grunge texture."));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("version")).toInt() == 11);
+
+    // Return to the word-level surface keeps the interview state mounted.
+    activateWithKeyboard(window, requireVisual(window, "interviewWordViewControl"));
+    QTest::qWait(50);
+    ROCLINT_CHECK(requireVisual(window, "interviewWordView")->isVisible());
+    ROCLINT_CHECK(requireVisual(window, "interviewWordApplyControl")->isVisible());
+    activateWithKeyboard(window, requireVisual(window, "interviewBackToInterviewControl"));
+    QTest::qWait(50);
+    ROCLINT_CHECK(!requireVisual(window, "interviewWordView")->isVisible());
+    ROCLINT_CHECK(visualText(window, "interviewQuestionLabel").contains(QStringLiteral("browsing")));
+
+    // Re-entry: closing and reopening the surface rebuilds the QML from the
+    // controller's state; the interview does not restart or lose decisions.
+    window->hide();
+    window->deleteLater();
+    QTest::qWait(60);
+    window = createCompanionHarness(engine, QStringLiteral("CompanionInterview"), 780, 880);
+    ROCLINT_CHECK(visualText(window, "interviewQuestionLabel").contains(QStringLiteral("browsing")));
+    ROCLINT_CHECK(visualText(window, "interviewTurnsLabel").contains(QStringLiteral("3")));
+    ROCLINT_CHECK(visualText(window, "interviewItemText_dec_answer").contains(QStringLiteral("Sleeve")));
+    ROCLINT_CHECK(visualText(window, "interviewItemText_dec_type").contains(QStringLiteral("sleeves")));
+
+    // Narrow window: wrapping stays inside the surface.
+    window->resize(360, 920);
+    QTest::qWait(120);
+    ROCLINT_CHECK(requireVisual(window, "interviewQuestionLabel")->width() <= 340);
+    ROCLINT_CHECK(requireVisual(window, "interviewChoice_0")->width() <= 340);
+    ROCLINT_CHECK(requireVisual(window, "interviewCustomAnswer")->width() > 0);
+    savePreview(window, QStringLiteral("interview_narrow_360.png"));
+    assertNoBindingFailures(warnings);
+}
+
+void testComprehensionReviewStatesAndApplyGate() {
+    QQmlEngine engine;
+    QStringList warnings;
+    auto* mock = createCompanionTestDouble(engine, QStringLiteral("CompanionMockController.qml"));
+    configureInterviewFixture(mock);
+    mock->setProperty("comprehensionReviewState", QStringLiteral("not_run"));
+    mock->setProperty("canApplyReviewedOutput", false);
+    engine.rootContext()->setContextProperty(QStringLiteral("hostController"), mock);
+    auto* window = createCompanionHarness(engine, QStringLiteral("ComprehensionReview"), 780, 620, &warnings, false);
+    auto* review = requireVisual(window, "componentUnderTest");
+    QSignalSpy applySpy(review, SIGNAL(applyRequested()));
+    QSignalSpy returnSpy(review, SIGNAL(returnToInterviewRequested()));
+
+    // Unreviewed text must not look or act applicable.
+    ROCLINT_CHECK(visualText(window, "comprehensionStateBadge") == QStringLiteral("NOT RUN"));
+    ROCLINT_CHECK(visualText(window, "comprehensionApplyReason").contains(QStringLiteral("not been independently reread")));
+    ROCLINT_CHECK(!requireVisual(window, "comprehensionApplyControl")->property("enabled").toBool());
+    savePreview(window, QStringLiteral("review_not_run.png"));
+
+    review->setProperty("embedded", true);
+    QTest::qWait(50);
+    ROCLINT_CHECK(lastMockCall(mock) == QStringLiteral("requestReview"));
+    ROCLINT_CHECK(!requireVisual(window, "comprehensionRequestControl")->isVisible());
+    auto wording = reviewFinding("wording", "blocking", "meaning_drift",
+                                 "Ask the user to specify exact colors, decision:5.",
+                                 "Use a minimalist, modern tech-company style.", true,
+                                 "Request exact typography values.", "candidate");
+    wording.insert("canConfirmIntent", true);
+    mock->setProperty("comprehensionFindings", QVariantList{wording});
+    mock->setProperty("comprehensionReviewState", QStringLiteral("ready"));
+    QTest::qWait(80);
+    ROCLINT_CHECK(visualText(window, "comprehensionFindingSummary_0") == "Does this wording still mean what you intended?");
+    ROCLINT_CHECK(!requireVisual(window, "comprehensionFindingReturn_0")->isVisible());
+    clickVisual(window, requireVisual(window, "comprehensionFindingConfirm_0"));
+    ROCLINT_CHECK(lastMockDetail(mock).value("resolution").toString() == "confirm_intent");
+    mock->setProperty("comprehensionFindings", QVariantList{});
+    review->setProperty("embedded", false);
+    // Defensive: even a mistaken host flag cannot enable apply mid-reread.
+    mock->setProperty("comprehensionReviewState", QStringLiteral("running"));
+    mock->setProperty("canApplyReviewedOutput", true);
+    QTest::qWait(80);
+    ROCLINT_CHECK(visualText(window, "comprehensionStateBadge") == QStringLiteral("REREADING"));
+    ROCLINT_CHECK(!requireVisual(window, "comprehensionApplyControl")->property("enabled").toBool());
+
+    // Stale review can never be applied.
+    mock->setProperty("comprehensionReviewState", QStringLiteral("stale"));
+    mock->setProperty("canApplyReviewedOutput", true);
+    QTest::qWait(80);
+    ROCLINT_CHECK(visualText(window, "comprehensionStateBadge") == QStringLiteral("STALE"));
+    ROCLINT_CHECK(visualText(window, "comprehensionStateHeadline").contains(QStringLiteral("out of date")));
+    ROCLINT_CHECK(visualText(window, "comprehensionApplyReason").contains(QStringLiteral("earlier draft")));
+    ROCLINT_CHECK(!requireVisual(window, "comprehensionApplyControl")->property("enabled").toBool());
+    window->resize(780, 260);
+    QTest::qWait(100);
+    savePreview(window, QStringLiteral("review_stale.png"));
+    window->resize(780, 700);
+    QTest::qWait(100);
+
+    mock->setProperty("comprehensionReviewState", QStringLiteral("failed"));
+    QTest::qWait(80);
+    ROCLINT_CHECK(visualText(window, "comprehensionStateBadge") == QStringLiteral("FAILED"));
+    ROCLINT_CHECK(!requireVisual(window, "comprehensionApplyControl")->property("enabled").toBool());
+
+    // Ready with unresolved findings: still locked, and blocking findings
+    // cannot be acknowledged into applicability.
+    mock->setProperty("comprehensionReviewState", QStringLiteral("ready"));
+    mock->setProperty("canApplyReviewedOutput", false);
+    mock->setProperty("comprehensionInterpretation",
+                      QStringLiteral("A music app that borrows 1960s sleeve typography while keeping browsing simple."));
+    mock->setProperty("comprehensionFindings", QVariantList{
+        reviewFinding(QStringLiteral("f1"), QStringLiteral("blocking"), QStringLiteral("negative_constraint"),
+                      QStringLiteral("The rewrite drops the no-new-dependencies constraint."),
+                      QStringLiteral("Avoid adding new dependencies"), true,
+                      QStringLiteral("Restore the constraint verbatim."), QStringLiteral("draft")),
+        reviewFinding(QStringLiteral("f2"), QStringLiteral("required"), QStringLiteral("comprehension"),
+                      QStringLiteral("Browsing is still ambiguous: scroll or pages?"),
+                      QStringLiteral("easy browsing"), true,
+                      QStringLiteral("Ask which browsing pattern to keep."), QStringLiteral("draft")),
+        reviewFinding(QStringLiteral("f3"), QStringLiteral("advisory"), QStringLiteral("meaning_drift"),
+                      QStringLiteral("The tone may read more minimal than the draft."),
+                      QString(), false)});
+    QTest::qWait(120);
+    ROCLINT_CHECK(visualText(window, "comprehensionStateBadge") == QStringLiteral("READY"));
+    ROCLINT_CHECK(requireVisual(window, "comprehensionFinding_f1")->isVisible());
+    ROCLINT_CHECK(visualText(window, "comprehensionFindingSeverity_0") == QStringLiteral("BLOCKING"));
+    ROCLINT_CHECK(visualText(window, "comprehensionFindingExcerpt_0").contains(QStringLiteral("Avoid adding new dependencies")));
+    ROCLINT_CHECK(visualText(window, "comprehensionInterpretation").contains(QStringLiteral("sleeve")));
+    ROCLINT_CHECK(!requireVisual(window, "comprehensionFindingAcknowledge_0")->isVisible());
+    ROCLINT_CHECK(!requireVisual(window, "comprehensionApplyControl")->property("enabled").toBool());
+    ROCLINT_CHECK(visualText(window, "comprehensionApplyReason").contains(QStringLiteral("finding")));
+    savePreview(window, QStringLiteral("review_ready_findings.png"));
+
+    // Keyboard resolution returns the unresolved choice to the interview.
+    activateWithKeyboard(window, requireVisual(window, "comprehensionFindingReturn_0"));
+    QTest::qWait(50);
+    ROCLINT_CHECK(lastMockCall(mock) == QStringLiteral("resolveFinding"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("id")).toString() == QStringLiteral("f1"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("resolution")).toString()
+                  == QStringLiteral("return_to_interview"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("version")).toInt() == 11);
+    ROCLINT_CHECK(returnSpy.count() == 1);
+    activateWithKeyboard(window, requireVisual(window, "comprehensionFindingAcknowledge_1"));
+    ROCLINT_CHECK(lastMockDetail(mock).value(QStringLiteral("resolution")).toString() == QStringLiteral("acknowledge"));
+
+    // Host unlocks only after decisions; then apply fires the explicit signal.
+    mock->setProperty("comprehensionFindings", QVariantList{
+        reviewFinding(QStringLiteral("f3"), QStringLiteral("advisory"), QStringLiteral("meaning_drift"),
+                      QStringLiteral("The tone may read more minimal than the draft."), QString(), false)});
+    mock->setProperty("canApplyReviewedOutput", true);
+    QTest::qWait(100);
+    auto* apply = requireVisual(window, "comprehensionApplyControl");
+    ROCLINT_CHECK(apply->property("enabled").toBool());
+    ROCLINT_CHECK(visualText(window, "comprehensionApplyReason").isEmpty());
+    activateWithKeyboard(window, apply);
+    QTest::qWait(50);
+    ROCLINT_CHECK(applySpy.count() == 1);
+    assertNoBindingFailures(warnings);
+}
+
+void testCompanionInterviewBindsRealController() {
+    // The production QML binds the real HostController, not the test double.
+    // This is a small real-controller smoke test for the new intent surface.
+    HostController c(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(c.waitForStorageForTesting());
+    c.setLegacyDiscoveryForTesting(true);
+    std::atomic<int> calls{0};
+    prepare(c, calls);
+    QQmlApplicationEngine engine;
+    QStringList warnings;
+    engine.rootContext()->setContextProperty(QStringLiteral("hostController"), &c);
+    ROCLINT_CHECK(c.waitForCommandForTesting(
+        c.analyzePrompt(QStringLiteral("Refactor the parser so it runs faster."), c.stateVersion())));
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    c.openInterviewFromCompanion(c.stateVersion());
+    for (int i = 0; i < 400 && c.interviewQuestion().isEmpty(); ++i) QTest::qWait(10);
+    ROCLINT_CHECK(c.isInterviewActive());
+    ROCLINT_CHECK(c.interviewQuestion().contains(QStringLiteral("Which kind of speed matters?")));
+    auto* window = createCompanionHarness(engine, QStringLiteral("CompanionInterview"), 780, 880, &warnings);
+    auto* question = window->findChild<QObject*>(QStringLiteral("interviewQuestionLabel"));
+    ROCLINT_CHECK(question != nullptr);
+    ROCLINT_CHECK(question->property("text").toString().contains(
+        QStringLiteral("Which kind of speed matters?")));
+    // Repeater delegates may be parented only in the visual item tree.
+    ROCLINT_CHECK(findVisual(window->contentItem(), QStringLiteral("interviewChoice_0")) != nullptr);
+    savePreview(window, QStringLiteral("companion_interview_real_controller.png"));
+    assertNoBindingFailures(warnings);
+    window->close();
+    window->deleteLater();
+    std::cout << "  [PASS] Real HostController binds the adaptive interview QML.\n";
+}
+
+void testCompanionContractGuardsPreContractHost() {
+    // A host with only the baseline word surface must not bind missing fields.
+    {
+        QQmlApplicationEngine engine;
+        QStringList warnings;
+        QSettings().setValue(QStringLiteral("appearance/reducedMotion"), true);
+        auto* mock = createCompanionTestDouble(engine, QStringLiteral("CompanionWordOnlyMock.qml"));
+        mock->setProperty("hasWordRefinement", true);
+        mock->setProperty("wordRefinementOriginal", QStringLiteral("stuff"));
+        mock->setProperty("wordRefinementReplacement", QStringLiteral("the parser settings"));
+        mock->setProperty("wordRefinementExplanation", QStringLiteral("Names the parser rather than a vague word."));
+        mock->setProperty("wordRefinementCandidates", QVariantList{
+            wordCandidate(QStringLiteral("parser"), QStringLiteral("Parser settings"),
+                          QStringLiteral("the parser settings"),
+                          QStringLiteral("Names the parser rather than a vague word."))});
+        mock->setProperty("wordRefinementSelectedCandidateId", QStringLiteral("parser"));
+        engine.rootContext()->setContextProperty(QStringLiteral("hostController"), mock);
+        QObject::connect(&engine, &QQmlEngine::warnings, &engine,
+                         [&warnings](const QList<QQmlError>& list) {
+            for (const auto& error : list) {
+            warnings.append(error.description());
+            std::cerr << "  [qml warning] " << error.url().toString().toStdString()
+                      << ":" << error.line() << " " << error.description().toStdString() << '\n';
+        }
+        });
+        engine.load(QUrl(QStringLiteral("qrc:/shell/WordCompanion.qml")));
+        ROCLINT_CHECK(engine.rootObjects().size() == 1);
+        auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+        ROCLINT_CHECK(window != nullptr);
+        window->show();
+        (void)QTest::qWaitForWindowExposed(window);
+        QTest::qWait(100);
+        ROCLINT_CHECK(!window->property("contractInterviewAvailable").toBool());
+        ROCLINT_CHECK(!window->property("contractReviewAvailable").toBool());
+        ROCLINT_CHECK(window->property("reducedMotion").toBool());
+        QSettings().remove(QStringLiteral("appearance/reducedMotion"));
+        clickVisual(window, requireVisual(window, "wordCompanionDetailsControl")); QTest::qWait(30);
+        clickVisual(window, requireVisual(window, "wordCompanionExploreControl"));
+        QTest::qWait(50);
+        ROCLINT_CHECK(lastMockCall(mock) == QStringLiteral("explore"));
+        assertNoBindingFailures(warnings);
+    }
+
+    // The integrated HostController now exposes the full v1 contract. The
+    // word-only mock above still proves the guarded pre-contract fallback; here
+    // the real host must light up both new surfaces and bind without warnings.
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    bridge->accessValue = AccessibilityAccess::Granted;
+    HostController controller(QStringLiteral(":memory:"), std::move(bridge));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
+    QQmlApplicationEngine engine;
+    QStringList warnings;
+    QObject::connect(&engine, &QQmlEngine::warnings, &engine,
+                     [&warnings](const QList<QQmlError>& list) {
+        for (const auto& error : list) {
+            warnings.append(error.description());
+            std::cerr << "  [qml warning] " << error.url().toString().toStdString()
+                      << ":" << error.line() << " " << error.description().toStdString() << '\n';
+        }
+    });
+    engine.rootContext()->setContextProperty(QStringLiteral("hostController"), &controller);
+    engine.load(QUrl(QStringLiteral("qrc:/shell/WordCompanion.qml")));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+    ROCLINT_CHECK(window != nullptr);
+    ROCLINT_CHECK(window->property("contractInterviewAvailable").toBool());
+    ROCLINT_CHECK(window->property("contractReviewAvailable").toBool());
+    assertNoBindingFailures(warnings);
+}
+
 void testOptionalPresentationFromPersistedV5() {
     QSettings().clear();
     auto bridge=std::make_unique<roclint::test::MockAccessibilityBridge>(); auto* observed=bridge.get();
@@ -192,7 +1044,7 @@ void testReviewGeometryAndExplicitExpansion() {
         if (prompt.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
-        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (prompt.find("granite.goldfish_audit.v2") != std::string_view::npos) {
                 return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
             }
             ++calls; return prompt.find("<instructions>") == std::string_view::npos ? discovery : fx::rewriteReply(rewritten);
@@ -264,7 +1116,7 @@ void testReviewGeometryAndExplicitExpansion() {
                 auto* detail = window->findChild<QQuickItem*>("reviewExplanationText");
                 auto* detailViewport = window->findChild<QQuickItem*>("reviewExplanationViewport");
                 ROCLINT_CHECK(dialog && dialog->property("visible").toBool());
-                ROCLINT_CHECK(detail && detail->property("text").toString().contains(explanation));
+                ROCLINT_CHECK(detail && !detail->property("text").toString().contains(explanation));
                 ROCLINT_CHECK(detail->property("text").toString().contains(label->property("text").toString()));
                 ROCLINT_CHECK(detailViewport && fullyInViewport(window, detailViewport));
                 QTest::keyClick(window, Qt::Key_Escape); QTest::qWait(50);
@@ -276,6 +1128,7 @@ void testReviewGeometryAndExplicitExpansion() {
             ROCLINT_CHECK(c.waitForIdleForTesting(3000));
             ROCLINT_CHECK(!c.hasApproval() && observed->injections.empty() && calls==modelCalls);
         }
+        completeApprovingReview(c);
         ROCLINT_CHECK(c.canApprove() && primary->property("label").toString().startsWith("Approve &"));
         auto* diff=findVisual(window->contentItem(),"diffView");
         auto* viewport=window->findChild<QQuickItem*>("workflowViewport");
@@ -389,7 +1242,35 @@ void testCaptureControlsEnableAmbientBadge() {
     engine.rootContext()->setContextProperty("hostController",&c);
     engine.load(QUrl("qrc:/shell/DashboardWindow.qml"));
     ROCLINT_CHECK(engine.rootObjects().size()==1);
-    auto* dashboard=engine.rootObjects().first();
+    auto* dashboard = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    ROCLINT_CHECK(dashboard && (dashboard->flags() & Qt::WindowType_Mask) == Qt::Window);
+    ROCLINT_CHECK(!dashboard->flags().testFlag(Qt::FramelessWindowHint));
+    ROCLINT_CHECK(!dashboard->flags().testFlag(Qt::WindowStaysOnTopHint));
+    ROCLINT_CHECK(QMetaObject::invokeMethod(dashboard, "present", Q_ARG(QVariant, QVariant(false))));
+    ROCLINT_CHECK(QTest::qWaitForWindowExposed(dashboard));
+    ROCLINT_CHECK(QTest::qWaitFor([&] { return dashboard->visibility() == QWindow::FullScreen; }));
+    ROCLINT_CHECK(QMetaObject::invokeMethod(dashboard, "toggleFullscreen"));
+    ROCLINT_CHECK(QTest::qWaitFor([&] { return dashboard->visibility() == QWindow::Windowed; }));
+    dashboard->hide();
+    ROCLINT_CHECK(QMetaObject::invokeMethod(dashboard, "present", Q_ARG(QVariant, QVariant(false))));
+    ROCLINT_CHECK(QTest::qWaitFor([&] { return dashboard->visibility() == QWindow::Windowed; }));
+    dashboard->showMaximized();
+    ROCLINT_CHECK(QTest::qWaitForWindowExposed(dashboard));
+    ROCLINT_CHECK(QTest::qWaitFor([&] { return dashboard->visibility() == QWindow::Maximized; }));
+#ifdef Q_OS_WIN
+    if (QGuiApplication::platformName() == QStringLiteral("windows")) {
+        const auto handle = reinterpret_cast<HWND>(dashboard->winId());
+        constexpr LONG frame = WS_CAPTION | WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
+        ROCLINT_CHECK((GetWindowLongW(handle, GWL_STYLE) & frame) == frame);
+        ROCLINT_CHECK(!(GetWindowLongW(handle, GWL_EXSTYLE) & WS_EX_TOOLWINDOW));
+        ROCLINT_CHECK(IsZoomed(handle));
+    }
+#endif
+    ROCLINT_CHECK(QMetaObject::invokeMethod(dashboard, "toggleFullscreen"));
+    ROCLINT_CHECK(QTest::qWaitFor([&] { return dashboard->visibility() == QWindow::FullScreen; }));
+    ROCLINT_CHECK(QMetaObject::invokeMethod(dashboard, "toggleFullscreen"));
+    ROCLINT_CHECK(QTest::qWaitFor([&] { return dashboard->visibility() == QWindow::Maximized; }));
+    dashboard->hide();
     auto activate=[&](const char* objectName,const QString& expression) {
         auto* control=dashboard->findChild<QObject*>(objectName);
         ROCLINT_CHECK(control);
@@ -558,7 +1439,7 @@ void testCompactHudControlsStayInsideWindow() {
         if (prompt.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
-        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (prompt.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
         return prompt.find("<instructions>") == std::string_view::npos ? discovery
@@ -602,14 +1483,18 @@ void testCompactHudControlsStayInsideWindow() {
     // binding that may be invalidated by an asynchronously opening capture session.
     ROCLINT_CHECK(remaining->property("visible").toBool());
     ROCLINT_CHECK(remaining->property("text").toString()=="3 checks left");
-    for (const auto size : {QSize(620,250),QSize(420,200),QSize(560,400),QSize(820,520)}) {
+    for (const auto size : {QSize(620,250),QSize(420,200),QSize(480,380),QSize(560,400),QSize(820,520)}) {
         window->resize(size); QTest::qWait(100);
         for (const auto& label : {QString("[ LOADING MODEL ]"),QString("[ INFERRING ON A VERY LONG ACCELERATOR NAME ]")}) {
             model->setProperty("text",label);
             state->setProperty("text","[ NO SUGGESTION ]");
             QTest::qWait(50);
-            for (const auto* name : {"expandToggleButton","pinButton","setButton","minButton","closeButton",
-                                    "engineBadge","hudStateBadge","bypassBtn","approveRewriteControl","hideBtn","deliveryDestinationLabel","pendingReviewLabel"}) {
+            for (const auto* name : {"pinButton","openSettingsControl","engineBadge","hudStateBadge","hideBtn"}) {
+                auto* control = window->findChild<QQuickItem*>(name);
+                ROCLINT_CHECK(control && !control->isVisible());
+            }
+            for (const auto* name : {"expandToggleButton","minButton","closeButton","bypassBtn",
+                                    "approveRewriteControl","deliveryDestinationLabel","pendingReviewLabel"}) {
                 auto* item=window->findChild<QQuickItem*>(name);
                 if (!fullyInViewport(window,item)) {
                     const auto rect = item->mapRectToItem(window->contentItem(), item->boundingRect());
@@ -623,6 +1508,38 @@ void testCompactHudControlsStayInsideWindow() {
         savePreview(window,QString("hud-controls-%1x%2.png").arg(size.width()).arg(size.height()));
     }
     std::cout << "  [PASS] Header and footer controls fit compact/resized HUDs with long project, source and model labels.\n";
+}
+
+void testHudDismissControlsHideWindow() {
+    QSettings().clear();
+    HostController controller(QStringLiteral(":memory:"));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty("hostController", &controller);
+    engine.load(QUrl("qrc:/shell/FloatingCard.qml"));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+    ROCLINT_CHECK(window);
+
+    // Exercise the controls with the modeless window visible and the host
+    // already hidden. No hideCardRequested signal is emitted in this state.
+    window->show();
+    ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
+    ROCLINT_CHECK(!controller.isCardVisible());
+    clickVisual(window, requireVisual(window, "closeButton"));
+    QTRY_VERIFY(!window->isVisible());
+
+#if defined(Q_OS_WIN)
+    window->show();
+    ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
+    clickVisual(window, requireVisual(window, "minButton"));
+    QTRY_COMPARE(window->visibility(), QWindow::Hidden);
+#endif
+
+    window->show();
+    ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
+    QTest::keyClick(window, Qt::Key_Escape);
+    QTRY_VERIFY(!window->isVisible());
 }
 
 void testCaptureAndSettings() {
@@ -735,12 +1652,16 @@ void testKeyboardWorkflow() {
     window->show();
     window->requestActivate();
     ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
-    auto* settingsControl = window->findChild<QQuickItem*>(QStringLiteral("openSettingsControl"));
-    ROCLINT_CHECK(settingsControl != nullptr);
+    auto* settingsControl = requireVisual(window, "openSettingsControl");
+    ROCLINT_CHECK(settingsControl->isVisible());
+    QSignalSpy openSettings(&c, &HostController::showDashboardRequested);
     settingsControl->forceActiveFocus();
     QTest::keyClick(window, Qt::Key_Space);
-    ROCLINT_CHECK(c.isDashboardVisible());
+    ROCLINT_CHECK(openSettings.count() == 1 && c.isDashboardVisible() && !window->isVisible());
     c.hideDashboard();
+    c.showCard();
+    window->show();
+    ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
     editor->forceActiveFocus();
     QTest::qWait(750);
     ROCLINT_CHECK(calls == 0); // capture is editable before the first model request
@@ -771,6 +1692,7 @@ void testKeyboardWorkflow() {
     for (int i = 0; i < 300 && c.proposalStatus() == "NONE"; ++i) QTest::qWait(10);
     ROCLINT_CHECK(c.waitForIdleForTesting(3000));
     ROCLINT_CHECK(c.hasProposal());
+    completeApprovingReview(c);
     ROCLINT_CHECK(c.canApprove());
     ROCLINT_CHECK(QGuiApplication::clipboard()->text() == "untouched");
     savePreview(window, QStringLiteral("review-default.png"));
@@ -811,7 +1733,7 @@ void testReviewRequiresExplicitActivation() {
         if (prompt.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
-        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (prompt.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
         return prompt.find("<instructions>") == std::string_view::npos ? kDiscovery : fx::rewriteReply("Make the parser quicker.");
@@ -848,6 +1770,7 @@ void testReviewRequiresExplicitActivation() {
     QTest::keyClick(window, Qt::Key_Space);
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(controller.pendingReviewCount() == 0 && controller.stateVersion() == observed + 1);
+    completeApprovingReview(controller);
     ROCLINT_CHECK(controller.canApprove() && !controller.hasApproval());
     ROCLINT_CHECK(controller.lastErrorCode().isEmpty());
     std::cout << "  [PASS] Programmatic checkbox changes do not acknowledge; keyboard activation does.\n";
@@ -861,7 +1784,7 @@ void testReviewAcknowledgementStorageFailure() {
         if (prompt.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
-        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (prompt.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
         return prompt.find("<instructions>") == std::string_view::npos ? kDiscovery : fx::rewriteReply("Make the parser quicker.");
@@ -1024,7 +1947,7 @@ void testCapturedAndClipboardDraftPresentation() {
     ObservedField field;
     field.fieldToken = 903; field.processId = 444; field.kind = FieldKind::GuiEditor;
     field.appIdentifier = "Antigravity.exe"; field.appDisplayName = "Antigravity";
-    field.text = "Make Queue::push async and retain error handling.";
+    field.text = "Review the Windows build.";
     observed->observe(field);
     ROCLINT_CHECK(c.waitForCommandForTesting(c.openFromAmbient()));
     ROCLINT_CHECK(c.waitForIdleForTesting(3000));
@@ -1033,6 +1956,24 @@ void testCapturedAndClipboardDraftPresentation() {
     ROCLINT_CHECK(c.isAmbientCapture() && !c.isClarifying() && !c.hasProposal());
     ROCLINT_CHECK(!window->property("showPromptEditor").toBool() && !editor->isVisible() && !heading->isVisible());
     ROCLINT_CHECK(preview->isVisible() && draftText->property("text").toString() == field.text);
+    ROCLINT_CHECK(fullyInViewport(window, draftText));
+    auto* compactClarify = requireVisual(window, "compactClarifyButton");
+    auto* compactRewrite = requireVisual(window, "approveRewriteControl");
+    ROCLINT_CHECK(fullyInViewport(window, compactClarify) && fullyInViewport(window, compactRewrite));
+    ROCLINT_CHECK(compactRewrite->property("label").toString() == "Rewrite prompt");
+    ROCLINT_CHECK(!requireVisual(window, "reviewPromptButton")->isVisible());
+    ROCLINT_CHECK(!requireVisual(window, "hudStatusRow")->isVisible());
+    savePreview(window, "captured_prompt_compact.png");
+    const auto singleLineHeight = window->height();
+    ROCLINT_CHECK(singleLineHeight <= 215);
+    const QString multiline = QStringLiteral("Revise the Windows companion.\nKeep the composer in view.\n"
+                                             "Preserve keyboard navigation.\nShow me the changes before applying.");
+    ROCLINT_CHECK(QMetaObject::invokeMethod(window, "setEditorText", Q_ARG(QVariant, QVariant(multiline))));
+    ROCLINT_CHECK(QTest::qWaitFor([&] { return window->height() > singleLineHeight; }, 2000));
+    ROCLINT_CHECK(fullyInViewport(window, draftText) && fullyInViewport(window, compactRewrite));
+    savePreview(window, "captured_prompt_multiline.png");
+    ROCLINT_CHECK(QMetaObject::invokeMethod(window, "setEditorText", Q_ARG(QVariant, QVariant(field.text))));
+    ROCLINT_CHECK(QTest::qWaitFor([&] { return window->height() == singleLineHeight; }, 2000));
     ROCLINT_CHECK(c.deliveryLabel() == "Delivers into Antigravity");
     edit->forceActiveFocus(Qt::TabFocusReason);
     QTest::keyClick(window, Qt::Key_Space); QTest::qWait(50);
@@ -1041,7 +1982,11 @@ void testCapturedAndClipboardDraftPresentation() {
     QTest::keyClick(window, Qt::Key_End); QTest::keyClick(window, Qt::Key_A);
     const auto localDraft = editor->property("text").toString();
     ROCLINT_CHECK(localDraft != field.text);
+    const auto sessionBeforeMinimize = c.currentSessionIdString();
+    c.minimizeCard(); window->hide();
     field.text += " External change."; observed->observe(field);
+    c.showCard(); window->show(); QTest::qWait(50);
+    ROCLINT_CHECK(c.isCardVisible() && c.currentSessionIdString() == sessionBeforeMinimize);
     ROCLINT_CHECK(editor->property("text").toString() == localDraft);
     c.setAmbientModeEnabled(false); QTest::qWait(20);
     ROCLINT_CHECK(!c.isAmbientCapture() && !c.isAmbientAttached());
@@ -1144,7 +2089,9 @@ void testHudPresentationSurvivesDraftAndDelivery() {
 
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.confirmChoice("alt_0_0", controller.stateVersion())));
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
-    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.canApprove());
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    completeApprovingReview(controller);
+    ROCLINT_CHECK(controller.canApprove());
     int delivered = 0;
     QObject::connect(&controller, &HostController::promptInjected, [&]() { ++delivered; });
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.approveAndCopyRewrite(controller.stateVersion())));
@@ -1350,6 +2297,8 @@ void testEditPromptFromProposalUsesNewHudDraft() {
     ROCLINT_CHECK(controller.isDraftDirty());
     QString rewriteInstructions;
     controller.setTransportOverrideForTesting([&rewriteInstructions](std::string_view instructions) -> Result<std::string> {
+        if (instructions.find("granite.comprehension_review.v1") != std::string_view::npos)
+            return makeError(ErrorCode::ProviderUnavailable, "No scripted reread is configured.");
         if (instructions.find("<instructions>") == std::string_view::npos)
             return std::string(R"({"status":"no_ambiguity","choice_groups":[],"assumptions":[],"missing_decisions":[],"conflicts":[]})");
         rewriteInstructions = QString::fromUtf8(instructions.data(), static_cast<qsizetype>(instructions.size()));
@@ -1366,10 +2315,10 @@ void testEditPromptFromProposalUsesNewHudDraft() {
         return fx::rewriteReply(rough.toStdString());
     });
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
-    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.hasProposal());
-    ROCLINT_CHECK(controller.proposalMessage().contains("No wording changes suggested"));
-    auto* heading = window->findChild<QObject*>("reviewHeading");
-    ROCLINT_CHECK(heading && heading->property("text").toString().contains("No wording changes suggested"));
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    // An identical rewrite is not presented as an applicable proposal.
+    ROCLINT_CHECK(!controller.hasProposal());
+    ROCLINT_CHECK(controller.proposalMessage().contains("No useful change"));
     ROCLINT_CHECK(!controller.hasApproval() && observed->injections.empty());
     std::cout << "  [PASS] Panel edit leaves proposal preview, focuses the draft and rewrites the newly frozen text.\n";
 }
@@ -1399,13 +2348,15 @@ void testExplicitClarificationAndDeferredRewrite() {
         if (prompt.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
-        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (prompt.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
+        if (prompt.find("granite.comprehension_review.v1") != std::string_view::npos)
+            return makeError(ErrorCode::ProviderUnavailable, "No scripted reread is configured.");
         if (prompt.find("<instructions>") != std::string_view::npos) {
             ++rewriteCalls;
             instructions = QString::fromUtf8(prompt.data(), static_cast<qsizetype>(prompt.size()));
-            return fx::rewriteReply(draft.toStdString());
+            return fx::rewriteReply("Make Reader::open better and make Queue::push faster while keeping both changes focused.");
         }
         if (++discoveryCalls == 1) return std::string(R"({"status":"no_ambiguity","choice_groups":[]})");
         return choices;
@@ -1514,7 +2465,9 @@ void testAutoAnalysisResumesAfterDelivery() {
     controller.pauseAmbientFollowing();
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.confirmChoice("alt_0_0", controller.stateVersion())));
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
-    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.canApprove() && calls == 2);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    completeApprovingReview(controller);
+    ROCLINT_CHECK(controller.canApprove() && calls == 2);
     // Editing the bound source supersedes an unapproved review and schedules a fresh check.
     field.text += " Preserve behavior."; observed->observe(field);
     ROCLINT_CHECK(editor->property("text").toString() == field.text && !controller.hasProposal() && !controller.hasConfirmedIntent());
@@ -1523,7 +2476,9 @@ void testAutoAnalysisResumesAfterDelivery() {
     controller.pauseAmbientFollowing();
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.confirmChoice("alt_0_0", controller.stateVersion())));
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
-    ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.canApprove() && calls == 4);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    completeApprovingReview(controller);
+    ROCLINT_CHECK(controller.canApprove() && calls == 4);
     int delivered = 0;
     QObject::connect(&controller, &HostController::promptInjected, [&]() { ++delivered; });
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.approveAndCopyRewrite(controller.stateVersion())));
@@ -1810,13 +2765,17 @@ void testUserRequestedRewriteFromNewDraft() {
         if (request.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
-        if (request.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (request.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
+        if (request.find("granite.comprehension_review.v1") != std::string_view::npos)
+            return makeError(ErrorCode::ProviderUnavailable, "No scripted reread is configured.");
         if (request.find("<instructions>")!=std::string_view::npos) {
-            ++rewrites; return fx::rewriteReply(draft.toStdString());
+            ++rewrites; return fx::rewriteReply("Refactor Reader::open for readability, preserving behavior and caller-owned handles.");
         }
-        ++discoveries; return std::string(R"({"status":"no_ambiguity","choice_groups":[]})");
+        ++discoveries;
+        QThread::msleep(200); // The user can request wording while an automatic check is in flight.
+        return std::string(R"({"status":"no_ambiguity","choice_groups":[]})");
     });
     ROCLINT_CHECK(controller.markModelReadyForTesting(fx::testModel()));
     QQmlApplicationEngine engine;
@@ -1832,7 +2791,18 @@ void testUserRequestedRewriteFromNewDraft() {
     ROCLINT_CHECK(!rewrite->isEnabled());
     editor->setProperty("text",draft);
     ROCLINT_CHECK(rewrite->isVisible() && rewrite->isEnabled());
+    // A queued review can publish a storage notification before it has committed
+    // the draft (notably while the cold Julia runtime is starting). That is not
+    // evidence that the user changed the requested draft.
+    window->setProperty("rewriteAfterReview", true);
+    window->setProperty("rewriteDraft", draft);
+    ROCLINT_CHECK(QMetaObject::invokeMethod(window, "continueRequestedRewrite"));
+    ROCLINT_CHECK(window->property("rewriteAfterReview").toBool());
+    window->setProperty("rewriteAfterReview", false);
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(draft, controller.stateVersion())));
+    ROCLINT_CHECK(controller.isAnalyzing() && rewrite->isEnabled());
     ROCLINT_CHECK(QMetaObject::invokeMethod(rewrite,"clicked"));
+    ROCLINT_CHECK(!rewrite->isEnabled() && rewrite->property("label").toString() == "Rewrite queued…");
     QTRY_VERIFY_WITH_TIMEOUT(controller.hasProposal(),5000);
     ROCLINT_CHECK(discoveries==1 && rewrites==1 && controller.currentRevisionText()==draft);
     ROCLINT_CHECK(!controller.hasApproval() && observed->injections.empty());
@@ -1860,9 +2830,11 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
         if (request.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
-        if (request.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (request.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
+        if (request.find("granite.comprehension_review.v1") != std::string_view::npos)
+            return makeError(ErrorCode::ProviderUnavailable, "No scripted reread is configured.");
         ++modelCalls;
         if (request.find("<instructions>") != std::string_view::npos) return fx::rewriteReply(kRewritten.toStdString());
         return std::string(R"({"status":"options_generated","choice_groups":[],"assumptions":[],"missing_decisions":[{"question":"Which performance goal should take priority?","blocking":true}],"conflicts":[],"clarification_question":""})");
@@ -1899,7 +2871,7 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     auto* connect = window->findChild<QQuickItem*>(QStringLiteral("connectRewriteEditorControl"));
     auto* approve = window->findChild<QQuickItem*>(QStringLiteral("approveRewriteControl"));
     ROCLINT_CHECK(connect && approve && connect->isVisible());
-    ROCLINT_CHECK(approve->property("label").toString() == "Review rewrite");
+    ROCLINT_CHECK(approve->property("label").toString() == "Confirm changes");
     connect->forceActiveFocus(); QTest::qWait(75);
     savePreview(window, QStringLiteral("manual-rewrite-connect.png"));
     QTest::keyClick(window, Qt::Key_Space);
@@ -1913,7 +2885,7 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     controller.toggleCard();
     QTest::qWait(40);
     ROCLINT_CHECK(controller.isAmbientCapture() && controller.isCardVisible());
-    ROCLINT_CHECK(approve->property("label").toString() == "Review rewrite");
+    ROCLINT_CHECK(approve->property("label").toString() == "Confirm changes");
     ROCLINT_CHECK(controller.stateVersion() == version && controller.pendingReviewCount() == pending && !controller.canApprove());
     ROCLINT_CHECK(controller.proposalForTesting()->proposalHash == proposalHash && controller.confirmedIntentForTesting()->intentHash == intentHash);
     ROCLINT_CHECK(controller.currentRevisionText() == original && modelCalls == calls && observed->injections.empty());
@@ -1927,7 +2899,16 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     ROCLINT_CHECK(check && !check->property("checked").toBool());
     check->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
-    ROCLINT_CHECK(controller.canApprove());
+    setApprovingReview(controller);
+    const auto heldVersion = controller.stateVersion();
+    ROCLINT_CHECK(approve->property("label").toString() == "Resolve checks");
+    clickVisual(window, approve);
+    QTRY_COMPARE(controller.comprehensionReviewState(), QStringLiteral("ready"));
+    ROCLINT_CHECK(controller.stateVersion() == heldVersion && window->property("isDetailedExpanded").toBool());
+    auto* reviewStatus = findVisual(window->contentItem(), "comprehensionStateHeadline");
+    ROCLINT_CHECK(reviewStatus && !reviewStatus->isVisible());
+    ROCLINT_CHECK(approve->property("label").toString() == "Approve & Insert");
+    ROCLINT_CHECK(controller.canApprove() && !controller.hasApproval() && observed->injections.empty());
     approve->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     QTest::qWait(30);
@@ -1938,6 +2919,7 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.restoreSessionForReview(savedSession, controller.stateVersion())));
     ROCLINT_CHECK(controller.isCardVisible() && !controller.isAmbientCapture());
     ROCLINT_CHECK(controller.proposalForTesting()->proposalHash == proposalHash && modelCalls == calls);
+    completeApprovingReview(controller);
     ROCLINT_CHECK(controller.canApprove());
     ROCLINT_CHECK(approve->property("label").toString() == "Approve & Copy");
     HostContextDetector::resetMock();
@@ -2002,9 +2984,11 @@ void testManualRemainderCanFinishAndGeneratePreview() {
         if (prompt.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
-        if (prompt.find("granite.goldfish_audit.v1") != std::string_view::npos) {
+        if (prompt.find("granite.goldfish_audit.v2") != std::string_view::npos) {
             return std::string(R"({"outcome": "Pass", "violations": [], "unresolved": []})");
         }
+        if (prompt.find("granite.comprehension_review.v1") != std::string_view::npos)
+            return makeError(ErrorCode::ProviderUnavailable, "No scripted reread is configured.");
         if (prompt.find("<instructions>") != std::string_view::npos) {
             ++rewriteCalls;
             return fx::rewriteReply("Reduce latency, binary size, and memory errors.");
@@ -2253,6 +3237,18 @@ int main(int argc, char* argv[]) {
         ROCLINT_CHECK(!QTest::currentTestFailed());
         return 0;
     }
+    if (qEnvironmentVariableIsSet("ROCLINT_COMPANION_UI_ONLY")) {
+        run("testCompanionWordSurfaceCompactAndActionable", testCompanionWordSurfaceCompactAndActionable);
+        run("testWordMarksOnlyUseAttestedGeometry", testWordMarksOnlyUseAttestedGeometry);
+        run("testQuietAmbientIndicatorIsSmallAndExplicit", testQuietAmbientIndicatorIsSmallAndExplicit);
+        run("testWordCompanionShowsHonestApplyFeedback", testWordCompanionShowsHonestApplyFeedback);
+        run("testCompanionInterviewContextCorrectionsAndBusy", testCompanionInterviewContextCorrectionsAndBusy);
+        run("testComprehensionReviewStatesAndApplyGate", testComprehensionReviewStatesAndApplyGate);
+        run("testCompanionInterviewBindsRealController", testCompanionInterviewBindsRealController);
+        run("testCompanionContractGuardsPreContractHost", testCompanionContractGuardsPreContractHost);
+        ROCLINT_CHECK(!QTest::currentTestFailed());
+        return 0;
+    }
     if (qEnvironmentVariableIsSet("ROCLINT_CLARIFICATION_REGRESSION_ONLY")) {
         run("testExplicitClarificationAndDeferredRewrite", testExplicitClarificationAndDeferredRewrite);
         ROCLINT_CHECK(!QTest::currentTestFailed());
@@ -2264,13 +3260,21 @@ int main(int argc, char* argv[]) {
     run("testNativeGlobalShortcutDispatch", testNativeGlobalShortcutDispatch);
     run("testCompactHudControlsStayInsideWindow", testCompactHudControlsStayInsideWindow);
     run("testCaptureControlsEnableAmbientBadge", testCaptureControlsEnableAmbientBadge);
-    run("testIntegrationSettingsFitAvailableWidth", testIntegrationSettingsFitAvailableWidth);
-    run("testModelsRewriteSettingsFitAvailableWidth", testModelsRewriteSettingsFitAvailableWidth);
+    run("testHudDismissControlsHideWindow", testHudDismissControlsHideWindow);
     run("testCaptureAndSettings", testCaptureAndSettings);
     run("testHintChangeRejectsInFlightResult", testHintChangeRejectsInFlightResult);
     run("testModelSwitchDuringInference", testModelSwitchDuringInference);
     run("testKeyboardWorkflow", testKeyboardWorkflow);
     run("testReviewRequiresExplicitActivation", testReviewRequiresExplicitActivation);
+    run("testCompanionWordSurfaceCompactAndActionable", testCompanionWordSurfaceCompactAndActionable);
+        run("testWordMarksOnlyUseAttestedGeometry", testWordMarksOnlyUseAttestedGeometry);
+        run("testQuietAmbientIndicatorIsSmallAndExplicit", testQuietAmbientIndicatorIsSmallAndExplicit);
+        run("testWordCompanionShowsHonestApplyFeedback", testWordCompanionShowsHonestApplyFeedback);
+    run("testWordCompanionOpensFullRewriteWithoutInterview", testWordCompanionOpensFullRewriteWithoutInterview);
+    run("testCompanionInterviewContextCorrectionsAndBusy", testCompanionInterviewContextCorrectionsAndBusy);
+    run("testComprehensionReviewStatesAndApplyGate", testComprehensionReviewStatesAndApplyGate);
+    run("testCompanionInterviewBindsRealController", testCompanionInterviewBindsRealController);
+    run("testCompanionContractGuardsPreContractHost", testCompanionContractGuardsPreContractHost);
     run("testReviewAcknowledgementStorageFailure", testReviewAcknowledgementStorageFailure);
     run("testOverBudgetAssumptionsRemainVisibleAndUnconfirmed", testOverBudgetAssumptionsRemainVisibleAndUnconfirmed);
     run("testResidencySettingsKeyboard", testResidencySettingsKeyboard);

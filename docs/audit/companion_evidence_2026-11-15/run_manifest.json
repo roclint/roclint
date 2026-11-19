@@ -1,0 +1,56 @@
+{
+  "schema": "roclint.companion_eval.run_manifest.v1",
+  "date": "2026-11-15",
+  "baseline_commit": "d5c8101e42b45d5d3b0796c97f01024214fd5d57",
+  "worktree": "D:/Stardust/roclint-wt-eval",
+  "branch": "topic/eval-2026-11-15",
+  "runs": [
+    {
+      "id": "primary_host_20261115T204431Z",
+      "stage": "host",
+      "scope": "12 automatic/explicit scenarios in one cold-then-warm host process",
+      "scenario_file": "tests/fixtures/companion_eval/scenarios_2026-11-15.json",
+      "evidence": "host_20261115T204431Z.ndjson",
+      "rows": "baseline_host.json",
+      "exit_code": 0,
+      "wall_ms": 399619.4,
+      "ambient_cpu_median_pct": 60.8,
+      "probe_sha256_prefix": "ad5cf63d"
+    },
+    {
+      "id": "music_explicit_followup_20261115T205158Z",
+      "stage": "host",
+      "scope": "explicit review of the known music-app acceptance prompt after the automatic route retained the original",
+      "scenario_file": "tests/fixtures/companion_eval/scenarios_explicit_followup_2026-11-15.json",
+      "evidence": "followup_explicit/host_20261115T205158Z.ndjson",
+      "rows": "followup_explicit/baseline_host.json",
+      "exit_code": 0,
+      "wall_ms": 131900.5
+    },
+    {
+      "id": "code_ast_followup",
+      "stage": "host",
+      "scope": "index-ready code fixture follow-up; records codebaseIndexReadyForTesting, groundingStatus and groundedEvidence",
+      "scenario_file": "tests/fixtures/companion_eval/scenarios_code_followup_2026-11-15.json",
+      "evidence": "followup_code_ast/host_20261115T211213Z.ndjson",
+      "exit_code": null,
+      "status": "PARTIAL — index readiness never true",
+      "note": "project_indexed reported idle=true but index_ready=false after the full 180 s wait. The run was interrupted by a harness server restart during Julia load; no analysis/rewrite result was produced. This is evidence that the headless fixture path did not establish codebase index readiness, not AST-grounding evidence."
+    },
+    {
+      "id": "raw_worker_attempts",
+      "stage": "raw",
+      "scope": "helper-only raw discovery capture",
+      "status": "NOT COMPLETED",
+      "evidence": "raw_worker/FAILED.md",
+      "note": "Existing checker expects 12 s analysis capability; v13 worker advertises 45 s. Diagnostic and v13-wrapper attempts hung during generation and were terminated. No raw model JSON captured."
+    }
+  ],
+  "comparison": {
+    "status": "NOT RUN",
+    "protocol": "comparison_protocol_2026-11-15.md",
+    "reason": "No competitor model, skill, cloud provider or API credential was available."
+  },
+  "production_paths_modified": false,
+  "cmake_manifest_changes_requested": "none"
+}

@@ -1,0 +1,202 @@
+{
+  "settings_directory": "D:\\Stardust\\roclint-wt-eval\\docs\\audit\\companion_evidence_2026-11-15\\probe-settings\\20261115T204431Z",
+  "settings": {
+    "python": "D:\\Stardust\\roclint\\build\\runtime\\julia-python\\Scripts\\python.exe",
+    "julia_directory": "D:\\Stardust\\roclint\\models\\julia-1",
+    "granite_directory": "D:\\Stardust\\roclint\\models\\granite-4.2-3b",
+    "worker": "D:\\Stardust\\roclint\\build\\Release\\roclint_granite_worker.exe",
+    "active_model": "native-granite:Q8_0"
+  },
+  "index_timeout_ms": 180000,
+  "scenarios": [
+    {
+      "id": "music_app_typography",
+      "prompt": "I'm building a music app. I want compact typography, a fusion of 1990s and 1960s/Revolver-era references, and easy browsing.",
+      "answers": [
+        {
+          "type": "custom",
+          "text": "Compact typography means smaller type sizes and tighter line spacing for dense lists, not fewer features or shortened labels. Keep browsing one tap away and keep artist and track names readable."
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "explicit_review": false,
+      "analysis_timeout_ms": 400000,
+      "rewrite_timeout_ms": 240000
+    },
+    {
+      "id": "unseen_typography_cookbook",
+      "prompt": "Style the recipe app's typography to feel like a 1970s cookbook but stay legible on phones.",
+      "answers": [
+        {
+          "type": "custom",
+          "text": "Use a warm serif for headings, keep body text at 16 px or larger, and do not make the ingredient list smaller."
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "explicit_review": false,
+      "analysis_timeout_ms": 400000,
+      "rewrite_timeout_ms": 240000
+    },
+    {
+      "id": "cinematic_auto",
+      "prompt": "Make the product photo look cinematic.",
+      "answers": [
+        {
+          "type": "choice",
+          "pick": "light",
+          "index": 0
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "explicit_review": false,
+      "analysis_timeout_ms": 400000,
+      "rewrite_timeout_ms": 240000
+    },
+    {
+      "id": "cinematic_explicit",
+      "prompt": "Make the product photo look cinematic.",
+      "answers": [
+        {
+          "type": "choice",
+          "pick": "light",
+          "index": 0
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "explicit_review": true,
+      "analysis_timeout_ms": 400000,
+      "rewrite_timeout_ms": 240000
+    },
+    {
+      "id": "performance_dashboard",
+      "prompt": "Make the dashboard faster on slow laptops.",
+      "answers": [
+        {
+          "type": "choice",
+          "pick": "render",
+          "index": 0
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "explicit_review": false,
+      "analysis_timeout_ms": 400000,
+      "rewrite_timeout_ms": 240000
+    },
+    {
+      "id": "already_clear_500ms",
+      "prompt": "Make the search API respond within 500 milliseconds for 95% of requests without changing the response schema.",
+      "answers": [],
+      "rewrite": false,
+      "max_turns": 0,
+      "explicit_review": false,
+      "analysis_timeout_ms": 400000,
+      "rewrite_timeout_ms": 240000
+    },
+    {
+      "id": "custom_answer_settings",
+      "prompt": "Redesign the settings screen to feel calmer.",
+      "answers": [
+        {
+          "type": "custom",
+          "text": "Use muted slate-blue tones and more space between groups, but keep every control in its current order."
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "explicit_review": false,
+      "analysis_timeout_ms": 400000,
+      "rewrite_timeout_ms": 240000
+    },
+    {
+      "id": "gibberish_answer",
+      "prompt": "Rewrite the onboarding copy so it feels more welcoming.",
+      "answers": [
+        {
+          "type": "custom",
+          "text": "asdf qwer zxcv 1234"
+        },
+        {
+          "type": "skip"
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 3,
+      "explicit_review": false,
+      "analysis_timeout_ms": 400000,
+      "rewrite_timeout_ms": 240000
+    },
+    {
+      "id": "dont_know_answer",
+      "prompt": "Organize the photo gallery by mood.",
+      "answers": [
+        {
+          "type": "unknown",
+          "text": "I don't know"
+        },
+        {
+          "type": "skip"
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 3,
+      "explicit_review": false,
+      "analysis_timeout_ms": 400000,
+      "rewrite_timeout_ms": 240000
+    },
+    {
+      "id": "skip_question",
+      "prompt": "Rewrite the release notes to sound more confident.",
+      "answers": [
+        {
+          "type": "skip"
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "explicit_review": false,
+      "analysis_timeout_ms": 400000,
+      "rewrite_timeout_ms": 240000
+    },
+    {
+      "id": "changed_preference",
+      "prompt": "Redesign the landing page with a bold hero and a retro palette.",
+      "answers": [
+        {
+          "type": "choice",
+          "index": 0
+        },
+        {
+          "type": "custom",
+          "text": "Actually, reverse that: use a cool 1980s neon palette instead of the warm retro direction, and keep the bold hero."
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 3,
+      "explicit_review": true,
+      "analysis_timeout_ms": 400000,
+      "rewrite_timeout_ms": 240000
+    },
+    {
+      "id": "code_ast_signature",
+      "prompt": "Change p95LatencyMs in include/metrics.hpp to compute the percentile from a t-digest sketch instead of sorting every sample. Keep the function signature and the public API unchanged.",
+      "answers": [
+        {
+          "type": "custom",
+          "text": "Use one t-digest with 100 centroids per function, keep the exact p95LatencyMs signature, and do not change the public header's other declarations."
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "explicit_review": false,
+      "analysis_timeout_ms": 400000,
+      "rewrite_timeout_ms": 240000,
+      "project_directory": "D:\\Stardust\\roclint-wt-eval\\tests\\fixtures\\companion_eval\\code_project",
+      "index_timeout_ms": 180000
+    }
+  ]
+}

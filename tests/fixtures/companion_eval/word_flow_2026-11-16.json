@@ -1,0 +1,39 @@
+{
+  "synthetic": true,
+  "schema": "roclint.word_flow.v1",
+  "scope": "Synthetic native-model word question and answer challenge; semantic judgments require human review.",
+  "cases": [
+    {
+      "id": "compact_music",
+      "prompt": "Make a music collection app with compact typography, combining early web design with black-and-white illustrated album art. Keep album titles visible.",
+      "selected": "compact",
+      "quality": "Choices concern typography; preserve visible titles."
+    },
+    {
+      "id": "cinematic_plant",
+      "prompt": "Create a cinematic photograph of a fern on a windowsill.",
+      "selected": "cinematic",
+      "quality": "Concrete photographic choices; no claim that one composition defines cinematic."
+    },
+    {
+      "id": "quiet_help",
+      "prompt": "Make this writing assistant less intrusive while keeping context-aware suggestions.",
+      "selected": "intrusive",
+      "quality": "Choices concern when or where help appears; context awareness remains available."
+    },
+    {
+      "id": "held_out_immersive",
+      "prompt": "Make this museum exhibit description immersive while keeping every historical fact accurate.",
+      "selected": "immersive",
+      "quality": "Distinguish ways to engage the reader without inventing facts.",
+      "held_out": true
+    },
+    {
+      "id": "held_out_airy",
+      "prompt": "Make the planning dashboard feel airy while preserving every existing control and data field.",
+      "selected": "airy",
+      "quality": "Concrete presentation choices; no removal of controls or data.",
+      "held_out": true
+    }
+  ]
+}

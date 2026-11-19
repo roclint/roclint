@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -44,12 +45,16 @@
 #include "roclint/core/Result.hpp"
 #include "roclint/core/prompt_state/RevisionState.hpp"
 #include "roclint/intent/ConfirmedIntent.hpp"
+#include "roclint/intent/IntentBrief.hpp"
 #include "roclint/intent/InterventionStateMachine.hpp"
+#include "roclint/intent/SettledRequirementPolicy.hpp"
 #include "roclint/review/ApprovalRecord.hpp"
+#include "roclint/review/ComprehensionReview.hpp"
 #include "roclint/rewrite/RewriteProposal.hpp"
 #include "roclint/rewrite/RewriteValidator.hpp"
 #include "roclint/rewrite/CreativeExpansion.hpp"
 #include "roclint/storage/Database.hpp"
+#include "roclint/storage/PayloadCodec.hpp"
 #include "roclint/storage/PromptRepository.hpp"
 
 namespace roclint::host {
@@ -254,6 +259,8 @@ public:
     Q_PROPERTY(QString accessibilityStatus READ accessibilityStatus NOTIFY accessibilityTrustedChanged)
     Q_PROPERTY(bool ambientModeEnabled READ isAmbientModeEnabled WRITE setAmbientModeEnabled NOTIFY ambientModeEnabledChanged)
     Q_PROPERTY(bool isAmbientActive READ isAmbientActive NOTIFY ambientModeEnabledChanged)
+    Q_PROPERTY(bool ambientBadgeSuggestionsOnly READ ambientBadgeSuggestionsOnly WRITE setAmbientBadgeSuggestionsOnly NOTIFY ambientBadgeChanged)
+    Q_PROPERTY(bool wordReplacementReady READ wordReplacementReady NOTIFY wordRefinementChanged)
     Q_PROPERTY(bool isAmbientCapture READ isAmbientCapture NOTIFY captureSourceChanged)
     Q_PROPERTY(bool isAmbientAttached READ isAmbientAttached NOTIFY captureSourceChanged)
     Q_PROPERTY(QString captureTargetName READ captureTargetName NOTIFY captureSourceChanged)
@@ -278,6 +285,37 @@ public:
     Q_PROPERTY(QString wordRefinementClarificationQuestion READ wordRefinementClarificationQuestion NOTIFY wordRefinementChanged)
     Q_PROPERTY(bool wordRefinementApplying READ wordRefinementApplying NOTIFY wordRefinementChanged)
     Q_PROPERTY(QRect wordRefinementAnchorRect READ wordRefinementAnchorRect NOTIFY wordRefinementChanged)
+    Q_PROPERTY(bool wordCompanionVisible READ wordCompanionVisible NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QString wordCompanionState READ wordCompanionState NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QString wordCompanionMessage READ wordCompanionMessage NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QVariantList wordMarkRects READ wordMarkRects NOTIFY wordRefinementChanged)
+    Q_PROPERTY(bool wordMarkVisible READ wordMarkVisible NOTIFY wordRefinementChanged)
+    Q_PROPERTY(bool wordCanUndo READ wordCanUndo NOTIFY wordRefinementChanged)
+    Q_PROPERTY(QStringList wordClarificationChoices READ wordClarificationChoices NOTIFY wordRefinementChanged)
+
+    // Shared intent brief. Display summaries are never authority: raw answers and
+    // source excerpts are. Every item is bound to the current revision/snapshot.
+    Q_PROPERTY(bool hasIntentBrief READ hasIntentBrief NOTIFY intentBriefChanged)
+    Q_PROPERTY(QVariantList intentBriefItems READ intentBriefItems NOTIFY intentBriefChanged)
+    Q_PROPERTY(QStringList intentOpenChoiceIds READ intentOpenChoiceIds NOTIFY intentBriefChanged)
+    Q_PROPERTY(QString intentBriefSummary READ intentBriefSummary NOTIFY intentBriefChanged)
+
+    // Substantial adaptive interview. Each turn is one bounded model request; the
+    // interview itself has no fixed two/three-question ceiling.
+    Q_PROPERTY(bool isInterviewActive READ isInterviewActive NOTIFY interviewChanged)
+    Q_PROPERTY(bool canExploreInterview READ canExploreInterview NOTIFY interviewChanged)
+    Q_PROPERTY(int interviewTurnsCompleted READ interviewTurnsCompleted NOTIFY interviewChanged)
+    Q_PROPERTY(QString interviewQuestion READ interviewQuestion NOTIFY interviewChanged)
+    Q_PROPERTY(QString interviewConsequence READ interviewConsequence NOTIFY interviewChanged)
+    Q_PROPERTY(QVariantList interviewChoices READ interviewChoices NOTIFY interviewChanged)
+    Q_PROPERTY(bool isInterviewBusy READ isInterviewBusy NOTIFY interviewChanged)
+    Q_PROPERTY(QString interviewFeedback READ interviewFeedback NOTIFY interviewChanged)
+
+    // Independent comprehension review of a substantial rewrite.
+    Q_PROPERTY(QString comprehensionReviewState READ comprehensionReviewState NOTIFY comprehensionReviewChanged)
+    Q_PROPERTY(QString comprehensionInterpretation READ comprehensionInterpretation NOTIFY comprehensionReviewChanged)
+    Q_PROPERTY(QVariantList comprehensionFindings READ comprehensionFindings NOTIFY comprehensionReviewChanged)
+    Q_PROPERTY(bool canApplyReviewedOutput READ canApplyReviewedOutput NOTIFY comprehensionReviewChanged)
 
     Q_PROPERTY(QString scorerEngine READ scorerEngine NOTIFY scorerEngineChanged)
     Q_PROPERTY(QString scorerStatus READ scorerStatus NOTIFY scorerEngineChanged)
@@ -464,6 +502,9 @@ public:
     [[nodiscard]] QString accessibilityStatus() const;
     [[nodiscard]] bool isAmbientModeEnabled() const noexcept { return m_ambientModeEnabled; }
     void setAmbientModeEnabled(bool enabled);
+    [[nodiscard]] bool ambientBadgeSuggestionsOnly() const noexcept { return m_ambientBadgeSuggestionsOnly; }
+    void setAmbientBadgeSuggestionsOnly(bool enabled);
+    [[nodiscard]] bool wordReplacementReady() const;
     [[nodiscard]] bool isAmbientActive() const;
     [[nodiscard]] bool isAmbientCapture() const noexcept { return m_captureSource == CaptureSource::Ambient; }
     [[nodiscard]] bool isAmbientAttached() const noexcept {
@@ -471,7 +512,7 @@ public:
     }
     [[nodiscard]] QString captureTargetName() const;
     [[nodiscard]] QString deliveryLabel() const;
-    [[nodiscard]] bool isAmbientBadgeVisible() const noexcept { return m_ambientBadgeVisible; }
+    [[nodiscard]] bool isAmbientBadgeVisible() const;
     [[nodiscard]] int ambientBadgeX() const noexcept { return m_ambientBadgePos.x(); }
     [[nodiscard]] int ambientBadgeY() const noexcept { return m_ambientBadgePos.y(); }
     [[nodiscard]] QString ambientBadgeLabel() const { return m_ambientBadgeLabel; }
@@ -491,13 +532,63 @@ public:
     [[nodiscard]] QString wordRefinementClarificationQuestion() const { return m_wordRefinementClarificationQuestion; }
     [[nodiscard]] bool wordRefinementApplying() const noexcept { return m_wordRefinementInFlight; }
     [[nodiscard]] QRect wordRefinementAnchorRect() const noexcept { return m_wordRefinementAnchorRect; }
+    [[nodiscard]] bool wordCompanionVisible() const noexcept { return m_wordCompanionRequested && (m_hasWordRefinement || m_wordCompanionState != QLatin1String("idle")); }
+    [[nodiscard]] QString wordCompanionState() const { return m_wordCompanionState; }
+    [[nodiscard]] QString wordCompanionMessage() const { return m_wordCompanionMessage; }
+    [[nodiscard]] QVariantList wordMarkRects() const;
+    [[nodiscard]] bool wordMarkVisible() const;
+    [[nodiscard]] bool wordCanUndo() const;
+    [[nodiscard]] QStringList wordClarificationChoices() const { return m_wordClarificationChoices; }
+    Q_INVOKABLE quint64 undoWordRefinement(quint64 expectedVersion);
+    Q_INVOKABLE bool submitWordClarification(const QString& answer, quint64 expectedVersion);
 
     // Resolves the stable candidate identity before the write. The candidate id is optional only
     // for backward compatibility; the companion and HUD always pass it explicitly.
     Q_INVOKABLE quint64 applyWordRefinement(quint64 expectedVersion = 0, const QString& candidateId = QString());
     Q_INVOKABLE void selectWordRefinementCandidate(const QString& candidateId);
     Q_INVOKABLE void dismissWordRefinement();
+    Q_INVOKABLE void retryWordRefinement();
     Q_INVOKABLE void exploreInCompanion();
+    Q_INVOKABLE quint64 openRewriteFromCompanion(quint64 expectedVersion);
+
+    // Shared intent brief and adaptive interview. Return values are the state
+    // version the accepted transition publishes, or 0 when the request is refused
+    // synchronously (stale expectedVersion, no active question, unknown disposition,
+    // empty or unmatched answer). A bounded relevance check that fails later leaves
+    // the question open and reports through interviewFeedback without publishing a
+    // new version.
+    [[nodiscard]] bool hasIntentBrief() const;
+    [[nodiscard]] QVariantList intentBriefItems() const;
+    [[nodiscard]] QStringList intentOpenChoiceIds() const;
+    [[nodiscard]] QString intentBriefSummary() const;
+    [[nodiscard]] bool isInterviewActive() const noexcept { return m_interviewActive; }
+    [[nodiscard]] bool canExploreInterview() const;
+    [[nodiscard]] int interviewTurnsCompleted() const noexcept { return m_interviewTurnsCompleted; }
+    [[nodiscard]] QString interviewQuestion() const { return m_interviewQuestion; }
+    [[nodiscard]] QString interviewConsequence() const { return m_interviewConsequence; }
+    [[nodiscard]] QVariantList interviewChoices() const { return m_interviewChoices; }
+    [[nodiscard]] bool isInterviewBusy() const noexcept { return m_interviewBusy; }
+    [[nodiscard]] QString interviewFeedback() const { return m_interviewFeedback; }
+    Q_INVOKABLE quint64 openInterviewFromCompanion(quint64 expectedVersion);
+    Q_INVOKABLE quint64 submitInterviewResponse(const QString& text, const QString& disposition,
+                                                quint64 expectedVersion);
+    Q_INVOKABLE quint64 changeIntentDecision(const QString& itemId, const QString& newText,
+                                             quint64 expectedVersion);
+
+    // Independent comprehension review. A substantial rewrite is applicable only
+    // while the current review is fresh and has no unresolved blocking/required
+    // findings. The handler seam defaults to a not-run/failed result; production
+    // wiring replaces it with bridge::reviewComprehension.
+    using ComprehensionReviewHandler =
+        std::function<bridge::ComprehensionReviewResult(const bridge::ComprehensionReviewRequest&)>;
+    void setComprehensionReviewHandler(ComprehensionReviewHandler handler);
+    [[nodiscard]] QString comprehensionReviewState() const;
+    [[nodiscard]] QString comprehensionInterpretation() const;
+    [[nodiscard]] QVariantList comprehensionFindings() const;
+    [[nodiscard]] bool canApplyReviewedOutput() const;
+    Q_INVOKABLE quint64 requestComprehensionReview(quint64 expectedVersion);
+    Q_INVOKABLE quint64 resolveComprehensionFinding(const QString& findingId, const QString& resolution,
+                                                     quint64 expectedVersion);
 
     [[nodiscard]] QString scorerEngine() const;
     [[nodiscard]] QString scorerStatus() const;
@@ -627,6 +718,10 @@ public:
     [[nodiscard]] bool codebaseWatcherDegradedForTesting() const noexcept { return m_codebaseWatcherDegraded; }
     [[nodiscard]] double lastGroundingApplyMsForTesting() const noexcept { return m_lastGroundingApplyMs; }
     [[nodiscard]] QString groundedIntentXmlForTesting(const QString& prompt);
+    // Runs the real automatic discovery policy with injected S1 evidence. Used to
+    // prove that a lone RULE_CONFLICT + exact values keeps the original without
+    // calling Granite. The triage must be sealed for the current revision.
+    quint64 startDiscoveryWithTriageForTesting(core::analysis::PromptTriage triage);
     void setResidencyInputsForTesting(std::optional<qint64> idleMs, std::optional<bool> lowMemory) {
         m_residencyIdleOverride = idleMs; m_residencyPressureOverride = lowMemory; applyResidencyPolicy();
     }
@@ -648,6 +743,20 @@ public:
     [[nodiscard]] const core::intent::WorkingIntentState& workingIntentForTesting() const noexcept {
         return m_workingIntent;
     }
+    void setComprehensionReviewForTesting(ComprehensionReviewHandler handler) {
+        setComprehensionReviewHandler(std::move(handler));
+    }
+    [[nodiscard]] const std::vector<core::intent::InterviewRecord>& interviewRecordsForTesting() const noexcept {
+        return m_interviewRecords;
+    }
+    [[nodiscard]] core::intent::IntentBrief intentBriefForTesting() const { return buildIntentBrief(); }
+    [[nodiscard]] QString interviewFrozenWordForTesting() const {
+        if (!m_interviewWordContext.has_value()) return QString();
+        return QStringLiteral("%1|%2|%3")
+            .arg(m_interviewWordContext->original)
+            .arg(m_interviewWordContext->startOffset)
+            .arg(m_interviewWordContext->endOffset);
+    }
     [[nodiscard]] AsyncRepository* repositoryForTesting() noexcept { return m_repository.get(); }
 #endif
 
@@ -657,6 +766,7 @@ public slots:
     // App/Start-menu activation shows the retained draft without capturing another app.
     void activateCard();
     void hideCard();
+    void minimizeCard();
     void toggleCard();
     void showDashboard();
     void hideDashboard();
@@ -709,6 +819,8 @@ public slots:
     // Opens the card on the prompt last observed in an eligible app.
     Q_INVOKABLE quint64 openFromAmbient();
     Q_INVOKABLE void dismissAmbientBadge();
+    // The passive icon is the only automatic surface. A card requires this explicit action.
+    Q_INVOKABLE void activateAmbientIndicator();
 
     // History.
     Q_INVOKABLE QVariantList getRecentSessions();
@@ -748,6 +860,7 @@ public slots:
     Q_INVOKABLE QPoint calculateAmbientAnchor(int width, int height);
 
 signals:
+    void companionRewriteRequested(const QString& draft, quint64 expectedVersion);
     void storageBusyChanged();
     void storageCommandFinished(quint64 requestId, const QString& name, bool succeeded, const QString& errorCode, const QString& message);
     void cardVisibilityChanged();
@@ -786,6 +899,9 @@ signals:
     void inferenceSpeedChanged();
     void approvalChanged();
     void wordRefinementChanged();
+    void intentBriefChanged();
+    void interviewChanged();
+    void comprehensionReviewChanged();
     void groundingChanged();
     void accessibilityTrustedChanged();
     void ambientModeEnabledChanged();
@@ -994,7 +1110,8 @@ private:
     void refreshActiveItemPresentation();
     AsyncTask<core::Status> finalizeIntentIfQuiet();
     AsyncTask<core::Status> applyTransition(const char* name, quint64 expectedVersion,
-                         std::function<core::Status(core::intent::WorkingIntentState&)> transition);
+                         std::function<core::Status(core::intent::WorkingIntentState&)> transition,
+                         bool advanceInterviewAfter = true);
 
     [[nodiscard]] core::rewrite::ValidationResult validateCurrentProposal() const;
     [[nodiscard]] std::optional<core::review::ApprovalContext> approvalContext() const;
@@ -1007,7 +1124,7 @@ private:
 
     [[nodiscard]] bridge::GraniteTransport currentTransport(const std::string& outputSchema, const PipelineTicket* ticket = nullptr,
         const QString& operation = {}, const QString& prompt = {}, const QString& intentId = {}, const QString& profileId = {},
-        std::shared_ptr<std::atomic_bool> cancellation = {}) const;
+        std::shared_ptr<std::atomic_bool> cancellation = {}, const QString& surface = {}) const;
     int analysisGroupBudgetMs() const;
     void prepareNativeModel();
     void initializeResidencyPolicy();
@@ -1055,10 +1172,69 @@ private:
                                      const bridge::WordRefinementRequest& request,
                                      core::Result<bridge::WordRefinementResponse> result);
     void clearWordRefinement();
+    AsyncTask<core::Status> commitPendingWordClarification();
+    void setWordCompanionState(const QString& state, const QString& message = {});
+    quint64 refuseWordApply(const QString& reason);
     void startPendingWordRefinement();
+
+    // Shared intent brief and adaptive interview.
+    [[nodiscard]] core::intent::IntentBrief buildIntentBrief() const;
+    [[nodiscard]] std::vector<core::intent::SupplementalDecision> supplementalInterviewDecisions() const;
+    [[nodiscard]] static std::vector<core::intent::SupplementalDecision> supplementalDecisionsFrom(
+        const std::vector<core::intent::InterviewRecord>& records);
+    AsyncTask<core::Status> commitInterviewRecordChange(
+        quint64 expectedVersion, std::vector<core::intent::InterviewRecord> nextRecords);
+    AsyncTask<void> finishInterviewCustomCheck(PipelineTicket ticket, quint64 expectedVersion,
+                                               std::string questionId, quint64 questionSerial,
+                                               QString answer,
+                                               core::Result<bridge::ClarificationCheckResponse> result);
+    void captureWordContextForInterview();
+    void seedInterviewFromDecision();
+    void advanceInterview();
+    void requestInterviewFollowUp();
+    void finishInterviewFollowUp(quint64 serial, std::string revisionId, std::uint64_t workspaceEpoch,
+                                 std::uint64_t pipelineSerial,
+                                 core::Result<bridge::GraniteOptionDiscoveryResponse> result);
+    void cancelInterview();
+    void setInterviewFeedback(const QString& feedback);
+    [[nodiscard]] core::intent::InterviewRecord* findInterviewRecord(std::string_view id);
+    [[nodiscard]] const core::intent::InterviewRecord* findInterviewRecord(std::string_view id) const;
+    void publishInterviewQuestion(const core::intent::InterviewRecord& record);
+    void recordInterviewTurn(core::intent::InterviewRecord& record, std::string disposition,
+                             std::string rawAnswer, std::string selectedChoiceId);
+    AsyncTask<core::Status> submitInterviewResponseOperation(QString text, QString disposition,
+                                                             quint64 expectedVersion,
+                                                             std::string questionId,
+                                                             quint64 questionSerial);
+    AsyncTask<core::Status> changeIntentDecisionOperation(QString itemId, QString newText,
+                                                          quint64 expectedVersion);
+
+    // Independent comprehension review of a substantial rewrite.
+    struct ComprehensionBinding {
+        std::string sessionId{};
+        std::string revisionId{};
+        std::string proposalId{};
+        std::string proposalHash{};
+        std::uint64_t workspaceEpoch{0};
+        std::uint64_t stateVersion{0};
+
+        bool operator==(const ComprehensionBinding&) const = default;
+    };
+    enum class ReviewState : quint8 { NotRun, Running, Ready, Failed, Stale };
+    [[nodiscard]] std::optional<ComprehensionBinding> currentReviewBinding() const;
+    [[nodiscard]] bool reviewBindingMatchesCurrent() const;
+    [[nodiscard]] bool findingIsResolved(std::string_view findingId) const;
+    [[nodiscard]] bool hasUnresolvedRequiredFindings() const;
+    [[nodiscard]] bool reviewIsFreshAndComplete() const;
+    void markComprehensionReviewStale();
+    AsyncTask<core::Status> requestComprehensionReviewOperation(quint64 expectedVersion);
+    AsyncTask<core::Status> resolveComprehensionFindingOperation(QString findingId, QString resolution,
+                                                                  quint64 expectedVersion);
+    void openReviewFindingInInterview(const bridge::ComprehensionFinding& finding);
+
     void onFieldObserved(const ObservedField& field);
     void followAmbientDraft();
-    void onFieldLost();
+    void onFieldLost(bool interrupted = false);
     void onAmbientDebounce();
     void startAmbientCheck();
     void setAmbientBadge(bool visible, const QString& label = QString());
@@ -1080,6 +1256,32 @@ private:
     HostContextObservation m_hostContext;
     QString m_capturedDraftText;
     bool m_hasWordRefinement{false};
+    bool m_wordCompanionRequested{false};
+    QString m_wordCompanionState{QStringLiteral("idle")};
+    QString m_wordCompanionMessage;
+    quint64 m_wordFeedbackGeneration{0};
+    struct PendingWordApply {
+        quint64 requestId{0}, fieldToken{0}, workspaceEpoch{0}, pipelineSerial{0}, feedbackGeneration{0};
+        qint64 processId{0};
+        QString before, after, original, replacement;
+        QRect anchor;
+        int startOffset{0};
+        bool undo{false};
+    };
+    std::optional<PendingWordApply> m_pendingWordApply;
+    std::optional<PendingWordApply> m_wordUndo;
+    QList<QRect> m_wordMarkRects;
+    QStringList m_wordClarificationChoices;
+    QString m_wordClarificationAnswer;
+    // Only semantically accepted answers, bound to their exact external draft.
+    struct WordClarificationDecision {
+        QString question, answer, original, draftText;
+        quint64 fieldToken{0}, workspaceEpoch{0}, pipelineSerial{0};
+        qint64 processId{0};
+        std::string sessionId, revisionId;
+    };
+    std::optional<WordClarificationDecision> m_acceptedWordClarification;
+    std::optional<WordClarificationDecision> m_pendingWordClarificationHandoff;
     QString m_wordRefinementOriginal;
     QString m_wordRefinementReplacement;
     QString m_wordRefinementExplanation;
@@ -1109,6 +1311,52 @@ private:
     bool m_wordRefinementGenerating{false};
     std::function<void()> m_pendingWordRefinement;
     std::shared_ptr<std::atomic_bool> m_wordRefinementCancellation;
+
+    // Frozen word context carried into the substantial interview. The popup closes,
+    // but the exact draft, selected span and proposed wording are preserved.
+    struct InterviewWordContext {
+        QString draftText{};
+        int startOffset{-1};
+        int endOffset{-1};
+        QString original{};
+        QString replacement{};
+        QString explanation{};
+        QString assumption{};
+        QString selectedCandidateId{};
+        QVariantList candidates{};
+        quint64 fieldToken{0};
+        quint64 workspaceEpoch{0};
+        std::string textHash{};
+    };
+    std::optional<InterviewWordContext> m_interviewWordContext;
+    bool m_interviewActive{false};
+    bool m_interviewOpenPending{false};
+    bool m_interviewBusy{false};
+    bool m_interviewComplete{false};
+    int m_interviewTurnsCompleted{0};
+    QString m_interviewQuestion;
+    QString m_interviewConsequence;
+    QString m_interviewFeedback;
+    QVariantList m_interviewChoices;
+    std::string m_interviewCurrentRecordId;
+    std::vector<core::intent::InterviewRecord> m_interviewRecords;
+    quint64 m_interviewSerial{0};
+    quint64 m_interviewQuestionSerial{0};
+    quint64 m_interviewBusySerial{0};
+    std::shared_ptr<std::atomic_bool> m_interviewCancellation;
+
+    // Comprehension review state. Findings are never auto-resolved, and a stale
+    // binding cannot authorize apply.
+    ReviewState m_reviewState{ReviewState::NotRun};
+    bridge::ComprehensionReviewResult m_reviewResult{};
+    ComprehensionBinding m_reviewBinding{};
+    std::map<std::string, std::string> m_findingResolutions{};
+    std::string m_reviewReturnedFindingId{};
+    quint64 m_reviewSerial{0};
+    ComprehensionReviewHandler m_reviewHandler;
+    // The production reviewer is one bounded native request. Keep its cancellation
+    // token so a stale proposal/workspace/revision can stop obsolete queued work.
+    std::shared_ptr<std::atomic_bool> m_reviewCancellation;
 
     struct StorageCommand { quint64 id; quint64 editSerial; QString name; std::function<AsyncTask<core::Status>()> operation; bool modelCompletion{false}; };
     struct DraftBatch { core::RevisionState next; quint64 expectedVersion; std::vector<std::pair<quint64, quint64>> requests; };
@@ -1184,6 +1432,22 @@ private:
         quint64 configurationGeneration;
     };
     std::optional<PendingNativeRewrite> m_pendingNativeRewrite;
+    struct PendingNativeReview {
+        ComprehensionBinding binding;
+        quint64 serial;
+        quint64 configurationGeneration;
+    };
+    std::optional<PendingNativeReview> m_pendingNativeReview;
+    struct PendingNativeClarification {
+        quint64 stateVersion;
+        quint64 serial;
+        quint64 configurationGeneration;
+        quint64 workspaceEpoch;
+        std::string revisionId;
+        std::string itemId;
+        QString answer;
+    };
+    std::optional<PendingNativeClarification> m_pendingNativeClarification;
     QString m_juliaModelDirectory;
     QString m_juliaPython;
     QString m_juliaDevice;
@@ -1284,10 +1548,12 @@ private:
 
     std::unique_ptr<IAccessibilityBridge> m_accessibility;
     bool m_ambientModeEnabled{false};
+    bool m_ambientBadgeSuggestionsOnly{false};
     CaptureSource m_captureSource{CaptureSource::Widget};
     std::optional<AmbientObservation> m_ambientObservation;
     std::optional<AmbientObservation> m_captureTarget;
     bool m_followAmbientDraft{false};
+    bool m_resumeMinimizedCard{false};
     bool m_widgetDraftEdited{false};
     quint64 m_captureOpenGeneration{0};
     bool m_captureOpenPending{false};
@@ -1298,6 +1564,7 @@ private:
     bool m_ambientCheckInFlight{false};
     bool m_ambientCheckPending{false};
     QTimer m_ambientDebounce;
+    QTimer m_ambientBadgeRecovery;
     bool m_ambientBadgeVisible{false};
     QPoint m_ambientBadgePos;
     QString m_ambientBadgeLabel;

@@ -17,7 +17,17 @@ inline GraniteReasoningPlan graniteReasoningPlan(const QJsonObject& manifest, co
                                                 const QString& instructions, bool referenceDisabled = false) {
     const auto policy = manifest.value("reasoning").toObject();
     GraniteReasoningPlan plan;
+    // Independent comprehension review returns an interpretation plus an open
+    // findings array (summary, verbatim excerpt and proposed repair per finding).
+    // A 512-token audit reservation can truncate that object; use the existing
+    // 1535-token rewrite answer reservation, which still fits the frozen 2048
+    // output budget together with its reasoning reservation. Only a contract on
+    // the instruction first line selects a profile; quoted text in user data
+    // cannot.
+    const bool comprehensionReview = instructions.startsWith(
+        QLatin1String("<instructions>\nInstruction contract: granite.comprehension_review."));
     plan.profile = instructions.startsWith(QLatin1String("<instructions>\nInstruction contract: granite.goldfish_")) ? QStringLiteral("audit")
+        : comprehensionReview ? QStringLiteral("rewrite")
         : operation == QLatin1String("granite_word_refinement") ? QStringLiteral("word")
         : operation == QLatin1String("granite_rewrite") ? QStringLiteral("rewrite") : QStringLiteral("analysis");
     const auto profile = policy.value("profiles").toObject().value(plan.profile).toObject();

@@ -3,8 +3,84 @@
 #include <QGuiApplication>
 #include <QScreen>
 #include <QCursor>
+#include <QtMath>
+#include <QDebug>
+#include <algorithm>
+
+#ifdef Q_OS_WIN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace roclint::host {
+
+PlacementResult ScreenPlacement::calculateIndicatorPosition(const QRect& field, const QRect& availableGeometry) {
+    constexpr int size = 28, gap = 6, margin = 8;
+    if (field.isEmpty() || availableGeometry.isEmpty()) return {100, 100, false};
+    const QRect safe = availableGeometry.adjusted(margin, margin, -margin, -margin);
+    // Prefer outside the editor so the indicator cannot cover its Send/control row.
+    const QPoint candidates[] = {
+        {field.right() + gap + 1, field.bottom() - size + 1},
+        {field.right() - size + 1, field.bottom() + gap + 1},
+        {field.right() - size + 1, field.top() - gap - size},
+        {field.left() - gap - size, field.bottom() - size + 1}
+    };
+    for (const auto& point : candidates)
+        if (safe.contains(QRect(point, QSize(size, size)))) return {point.x(), point.y(), false};
+    // A screen-filling editor can leave no external space. Keep the tiny control
+    // on-screen at its edge; never move it to the middle of the draft.
+    return {std::clamp(field.right() - size + 1, safe.left(), std::max(safe.left(), safe.right() - size + 1)),
+            std::clamp(field.bottom() - size + 1, safe.top(), std::max(safe.top(), safe.bottom() - size + 1)), true};
+}
+
+PlacementResult ScreenPlacement::determineIndicatorPosition(const QRect& field) {
+    auto* screen = QGuiApplication::screenAt(field.center());
+    if (!screen) screen = QGuiApplication::primaryScreen();
+    return calculateIndicatorPosition(field, screen ? screen->availableGeometry() : QRect());
+}
+
+QRect ScreenPlacement::mapNativeRect(const QRect& rect, const QRect& nativeScreen, const QRect& logicalScreen) {
+    if (rect.isEmpty() || nativeScreen.isEmpty() || logicalScreen.isEmpty()) return {};
+    const double sx = static_cast<double>(logicalScreen.width()) / nativeScreen.width();
+    const double sy = static_cast<double>(logicalScreen.height()) / nativeScreen.height();
+    const int x = logicalScreen.x() + qFloor((static_cast<double>(rect.x()) - nativeScreen.x()) * sx);
+    const int y = logicalScreen.y() + qFloor((static_cast<double>(rect.y()) - nativeScreen.y()) * sy);
+    const int endX = logicalScreen.x() + qCeil((static_cast<double>(rect.x()) + rect.width() - nativeScreen.x()) * sx);
+    const int endY = logicalScreen.y() + qCeil((static_cast<double>(rect.y()) + rect.height() - nativeScreen.y()) * sy);
+    return QRect(x, y, std::max(1, endX - x), std::max(1, endY - y));
+}
+
+QRect ScreenPlacement::fromNativePixels(const QRect& rect) {
+    if (rect.isEmpty()) return {};
+#ifdef Q_OS_WIN
+    const RECT bounds{rect.x(), rect.y(), rect.x() + rect.width(), rect.y() + rect.height()};
+    const auto monitor = MonitorFromRect(&bounds, MONITOR_DEFAULTTONEAREST);
+    MONITORINFOEXW info{};
+    info.cbSize = sizeof(info);
+    if (!monitor || !GetMonitorInfoW(monitor, reinterpret_cast<MONITORINFO*>(&info))) return {};
+    const auto device = QString::fromWCharArray(info.szDevice);
+    const auto deviceName = [](QString name) {
+        if (name.startsWith(QStringLiteral("\\\\.\\"))) name.remove(0, 4);
+        return name;
+    };
+    for (const auto* screen : QGuiApplication::screens()) {
+        if (deviceName(screen->name()).compare(deviceName(device), Qt::CaseInsensitive) != 0) continue;
+        const auto& native = info.rcMonitor;
+        const auto mapped = mapNativeRect(rect, QRect(native.left, native.top, native.right - native.left,
+                                        native.bottom - native.top), screen->geometry());
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
+            qInfo() << "[Roclint geometry] monitor=" << device << "native=" << rect << "logical=" << mapped;
+        return mapped;
+    }
+    // Unknown monitor mapping uses the existing unknown-anchor fallback, not a
+    // guess that applies one display's scale to another display's coordinates.
+    return {};
+#else
+    return rect;
+#endif
+}
 
 PlacementResult ScreenPlacement::calculateClampedPosition(
     const QPoint& cursorPos,
@@ -139,6 +215,51 @@ PlacementResult ScreenPlacement::calculateAnchorPosition(
     }
 
     return PlacementResult{targetX, targetY, clamped};
+}
+
+PlacementResult ScreenPlacement::calculateReviewPosition(const QRect& field, const QSize& size, const QRect& workArea) {
+    if (workArea.isEmpty()) return {100, 100, false};
+
+    constexpr int margin = 12;
+    constexpr int gap = 10;
+    const auto safe = workArea.adjusted(margin, margin, -margin, -margin);
+    const int maxX = safe.right() - size.width() + 1;
+    const int maxY = safe.bottom() - size.height() + 1;
+    const auto clamp = [&](const QPoint& point) {
+        return QPoint(
+            maxX < safe.left() ? workArea.left() : std::clamp(point.x(), safe.left(), maxX),
+            maxY < safe.top() ? workArea.top() : std::clamp(point.y(), safe.top(), maxY));
+    };
+
+    const QPoint dock = clamp(QPoint(maxX, safe.top()));
+    if (field.isEmpty() || !workArea.intersects(field)) return {dock.x(), dock.y(), false};
+
+    const int alignedX = field.right() - size.width() + 1;
+    const QPoint candidates[] = {
+        {alignedX, field.top() - size.height() - gap},
+        {field.right() + gap + 1, field.bottom() - size.height() + 1},
+        {field.left() - size.width() - gap, field.bottom() - size.height() + 1},
+        {alignedX, field.bottom() + gap + 1},
+    };
+    const auto overlap = [&](const QPoint& point) {
+        const QRect intersection = QRect(point, size).intersected(field);
+        return qint64(intersection.width()) * intersection.height();
+    };
+
+    QPoint best = dock;
+    for (const QPoint& candidate : candidates) {
+        const QPoint point = clamp(candidate);
+        if (overlap(point) == 0) return {point.x(), point.y(), point != candidate};
+        if (overlap(point) < overlap(best)) best = point;
+    }
+    return {best.x(), best.y(), true};
+}
+
+PlacementResult ScreenPlacement::determineReviewPosition(const QRect& field, const QSize& size) {
+    auto* screen = field.isEmpty() ? nullptr : QGuiApplication::screenAt(field.center());
+    if (!screen) screen = QGuiApplication::screenAt(QCursor::pos());
+    if (!screen) screen = QGuiApplication::primaryScreen();
+    return calculateReviewPosition(field, size, screen ? screen->availableGeometry() : QRect());
 }
 
 PlacementResult ScreenPlacement::determineTargetPosition(int cardWidth, int cardHeight) {

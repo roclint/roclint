@@ -55,7 +55,8 @@ std::string IntentProvenanceBuilder::computeIntentHash(const ConfirmedIntent& in
 Result<ConfirmedIntent> IntentProvenanceBuilder::buildConfirmedIntent(const analysis::AnalysisSnapshot& finalSnapshot,
                                                                       const analysis::OverallPolicyResult& policy,
                                                                       const WorkingIntentState& state,
-                                                                      std::int64_t createdAtMs) {
+                                                                      std::int64_t createdAtMs,
+                                                                      const std::vector<SupplementalDecision>& supplemental) {
     if (auto status = analysis::validateAnalysisSnapshot(finalSnapshot); !status.ok()) return status.error();
     const auto& snapshot = finalSnapshot.normalized;
 
@@ -152,6 +153,21 @@ Result<ConfirmedIntent> IntentProvenanceBuilder::buildConfirmedIntent(const anal
 
     for (const auto& c : snapshot.conflicts) {
         resolveGeneric(c.id, c.blocking);
+    }
+
+    // Explicit host-recorded interview decisions. The user's wording is authoritative;
+    // these IDs intentionally are not analysis item IDs, so a snapshot decision with the
+    // same identity always takes precedence and no duplicate can be introduced.
+    for (const auto& decision : supplemental) {
+        if (decision.itemId.empty() || decision.text.empty()) continue;
+        const bool duplicate = std::any_of(intent.items.begin(), intent.items.end(),
+                                           [&](const ConfirmedItem& item) { return item.itemId == decision.itemId; });
+        if (duplicate) continue;
+        intent.items.push_back(ConfirmedItem{decision.itemId, IntentResolutionKind::CustomText, "",
+                                             decision.text, decision.text, decision.rationale});
+        if (!listContains(intent.visibleItemIds, decision.itemId)) {
+            intent.visibleItemIds.push_back(decision.itemId);
+        }
     }
 
     intent.intentHash = computeIntentHash(intent);

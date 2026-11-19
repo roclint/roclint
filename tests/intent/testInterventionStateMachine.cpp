@@ -1,4 +1,6 @@
 #include "roclint/intent/InterventionStateMachine.hpp"
+#include "roclint/intent/IntentBrief.hpp"
+#include "roclint/intent/SettledRequirementPolicy.hpp"
 #include "support/check.hpp"
 #include "support/fixtures.hpp"
 
@@ -296,27 +298,300 @@ void testManualRequest() {
     ROCLINT_CHECK(p.decision.reason == InterventionReasonCode::UserRequestedManual);
 }
 
+namespace {
+
+BriefItemKind kindOf(const IntentBrief& brief, const std::string& id) {
+    const auto* item = brief.find(id);
+    ROCLINT_CHECK(item != nullptr);
+    return item->kind;
+}
+
+IntentBrief briefFor(const fx::Pipeline& p, const std::vector<InterviewRecord>& records = {}) {
+    IntentBriefInputs inputs;
+    inputs.sessionId = p.analysis.sessionId;
+    inputs.revisionId = p.analysis.baseRevisionId;
+    inputs.revisionText = p.text;
+    inputs.analysis = &p.analysis;
+    inputs.policy = &p.policy;
+    inputs.workingIntent = &p.state;
+    inputs.interviewRecords = records;
+    return IntentBriefBuilder::build(inputs);
+}
+
+} // namespace
+
+void testIntentBriefSeparatesRequirementsDecisionsAndOpenChoices() {
+    const std::string text =
+        "Keep the dashboard compact for everyday browsing. "
+        "Do not remove the navigation bar. "
+        "I'd prefer smaller type over tighter spacing.";
+    auto a = fx::AnalysisBuilder("sess_a", "rev_sess_a_1", text)
+                 .group("What should compact mean?", {"Smaller type", "Tighter spacing"}, "compact")
+                 .assumption("The dashboard is for desktop only", "everyday browsing")
+                 .missing("Which screen size matters?", true)
+                 .build();
+    fx::Pipeline p(text, a);
+    ROCLINT_CHECK(p.decision.verdict == InterventionVerdict::Clarify);
+    ROCLINT_CHECK(*p.decision.activeItemId == "grp_0");
+
+    auto before = briefFor(p);
+    ROCLINT_CHECK(before.hasKind(BriefItemKind::SourceRequirement));
+    ROCLINT_CHECK(before.hasKind(BriefItemKind::Prohibition));
+    ROCLINT_CHECK(before.hasKind(BriefItemKind::Preference));
+    ROCLINT_CHECK(before.hasKind(BriefItemKind::ProposedAssumption));
+    ROCLINT_CHECK(!before.displaySummary.empty());
+    // The display summary is a count, not a replacement for the verbatim source.
+    ROCLINT_CHECK(before.displaySummary.find("smaller type") == std::string::npos);
+    bool sawRequirement = false;
+    for (const auto& item : before.items) {
+        if (item.kind == BriefItemKind::SourceRequirement) {
+            sawRequirement = true;
+            ROCLINT_CHECK(item.sourceExcerpt.find("compact") != std::string::npos);
+        }
+        if (item.kind == BriefItemKind::Prohibition) {
+            ROCLINT_CHECK(item.sourceExcerpt.find("Do not remove") != std::string::npos);
+            ROCLINT_CHECK(item.status == BriefItemStatus::Confirmed);
+        }
+        if (item.kind == BriefItemKind::Preference) {
+            ROCLINT_CHECK(item.status == BriefItemStatus::Confirmed);
+            ROCLINT_CHECK(item.sourceExcerpt.find("prefer") != std::string::npos);
+        }
+    }
+    ROCLINT_CHECK(sawRequirement);
+
+    ROCLINT_CHECK(InterventionStateMachine::applyInterviewChoice(p.analysis, p.state, "grp_0", "alt_0_0").ok());
+    p.reevaluate();
+    auto after = briefFor(p);
+    ROCLINT_CHECK(kindOf(after, "grp_0") == BriefItemKind::ConfirmedDecision);
+    ROCLINT_CHECK(after.find("grp_0")->status == BriefItemStatus::Confirmed);
+    ROCLINT_CHECK(after.find("grp_0")->text == "Smaller type");
+    // An already-settled source requirement survives the decision.
+    bool requirementSurvived = false;
+    for (const auto& item : after.items) {
+        if (item.kind == BriefItemKind::SourceRequirement &&
+            item.sourceExcerpt.find("Keep the dashboard compact") != std::string::npos) {
+            requirementSurvived = true;
+        }
+    }
+    ROCLINT_CHECK(requirementSurvived);
+    const auto openIds = after.openChoiceIds();
+    ROCLINT_CHECK(std::find(openIds.begin(), openIds.end(), "mdc_0") != openIds.end());
+    ROCLINT_CHECK(std::find(openIds.begin(), openIds.end(), "asm_0") == openIds.end());
+}
+
+void testInterviewSkipAndUnknownStayOpenWithoutConsumingBudget() {
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    const auto rounds = p.state.roundsCompleted;
+    ROCLINT_CHECK(InterventionStateMachine::applyInterviewSkip(p.analysis, p.state, "grp_0").ok());
+    ROCLINT_CHECK(p.state.roundsCompleted == rounds);
+    ROCLINT_CHECK(p.state.isSkipped("grp_0"));
+    ROCLINT_CHECK(!p.state.isResolved("grp_0"));
+    p.reevaluate();
+    ROCLINT_CHECK(*p.decision.activeItemId == "grp_1");
+
+    ROCLINT_CHECK(InterventionStateMachine::applyInterviewUnknown(
+                      p.analysis, p.state, "grp_1", "I don't know yet").ok());
+    ROCLINT_CHECK(p.state.hasUncertainty("grp_1"));
+    ROCLINT_CHECK(p.state.uncertaintyNotes["grp_1"] == "I don't know yet");
+    ROCLINT_CHECK(!p.state.isResolved("grp_1"));
+    ROCLINT_CHECK(p.state.roundsCompleted == rounds);
+    p.reevaluate();
+    ROCLINT_CHECK(*p.decision.activeItemId == "grp_2");
+
+    auto brief = briefFor(p);
+    const auto* skipped = brief.find("grp_0");
+    ROCLINT_CHECK(skipped != nullptr && skipped->kind == BriefItemKind::OpenChoice &&
+                  skipped->status == BriefItemStatus::Open);
+    const auto* unknown = brief.find("grp_1");
+    ROCLINT_CHECK(unknown != nullptr && unknown->kind == BriefItemKind::OpenChoice &&
+                  unknown->status == BriefItemStatus::Open);
+    ROCLINT_CHECK(unknown->rawAnswer == "I don't know yet");
+    // A skip or unknown is never a confirmed decision.
+    for (const auto* decision : brief.confirmedDecisions()) {
+        ROCLINT_CHECK(decision->analysisItemId != "grp_0" && decision->analysisItemId != "grp_1");
+    }
+}
+
+void testDecisionChangeSupersedesAndPreservesProvenance() {
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    ROCLINT_CHECK(InterventionStateMachine::applyInterviewChoice(p.analysis, p.state, "grp_0", "alt_0_0").ok());
+    p.reevaluate();
+    ROCLINT_CHECK(InterventionStateMachine::applyDecisionChange(
+                      p.analysis, p.state, "grp_0", "alt_0_1", 5000).ok());
+    ROCLINT_CHECK(p.state.confirmedAlternatives["grp_0"] == "alt_0_1");
+    ROCLINT_CHECK(p.state.supersededDecisions.size() == 1);
+    ROCLINT_CHECK(p.state.supersededDecisions[0].previousValue == "Lower latency per call");
+    ROCLINT_CHECK(p.state.supersededDecisions[0].previousKind == "SELECTED_ALTERNATIVE");
+
+    auto brief = briefFor(p);
+    const auto* current = brief.find("grp_0");
+    ROCLINT_CHECK(current != nullptr && current->kind == BriefItemKind::ConfirmedDecision);
+    ROCLINT_CHECK(current->text == "Higher batch throughput");
+    bool sawSuperseded = false;
+    for (const auto& item : brief.items) {
+        if (item.kind != BriefItemKind::SupersededDecision) continue;
+        sawSuperseded = true;
+        ROCLINT_CHECK(item.status == BriefItemStatus::Superseded);
+        ROCLINT_CHECK(item.rawAnswer == "Lower latency per call");
+        ROCLINT_CHECK(item.analysisItemId == "grp_0");
+    }
+    ROCLINT_CHECK(sawSuperseded);
+
+    // A custom correction replaces the alternative and stores the verbatim answer.
+    ROCLINT_CHECK(InterventionStateMachine::applyDecisionChange(
+                      p.analysis, p.state, "grp_0", "I'd prefer the batch path for nightly imports", 6000).ok());
+    ROCLINT_CHECK(p.state.confirmedAlternatives.count("grp_0") == 0);
+    ROCLINT_CHECK(p.state.customResolutions["grp_0"] == "I'd prefer the batch path for nightly imports");
+    ROCLINT_CHECK(p.state.supersededDecisions.size() == 2);
+    auto custom = briefFor(p);
+    ROCLINT_CHECK(custom.find("grp_0")->kind == BriefItemKind::Preference);
+    ROCLINT_CHECK(custom.find("grp_0")->rawAnswer == "I'd prefer the batch path for nightly imports");
+}
+
+void testUnicodeSourceExcerptsRemainVerbatim() {
+    const std::string text =
+        "Keep the caf\xC3\xA9 header compact, and do not move the \xE2\x80\x9Clogo\xE2\x80\x9D.";
+    auto a = fx::AnalysisBuilder("sess_a", "rev_sess_a_1", text)
+                 .group("What should compact mean here?", {"Caf\xC3\xA9 header type", "Caf\xC3\xA9 header spacing"},
+                        "caf\xC3\xA9 header compact")
+                 .build();
+    fx::Pipeline p(text, a);
+    auto brief = briefFor(p);
+    bool sawUnicode = false;
+    for (const auto& item : brief.items) {
+        if (item.sourceExcerpt.find("caf\xC3\xA9") == std::string::npos) continue;
+        sawUnicode = true;
+        ROCLINT_CHECK(text.find(item.sourceExcerpt) != std::string::npos);
+        if (!item.sourceRef.empty() && item.sourceRef.find("#bytes:") != std::string::npos) {
+            const auto at = item.sourceRef.find("#bytes:");
+            const auto dash = item.sourceRef.find('-', at);
+            const auto start = std::stoul(item.sourceRef.substr(at + 7, dash - at - 7));
+            const auto end = std::stoul(item.sourceRef.substr(dash + 1));
+            ROCLINT_CHECK(end <= text.size());
+            ROCLINT_CHECK(text.substr(start, end - start) == item.sourceExcerpt);
+        }
+    }
+    ROCLINT_CHECK(sawUnicode);
+}
+
+void testFollowUpDecisionsAndSupersessionStayInTheBrief() {
+    InterviewRecord record;
+    record.id = "iv_q_1";
+    record.question = "Which browsing behavior matters most?";
+    record.consequence = "Changes how the library is arranged.";
+    record.origin = "model_followup";
+    record.disposition = "custom";
+    record.rawAnswer = "I'd prefer a fast A-Z jump list";
+    record.asked = true;
+    record.previousAnswers.push_back("A search-first layout");
+
+    fx::Pipeline p(fx::kThreeGroupPrompt, fx::threeGroupAnalysis());
+    auto brief = briefFor(p, {record});
+    const auto* decision = brief.find("iv_q_1");
+    ROCLINT_CHECK(decision != nullptr && decision->kind == BriefItemKind::Preference);
+    ROCLINT_CHECK(decision->rawAnswer == "I'd prefer a fast A-Z jump list");
+    ROCLINT_CHECK(decision->status == BriefItemStatus::Confirmed);
+    bool sawSuperseded = false;
+    for (const auto& item : brief.items) {
+        if (item.kind == BriefItemKind::SupersededDecision && item.analysisItemId == "iv_q_1") {
+            sawSuperseded = true;
+            ROCLINT_CHECK(item.rawAnswer == "A search-first layout");
+        }
+    }
+    ROCLINT_CHECK(sawSuperseded);
+}
+
+void testExactQuantityBoundariesAndConversions() {
+    const std::string prompt = "Respond to 95% of requests within 500 ms.";
+    const auto tokens = exactRequirementTokens(prompt);
+    ROCLINT_CHECK(tokens.size() == 2);
+    ROCLINT_CHECK(exactRequirementTokens("Use 1990s and 1960s references.").empty());
+    ROCLINT_CHECK(exactRequirementTokens("A v500ms identifier and a 500ms_suffix.").empty());
+
+    // Whole parsed quantities, never numeric substrings or floating-point epsilon.
+    ROCLINT_CHECK(droppedExactRequirements(prompt, "Use 1500 ms for 195% of requests.").size() == 2);
+    for (const auto& candidate : {"1500 ms", "-500 ms", "500ms_suffix", "v500ms",
+                                 "0.5000000001 seconds", "500 KB"}) {
+        ROCLINT_CHECK(droppedExactRequirements("Use 500 ms.", candidate).size() == 1);
+    }
+    for (const auto& candidate : {"500ms", "500 milliseconds", "0.5 seconds", ".5 secs",
+                                 "5e-1 seconds", "+0.500 second", "500.000 ms"}) {
+        ROCLINT_CHECK(droppedExactRequirements("Use 500 ms.", candidate).empty());
+    }
+    ROCLINT_CHECK(droppedExactRequirements(prompt, "Use 0.5 seconds for 95.0% of requests.").empty());
+    ROCLINT_CHECK(droppedExactRequirements("Use -500 ms.", "Use 500 ms.").size() == 1);
+    ROCLINT_CHECK(droppedExactRequirements("Use 1 MB.", "Use 1000 KB.").empty());
+    ROCLINT_CHECK(droppedExactRequirements("Use 1 MiB.", "Use 1024 KiB.").empty());
+    ROCLINT_CHECK(droppedExactRequirements("Use 1 MB.", "Use 0.001 GB.").empty());
+    ROCLINT_CHECK(droppedExactRequirements("Use 1 MB.", "Use 1 MiB.").size() == 1);
+    ROCLINT_CHECK(droppedExactRequirements("Use 9007199254740993 ms.",
+                                          "Use 9007199254740992 ms.").size() == 1);
+    ROCLINT_CHECK(droppedExactRequirements("Use 1e999999999999 ms.",
+                                          "Use 1e999999999999 ms.").empty());
+    ROCLINT_CHECK(droppedExactRequirements("Use 1e999999999999 ms.",
+                                          "Use 2e999999999999 ms.").size() == 1);
+}
+
+void testLongUnicodeClauseClippingPreservesSourceSpans() {
+    for (const auto& codepoint : {std::string("\xC3\xA9"), std::string("\xE2\x82\xAC"),
+                                  std::string("\xF0\x9F\x8C\xB1")}) {
+        for (std::size_t prefix = 509; prefix <= 513; ++prefix) {
+            const std::string text = "Keep the title; " + std::string(prefix, 'x') +
+                                     codepoint + " and preserve the full heading";
+            const auto clauses = extractSourceClauses(text);
+            ROCLINT_CHECK(clauses.size() == 2);
+            const auto& clipped = clauses.back();
+            ROCLINT_CHECK(clipped.truncated);
+            ROCLINT_CHECK(!clipped.excerpt.empty() && clipped.excerpt.size() <= 512);
+            ROCLINT_CHECK(analysis::isValidSpan(text, {clipped.startByte, clipped.endByte}));
+            ROCLINT_CHECK(text.substr(clipped.startByte, clipped.endByte - clipped.startByte) ==
+                          clipped.excerpt);
+            ROCLINT_CHECK(clipped.endByte - clipped.startByte == clipped.excerpt.size());
+        }
+    }
+    const std::string boundary = std::string(509, 'x') + "\xE2\x82\xAC";
+    const auto complete = extractSourceClauses(boundary);
+    ROCLINT_CHECK(complete.size() == 1 && !complete.front().truncated);
+    ROCLINT_CHECK(complete.front().excerpt == boundary && complete.front().endByte == 512);
+}
+
 } // namespace
 
 int main() {
+    std::cout << std::unitbuf;
     std::cout << "[Test InterventionStateMachine] Starting...\n";
-    testFixtureGroupsAreEligible();
-    testClearPromptReachesQuiet();
-    testBudgetAccountingAcrossThreeRounds();
-    testBudgetExhaustionWithItemsLeftGoesManual();
-    testSkipsAndAssumptionsConsumeBudget();
-    testExplicitManualAnswerAfterThreeChoices();
-    testNonBlockingConflictDoesNotBlock();
-    testBlockingConflictGoesManual();
-    testBlockingMissingDecisionTriggersIntervention();
-    testRejectedGroupIsNeverActive();
-    testConfirmChoiceRejectsForeignAlternative();
-    testUnrankedOrderingIsByEarliestByte();
-    testNanSafeRankedOrdering();
-    testScoreBindingMismatchGoesManual();
-    testProviderFailureReachesManual();
-    testStaleDecisionIsRejected();
-    testManualRequest();
+    const auto run = [](const char* name, auto check) {
+        std::cout << "  [RUN] " << name << '\n';
+        check();
+    };
+    run("testFixtureGroupsAreEligible", testFixtureGroupsAreEligible);
+    run("testClearPromptReachesQuiet", testClearPromptReachesQuiet);
+    run("testBudgetAccountingAcrossThreeRounds", testBudgetAccountingAcrossThreeRounds);
+    run("testBudgetExhaustionWithItemsLeftGoesManual", testBudgetExhaustionWithItemsLeftGoesManual);
+    run("testSkipsAndAssumptionsConsumeBudget", testSkipsAndAssumptionsConsumeBudget);
+    run("testExplicitManualAnswerAfterThreeChoices", testExplicitManualAnswerAfterThreeChoices);
+    run("testNonBlockingConflictDoesNotBlock", testNonBlockingConflictDoesNotBlock);
+    run("testBlockingConflictGoesManual", testBlockingConflictGoesManual);
+    run("testBlockingMissingDecisionTriggersIntervention", testBlockingMissingDecisionTriggersIntervention);
+    run("testRejectedGroupIsNeverActive", testRejectedGroupIsNeverActive);
+    run("testConfirmChoiceRejectsForeignAlternative", testConfirmChoiceRejectsForeignAlternative);
+    run("testUnrankedOrderingIsByEarliestByte", testUnrankedOrderingIsByEarliestByte);
+    run("testNanSafeRankedOrdering", testNanSafeRankedOrdering);
+    run("testScoreBindingMismatchGoesManual", testScoreBindingMismatchGoesManual);
+    run("testProviderFailureReachesManual", testProviderFailureReachesManual);
+    run("testStaleDecisionIsRejected", testStaleDecisionIsRejected);
+    run("testManualRequest", testManualRequest);
+    run("testIntentBriefSeparatesRequirementsDecisionsAndOpenChoices",
+        testIntentBriefSeparatesRequirementsDecisionsAndOpenChoices);
+    run("testInterviewSkipAndUnknownStayOpenWithoutConsumingBudget",
+        testInterviewSkipAndUnknownStayOpenWithoutConsumingBudget);
+    run("testDecisionChangeSupersedesAndPreservesProvenance",
+        testDecisionChangeSupersedesAndPreservesProvenance);
+    run("testUnicodeSourceExcerptsRemainVerbatim", testUnicodeSourceExcerptsRemainVerbatim);
+    run("testFollowUpDecisionsAndSupersessionStayInTheBrief",
+        testFollowUpDecisionsAndSupersessionStayInTheBrief);
+    run("testExactQuantityBoundariesAndConversions", testExactQuantityBoundariesAndConversions);
+    run("testLongUnicodeClauseClippingPreservesSourceSpans", testLongUnicodeClauseClippingPreservesSourceSpans);
     std::cout << "[Test InterventionStateMachine] All tests PASSED.\n";
     return 0;
 }

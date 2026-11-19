@@ -35,6 +35,9 @@ public:
         std::shared_ptr<std::atomic_bool> cancellation;
         bool thinkingEnabled{true};
         std::chrono::steady_clock::time_point deadline{std::chrono::steady_clock::time_point::max()};
+        // Optional opt-in timing-trace surface ("word", "interview", "rewrite",
+        // "review", "apply"). Additive: callers that leave it empty are unaffected.
+        QString surface;
     };
     explicit NativeGraniteRuntimeWorker(QObject* parent = nullptr, QString worker = {});
     ~NativeGraniteRuntimeWorker() override;
@@ -86,6 +89,7 @@ private:
         QJsonObject envelope;
         std::shared_ptr<Call> call;
         std::chrono::steady_clock::time_point deadline;
+        std::chrono::steady_clock::time_point traceStart;
     };
     struct Launch { QString directory; QString quantization; };
     void startWorker();
@@ -100,7 +104,9 @@ private:
     void receive(const QJsonObject& response);
     void submit(const RequestContext& context, const QString& operation, const QString& instructions,
                 const QString& schema, const std::shared_ptr<Call>& call);
-    void cancelCall(const std::shared_ptr<Call>& call);
+    void cancelCall(const std::shared_ptr<Call>& call, const char* reason = "caller_cancelled");
+    void settleReady(const QString& readyDetail);
+    void beginReadyTrace(const QString& reason);
     void resetSpeedMetrics(quint64 requestId = 0);
     bool updateSpeedMetrics(quint64 requestId, const QJsonObject& metrics, Call& call);
 
@@ -131,6 +137,8 @@ private:
     QList<qint64> restarts_;
     quint64 restartEpoch_{0};
     quint64 requestEpoch_{0};
+    std::optional<std::chrono::steady_clock::time_point> readyTraceStart_;
+    QString readyTraceReason_;
     double lastTokensPerSecond_{0.0};
     double lastDecodeTokensPerSecond_{0.0};
     double lastGenerationTokensPerSecond_{0.0};

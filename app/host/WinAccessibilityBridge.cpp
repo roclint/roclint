@@ -3,6 +3,7 @@
 #include "TerminalAdapter.hpp"
 #include "GuiCapturePolicy.hpp"
 #include "RangeInjectionPolicy.hpp"
+#include "WordSpan.hpp"
 
 #if defined(Q_OS_WIN)
 
@@ -12,6 +13,7 @@
 #include <windows.h>
 #include <oleauto.h>
 #include <uiautomation.h>
+#include <spellcheck.h>
 #include <wrl/client.h>
 
 #include <QStringList>
@@ -20,6 +22,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -39,6 +42,8 @@ namespace {
 
 constexpr int kMaxReadChars = 16000;
 constexpr auto kPollInterval = std::chrono::milliseconds(500);
+constexpr auto kReadRecoveryPollInterval = std::chrono::milliseconds(80);
+constexpr auto kReadRecoveryDuration = std::chrono::milliseconds(750);
 constexpr auto kElectronWakeDelay = std::chrono::milliseconds(60);
 constexpr DWORD kTerminalEchoMs = 300;
 
@@ -455,12 +460,17 @@ private:
                 onFocusChanged();
             }
             const auto now = std::chrono::steady_clock::now();
-            if (m_observing && (textDirty || now >= nextPoll)) {
+            const bool pollDue = now >= nextPoll;
+            if (m_observing && (textDirty || pollDue)) {
                 onFocusChanged(); // Recover focus changes missed by an Electron accessibility rebuild.
                 readAndEmit();
             }
-            if (now >= nextPoll) {
-                nextPoll = now + kPollInterval;
+            const auto afterRead = std::chrono::steady_clock::now();
+            const bool recovering = m_readRecoveryUntil && afterRead < *m_readRecoveryUntil;
+            if (pollDue) {
+                nextPoll = afterRead + (recovering ? kReadRecoveryPollInterval : kPollInterval);
+            } else if (recovering) {
+                nextPoll = std::min(nextPoll, afterRead + kReadRecoveryPollInterval);
             }
             for (const auto& r : injections) {
                 performInjection(r);
@@ -470,6 +480,7 @@ private:
             }
         }
         applyObserving(false);
+        m_spellChecker.Reset();
         m_uia.Reset();
         if (m_clipboardOwner != nullptr) DestroyWindow(m_clipboardOwner);
         CoUninitialize();
@@ -514,6 +525,7 @@ private:
         m_focused = Focused{};
         m_capturedFields.clear();
         m_lastEmittedText.clear();
+        m_readRecoveryUntil.reset();
         emit fieldLost();
     }
 
@@ -624,6 +636,7 @@ private:
         if (!HostContextDetector::isAmbientEligibleApp(next.exe)) {
             m_focused = Focused{};
             m_lastEmittedText.clear();
+            m_readRecoveryUntil.reset();
             emit fieldLost();
             return;
         }
@@ -660,21 +673,30 @@ private:
                                     .arg(next.exe).arg(next.token).arg(type).arg(next.eligible);
         }
 
+        const bool sameEditorWindow = m_focused.eligible && m_focused.window && m_focused.window == foreground &&
+                                      next.exe.compare(m_focused.exe, Qt::CaseInsensitive) == 0;
         m_focused = next;
         m_lastEmittedText.clear();
         if (!m_focused.eligible) {
-            emit fieldLost();
+            if (sameEditorWindow) {
+                reportReadInterruption();
+            } else {
+                m_readRecoveryUntil.reset();
+                emit fieldLost();
+            }
             return;
         }
         m_textSink.Attach(new TextSink([this](IUIAutomationElement*) { markTextDirty(); }));
         m_uia->AddAutomationEventHandler(UIA_Text_TextChangedEventId, element.Get(), TreeScope_Element, nullptr,
                                          m_textSink.Get());
         m_valueSink.Attach(new ValueSink([this](IUIAutomationElement*) { markTextDirty(); }));
-        PROPERTYID props[] = {UIA_ValueValuePropertyId};
-        SAFEARRAY* list = SafeArrayCreateVector(VT_I4, 0, 1);
+        PROPERTYID props[] = {UIA_ValueValuePropertyId, UIA_ValueIsReadOnlyPropertyId};
+        constexpr LONG propertyCount = sizeof(props) / sizeof(props[0]);
+        SAFEARRAY* list = SafeArrayCreateVector(VT_I4, 0, propertyCount);
         if (list != nullptr) {
-            LONG index = 0;
-            SafeArrayPutElement(list, &index, &props[0]);
+            for (LONG index = 0; index < propertyCount; ++index) {
+                SafeArrayPutElement(list, &index, &props[index]);
+            }
             m_uia->AddPropertyChangedEventHandler(element.Get(), TreeScope_Element, nullptr, m_valueSink.Get(), list);
             SafeArrayDestroy(list);
         }
@@ -747,7 +769,7 @@ private:
         return lines.join(QLatin1Char('\n'));
     }
 
-    std::optional<ObservedField> readField(const Focused& target) {
+    std::optional<ObservedField> readField(const Focused& target, bool observeWord = false) {
         if (!target.element || !target.eligible) {
             return std::nullopt;
         }
@@ -760,6 +782,7 @@ private:
             executableName(target.pid).compare(target.exe, Qt::CaseInsensitive) != 0 ||
             !HostContextDetector::isAmbientEligibleApp(target.exe)) return std::nullopt;
         ObservedField f;
+        f.geometryInNativePixels = true;
         f.fieldToken = target.token;
         f.appIdentifier = target.exe;
         f.appDisplayName = target.exe.endsWith(QLatin1String(".exe"), Qt::CaseInsensitive)
@@ -782,7 +805,9 @@ private:
             f.fieldRect = QRect(bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top);
         }
 
-        int caret = -1;
+        ComPtr<IUIAutomationTextRange> geometryDocument;
+        const bool richComposer = f.kind == FieldKind::GuiEditor && isElectronHost(target.exe);
+        bool fromWritableValue = false;
         if (target.xterm) {
             f.text = readXtermBuffer(el);
         } else {
@@ -796,6 +821,7 @@ private:
                     if (SUCCEEDED(valuePattern->get_CurrentValue(&value))) {
                         f.text = fromBstr(value);
                         valueRead = true;
+                        fromWritableValue = !f.text.isEmpty();
                     }
                     SysFreeString(value);
                 }
@@ -825,7 +851,7 @@ private:
                         SysFreeString(value);
                     }
                     if (f.text.size() > kMaxReadChars) return std::nullopt;
-                    readCaret(el, document.Get(), f, caret);
+                    geometryDocument = document;
                 }
             }
             CONTROLTYPEID type = 0;
@@ -851,58 +877,204 @@ private:
                                           isElectronHost(target.exe)) ||
                 f.text.size() > kMaxReadChars) return std::nullopt;
         }
-        normalizeText(f.text, caret);
-        f.caretOffset = caret >= 0 ? std::min(caret, static_cast<int>(f.text.size())) : -1;
+        normalizeText(f.text, f.caretOffset);
+        if (geometryDocument) readCaret(el, geometryDocument.Get(), f);
+        if (richComposer && !fromWritableValue && !f.text.trimmed().isEmpty() && f.caretOffset <= 0) {
+            BSTR name = nullptr, help = nullptr;
+            el->get_CurrentName(&name);
+            el->get_CurrentHelpText(&help);
+            const bool placeholder = isRichComposerPlaceholder(f.text, fromBstr(name), fromBstr(help),
+                                                               target.exe, f.caretOffset);
+            SysFreeString(name);
+            SysFreeString(help);
+            // A hint cannot establish a writable empty field. Use the same
+            // Copy fallback as other unverified rich editor reads.
+            if (placeholder) return std::nullopt;
+        }
+        if (observeWord && geometryDocument && f.kind == FieldKind::GuiEditor) {
+            // When the user puts the caret inside the draft, keep working on
+            // that word. At the end of a draft, an earlier typo can take priority.
+            if (f.caretOffset >= 0 && QStringView(f.text).mid(f.caretOffset).trimmed().isEmpty()) {
+                if (const auto misspelling = recentMisspelling(f.text, f.caretOffset))
+                    readWordGeometry(geometryDocument.Get(), f, *misspelling);
+            }
+            if (f.wordRects.isEmpty()) {
+                if (const auto span = wordSpanAtCaret(f.text, f.caretOffset))
+                    readWordGeometry(geometryDocument.Get(), f, *span);
+            }
+        }
         return f;
     }
 
-    void readCaret(IUIAutomationElement* el, IUIAutomationTextRange* document, ObservedField& f, int& caret) {
-        ComPtr<IUIAutomationTextPattern2> text2;
-        if (FAILED(el->GetCurrentPatternAs(UIA_TextPattern2Id, IID_PPV_ARGS(text2.GetAddressOf()))) || !text2) {
-            return;
+    std::optional<std::pair<int, int>> recentMisspelling(const QString& text, int caret) {
+        if (caret < 0 || text.isEmpty()) return std::nullopt;
+        if (!m_spellCheckerInitialized) {
+            m_spellCheckerInitialized = true;
+            wchar_t locale[LOCALE_NAME_MAX_LENGTH]{};
+            ComPtr<ISpellCheckerFactory> factory;
+            if (GetUserDefaultLocaleName(locale, LOCALE_NAME_MAX_LENGTH) &&
+                SUCCEEDED(CoCreateInstance(__uuidof(SpellCheckerFactory), nullptr, CLSCTX_INPROC_SERVER,
+                                           IID_PPV_ARGS(factory.GetAddressOf()))) && factory) {
+                factory->CreateSpellChecker(locale, m_spellChecker.GetAddressOf());
+            }
         }
-        BOOL active = FALSE;
+        if (!m_spellChecker) return std::nullopt;
+        if (text != m_spellCheckedText) {
+            m_spellCheckedText = text;
+            m_misspellings.clear();
+            // Check a bounded suffix once per edit. Avoid starting in a partial word.
+            int start = std::max(0, static_cast<int>(text.size()) - 1600);
+            while (start > 0 && start < text.size() && !text[start - 1].isSpace()) ++start;
+            if (start == text.size()) return std::nullopt;
+            const auto suffix = text.mid(start).toStdWString();
+            ComPtr<IEnumSpellingError> errors;
+            if (FAILED(m_spellChecker->Check(suffix.c_str(), errors.GetAddressOf())) || !errors) return std::nullopt;
+            for (int i = 0; i < 64; ++i) {
+                ComPtr<ISpellingError> error;
+                if (errors->Next(error.GetAddressOf()) != S_OK || !error) break;
+                CORRECTIVE_ACTION action = CORRECTIVE_ACTION_NONE;
+                ULONG offset = 0, length = 0;
+                if (FAILED(error->get_CorrectiveAction(&action)) ||
+                    (action != CORRECTIVE_ACTION_REPLACE && action != CORRECTIVE_ACTION_GET_SUGGESTIONS) ||
+                    FAILED(error->get_StartIndex(&offset)) || FAILED(error->get_Length(&length)) ||
+                    length < 4 || offset > suffix.size() || length > suffix.size() - offset) continue;
+                const int first = start + static_cast<int>(offset);
+                const int last = first + static_cast<int>(length);
+                const auto word = wordSpanAtCaret(text, first);
+                const auto spelling = QStringView(text).mid(first, last - first);
+                if (word && word->first == first && word->second == last &&
+                    std::all_of(spelling.begin(), spelling.end(), [](QChar c) { return c.isLower(); }))
+                    m_misspellings.emplace_back(first, last);
+            }
+        }
+        std::optional<std::pair<int, int>> closest;
+        for (const auto& word : m_misspellings) {
+            if (word.first <= caret && (!closest || word.first > closest->first)) closest = word;
+        }
+        return closest;
+    }
+
+    void readWordGeometry(IUIAutomationTextRange* document, ObservedField& field, std::pair<int, int> span) {
+        if (field.fieldRect.isEmpty()) return;
+        const auto [start, end] = span;
+        ComPtr<IUIAutomationTextRange> range, prefix;
+        if (FAILED(document->Clone(range.GetAddressOf())) || !range ||
+            FAILED(range->MoveEndpointByRange(TextPatternRangeEndpoint_End, range.Get(), TextPatternRangeEndpoint_Start))) return;
+        int moved = 0;
+        if (start && (FAILED(range->MoveEndpointByUnit(TextPatternRangeEndpoint_Start, TextUnit_Character, start, &moved)) || moved != start)) return;
+        if (FAILED(range->MoveEndpointByRange(TextPatternRangeEndpoint_End, range.Get(), TextPatternRangeEndpoint_Start)) ||
+            FAILED(range->MoveEndpointByUnit(TextPatternRangeEndpoint_End, TextUnit_Character, end - start, &moved)) || moved != end - start) return;
+        // UIA character units can differ from UTF-16/normalized LF offsets. Both
+        // the prefix and span must agree before trusting a bounding rectangle.
+        if (FAILED(document->Clone(prefix.GetAddressOf())) || !prefix ||
+            FAILED(prefix->MoveEndpointByRange(TextPatternRangeEndpoint_End, range.Get(), TextPatternRangeEndpoint_Start))) return;
+        auto prefixText = readRangeText(prefix.Get()), selected = readRangeText(range.Get());
+        if (!prefixText || !selected) return;
+        int unusedCaret = -1;
+        normalizeText(*prefixText, unusedCaret);
+        normalizeText(*selected, unusedCaret);
+        if (*prefixText != field.text.left(start) || *selected != field.text.mid(start, end - start)) return;
+        SAFEARRAY* array = nullptr;
+        if (FAILED(range->GetBoundingRectangles(&array)) || !array) return;
+        QList<QRect> bounds;
+        double* values = nullptr;
+        LONG low = 0, high = -1;
+        if (SafeArrayGetDim(array) == 1 && SUCCEEDED(SafeArrayGetLBound(array, 1, &low)) &&
+            SUCCEEDED(SafeArrayGetUBound(array, 1, &high)) && high >= low && (high - low + 1) % 4 == 0 && high - low < 128 &&
+            SUCCEEDED(SafeArrayAccessData(array, reinterpret_cast<void**>(&values)))) {
+            for (LONG i = 0; i < high - low + 1; i += 4) {
+                bool valid = true;
+                for (int j = 0; j < 4; ++j) valid = valid && std::isfinite(values[i + j]) && std::abs(values[i + j]) < 10000000;
+                if (!valid || values[i + 2] <= 0 || values[i + 3] <= 0) { bounds.clear(); break; }
+                const auto rect = QRect(qRound(values[i]), qRound(values[i + 1]), qRound(values[i + 2]), qRound(values[i + 3])).intersected(field.fieldRect);
+                if (!rect.isEmpty()) bounds.append(rect);
+            }
+            SafeArrayUnaccessData(array);
+        }
+        SafeArrayDestroy(array);
+        if (bounds.isEmpty()) return;
+        field.wordStartOffset = start; field.wordEndOffset = end; field.wordRects = bounds;
+    }
+
+    void readCaret(IUIAutomationElement* el, IUIAutomationTextRange* document, ObservedField& field) {
         ComPtr<IUIAutomationTextRange> caretRange;
-        if (FAILED(text2->GetCaretRange(&active, caretRange.GetAddressOf())) || !caretRange) {
-            return;
+        ComPtr<IUIAutomationTextPattern2> text2;
+        BOOL active = FALSE;
+        if (SUCCEEDED(el->GetCurrentPatternAs(UIA_TextPattern2Id, IID_PPV_ARGS(text2.GetAddressOf()))) && text2 &&
+            FAILED(text2->GetCaretRange(&active, caretRange.GetAddressOf()))) caretRange.Reset();
+        if (!caretRange && field.kind == FieldKind::GuiEditor) {
+            ComPtr<IUIAutomationTextPattern> text;
+            ComPtr<IUIAutomationTextRangeArray> selection;
+            int count = 0;
+            if (FAILED(el->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(text.GetAddressOf()))) || !text ||
+                FAILED(text->GetSelection(selection.GetAddressOf())) || !selection ||
+                FAILED(selection->get_Length(&count)) || count != 1 ||
+                FAILED(selection->GetElement(0, caretRange.GetAddressOf()))) return;
         }
+        int span = 0;
+        if (!caretRange || FAILED(caretRange->CompareEndpoints(TextPatternRangeEndpoint_Start, caretRange.Get(),
+                                                             TextPatternRangeEndpoint_End, &span)) || span != 0) return;
+        ComPtr<IUIAutomationTextRange> before;
+        if (FAILED(document->Clone(before.GetAddressOf())) || !before ||
+            FAILED(before->MoveEndpointByRange(TextPatternRangeEndpoint_End, caretRange.Get(),
+                                               TextPatternRangeEndpoint_Start))) return;
+        auto prefix = readRangeText(before.Get());
+        if (!prefix) return;
+        normalizeText(*prefix, field.caretOffset);
+        if (!field.text.startsWith(*prefix)) return;
+        field.caretOffset = static_cast<int>(prefix->size());
         SAFEARRAY* rects = nullptr;
         if (SUCCEEDED(caretRange->GetBoundingRectangles(&rects))) {
-            f.caretRect = rectFromArray(rects);
+            field.caretRect = rectFromArray(rects);
         }
-        if (f.caretRect.isNull()) {
+        if (field.caretRect.isNull()) {
             ComPtr<IUIAutomationTextRange> expanded;
             if (SUCCEEDED(caretRange->Clone(expanded.GetAddressOf())) && expanded &&
                 SUCCEEDED(expanded->ExpandToEnclosingUnit(TextUnit_Character)) &&
                 SUCCEEDED(expanded->GetBoundingRectangles(&rects))) {
-                f.caretRect = rectFromArray(rects);
+                field.caretRect = rectFromArray(rects);
             }
         }
-        ComPtr<IUIAutomationTextRange> before;
-        if (SUCCEEDED(document->Clone(before.GetAddressOf())) && before &&
-            SUCCEEDED(before->MoveEndpointByRange(TextPatternRangeEndpoint_End, caretRange.Get(),
-                                                  TextPatternRangeEndpoint_Start))) {
-            BSTR prefix = nullptr;
-            if (SUCCEEDED(before->GetText(kMaxReadChars, &prefix))) {
-                caret = static_cast<int>(SysStringLen(prefix));
-            }
-            SysFreeString(prefix);
+    }
+
+    void reportReadInterruption() {
+        // Retry quickly while the badge can still recover. Repeated failures
+        // keep the original deadline so a read-only editor returns to normal polling.
+        if (!m_readRecoveryUntil) {
+            m_readRecoveryUntil = std::chrono::steady_clock::now() + kReadRecoveryDuration;
+            emit fieldReadInterrupted();
         }
     }
 
     void readAndEmit() {
         DWORD pid = 0;
-        GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+        const HWND foreground = GetForegroundWindow();
+        GetWindowThreadProcessId(foreground, &pid);
         if (pid == GetCurrentProcessId()) return; // Keep the target, without observing behind the HUD.
-        auto field = readField(m_focused);
+        if (!m_focused.eligible) return; // Focus handling already published the loss.
+        if (m_focused.window && foreground != m_focused.window) {
+            m_lastEmittedText.clear();
+            m_readRecoveryUntil.reset();
+            emit fieldLost();
+            return;
+        }
+        auto field = readField(m_focused, true);
         if (!field.has_value()) {
             if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS") && m_failedReadToken != m_focused.token) {
                 qInfo() << "[Roclint capture] No writable text provider for token" << m_focused.token;
                 m_failedReadToken = m_focused.token;
             }
-            emit fieldLost();
+            // Republish even an identical draft when the provider recovers.
+            m_lastEmittedText.clear();
+            if (m_focused.window && foreground == m_focused.window) {
+                reportReadInterruption();
+            } else {
+                m_readRecoveryUntil.reset();
+                emit fieldLost();
+            }
             return;
         }
+        m_readRecoveryUntil.reset();
         // A focus change must not discard the COM identity that an open HUD captured.
         // Keep a bounded set of readable targets; never retain captured text here.
         if (!field->isPassword && !field->elevationMismatch) {
@@ -911,10 +1083,15 @@ private:
         }
         const QString signature = field->text + QChar(0x1F) + QString::number(field->caretOffset) + QChar(0x1F) +
                                   QString::number(field->fieldToken);
-        if (signature == m_lastEmittedText && !m_emitRefreshId) {
+        const bool geometryChanged = field->fieldRect != m_lastEmittedFieldRect ||
+                                     field->caretRect != m_lastEmittedCaretRect || field->wordRects != m_lastEmittedWordRects;
+        if (signature == m_lastEmittedText && !geometryChanged && !m_emitRefreshId) {
             return;
         }
         m_lastEmittedText = signature;
+        m_lastEmittedFieldRect = field->fieldRect;
+        m_lastEmittedCaretRect = field->caretRect;
+        m_lastEmittedWordRects = field->wordRects;
         field->refreshRequestId = m_emitRefreshId;
         if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
             // Metadata only: never log captured prompt content or selections.
@@ -1177,34 +1354,7 @@ private:
             return false;
         };
 
-        // ValuePattern approach (Notepad, WordPad, standard edit control)
-        ComPtr<IUIAutomationValuePattern> value;
-        if (!isElectronHost(target.exe) &&
-            SUCCEEDED(target.element->GetCurrentPatternAs(UIA_ValuePatternId, IID_PPV_ARGS(value.GetAddressOf()))) &&
-            value) {
-            BOOL readOnly = TRUE;
-            value->get_CurrentIsReadOnly(&readOnly);
-            if (!readOnly) {
-                BSTR text = SysAllocStringLen(reinterpret_cast<const OLECHAR*>(newFullText.utf16()),
-                                              static_cast<UINT>(newFullText.size()));
-                const HRESULT hr = value->SetValue(text);
-                SysFreeString(text);
-                const auto after = readField(target);
-                if (SUCCEEDED(hr) && after.has_value() && currentDraft(*after) == newFullText) {
-                    finishRange(r, InjectionOutcome::Injected, QString());
-                    return;
-                }
-                if (!after || currentDraft(*after) != r.expectedCurrentText) {
-                    // A failed SetValue may have partially written text. Never paste a snapshot
-                    // over it as a recovery mechanism.
-                    finishRange(r, InjectionOutcome::FieldChanged,
-                                QStringLiteral("The editor changed the text during a write. Review it before retrying."));
-                    return;
-                }
-            }
-        }
-
-        // TextPattern / selection approach (Electron, Monaco, rich text editors)
+        // Use the provider's exact selection before considering whole-field writes.
         bool selectedRange = false;
         ComPtr<IUIAutomationTextPattern> textPattern;
         if (SUCCEEDED(target.element->GetCurrentPatternAs(UIA_TextPatternId, IID_PPV_ARGS(textPattern.GetAddressOf()))) && textPattern) {
@@ -1273,6 +1423,35 @@ private:
             }
         }
 
+        // Some simple editors only expose a value. Prefer the exact text
+        // selection above when available: a whole-field setter on RichEdit
+        // can normalize paragraph breaks or replace the editor's formatting.
+        ComPtr<IUIAutomationValuePattern> value;
+        if (!selectedRange && !isElectronHost(target.exe) &&
+            SUCCEEDED(target.element->GetCurrentPatternAs(UIA_ValuePatternId, IID_PPV_ARGS(value.GetAddressOf()))) &&
+            value) {
+            BOOL readOnly = TRUE;
+            value->get_CurrentIsReadOnly(&readOnly);
+            if (!readOnly) {
+                BSTR text = SysAllocStringLen(reinterpret_cast<const OLECHAR*>(newFullText.utf16()),
+                                              static_cast<UINT>(newFullText.size()));
+                const HRESULT hr = value->SetValue(text);
+                SysFreeString(text);
+                const auto after = readField(target);
+                if (SUCCEEDED(hr) && after.has_value() && currentDraft(*after) == newFullText) {
+                    finishRange(r, InjectionOutcome::Injected, QString());
+                    return;
+                }
+                if (!after || currentDraft(*after) != r.expectedCurrentText) {
+                    // A failed SetValue may have partially written text. Never paste a snapshot
+                    // over it as a recovery mechanism.
+                    finishRange(r, InjectionOutcome::FieldChanged,
+                                QStringLiteral("The editor changed the text during a write. Review it before retrying."));
+                    return;
+                }
+            }
+        }
+
         // The full-field fallback is permitted only when the exact preconditions still hold:
         // the same field is focused, it still contains the frozen pre-write text, and the
         // range path performed no write at all.
@@ -1331,6 +1510,10 @@ private:
 
     // Worker-thread state.
     ComPtr<IUIAutomation> m_uia;
+    ComPtr<ISpellChecker> m_spellChecker;
+    bool m_spellCheckerInitialized{false};
+    QString m_spellCheckedText;
+    std::vector<std::pair<int, int>> m_misspellings;
     HWND m_clipboardOwner{nullptr};
     ComPtr<IUIAutomationFocusChangedEventHandler> m_focusSink;
     ComPtr<IUIAutomationEventHandler> m_textSink;
@@ -1342,8 +1525,12 @@ private:
     quint64 m_failedReadToken{0};
     quint64 m_emitRefreshId{0};
     std::chrono::steady_clock::time_point m_refreshEchoUntil{};
+    std::optional<std::chrono::steady_clock::time_point> m_readRecoveryUntil;
     std::set<DWORD> m_wokenPids;
     QString m_lastEmittedText;
+    QRect m_lastEmittedFieldRect;
+    QRect m_lastEmittedCaretRect;
+    QList<QRect> m_lastEmittedWordRects;
 };
 
 } // namespace

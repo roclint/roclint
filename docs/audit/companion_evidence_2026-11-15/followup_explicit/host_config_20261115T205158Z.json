@@ -1,0 +1,28 @@
+{
+  "settings_directory": "D:\\Stardust\\roclint-wt-eval\\docs\\audit\\companion_evidence_2026-11-15\\followup_explicit\\probe-settings\\20261115T205158Z",
+  "settings": {
+    "python": "D:\\Stardust\\roclint\\build\\runtime\\julia-python\\Scripts\\python.exe",
+    "julia_directory": "D:\\Stardust\\roclint\\models\\julia-1",
+    "granite_directory": "D:\\Stardust\\roclint\\models\\granite-4.2-3b",
+    "worker": "D:\\Stardust\\roclint\\build\\Release\\roclint_granite_worker.exe",
+    "active_model": "native-granite:Q8_0"
+  },
+  "index_timeout_ms": 180000,
+  "scenarios": [
+    {
+      "id": "music_app_typography_explicit",
+      "prompt": "I'm building a music app. I want compact typography, a fusion of 1990s and 1960s/Revolver-era references, and easy browsing.",
+      "answers": [
+        {
+          "type": "custom",
+          "text": "Compact typography means smaller type sizes and tighter line spacing for dense lists, not fewer features or shortened labels. Keep browsing one tap away and keep artist and track names readable."
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "explicit_review": true,
+      "analysis_timeout_ms": 400000,
+      "rewrite_timeout_ms": 240000
+    }
+  ]
+}

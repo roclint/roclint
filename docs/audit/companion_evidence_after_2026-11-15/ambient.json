@@ -1,0 +1,91 @@
+{
+  "before": {
+    "cpu": null,
+    "gpu": {
+      "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+      "driver": "617.14",
+      "memory_total_mib": 8188,
+      "memory_used_mib": 2462,
+      "utilization_pct": 7,
+      "error": ""
+    },
+    "gpu_processes": [
+      "10836, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\CrossDeviceResume.exe, [N/A]",
+      "9884, C:\\Windows\\explorer.exe, [N/A]",
+      "13720, C:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe, [N/A]",
+      "12944, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe, [N/A]",
+      "15004, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe, [N/A]",
+      "13056, C:\\Windows\\System32\\NahimicSvc64.exe, [N/A]",
+      "13492, C:\\Program Files\\ReasonLabs\\Common\\Client\\v1.6.0\\rsAppUI.exe, [N/A]",
+      "20288, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\TextInputHost.exe, [N/A]",
+      "20704, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe, [N/A]",
+      "24160, C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe, [N/A]",
+      "19936, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+      "22192, C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe, [N/A]",
+      "4788, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.1111.2228.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe, [N/A]",
+      "23212, C:\\Program Files (x86)\\Steam\\steam.exe, [N/A]",
+      "24864, C:\\Windows\\System32\\ApplicationFrameHost.exe, [N/A]",
+      "10852, C:\\Program Files\\WindowsApps\\A-Volute.Nahimic_1.10.15.0_x64__w2gh52qy24etm\\Nahimic3.exe, [N/A]",
+      "27452, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.1111.2228.0_x64__2p2nqsd0c76g0\\app\\resources\\cua_node\\bin\\node_modules\\@oai\\sky\\bin\\windows\\swift\\x64\\codex-computer-use-swift.exe, [N/A]",
+      "13692, C:\\Program Files\\WindowsApps\\MicrosoftWindows.Client.WebExperience_526.28801.60.0_x64__cw5n1h2txyewy\\WidgetBoard.exe, [N/A]",
+      "33000, C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe, [N/A]",
+      "2440, C:\\Users\\kirby\\AppData\\Local\\Programs\\ai.opencode.desktop\\OpenCode.exe, [N/A]",
+      "7976, C:\\Users\\kirby\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe, [N/A]",
+      "28036, C:\\Users\\kirby\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe, [N/A]",
+      "35204, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe, [N/A]",
+      "6012, C:\\Windows\\System32\\ShellHost.exe, [N/A]"
+    ],
+    "utc": "2026-11-16T04:14:27.757978+00:00"
+  },
+  "during_cpu_pct": {
+    "count": 90,
+    "min": 26.2,
+    "median": 48.8,
+    "max": 99.2,
+    "mean": 49.7
+  },
+  "after": {
+    "cpu": {
+      "count": 90,
+      "min": 26.2,
+      "median": 48.8,
+      "max": 99.2,
+      "mean": 49.7
+    },
+    "gpu": {
+      "name": "NVIDIA GeForce RTX 4060 Laptop GPU",
+      "driver": "617.14",
+      "memory_total_mib": 8188,
+      "memory_used_mib": 2298,
+      "utilization_pct": 48,
+      "error": ""
+    },
+    "gpu_processes": [
+      "10836, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\CrossDeviceResume.exe, [N/A]",
+      "9884, C:\\Windows\\explorer.exe, [N/A]",
+      "13720, C:\\Windows\\SystemApps\\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\\StartMenuExperienceHost.exe, [N/A]",
+      "12944, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\SearchHost.exe, [N/A]",
+      "15004, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe, [N/A]",
+      "13056, C:\\Windows\\System32\\NahimicSvc64.exe, [N/A]",
+      "13492, C:\\Program Files\\ReasonLabs\\Common\\Client\\v1.6.0\\rsAppUI.exe, [N/A]",
+      "20288, C:\\Windows\\SystemApps\\MicrosoftWindows.Client.CBS_cw5n1h2txyewy\\TextInputHost.exe, [N/A]",
+      "20704, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe, [N/A]",
+      "24160, C:\\Program Files (x86)\\Steam\\bin\\cef\\cef.win64\\steamwebhelper.exe, [N/A]",
+      "19936, C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe, [N/A]",
+      "22192, C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe, [N/A]",
+      "4788, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.1111.2228.0_x64__2p2nqsd0c76g0\\app\\ChatGPT.exe, [N/A]",
+      "23212, C:\\Program Files (x86)\\Steam\\steam.exe, [N/A]",
+      "24864, C:\\Windows\\System32\\ApplicationFrameHost.exe, [N/A]",
+      "10852, C:\\Program Files\\WindowsApps\\A-Volute.Nahimic_1.10.15.0_x64__w2gh52qy24etm\\Nahimic3.exe, [N/A]",
+      "27452, C:\\Program Files\\WindowsApps\\OpenAI.Codex_26.1111.2228.0_x64__2p2nqsd0c76g0\\app\\resources\\cua_node\\bin\\node_modules\\@oai\\sky\\bin\\windows\\swift\\x64\\codex-computer-use-swift.exe, [N/A]",
+      "13692, C:\\Program Files\\WindowsApps\\MicrosoftWindows.Client.WebExperience_526.28801.60.0_x64__cw5n1h2txyewy\\WidgetBoard.exe, [N/A]",
+      "33000, C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe, [N/A]",
+      "2440, C:\\Users\\kirby\\AppData\\Local\\Programs\\ai.opencode.desktop\\OpenCode.exe, [N/A]",
+      "7976, C:\\Users\\kirby\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe, [N/A]",
+      "28036, C:\\Users\\kirby\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe, [N/A]",
+      "35204, C:\\Program Files (x86)\\Microsoft\\EdgeWebView\\Application\\157.0.4341.46\\msedgewebview2.exe, [N/A]",
+      "6012, C:\\Windows\\System32\\ShellHost.exe, [N/A]"
+    ],
+    "utc": "2026-11-16T04:17:29.131152+00:00"
+  }
+}

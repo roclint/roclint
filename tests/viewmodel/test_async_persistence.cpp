@@ -22,9 +22,22 @@ void ready(HostController& controller) {
     controller.setLegacyDiscoveryForTesting(true);
 }
 const QString prompt = QString::fromStdString(fx::kChainPrompt);
+void completeApprovingReview(HostController& controller) {
+    controller.setComprehensionReviewForTesting(
+        [](const roclint::bridge::ComprehensionReviewRequest&) {
+            roclint::bridge::ComprehensionReviewResult result;
+            result.status = roclint::bridge::ComprehensionReviewStatus::Completed;
+            result.interpretedOutcome = "The rewrite preserves the requested parser refactor.";
+            result.readyForTask = true;
+            return result;
+        });
+    ROCLINT_CHECK(controller.requestComprehensionReview(controller.stateVersion()) != 0);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(controller.comprehensionReviewState() == "ready");
+}
 void prepareProposal(HostController& controller) {
     controller.setTransportOverrideForTesting([](std::string_view instructions) -> Result<std::string> {
-        if (instructions.find("granite.goldfish_audit.v1") != std::string_view::npos)
+        if (instructions.find("granite.goldfish_audit.v2") != std::string_view::npos)
             return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
         if (instructions.find("<instructions>") != std::string_view::npos)
             return fx::rewriteReply("Refactor the parser for lower latency per call.");
@@ -38,6 +51,7 @@ void prepareProposal(HostController& controller) {
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.confirmChoice("alt_0_0", controller.stateVersion())));
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.synthesizeRewrite(controller.stateVersion())));
     ROCLINT_CHECK(controller.waitForIdleForTesting(5000));
+    completeApprovingReview(controller);
     ROCLINT_CHECK(controller.canApprove());
 }
 void testContentionAndDraftBarrier() {

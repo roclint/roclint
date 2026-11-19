@@ -1,3 +1,4 @@
+#include "roclint/bridge/WordSurfaceCheck.hpp"
 #include "roclint/bridge/GraniteAdapter.hpp"
 #include "roclint/bridge/GraniteGoldfishAdapter.hpp"
 #include "roclint/core/Json.hpp"
@@ -587,7 +588,7 @@ void testContextualWordRefinementContract() {
     request.astContextXml = "<symbol name=\"refreshDashboard\"/>";
 
     const auto prompt = buildWordRefinementPrompt(request);
-    ROCLINT_CHECK(prompt.find("granite.word_refinement.v2") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("granite.word_refinement.v4") != std::string::npos);
     ROCLINT_CHECK(prompt.find("Make the dashboard feel faster") != std::string::npos);
     ROCLINT_CHECK(prompt.find("surrounding_before") != std::string::npos);
     ROCLINT_CHECK(prompt.find("surrounding_after") != std::string::npos);
@@ -640,6 +641,15 @@ void testContextualWordRefinementContract() {
     ROCLINT_CHECK(clarification.ok());
     ROCLINT_CHECK(clarification.value().needsClarification);
     ROCLINT_CHECK(clarification.value().clarificationQuestion.find("first paint") != std::string::npos);
+    auto choices = parseWordRefinementResponse(
+        R"({"action":"ask","question":"Which result matters?","choices":["Lower response latency","Higher batch throughput"]})", request);
+    ROCLINT_CHECK(choices.ok() && choices.value().clarificationChoices.size() == 2 && choices.value().candidates.empty());
+    ROCLINT_CHECK(!parseWordRefinementResponse(
+        R"({"action":"ask","question":"Which result matters?","choices":["Same answer","Same answer"]})", request).ok());
+    ROCLINT_CHECK(!parseWordRefinementResponse(
+        R"({"action":"ask","question":"Which result matters?","choices":["One","Two","Three","Four"]})", request).ok());
+    ROCLINT_CHECK(!parseWordRefinementResponse(
+        R"({"action":"ask","question":"Which result matters?","choices":[42]})", request).ok());
 
     auto emptyQuestion = parseWordRefinementResponse(
         R"({"needs_clarification":true,"clarification_question":"","candidates":[]})", request);
@@ -743,6 +753,140 @@ void testWordEditsRequireCompleteDraftAudit() {
     ROCLINT_CHECK(unresolved.ok() && unresolved.value().candidates.empty());
 }
 
+void testWordSurfaceRecoveryIsBoundedAndEvidenceChecked() {
+    WordRefinementRequest request;
+    request.draftText = "Keep the output unchnaged"; request.selectedText = "unchnaged";
+    request.selectionStart = 16; request.selectionEnd = 25;
+    const auto repair = parseWordSurfaceCheckResponse(
+        R"({"status":"repair","replacement":"unchanged","explanation":"Correct spelling","source":""})", request);
+    ROCLINT_CHECK(repair.ok() && repair.value().handled && repair.value().response.candidates.size() == 1);
+    ROCLINT_CHECK(repair.value().response.candidates[0].replacement == "unchanged");
+    const auto clean = parseWordSurfaceCheckResponse(
+        R"({"status":"clean","replacement":"","explanation":"","source":""})", request);
+    ROCLINT_CHECK(clean.ok() && !clean.value().handled);
+    const auto fixed = parseWordSurfaceCheckResponse(
+        R"({"status":"protected","replacement":"","explanation":"Exact spelling required","source":"Keep the output unchnaged"})", request);
+    ROCLINT_CHECK(fixed.ok() && fixed.value().handled && fixed.value().response.candidates.empty());
+    for (const auto* invalid : {
+        R"({"status":"clean","replacement":"unchanged","explanation":"","source":""})",
+        R"({"status":"protected","replacement":"","explanation":"Exact","source":"invented source"})",
+        R"({"status":"protected","replacement":"","explanation":"Exact","source":"unchnaged"})",
+        R"({"status":"repair","replacement":"unchnaged","explanation":"No change","source":""})",
+        R"({"status":"repair","replacement":"unchanged","explanation":"","source":""})",
+        R"({"status":"unknown","replacement":"","explanation":"","source":""})", "{}"})
+        ROCLINT_CHECK(!parseWordSurfaceCheckResponse(invalid, request).ok());
+    ++request.selectionStart;
+    ROCLINT_CHECK(!parseWordSurfaceCheckResponse(
+        R"({"status":"clean","replacement":"","explanation":"","source":""})", request).ok());
+}
+
+void testWordCodeIdentitySurvivesFalseModelApproval() {
+    for (const auto* draft : {"Use Cache::reaad exactly as named", "Call cache->reaad next",
+                              "Call cache.reaad next", "Use `reaad` as named", "Set the literal label to \"reaad\" exactly"}) {
+        WordRefinementRequest request;
+        request.draftText = draft; request.selectedText = "reaad";
+        request.selectionStart = static_cast<int>(request.draftText.find("reaad"));
+        request.selectionEnd = request.selectionStart + 5;
+        const auto parsed = parseWordRefinementResponse(
+            R"({"action":"replace","options":[{"text":"read","effect":"Correct spelling","assume":""}]})", request);
+        ROCLINT_CHECK(parsed.ok() && parsed.value().candidates.empty() && !parsed.value().needsClarification);
+        WordRefinementResponse forged;
+        forged.candidates.push_back({"wcand_1", "reaad", "read", "Spelling", "", false});
+        const auto audited = auditWordRefinementResponse(
+            R"({"verdicts":[{"id":"wcand_1","grammar":"Pass","preservation":"Pass","usefulness":"Pass"}]})",
+            request, forged);
+        ROCLINT_CHECK(audited.ok() && audited.value().candidates.empty());
+    }
+    for (const auto& draft : {std::string("Make Cache::run unchnaged"),
+                              std::string("Keep ") + std::string(12000, 'x') + " unchnaged"}) {
+        WordRefinementRequest request;
+        request.draftText = draft; request.selectedText = "unchnaged";
+        request.selectionStart = static_cast<int>(draft.find(request.selectedText));
+        request.selectionEnd = request.selectionStart + 9;
+        const auto parsed = parseWordRefinementResponse(
+            R"({"action":"replace","options":[{"text":"unchanged","effect":"Correct spelling","assume":""}]})", request);
+        ROCLINT_CHECK(parsed.ok() && parsed.value().candidates.size() == 1);
+    }
+}
+
+void testInterviewFollowUpCarriesBriefWithoutRepeatingSettledDecisions() {
+    GraniteOptionDiscoveryRequest request;
+    request.sessionId = kSession;
+    request.revisionId = kRevision;
+    request.promptString = "Make the dashboard feel faster for people on slow laptops.";
+    request.maximumQuestions = 1;
+    request.interviewFollowUp = true;
+    request.settledDecisions = {"Which kind of speed matters? -> Lower latency per call"};
+    request.openChoices = {"Which browsing behavior matters most?"};
+    const auto prompt = buildDiscoveryPrompt(request);
+    ROCLINT_CHECK(prompt.find("interview follow-up") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("settled_decisions") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Lower latency per call") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("Which browsing behavior matters most?") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("never question, repeat or contradict") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("\"maximum_questions\":1") != std::string::npos);
+    // The substantial interview uses the richer bounded contract, not the HUD's
+    // ultra-terse 5-word option limit.
+    ROCLINT_CHECK(prompt.find("at most 32 words") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("at most 9 words") == std::string::npos);
+    ROCLINT_CHECK(prompt.find("typographic") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("not fewer features or shortened labels") != std::string::npos);
+    ROCLINT_CHECK(prompt.find("do not question a settled value") != std::string::npos);
+
+    auto firstQuestion = request;
+    firstQuestion.interviewFollowUp = false;
+    firstQuestion.substantialInterview = true;
+    const auto firstPrompt = buildDiscoveryPrompt(firstQuestion);
+    ROCLINT_CHECK(firstPrompt.find("first question of the substantial interview") != std::string::npos);
+    ROCLINT_CHECK(firstPrompt.find("at most 32 words") != std::string::npos);
+    ROCLINT_CHECK(firstPrompt.find("at most 9 words") == std::string::npos);
+
+    GraniteOptionDiscoveryRequest automatic;
+    automatic.sessionId = kSession;
+    automatic.revisionId = kRevision;
+    automatic.promptString = request.promptString;
+    const auto automaticPrompt = buildDiscoveryPrompt(automatic);
+    ROCLINT_CHECK(automaticPrompt.find("settled_decisions") == std::string::npos);
+    ROCLINT_CHECK(automaticPrompt.find("at most 9 words") != std::string::npos);
+    ROCLINT_CHECK(automaticPrompt.find("at most 32 words") == std::string::npos);
+
+    // A mocked typography follow-up parses into two materially distinct directions
+    // with their practical consequences.
+    GraniteOptionDiscoveryRequest typography;
+    typography.sessionId = kSession;
+    typography.revisionId = kRevision;
+    typography.promptString = "Design a music app with compact text and easy browsing.";
+    typography.maximumQuestions = 1;
+    typography.interviewFollowUp = true;
+    typography.substantialInterview = true;
+    const auto typographyReply = std::string(R"({"kind":"creative","groups":[{"focus":"typography","question":"Should compact text mean smaller type with generous leading, or a tighter hierarchy with denser labels?","source":"compact text","options":[{"text":"Smaller type with generous leading","effect":"Keeps every feature and full labels while improving scan comfort.","assume":""},{"text":"Tighter hierarchy with denser labels","effect":"Fits more controls but makes small labels harder to read.","assume":""}]}]})");
+    auto typographyParsed = parseDiscoveryResponse(typographyReply, kSession, kRevision, typography.promptString);
+    ROCLINT_CHECK(typographyParsed.ok());
+    const auto& group = typographyParsed.value().analysis.choiceGroups.front();
+    ROCLINT_CHECK(group.alternatives.size() == 2);
+    ROCLINT_CHECK(group.alternatives[0].interpretation != group.alternatives[1].interpretation);
+    ROCLINT_CHECK(!group.alternatives[0].whyMaterial.empty());
+    ROCLINT_CHECK(!group.alternatives[1].whyMaterial.empty());
+    ROCLINT_CHECK(group.alternatives[0].whyMaterial != group.alternatives[1].whyMaterial);
+
+    const auto reply = std::string(R"({"kind":"creative","groups":[{"focus":"browsing","question":"Which browsing behavior matters most?","source":"slow laptops","options":[{"text":"fast A-Z jump list","effect":"one-click artist browsing","assume":""},{"text":"search-first layout","effect":"type to find anything","assume":""}]}]})");
+    auto parsed = parseDiscoveryResponse(reply, kSession, kRevision, request.promptString);
+    ROCLINT_CHECK(parsed.ok());
+    ROCLINT_CHECK(parsed.value().analysis.choiceGroups.size() == 1);
+    ROCLINT_CHECK(parsed.value().analysis.choiceGroups[0].question == "Which browsing behavior matters most?");
+    ROCLINT_CHECK(parsed.value().analysis.choiceGroups[0].alternatives.size() == 2);
+    ROCLINT_CHECK(!parsed.value().analysis.choiceGroups[0].alternatives[0].evidence.empty());
+    ROCLINT_CHECK(parsed.value().analysis.choiceGroups[0].alternatives[0].evidence[0].startByte ==
+                  request.promptString.find("slow laptops"));
+
+    // A fabricated quotation is not evidence and cannot ground the follow-up.
+    const auto ungrounded = std::string(R"({"kind":"creative","groups":[{"focus":"browsing","question":"Which browsing behavior matters most?","source":"not in the draft","options":[{"text":"fast A-Z jump list","effect":"one-click artist browsing","assume":""},{"text":"search-first layout","effect":"type to find anything","assume":""}]}]})");
+    auto ungroundedParsed = parseDiscoveryResponse(ungrounded, kSession, kRevision, request.promptString);
+    ROCLINT_CHECK(ungroundedParsed.ok());
+    ROCLINT_CHECK(ungroundedParsed.value().analysis.choiceGroups.empty() ||
+                  ungroundedParsed.value().analysis.choiceGroups[0].alternatives[0].evidence.empty());
+}
+
 void testCompactWireContractsRetainProvenanceAndSpanSafety() {
     const auto compact=R"({"kind":"creative","groups":[{"focus":"framing","question":"Which framing?","source":"cinematic","options":[{"text":"A close portrait","effect":"Isolates the subject","assume":"Use shallow focus"},{"text":"A wide environmental shot","effect":"Shows its surroundings","assume":""}]}]})";
     const auto parsed=parseDiscoveryResponse(compact,kSession,kRevision,"Make a cinematic fern portrait.");
@@ -794,6 +938,9 @@ int main() {
     testSourceQuotesAndProposalsAreDistinct();
     testContractRecoveryIsBoundedAndBudgeted();
     testWordEditsRequireCompleteDraftAudit();
+    testWordCodeIdentitySurvivesFalseModelApproval();
+    testWordSurfaceRecoveryIsBoundedAndEvidenceChecked();
+    testInterviewFollowUpCarriesBriefWithoutRepeatingSettledDecisions();
     testCompactWireContractsRetainProvenanceAndSpanSafety();
     std::cout << "[Test GraniteAdapter] All tests PASSED.\n";
     return 0;

@@ -1,0 +1,211 @@
+{
+  "schema": "roclint.companion_eval.scenarios.v1",
+  "created": "2026-11-15",
+  "notes": [
+    "Behavioral criteria only; no golden generated sentence is required.",
+    "development = the known music-app reproduction or a development-derived variant.",
+    "unseen = not used to tune the discovery/rewrite prompts in the audited build.",
+    "editorial judgments are recorded separately from model Pass and mechanical parsing."
+  ],
+  "scenarios": [
+    {
+      "id": "music_app_typography",
+      "class": "development",
+      "surface": "interview_then_rewrite",
+      "prompt": "I'm building a music app. I want compact typography, a fusion of 1990s and 1960s/Revolver-era references, and easy browsing.",
+      "answers": [
+        {
+          "type": "custom",
+          "text": "Compact typography means smaller type sizes and tighter line spacing for dense lists, not fewer features or shortened labels. Keep browsing one tap away and keep artist and track names readable."
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "criteria": {
+        "question_addresses_typography": "The question and options discuss type size, density, hierarchy or legibility rather than deleting UI or shortening labels.",
+        "answer_carried": "The rewrite reflects the custom typography answer (size/spacing/density) without turning it into UI removal.",
+        "browsing_preserved": "The rewrite retains easy browsing.",
+        "no_invented_reference_facts": "No unverified claim about 1990s music or Revolver-era artwork, songs or design facts is stated as source fact."
+      }
+    },
+    {
+      "id": "unseen_typography_cookbook",
+      "class": "unseen",
+      "surface": "interview_then_rewrite",
+      "prompt": "Style the recipe app's typography to feel like a 1970s cookbook but stay legible on phones.",
+      "answers": [
+        {
+          "type": "custom",
+          "text": "Use a warm serif for headings, keep body text at 16 px or larger, and do not make the ingredient list smaller."
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "criteria": {
+        "question_addresses_typography": "The question is about type choice, size, hierarchy or mobile legibility.",
+        "answer_carried": "The rewrite reflects the serif heading and minimum body size answer.",
+        "legibility_preserved": "The rewrite does not trade mobile legibility for the retro look."
+      }
+    },
+    {
+      "id": "cinematic_auto",
+      "class": "unseen",
+      "surface": "automatic_interview_then_rewrite",
+      "prompt": "Make the product photo look cinematic.",
+      "answers": [{"type": "choice", "pick": "light", "index": 0}],
+      "rewrite": true,
+      "max_turns": 2,
+      "criteria": {
+        "asks_consequential_question": "A vague visual direction receives a context-relevant lighting, depth, lens, grading or mood question.",
+        "not_original_route": "An automatic route that silently retains the vague prompt is an intent failure for this task.",
+        "answer_carried": "If a question is asked, the rewrite reflects the chosen visual direction."
+      }
+    },
+    {
+      "id": "cinematic_explicit",
+      "class": "unseen",
+      "surface": "explicit_review",
+      "prompt": "Make the product photo look cinematic.",
+      "explicit_review": true,
+      "answers": [{"type": "choice", "pick": "light", "index": 0}],
+      "rewrite": true,
+      "max_turns": 2,
+      "criteria": {
+        "asks_consequential_question": "Explicit review surfaces a context-relevant visual choice instead of stopping at the vague adjective.",
+        "task_relative": "The question does not demand file paths or signatures for a creative task.",
+        "answer_carried": "The rewrite reflects the chosen visual direction."
+      }
+    },
+    {
+      "id": "code_ast_signature",
+      "class": "unseen",
+      "surface": "codebase_grounded_interview_then_rewrite",
+      "prompt": "Change p95LatencyMs in include/metrics.hpp to compute the percentile from a t-digest sketch instead of sorting every sample. Keep the function signature and the public API unchanged.",
+      "project_directory": "tests/fixtures/companion_eval/code_project",
+      "answers": [
+        {
+          "type": "custom",
+          "text": "Use one t-digest with 100 centroids per function, keep the exact p95LatencyMs signature, and do not change the public header's other declarations."
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "criteria": {
+        "target_identified": "The result names p95LatencyMs and include/metrics.hpp (or the exact fixture symbol).",
+        "preservation": "The function signature and the rest of the public API are explicitly preserved.",
+        "change_described": "The rewrite describes a t-digest percentile computation rather than a generic optimization."
+      }
+    },
+    {
+      "id": "performance_dashboard",
+      "class": "development",
+      "surface": "automatic_interview_then_rewrite",
+      "prompt": "Make the dashboard faster on slow laptops.",
+      "answers": [{"type": "choice", "pick": "render", "index": 0}],
+      "rewrite": true,
+      "max_turns": 2,
+      "criteria": {
+        "distinguishes_scope": "The question distinguishes load/rendering/network/CPU scope or asks for a measurable goal.",
+        "answer_carried": "The rewrite reflects the selected scope rather than a generic speed claim."
+      }
+    },
+    {
+      "id": "already_clear_500ms",
+      "class": "unseen",
+      "surface": "automatic_route",
+      "prompt": "Make the search API respond within 500 milliseconds for 95% of requests without changing the response schema.",
+      "rewrite": false,
+      "max_turns": 0,
+      "criteria": {
+        "no_unnecessary_question": "An exact, testable requirement is not questioned again.",
+        "values_preserved": "500 ms, 95% and the response-schema constraint are not altered in any retained text."
+      }
+    },
+    {
+      "id": "custom_answer_settings",
+      "class": "unseen",
+      "surface": "interview_then_rewrite",
+      "prompt": "Redesign the settings screen to feel calmer.",
+      "answers": [
+        {
+          "type": "custom",
+          "text": "Use muted slate-blue tones and more space between groups, but keep every control in its current order."
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 2,
+      "criteria": {
+        "question_is_consequential": "The question addresses a choice that would materially change the visual outcome.",
+        "answer_carried": "The rewrite reflects slate-blue, group spacing and unchanged control order.",
+        "preservation": "The rewrite does not invent new settings or reorder controls."
+      }
+    },
+    {
+      "id": "gibberish_answer",
+      "class": "unseen",
+      "surface": "answer_validation_then_rewrite",
+      "prompt": "Rewrite the onboarding copy so it feels more welcoming.",
+      "answers": [
+        {"type": "custom", "text": "asdf qwer zxcv 1234"},
+        {"type": "skip"}
+      ],
+      "rewrite": true,
+      "max_turns": 3,
+      "criteria": {
+        "rejects_or_ignores_gibberish": "Unrelated characters are not accepted as a confirmed preference or copied into the rewrite.",
+        "skip_leaves_open": "After skipping, the item remains open or becomes an explicitly labeled proposed assumption."
+      }
+    },
+    {
+      "id": "dont_know_answer",
+      "class": "unseen",
+      "surface": "answer_handling_then_rewrite",
+      "prompt": "Organize the photo gallery by mood.",
+      "answers": [
+        {"type": "unknown", "text": "I don't know"},
+        {"type": "skip"}
+      ],
+      "rewrite": true,
+      "max_turns": 3,
+      "criteria": {
+        "explicit_uncertainty": "'I don't know' produces helpful examples, a disclosed best effort, or an explicit open item; not a silent default.",
+        "no_default_confirmation": "The unknown answer is not recorded as a user-confirmed preference.",
+        "rewrite_disclosed": "Any assumption used in the rewrite is labeled proposed, not confirmed."
+      }
+    },
+    {
+      "id": "skip_question",
+      "class": "unseen",
+      "surface": "skip_then_rewrite",
+      "prompt": "Rewrite the release notes to sound more confident.",
+      "answers": [{"type": "skip"}],
+      "rewrite": true,
+      "max_turns": 2,
+      "criteria": {
+        "skip_leaves_open": "The skipped choice remains open; skip does not confirm a value or a model assumption.",
+        "provenance": "The rewrite does not claim a user preference that was never given."
+      }
+    },
+    {
+      "id": "changed_preference",
+      "class": "unseen",
+      "surface": "two_turn_preference_change",
+      "prompt": "Redesign the landing page with a bold hero and a retro palette.",
+      "explicit_review": true,
+      "answers": [
+        {"type": "choice", "index": 0},
+        {
+          "type": "custom",
+          "text": "Actually, reverse that: use a cool 1980s neon palette instead of the warm retro direction, and keep the bold hero."
+        }
+      ],
+      "rewrite": true,
+      "max_turns": 3,
+      "criteria": {
+        "supersedes_prior": "The second answer supersedes the earlier palette choice and invalidates proposals derived from it.",
+        "provenance": "The earlier decision is retained as superseded rather than silently overwritten.",
+        "rewrite_uses_current": "The rewrite reflects the neon palette, not the earlier warm retro direction."
+      }
+    }
+  ]
+}

@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QRect>
 #include <QString>
+#include <QList>
 
 #include <memory>
 
@@ -31,9 +32,17 @@ struct ObservedField {
     int caretOffset{-1};        // UTF-16 offset into text; -1 when the app doesn't report it
     QRect caretRect;            // Screen coordinates; null when the app doesn't report bounds
     QRect fieldRect;            // Screen coordinates of the field; null when unknown
+    // Provider-verified word range. Empty on unsupported editors; never inferred
+    // from font metrics. Offsets must match the host's exact selected span.
+    int wordStartOffset{-1};
+    int wordEndOffset{-1};
+    QList<QRect> wordRects;
     bool isPassword{false};
     bool elevationMismatch{false}; // The target runs with higher privileges than Roclint (Windows UIPI)
     quint64 refreshRequestId{0}; // Nonzero only for an explicit focused-field refresh response.
+    // Windows UIA uses physical pixels. The GUI thread normalizes exactly once
+    // before storing the observation; macOS and test observations are logical.
+    bool geometryInNativePixels{false};
 };
 
 struct InjectionRequest {
@@ -90,6 +99,8 @@ signals:
     void accessChanged();
     void fieldObserved(const roclint::host::ObservedField& field);
     void fieldLost();
+    // The focused window is still current, but its editor could not be read.
+    void fieldReadInterrupted();
     void injectionFinished(quint64 requestId, roclint::host::InjectionOutcome outcome, const QString& detail);
     void rangeInjectionFinished(quint64 requestId, roclint::host::InjectionOutcome outcome, const QString& detail);
 };

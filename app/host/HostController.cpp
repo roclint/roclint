@@ -1,14 +1,18 @@
+#include "roclint/bridge/WordSurfaceCheck.hpp"
 #include "HostController.hpp"
 #include <iostream>
+#include <regex>
 #include <QJsonArray>
 #include <utility>
 #include <QKeySequence>
 #include "ScreenPlacement.hpp"
+#include "WordSpan.hpp"
 #include "TerminalAdapter.hpp"
 
 #include "roclint/core/crypto/Sha256.hpp"
 #include "roclint/core/prompt_state/TextNormalization.hpp"
 #include "roclint/rewrite/RewriteProfile.hpp"
+#include "roclint/rewrite/StructuredEntityExtractor.hpp"
 
 #include <QClipboard>
 #include <QCoreApplication>
@@ -317,6 +321,7 @@ HostController::HostController(const QString& dbPathOverride,
         m_modelDirectory = settings.value(QStringLiteral("models/directory")).toString();
         m_nativeDirectory = settings.value(QStringLiteral("models/nativeDirectory"), m_modelsBaseDirectory + QStringLiteral("/s2")).toString();
         m_ambientModeEnabled = settings.value(QStringLiteral("ambient/enabled"), true).toBool();
+        m_ambientBadgeSuggestionsOnly = settings.value(QStringLiteral("ambient/badgeSuggestionsOnly"), false).toBool();
         m_hostContextEnabled = settings.value(QStringLiteral("invocation/hostContextEnabled"), true).toBool();
         m_invocationShortcut = settings.value(QStringLiteral("invocation/shortcut"), m_invocationShortcut).toString();
         const QString savedProfile = settings.value(QStringLiteral("rewrite/profile"), m_rewriteProfile).toString();
@@ -383,17 +388,26 @@ HostController::HostController(const QString& dbPathOverride,
     m_ambientDebounce.setSingleShot(true);
     m_ambientDebounce.setInterval(kAmbientDebounceMs);
     connect(&m_ambientDebounce, &QTimer::timeout, this, &HostController::onAmbientDebounce);
+    m_ambientBadgeRecovery.setSingleShot(true);
+    m_ambientBadgeRecovery.setInterval(750);
+    m_ambientBadgeRecovery.setTimerType(Qt::PreciseTimer);
+    connect(&m_ambientBadgeRecovery, &QTimer::timeout, this, &HostController::ambientBadgeChanged);
     connect(m_accessibility.get(), &IAccessibilityBridge::accessChanged, this, [this]() {
         emit accessibilityTrustedChanged();
         emit ambientModeEnabledChanged();
         applyAmbientObserving();
     });
     connect(m_accessibility.get(), &IAccessibilityBridge::fieldObserved, this, &HostController::onFieldObserved);
-    connect(m_accessibility.get(), &IAccessibilityBridge::fieldLost, this, &HostController::onFieldLost);
+    connect(m_accessibility.get(), &IAccessibilityBridge::fieldLost, this, [this]() { onFieldLost(); });
+    connect(m_accessibility.get(), &IAccessibilityBridge::fieldReadInterrupted, this, [this]() { onFieldLost(true); });
     connect(m_accessibility.get(), &IAccessibilityBridge::injectionFinished, this,
             &HostController::onInjectionFinished);
     connect(m_accessibility.get(), &IAccessibilityBridge::rangeInjectionFinished, this,
             &HostController::onRangeInjectionFinished);
+    connect(this, &HostController::wordRefinementChanged, this, [this]() {
+        setAmbientBadge(m_ambientBadgeVisible);
+        emit ambientBadgeChanged();
+    });
     applyAmbientObserving();
     initializeResidencyPolicy();
 }
@@ -504,6 +518,10 @@ void HostController::activateCard() {
 }
 
 void HostController::showCard() {
+    if (m_resumeMinimizedCard && !m_selectingInsertionTarget) {
+        showCardInternal(false);
+        return;
+    }
     const auto frontmost = HostContextDetector::captureFrontmost();
     if (m_selectingInsertionTarget && !isAmbientEligibleApp(frontmost.bundleOrExecutableId)) {
         m_selectingInsertionTarget = false;
@@ -573,25 +591,20 @@ void HostController::showCardInternal(bool captureClipboard) {
     if (captureClipboard) {
         captureClipboardDraft();
     }
-    setAmbientBadge(false);
+    if (!promptTriageRoutingEnabled()) setAmbientBadge(false);
 
-    PlacementResult placement;
-    if (isAmbientAttached() && m_captureTarget.has_value()) {
-        const auto& f = m_captureTarget->field;
-        const QRect targetRect = !f.fieldRect.isNull() ? f.fieldRect : f.caretRect;
-        placement = ScreenPlacement::determineAnchorPosition(targetRect, 620, 250);
-    } else if (isAmbientActive() && m_ambientObservation.has_value()) {
-        const auto& f = m_ambientObservation->field;
-        const QRect targetRect = !f.fieldRect.isNull() ? f.fieldRect : f.caretRect;
-        placement = ScreenPlacement::determineAnchorPosition(targetRect, 620, 250);
-    } else {
-        placement = ScreenPlacement::determineTargetPosition(820, 520);
-    }
+    const auto placement = calculateAmbientAnchor(480, 380);
     setCardVisibility(CardVisibility::Focused);
-    emit showCardRequested(placement.x, placement.y);
+    emit showCardRequested(placement.x(), placement.y());
+}
+
+void HostController::minimizeCard() {
+    hideCard();
+    m_resumeMinimizedCard = true;
 }
 
 void HostController::hideCard() {
+    m_resumeMinimizedCard = false;
     m_selectingInsertionTarget = false;
     m_captureOpenPending = false;
     m_captureRequestedApp.clear();
@@ -603,23 +616,21 @@ void HostController::hideCard() {
 }
 
 QPoint HostController::calculateAmbientAnchor(int width, int height) {
-    if (isAmbientAttached() && m_captureTarget.has_value()) {
-        const auto& f = m_captureTarget->field;
-        const QRect targetRect = !f.fieldRect.isNull() ? f.fieldRect : f.caretRect;
-        const auto p = ScreenPlacement::determineAnchorPosition(targetRect, width, height);
-        return QPoint(p.x, p.y);
+    QRect field;
+    if (isAmbientActive() && m_ambientObservation) {
+        field = m_ambientObservation->field.fieldRect;
+    } else if (isAmbientAttached() && m_captureTarget) {
+        field = m_captureTarget->field.fieldRect;
     }
-    if (isAmbientActive() && m_ambientObservation.has_value()) {
-        const auto& f = m_ambientObservation->field;
-        const QRect targetRect = !f.fieldRect.isNull() ? f.fieldRect : f.caretRect;
-        const auto p = ScreenPlacement::determineAnchorPosition(targetRect, width, height);
-        return QPoint(p.x, p.y);
-    }
-    const auto p = ScreenPlacement::determineTargetPosition(width, height);
-    return QPoint(p.x, p.y);
+    const auto placement = ScreenPlacement::determineReviewPosition(field, QSize(width, height));
+    return QPoint(placement.x, placement.y);
 }
 
 void HostController::toggleCard() {
+    if (m_resumeMinimizedCard && !isCardVisible() && !m_selectingInsertionTarget) {
+        showCardInternal(false);
+        return;
+    }
     const auto frontmost = HostContextDetector::captureFrontmost();
     if (m_selectingInsertionTarget && !isAmbientEligibleApp(frontmost.bundleOrExecutableId)) {
         m_selectingInsertionTarget = false;
@@ -746,7 +757,9 @@ bool HostController::setCardVisibility(CardVisibility visibility) {
     if (m_accessibility) {
         m_accessibility->setCardVisible(visibility != CardVisibility::Hidden);
     }
+    if (visibility != CardVisibility::Hidden) m_ambientBadgeRecovery.stop();
     emit cardVisibilityChanged();
+    emit ambientBadgeChanged();
     return true;
 }
 
@@ -996,7 +1009,10 @@ AsyncTask<core::Status> HostController::hardBypassOperation(QString text, quint6
 // ----------------------------------------------------------------------------------------------
 
 void HostController::invalidateDownstreamPipeline() {
+    m_pendingWordClarificationHandoff.reset();
     clearWordRefinement();
+    cancelInterview();
+    markComprehensionReviewStale();
     resetClarificationCheck();
     m_selectingInsertionTarget = false;
     ++m_pipelineSerial;
@@ -1120,6 +1136,7 @@ AsyncTask<core::Status> HostController::invalidateProposalArtifacts() {
     m_proposalStatus = ProposalUiStatus::None;
     m_proposalMessage.clear();
     m_streamingPreview.clear();
+    markComprehensionReviewStale();
     emit rewriteProposalChanged();
     emit approvalChanged();
     emit intentChanged();
@@ -1128,9 +1145,17 @@ AsyncTask<core::Status> HostController::invalidateProposalArtifacts() {
 }
 
 void HostController::resetSessionState() {
+    m_resumeMinimizedCard = false;
     m_followAmbientDraft = false;
     m_widgetDraftEdited = false;
     invalidateDownstreamPipeline();
+    m_reviewState = ReviewState::NotRun;
+    m_reviewResult = bridge::ComprehensionReviewResult{};
+    m_reviewBinding = ComprehensionBinding{};
+    m_findingResolutions.clear();
+    m_reviewReturnedFindingId.clear();
+    ++m_reviewSerial;
+    emit comprehensionReviewChanged();
     m_revisionState.reset();
     emit stateVersionChanged();
 }
@@ -1185,7 +1210,7 @@ int HostController::analysisGroupBudgetMs() const {
 
 bridge::GraniteTransport HostController::currentTransport(const std::string& outputSchema, const PipelineTicket* ticket,
     const QString& operation, const QString& prompt, const QString& intentId, const QString& profileId,
-    std::shared_ptr<std::atomic_bool> cancellation) const {
+    std::shared_ptr<std::atomic_bool> cancellation, const QString& surface) const {
 #ifdef ROCLINT_ENABLE_TEST_MOCKS
     if (m_transportOverride) {
         return m_transportOverride;
@@ -1195,6 +1220,7 @@ bridge::GraniteTransport HostController::currentTransport(const std::string& out
         if (!ticket || !m_native->isReady()) return {};
         NativeGraniteRuntime::RequestContext context{qs(ticket->analysisGroup ? ticket->analysisGroup->id : ticket->attemptId), qs(ticket->attemptId), qs(ticket->sessionId),
             qs(ticket->revisionId), ticket->stateVersion, prompt, intentId, profileId, std::move(cancellation), m_thinkingEnabled};
+        context.surface = surface;
         if (ticket->analysisGroup && !ticket->analysisGroup->deadline.isForever())
             context.deadline = std::chrono::steady_clock::now() +
                 std::chrono::milliseconds(std::max<qint64>(0, ticket->analysisGroup->deadline.remainingTime()));
@@ -1368,6 +1394,9 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
         (m_reviewTrigger != analysis::ReviewTrigger::ExplicitReview &&
          analysis::routePromptTriage(*m_promptTriage).value() != analysis::PromptTriageRoute::Clarify)))
         co_return makeError(ErrorCode::PreconditionFailed, "Granite discovery requires current ambiguous S1 classification");
+    // Exact quantities do not prove the absence of a conflict. Preserve S1's
+    // Clarify route when the conservative deterministic extractor finds nothing;
+    // discovery and its semantic audit must evaluate the actual requirements.
     if (promptTriageRoutingEnabled() && !nativeGraniteSelected() && !usesTransportOverride()) {
         m_routedAnalysisGroup->terminal = true;
         const auto reason = QStringLiteral("This flow requires pinned IBM Granite 3B. Choose Native Granite in Settings.");
@@ -1412,9 +1441,13 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
         co_return st;
     }
 
-    const std::size_t maximumQuestions = ticket.analysisGroup->deadline.isForever() ||
-        ticket.analysisGroup->deadline.remainingTime() > 60000 ? 2 : 1;
-    const auto transport = currentTransport(bridge::discoveryResponseSchema(m_revisionState->currentRevision().text(), maximumQuestions), &ticket, QStringLiteral("granite_analyze"), qs(m_revisionState->currentRevision().text()));
+    const std::size_t maximumQuestions = m_interviewActive
+        ? 1
+        : (ticket.analysisGroup->deadline.isForever() ||
+           ticket.analysisGroup->deadline.remainingTime() > 60000 ? 2 : 1);
+    const auto transport = currentTransport(bridge::discoveryResponseSchema(m_revisionState->currentRevision().text(), maximumQuestions), &ticket,
+        QStringLiteral("granite_analyze"), qs(m_revisionState->currentRevision().text()), {}, {}, {},
+        m_interviewActive ? QStringLiteral("interview") : QString());
     if (runtime != bridge::GraniteRuntimeState::Ready || !transport) {
         std::string reason;
         if (!transport) {
@@ -1439,6 +1472,7 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
     request.hostContextCategory = ss(m_hostContext.categoryString());
     request.reviewTrigger = ticket.reviewTrigger;
     request.maximumQuestions = maximumQuestions;
+    request.substantialInterview = m_interviewActive;
     if (promptTriageRoutingEnabled()) request.promptTriage = m_promptTriage;
 
     for (const auto& f : m_projectFiles) {
@@ -1885,6 +1919,10 @@ AsyncTask<void> HostController::reevaluateIntervention() {
         emit intentChanged();
         co_return;
     }
+    if (auto status = co_await commitPendingWordClarification(); !status.ok()) {
+        setLastError(status.error());
+        co_return;
+    }
     m_currentDecision = intent::InterventionStateMachine::evaluate(*m_currentAnalysis, m_currentPolicyResult,
                                                                    m_currentSnapshotEval, m_workingIntent);
     intent::InterventionStateMachine::recordPresented(m_currentDecision, m_workingIntent);
@@ -1894,6 +1932,8 @@ AsyncTask<void> HostController::reevaluateIntervention() {
     }
     emit interventionChanged();
     emit intentChanged();
+    emit intentBriefChanged();
+    if (m_interviewActive) advanceInterview();
 
     co_return;
 }
@@ -2030,8 +2070,8 @@ AsyncTask<core::Status> HostController::finalizeIntentIfQuiet() {
     const auto operationWorkspaceEpoch = m_workspaceEpoch;
     const auto operationPipelineSerial = m_pipelineSerial;
     const std::int64_t now = nowMs();
-    auto built = intent::IntentProvenanceBuilder::buildConfirmedIntent(*m_currentSnapshot, m_currentPolicyResult,
-                                                                       m_workingIntent, now);
+    auto built = intent::IntentProvenanceBuilder::buildConfirmedIntent(
+        *m_currentSnapshot, m_currentPolicyResult, m_workingIntent, now, supplementalInterviewDecisions());
     if (!built.ok()) {
         co_return built.error();
     }
@@ -2050,7 +2090,8 @@ AsyncTask<core::Status> HostController::finalizeIntentIfQuiet() {
 }
 
 AsyncTask<core::Status> HostController::applyTransition(const char* /*name*/, quint64 expectedVersion,
-                                     std::function<Status(intent::WorkingIntentState&)> transition) {
+                                     std::function<Status(intent::WorkingIntentState&)> transition,
+                                     bool advanceInterviewAfter) {
 
         if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
         if (!m_currentAnalysis || !m_revisionState) {
@@ -2074,7 +2115,8 @@ AsyncTask<core::Status> HostController::applyTransition(const char* /*name*/, qu
         if (!advanced.ok()) co_return advanced;
         std::optional<intent::ConfirmedIntent> confirmed;
         if (decision.verdict == intent::InterventionVerdict::Quiet) {
-            auto result = intent::IntentProvenanceBuilder::buildConfirmedIntent(*m_currentSnapshot, m_currentPolicyResult, next, nowMs());
+            auto result = intent::IntentProvenanceBuilder::buildConfirmedIntent(
+                *m_currentSnapshot, m_currentPolicyResult, next, nowMs(), supplementalInterviewDecisions());
             if (!result.ok()) co_return result.error();
             confirmed = std::move(result).value();
             if (auto status = (co_await m_repository->insertIntentVersion(*confirmed, nowMs(), expectedVersion)); !status.ok()) co_return status;
@@ -2104,14 +2146,17 @@ AsyncTask<core::Status> HostController::applyTransition(const char* /*name*/, qu
                                         m_groundingValidationSerial);
             m_proposalStatus = ProposalUiStatus::None;
             m_proposalMessage.clear();
+            markComprehensionReviewStale();
             emit rewriteProposalChanged();
         }
         refreshActiveItemPresentation();
         resetClarificationCheck();
         emit interventionChanged();
         emit intentChanged();
+        emit intentBriefChanged();
         emit stateVersionChanged();
         emit approvalChanged();
+        if (advanceInterviewAfter) advanceInterview();
         co_return Status::success();
 
 }
@@ -2163,8 +2208,23 @@ AsyncTask<core::Status> HostController::submitCustomIntentOperation(QString cust
         co_return makeError(ErrorCode::ValidationFailed, ss(m_clarificationFeedback));
     }
 
-    auto ticket = makeTicket();
     const auto itemId = *m_currentDecision.activeItemId;
+    if (nativeGraniteSelected() && !usesTransportOverride() && !m_native->isReady()) {
+        if (m_isDownloadingModel && m_downloadingNativeTag == m_activeModel) {
+            m_clarificationFeedback = QStringLiteral("The model download is still running. Your answer is kept; retry when it finishes.");
+            emit clarificationCheckChanged();
+            co_return makeError(ErrorCode::ProviderUnavailable, ss(m_clarificationFeedback));
+        }
+        m_pendingNativeClarification = PendingNativeClarification{
+            expectedVersion, ++m_clarificationCheckSerial, m_configurationGeneration,
+            m_workspaceEpoch, m_revisionState->currentRevision().revisionId().value(), itemId, customText};
+        m_checkingClarification = true;
+        m_clarificationFeedback = QStringLiteral("Preparing the local model to check your answer…");
+        emit clarificationCheckChanged();
+        prepareNativeModel();
+        co_return Status::success();
+    }
+    auto ticket = makeTicket();
     const auto transport = currentTransport(bridge::clarificationCheckResponseSchema(), &ticket,
         QStringLiteral("granite_analyze"), currentRevisionText());
     if (!transport || m_graniteAdapter->state() != bridge::GraniteRuntimeState::Ready) {
@@ -2242,6 +2302,7 @@ AsyncTask<core::Status> HostController::submitCustomIntentOperation(QString cust
 }
 
 void HostController::resetClarificationCheck() {
+    m_pendingNativeClarification.reset();
     ++m_clarificationCheckSerial;
     m_checkingClarification = false;
     m_clarificationFeedback.clear();
@@ -2824,7 +2885,7 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
         request.rewriteProfileId = profile->id;
         request.proposalEditGeneration = ticket.proposalEditGeneration + 1;
         const auto transport = currentTransport(bridge::rewriteResponseSchema(), &ticket, QStringLiteral("granite_rewrite"),
-            qs(request.originalText), qs(request.confirmedIntent.id), m_rewriteProfile);
+            qs(request.originalText), qs(request.confirmedIntent.id), m_rewriteProfile, {}, QStringLiteral("rewrite"));
         if (!transport) {
             completeAttempt(ticket, storage::AttemptStatus::Failed, "Native rewrite transport is unavailable");
             co_return makeError(ErrorCode::ProviderUnavailable, "The local rewrite runtime is not ready.");
@@ -2835,7 +2896,7 @@ AsyncTask<core::Status> HostController::synthesizeRewriteOperation(quint64 expec
         emit modelEngineStatusChanged();
 
         const auto auditTransport = currentTransport(bridge::goldfishAuditResponseSchema(), &ticket, QStringLiteral("granite_rewrite"),
-            qs(request.originalText), qs(request.confirmedIntent.id), m_rewriteProfile);
+            qs(request.originalText), qs(request.confirmedIntent.id), m_rewriteProfile, {}, QStringLiteral("rewrite"));
 
         struct RewriteExecutionResult {
             core::Result<rewrite::RewriteProposal> proposal;
@@ -3000,6 +3061,12 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
         m_activeGroundingSessionId = ticket.sessionId;
         m_activeGroundingRevisionId = ticket.revisionId;
         setProposalStatus(ProposalUiStatus::NeedsClarification, qs(proposal.clarificationQuestion));
+        m_reviewState = ReviewState::NotRun;
+        m_reviewResult = bridge::ComprehensionReviewResult{};
+        m_reviewBinding = ComprehensionBinding{};
+        m_findingResolutions.clear();
+        m_reviewReturnedFindingId.clear();
+        emit comprehensionReviewChanged();
         emit stateVersionChanged();
         co_return;
     }
@@ -3010,6 +3077,46 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
         completeAttempt(ticket, storage::AttemptStatus::Failed, "Validation failed: " + validation.rejectionReason, &model);
         setProposalStatus(ProposalUiStatus::ValidationFailed,
                           QStringLiteral("That rewrite couldn't be verified. Retry explicitly or keep the original prompt."));
+        co_return;
+    }
+
+    // Deterministic post-generation guards. These do not claim semantic proof; they
+    // prevent presenting an unchanged string, an instruction about the prompt, or a
+    // rewrite that silently drops a supplied exact value/unit as an applicable rewrite.
+    const auto normalizedTrimmed = [](const std::string& text) {
+        std::string normalized = core::normalizeLineEndings(text);
+        const auto first = normalized.find_first_not_of(" \t\n");
+        if (first == std::string::npos) return std::string();
+        const auto last = normalized.find_last_not_of(" \t\n");
+        return normalized.substr(first, last - first + 1);
+    };
+    if (normalizedTrimmed(proposal.rewrittenText) == normalizedTrimmed(proposal.originalText)) {
+        completeAttempt(ticket, storage::AttemptStatus::Succeeded, "No material change produced", &model);
+        m_currentProposal.reset();
+        m_proposalWorkspaceEpoch = 0;
+        m_currentApproval.reset();
+        markComprehensionReviewStale();
+        setProposalStatus(ProposalUiStatus::ValidationFailed,
+                          QStringLiteral("No useful change was found. Your original prompt is kept; "
+                                         "skipped or unknown details remain open."));
+        emit approvalChanged();
+        co_return;
+    }
+    // Imperatives such as "identify which" can be the requested task. Do not
+    // reject them by vocabulary; the required independent comprehension review
+    // checks whether a rewrite expresses the task or merely asks to define it.
+    if (const auto dropped = intent::droppedExactRequirements(proposal.originalText, proposal.rewrittenText);
+        !dropped.empty()) {
+        completeAttempt(ticket, storage::AttemptStatus::Failed,
+                        "Rewrite dropped an exact requirement: " + dropped.front(), &model);
+        m_currentProposal.reset();
+        m_proposalWorkspaceEpoch = 0;
+        m_currentApproval.reset();
+        markComprehensionReviewStale();
+        setProposalStatus(ProposalUiStatus::ValidationFailed,
+                          QStringLiteral("That rewrite dropped an exact requirement (%1). "
+                                         "Your original prompt is kept.").arg(qs(dropped.front())));
+        emit approvalChanged();
         co_return;
     }
 
@@ -3082,6 +3189,12 @@ AsyncTask<void> HostController::onRewriteFinishedAsync(PipelineTicket ticket,
     m_activeGroundingProposalId = proposal.id;
     m_activeGroundingSessionId = ticket.sessionId;
     m_activeGroundingRevisionId = ticket.revisionId;
+    m_reviewState = ReviewState::NotRun;
+    m_reviewResult = bridge::ComprehensionReviewResult{};
+    m_reviewBinding = ComprehensionBinding{};
+    m_findingResolutions.clear();
+    m_reviewReturnedFindingId.clear();
+    emit comprehensionReviewChanged();
     emit stateVersionChanged();
     const auto currentValidation = validateCurrentProposal();
     const auto pending = currentValidation.pendingAcknowledgments.size();
@@ -3272,6 +3385,10 @@ AsyncTask<core::Status> HostController::approveAndCopyRewriteOperation(quint64 e
                              "Check the " + std::to_string(validation.pendingAcknowledgments.size()) +
                                  " highlighted item(s) before approving.");
         }
+        if (!canApplyReviewedOutput()) {
+            co_return makeError(ErrorCode::PreconditionFailed,
+                                "Run a fresh independent review and resolve its required findings before applying this rewrite.");
+        }
         auto ctx = approvalContext();
         if (!ctx.has_value()) {
             co_return makeError(ErrorCode::PreconditionFailed, "The rewrite is no longer bound to the current prompt.");
@@ -3403,33 +3520,143 @@ void HostController::onInjectionFinished(quint64 requestId, InjectionOutcome out
     emit deliveryFellBack(message);
 }
 
-void HostController::onRangeInjectionFinished(quint64 requestId, InjectionOutcome outcome, const QString& detail) {
-    if (requestId != m_wordRefinementRequestId) {
-        return;
-    }
-    const bool stillSameSuggestion = m_wordRefinementSuggestionId == m_wordRefinementInFlightSuggestionId;
-    m_wordRefinementInFlight = false;
-    if (outcome == InjectionOutcome::Injected) {
-        if (stillSameSuggestion) clearWordRefinement();
-        setAmbientStatus(QStringLiteral("Applied inline refinement."));
-    } else {
-        const QString reason = detail.isEmpty() ? QString::fromUtf8(toString(outcome)) : detail;
-        setAmbientStatus(QStringLiteral("Inline refinement failed: %1").arg(reason));
-    }
+void HostController::setWordCompanionState(const QString& state, const QString& message) {
+    if (m_wordCompanionState == state && m_wordCompanionMessage == message) return;
+    m_wordCompanionState = state; m_wordCompanionMessage = message;
     emit wordRefinementChanged();
 }
 
+QVariantList HostController::wordMarkRects() const {
+    QVariantList result;
+    for (const auto& rect : m_wordMarkRects)
+        if (!rect.isEmpty()) result.append(QVariantMap{{"x", rect.x()}, {"y", rect.y()}, {"width", rect.width()}, {"height", rect.height()}});
+    return result;
+}
+
+bool HostController::wordReplacementReady() const {
+    return m_hasWordRefinement && !m_wordRefinementNeedsClarification &&
+        !m_wordRefinementReplacement.isEmpty() && !m_wordRefinementInFlight &&
+        m_wordCompanionState == QLatin1String("ready");
+}
+
+bool HostController::wordMarkVisible() const {
+    return isAmbientActive() && !isCardVisible() && wordReplacementReady() &&
+        !m_wordMarkRects.isEmpty() && m_ambientObservation &&
+        !m_ambientDismissed.count(m_ambientObservation->textHash);
+}
+
+bool HostController::wordCanUndo() const {
+    return m_wordUndo && !m_wordRefinementInFlight && m_ambientObservation &&
+        m_wordUndo->workspaceEpoch == m_workspaceEpoch && m_wordUndo->pipelineSerial == m_pipelineSerial &&
+        m_wordUndo->fieldToken == m_ambientObservation->field.fieldToken &&
+        m_wordUndo->processId == m_ambientObservation->field.processId &&
+        m_ambientObservation->field.text == m_wordUndo->after;
+}
+
+quint64 HostController::undoWordRefinement(quint64 expectedVersion) {
+    if (expectedVersion != stateVersion() || !wordCanUndo()) return 0;
+    auto undo = *m_wordUndo;
+    std::swap(undo.before, undo.after);
+    std::swap(undo.original, undo.replacement);
+    undo.undo = true;
+    undo.requestId = ++m_wordRefinementRequestId;
+    undo.feedbackGeneration = m_wordFeedbackGeneration;
+    RangeInjectionRequest request{undo.requestId, undo.fieldToken, FieldKind::GuiEditor, undo.startOffset,
+        undo.startOffset + static_cast<int>(undo.original.size()), undo.original, undo.replacement, undo.before};
+    m_wordUndo.reset();
+    m_pendingWordApply = undo;
+    m_wordRefinementInFlight = true;
+    setWordCompanionState(QStringLiteral("applying"), QStringLiteral("Restoring your wording…"));
+    m_accessibility->injectRange(request);
+    return request.requestId;
+}
+
+bool HostController::submitWordClarification(const QString& answer, quint64 expectedVersion) {
+    if (expectedVersion != stateVersion() || !m_hasWordRefinement || !m_wordRefinementNeedsClarification ||
+        m_wordRefinementGenerating || m_wordRefinementInFlight || !m_ambientObservation ||
+        m_wordRefinementWorkspaceEpoch != m_workspaceEpoch || m_wordRefinementPipelineSerial != m_pipelineSerial ||
+        m_wordRefinementStateVersion != stateVersion() ||
+        m_ambientObservation->field.fieldToken != m_wordRefinementFieldToken ||
+        m_ambientObservation->field.text != m_wordRefinementFieldText) return false;
+    if (answer.trimmed().isEmpty() || answer.toUtf8().size() > bridge::kMaxModelStringBytes) return false;
+    m_wordClarificationAnswer = answer.trimmed();
+    requestWordRefinement(m_ambientObservation->field, m_wordRefinementStartOffset, m_wordRefinementEndOffset, m_wordRefinementOriginal);
+    return true;
+}
+
+quint64 HostController::refuseWordApply(const QString& reason) {
+    if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
+        qInfo() << "[Roclint inline apply] phase=refused reason=" << reason;
+    if (m_hasWordRefinement && !m_wordRefinementInFlight)
+        setWordCompanionState(QStringLiteral("failed"), reason);
+    return 0;
+}
+
+void HostController::retryWordRefinement() {
+    if (m_wordRefinementInFlight || !m_ambientObservation || isCardVisible()) return;
+    const auto field = m_ambientObservation->field;
+    clearWordRefinement();
+    detectWordRefinements(field);
+    m_wordCompanionRequested = true; // Retry is explicit, unlike passive typing.
+    emit wordRefinementChanged();
+    // Refresh the actual editor too; any change replaces the pending snapshot
+    // before dispatch, and native insertion always verifies the frozen text again.
+    m_accessibility->refreshFocusedField();
+}
+
+void HostController::onRangeInjectionFinished(quint64 requestId, InjectionOutcome outcome, const QString& detail) {
+    if (!m_pendingWordApply || requestId != m_pendingWordApply->requestId) return;
+    const auto pending = std::exchange(m_pendingWordApply, std::nullopt).value();
+    m_wordRefinementInFlight = false;
+    if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
+        qInfo() << "[Roclint inline apply] phase=completed request=" << requestId << "outcome=" << toString(outcome);
+    const bool current = m_wordFeedbackGeneration == pending.feedbackGeneration &&
+        m_workspaceEpoch == pending.workspaceEpoch && m_pipelineSerial == pending.pipelineSerial &&
+        m_ambientObservation && m_ambientObservation->field.fieldToken == pending.fieldToken &&
+        m_ambientObservation->field.processId == pending.processId &&
+        (m_ambientObservation->field.text == pending.before || m_ambientObservation->field.text == pending.after);
+    if (!current) { emit wordRefinementChanged(); return; }
+    const bool requested = m_wordCompanionRequested;
+    clearWordRefinement();
+    m_wordCompanionRequested = requested;
+    m_wordRefinementAnchorRect = pending.anchor;
+    m_wordRefinementOriginal = pending.original;
+    m_wordRefinementReplacement = pending.replacement;
+    m_wordRefinementFieldToken = pending.fieldToken;
+    m_wordRefinementFieldText = outcome == InjectionOutcome::Injected ? pending.after : pending.before;
+    if (outcome == InjectionOutcome::Injected) {
+        if (!pending.undo) m_wordUndo = pending;
+        setWordCompanionState(pending.undo ? QStringLiteral("undone") : QStringLiteral("applied"),
+            pending.undo ? QStringLiteral("Original wording restored.") : QStringLiteral("Applied to your draft."));
+        setAmbientStatus(QStringLiteral("Applied inline refinement."));
+        const auto generation = ++m_wordFeedbackGeneration;
+        QTimer::singleShot(7000, this, [this, generation] {
+            if (generation == m_wordFeedbackGeneration && (m_wordCompanionState == QLatin1String("applied") || m_wordCompanionState == QLatin1String("undone")))
+                clearWordRefinement();
+        });
+    } else {
+        const auto message = detail.isEmpty()
+            ? QStringLiteral("The editor didn't confirm the change. Check your draft before trying again.") : detail;
+        setWordCompanionState(QStringLiteral("failed"), message);
+        setAmbientStatus(QStringLiteral("Inline refinement failed: %1").arg(message));
+    }
+}
+
 quint64 HostController::applyWordRefinement(quint64 expectedVersion, const QString& candidateId) {
-    if (m_wordRefinementInFlight || m_wordRefinementNeedsClarification ||
-        !m_hasWordRefinement || !m_ambientObservation.has_value()) return 0;
-    if (expectedVersion != 0 && expectedVersion != stateVersion()) return 0;
+    if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
+        qInfo() << "[Roclint inline apply] phase=request expected_version=" << expectedVersion << "current_version=" << stateVersion();
+    if (m_wordRefinementInFlight) return 0;
+    if (m_wordRefinementNeedsClarification || !m_hasWordRefinement || !m_ambientObservation)
+        return refuseWordApply(QStringLiteral("Refocus your editor and check this phrase again."));
+    if (expectedVersion != 0 && expectedVersion != stateVersion())
+        return refuseWordApply(QStringLiteral("This suggestion is out of date. Check your current draft again."));
     const auto& observation = *m_ambientObservation;
     if (observation.field.fieldToken != m_wordRefinementFieldToken ||
         observation.field.text != m_wordRefinementFieldText ||
         m_workspaceEpoch != m_wordRefinementWorkspaceEpoch ||
         m_pipelineSerial != m_wordRefinementPipelineSerial ||
         stateVersion() != m_wordRefinementStateVersion) {
-        return 0;
+        return refuseWordApply(QStringLiteral("Your draft or workspace changed. Check the current draft again."));
     }
 
     const QString chosenId = candidateId.isEmpty() ? m_wordRefinementSelectedCandidateId : candidateId;
@@ -3443,18 +3670,18 @@ quint64 HostController::applyWordRefinement(quint64 expectedVersion, const QStri
             break;
         }
     }
-    if (!found) return 0;
-    if (chosen.value(QStringLiteral("requiresClarification")).toBool()) return 0;
+    if (!found) return refuseWordApply(QStringLiteral("Choose a current suggestion before applying."));
+    if (chosen.value(QStringLiteral("requiresClarification")).toBool()) return refuseWordApply(QStringLiteral("This wording needs your answer first."));
 
     const QString replacement = chosen.value(QStringLiteral("replacement")).toString();
     const QString originalSpan = chosen.value(QStringLiteral("originalSpan")).toString();
-    if (replacement.isEmpty() || originalSpan != m_wordRefinementOriginal) return 0;
+    if (replacement.isEmpty() || originalSpan != m_wordRefinementOriginal) return refuseWordApply(QStringLiteral("This suggestion is no longer current. Check again."));
     if (m_wordRefinementStartOffset < 0 ||
         m_wordRefinementEndOffset <= m_wordRefinementStartOffset ||
-        m_wordRefinementEndOffset > m_wordRefinementFieldText.size()) return 0;
+        m_wordRefinementEndOffset > m_wordRefinementFieldText.size()) return refuseWordApply(QStringLiteral("The selected phrase changed. Check your current draft again."));
     if (m_wordRefinementFieldText.mid(m_wordRefinementStartOffset,
                                       m_wordRefinementEndOffset - m_wordRefinementStartOffset) != originalSpan) {
-        return 0;
+        return refuseWordApply(QStringLiteral("The selected phrase changed. Check your current draft again."));
     }
 
     // Freeze the selected request before crossing the accessibility boundary. A delayed
@@ -3475,6 +3702,13 @@ quint64 HostController::applyWordRefinement(quint64 expectedVersion, const QStri
     req.originalRangeText = originalSpan;
     req.replacementText = replacement;
     req.expectedCurrentText = m_wordRefinementFieldText;
+    m_pendingWordApply = PendingWordApply{req.requestId, observation.field.fieldToken, m_workspaceEpoch,
+        m_pipelineSerial, m_wordFeedbackGeneration, observation.field.processId, m_wordRefinementFieldText,
+        m_wordRefinementFieldText.left(req.startOffset) + replacement + m_wordRefinementFieldText.mid(req.endOffset),
+        originalSpan, replacement, m_wordRefinementAnchorRect, req.startOffset};
+    setWordCompanionState(QStringLiteral("applying"), QStringLiteral("Applying to your draft…"));
+    if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
+        qInfo() << "[Roclint inline apply] phase=queued request=" << req.requestId << "field=" << req.fieldToken;
     emit wordRefinementChanged();
     m_accessibility->injectRange(req);
     return req.requestId;
@@ -3500,13 +3734,94 @@ void HostController::dismissWordRefinement() {
 }
 
 void HostController::exploreInCompanion() {
+    const quint64 version = m_revisionState ? stateVersion() : 0;
+    (void)openInterviewFromCompanion(version);
+}
+
+quint64 HostController::openRewriteFromCompanion(quint64 expectedVersion) {
+    if (expectedVersion != stateVersion() || stateVersion() != m_wordRefinementStateVersion || m_wordRefinementKey.isEmpty() ||
+        m_wordRefinementInFlight || !m_ambientObservation ||
+        m_ambientObservation->field.fieldToken != m_wordRefinementFieldToken ||
+        m_ambientObservation->textHash != m_wordRefinementTextHash ||
+        m_wordRefinementWorkspaceEpoch != m_workspaceEpoch ||
+        m_wordRefinementPipelineSerial != m_pipelineSerial) return 0;
+    const auto observation = *m_ambientObservation;
+    const auto epoch = m_workspaceEpoch;
+    const auto acceptedAnswer = m_acceptedWordClarification;
     if (!m_wordRefinementKey.isEmpty()) m_wordRefinementDismissedKeys.insert(m_wordRefinementKey);
     clearWordRefinement();
-    openFromAmbient();
+    return enqueueStorageCommand("openRewriteFromCompanion", [this, observation, epoch, expectedVersion, acceptedAnswer]() -> AsyncTask<core::Status> {
+        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
+        if (epoch != m_workspaceEpoch || !m_ambientObservation ||
+            m_ambientObservation->field.fieldToken != observation.field.fieldToken ||
+            m_ambientObservation->textHash != observation.textHash)
+            co_return makeError(ErrorCode::StaleVersion, "The editor draft changed before rewriting.");
+        if (auto status = co_await openFromAmbientOperation(observation); !status.ok()) co_return status;
+        if (epoch != m_workspaceEpoch || !m_revisionState ||
+            m_revisionState->currentRevision().text() != ss(observation.prompt) ||
+            !m_captureTarget || m_captureTarget->field.fieldToken != observation.field.fieldToken ||
+            !m_ambientObservation || m_ambientObservation->field.fieldToken != observation.field.fieldToken ||
+            m_ambientObservation->textHash != observation.textHash)
+            co_return makeError(ErrorCode::StaleVersion, "The editor draft changed before rewriting.");
+        if (acceptedAnswer && acceptedAnswer->workspaceEpoch == epoch &&
+            acceptedAnswer->draftText == observation.field.text &&
+            acceptedAnswer->fieldToken == observation.field.fieldToken &&
+            acceptedAnswer->processId == observation.field.processId) {
+            auto handoff = *acceptedAnswer;
+            handoff.sessionId = currentSessionId();
+            handoff.revisionId = m_revisionState->currentRevision().revisionId().value();
+            handoff.pipelineSerial = m_pipelineSerial;
+            m_pendingWordClarificationHandoff = std::move(handoff);
+            if (auto status = co_await commitPendingWordClarification(); !status.ok()) co_return status;
+        }
+        emit companionRewriteRequested(currentRevisionText(), stateVersion());
+        co_return Status::success();
+    });
+}
+
+AsyncTask<core::Status> HostController::commitPendingWordClarification() {
+    if (!m_pendingWordClarificationHandoff) co_return Status::success();
+    const auto pending = *m_pendingWordClarificationHandoff;
+    if (!m_revisionState || pending.workspaceEpoch != m_workspaceEpoch ||
+        pending.pipelineSerial != m_pipelineSerial || pending.sessionId != currentSessionId() ||
+        pending.revisionId != m_revisionState->currentRevision().revisionId().value() ||
+        ss(pending.draftText) != m_revisionState->currentRevision().text() || m_revisionState->isDraftDirty() ||
+        !m_captureTarget || pending.fieldToken != m_captureTarget->field.fieldToken ||
+        pending.processId != m_captureTarget->field.processId) {
+        m_pendingWordClarificationHandoff.reset();
+        co_return makeError(ErrorCode::StaleVersion, "The draft changed before your phrase answer could be included.");
+    }
+    // Analysis may still be running. The normal reevaluation commits this exact
+    // answer before confirming intent or allowing the requested full rewrite.
+    if (!m_currentAnalysis || !m_currentSnapshot) co_return Status::success();
+    auto records = m_interviewRecords;
+    core::intent::InterviewRecord record;
+    record.id = newOpaqueId("iv_word_");
+    record.question = ss(pending.question);
+    record.rawAnswer = ss(pending.answer);
+    record.sourceExcerpt = ss(pending.original);
+    record.sourceRef = pending.revisionId;
+    record.origin = "word_clarification";
+    record.disposition = "custom";
+    record.asked = true;
+    records.push_back(std::move(record));
+    if (auto status = co_await commitInterviewRecordChange(stateVersion(), std::move(records)); !status.ok()) co_return status;
+    m_pendingWordClarificationHandoff.reset();
+    co_return Status::success();
 }
 
 void HostController::clearWordRefinement() {
-    const bool changed = m_hasWordRefinement || !m_wordRefinementOriginal.isEmpty();
+    const bool changed = m_hasWordRefinement || m_wordCompanionState != QLatin1String("idle") ||
+        m_wordCompanionRequested || !m_wordRefinementOriginal.isEmpty();
+    ++m_wordFeedbackGeneration;
+    m_wordCompanionRequested = false;
+    m_wordCompanionState = QStringLiteral("idle");
+    m_wordCompanionMessage.clear();
+    m_wordUndo.reset();
+    m_wordMarkRects.clear();
+    m_wordClarificationChoices.clear();
+    m_wordClarificationAnswer.clear();
+    m_acceptedWordClarification.reset();
     ++m_wordRefinementSuggestionId;
     m_wordRefinementDebounce.stop();
     m_pendingWordRefinement = {};
@@ -3541,30 +3856,37 @@ void HostController::detectWordRefinements(const ObservedField& field) {
         clearWordRefinement();
         return;
     }
-    if (m_wordRefinementInFlight) return;
+    if (m_wordRefinementInFlight) {
+        if (m_pendingWordApply && (field.fieldToken != m_pendingWordApply->fieldToken ||
+            field.processId != m_pendingWordApply->processId ||
+            (field.text != m_pendingWordApply->before && field.text != m_pendingWordApply->after)))
+            clearWordRefinement();
+        return;
+    }
+    // Keep the short confirmation visible through its own observation echo.
+    // Actual typing or a different field replaces it immediately.
+    if ((m_wordCompanionState == QLatin1String("applied") || m_wordCompanionState == QLatin1String("undone")) &&
+        field.fieldToken == m_wordRefinementFieldToken && field.text == m_wordRefinementFieldText) {
+        // The native completion may precede its observation echo. Publish the
+        // now-current Undo eligibility without starting another model request.
+        emit wordRefinementChanged();
+        return;
+    }
 
     const QString text = field.text;
     const int caret = (field.caretOffset >= 0 && field.caretOffset <= text.size()) ? field.caretOffset : text.size();
 
-    // Find the word or short phrase preceding or enclosing the caret.
-    auto isWordChar = [](QChar c) {
-        return c.isLetterOrNumber() || c == QLatin1Char('_') || c == QLatin1Char('-');
-    };
-    int wordEnd = caret;
-    while (wordEnd < text.size() && isWordChar(text[wordEnd])) ++wordEnd;
-    int wordStart = caret;
-    while (wordStart > 0 && isWordChar(text[wordStart - 1])) --wordStart;
-    if (wordStart >= wordEnd) {
-        int p = caret;
-        while (p > 0 && text[p - 1].isSpace()) --p;
-        wordEnd = p;
-        wordStart = p;
-        while (wordStart > 0 && isWordChar(text[wordStart - 1])) --wordStart;
+    auto span = wordSpanAtCaret(text, caret);
+    if (!field.wordRects.isEmpty()) {
+        const auto observedSpan = wordSpanAtCaret(text, field.wordStartOffset);
+        if (observedSpan && observedSpan->first == field.wordStartOffset && observedSpan->second == field.wordEndOffset)
+            span = observedSpan;
     }
-    if (wordStart >= wordEnd) {
+    if (!span) {
         clearWordRefinement();
         return;
     }
+    const auto [wordStart, wordEnd] = *span;
 
     const QString word = text.mid(wordStart, wordEnd - wordStart);
     if (word.size() < 3) {
@@ -3581,7 +3903,16 @@ void HostController::detectWordRefinements(const ObservedField& field) {
         clearWordRefinement();
         return;
     }
-    if (key == m_wordRefinementKey && (m_hasWordRefinement || m_pendingWordRefinement || m_wordRefinementGenerating)) return;
+    if (key == m_wordRefinementKey && (m_hasWordRefinement || m_pendingWordRefinement || m_wordRefinementGenerating)) {
+        const auto rects = field.wordStartOffset == wordStart && field.wordEndOffset == wordEnd ? field.wordRects : QList<QRect>{};
+        const auto anchor = !rects.isEmpty() ? rects.constFirst() : !field.caretRect.isNull() ? field.caretRect : field.fieldRect;
+        if (anchor != m_wordRefinementAnchorRect || rects != m_wordMarkRects) {
+            m_wordMarkRects = rects;
+            m_wordRefinementAnchorRect = anchor;
+            emit wordRefinementChanged();
+        }
+        return;
+    }
 
     clearWordRefinement();
     m_wordRefinementKey = key;
@@ -3590,7 +3921,8 @@ void HostController::detectWordRefinements(const ObservedField& field) {
     m_wordRefinementStartOffset = wordStart;
     m_wordRefinementEndOffset = wordEnd;
     m_wordRefinementOriginal = word;
-    m_wordRefinementAnchorRect = !field.caretRect.isNull() ? field.caretRect : field.fieldRect;
+    m_wordMarkRects = field.wordStartOffset == wordStart && field.wordEndOffset == wordEnd ? field.wordRects : QList<QRect>{};
+    m_wordRefinementAnchorRect = !m_wordMarkRects.isEmpty() ? m_wordMarkRects.constFirst() : !field.caretRect.isNull() ? field.caretRect : field.fieldRect;
 
     // Debounce so fast typing does not queue a model request for every intermediate word.
     const quint64 generation = ++m_wordRefinementSuggestionId;
@@ -3616,6 +3948,17 @@ void HostController::requestWordRefinement(const ObservedField& field, int start
     if (!isAmbientActive() || isCardVisible() || !m_ambientObservation.has_value()) return;
     if (m_ambientObservation->field.fieldToken != field.fieldToken ||
         m_ambientObservation->field.text != field.text) return;
+    setWordCompanionState(QStringLiteral("checking"),
+        nativeGraniteSelected() && !usesTransportOverride() && !m_native->isReady()
+            ? QStringLiteral("Loading the local model…") : QStringLiteral("Checking this phrase…"));
+    // Inline assistance must work on the first draft, before any HUD analysis
+    // has loaded Granite. Retain only the latest frozen request during warm-up.
+    if (nativeGraniteSelected() && !usesTransportOverride() && !m_native->isReady()) {
+        if (!m_nativeWarming && m_native->state() != QLatin1String("LOADING") &&
+            !(m_isDownloadingModel && m_downloadingNativeTag == m_activeModel))
+            prepareNativeModel();
+        return;
+    }
     const auto runtime = m_graniteAdapter->state();
     if (runtime != bridge::GraniteRuntimeState::Ready && !usesTransportOverride()) return;
 
@@ -3684,9 +4027,19 @@ void HostController::requestWordRefinement(const ObservedField& field, int start
     auto schemas = core::json::Value::array(); for (auto& branch : branches) schemas.push(std::move(branch));
     wordSchema.set("oneOf", std::move(schemas));
     const auto transport = currentTransport(core::json::serialize(wordSchema), &ticket,
-                                            QStringLiteral("granite_word_refinement"), field.text, {}, {}, cancellation);
+                                            QStringLiteral("granite_word_refinement"), field.text, {}, {}, cancellation,
+                                            QStringLiteral("word"));
+    const auto wordSurfaceTransport = currentTransport(bridge::wordSurfaceCheckResponseSchema(), &ticket,
+                                            QStringLiteral("granite_word_refinement"), field.text, {}, {}, cancellation,
+                                            QStringLiteral("word"));
     const auto wordAuditTransport = currentTransport(bridge::wordRefinementAuditResponseSchema(), &ticket,
-                                            QStringLiteral("granite_word_refinement"), field.text, {}, {}, cancellation);
+                                            QStringLiteral("granite_word_refinement"), field.text, {}, {}, cancellation,
+                                            QStringLiteral("word"));
+    const auto answerCheckTransport = currentTransport(bridge::clarificationCheckResponseSchema(), &ticket,
+                                            QStringLiteral("granite_analyze"), field.text, {}, {}, cancellation, QStringLiteral("word"));
+    const auto answerAccepted = std::make_shared<std::atomic_bool>(false);
+    const auto answer = ss(m_wordClarificationAnswer);
+    const auto question = ss(m_wordRefinementClarificationQuestion);
     if (!transport) {
         setAmbientStatus(QStringLiteral("Inline suggestions need a loaded local model. Analyze in the companion instead."));
         return;
@@ -3712,7 +4065,7 @@ void HostController::requestWordRefinement(const ObservedField& field, int start
     auto* watcher = new QFutureWatcher<Result>(this);
     connect(watcher, &QFutureWatcherBase::finished, this,
         [this, watcher, suggestionId, boundVersion, sessionId, revisionId, textHash, request,
-         workspaceEpoch, pipelineSerial, nativeWork, cancellation]() {
+         workspaceEpoch, pipelineSerial, nativeWork, cancellation, answerAccepted, answer, question, field]() {
             const auto result = watcher->result();
             watcher->deleteLater();
             --m_inFlight;
@@ -3725,27 +4078,69 @@ void HostController::requestWordRefinement(const ObservedField& field, int start
                 pipelineSerial != m_pipelineSerial || stateVersion() != boundVersion ||
                 !m_ambientObservation.has_value() ||
                 m_ambientObservation->field.fieldToken != m_wordRefinementFieldToken ||
+                m_ambientObservation->field.processId != field.processId ||
                 m_ambientObservation->textHash != textHash || isCardVisible()) {
                 return;
+            }
+            if (answerAccepted->load()) {
+                m_acceptedWordClarification = WordClarificationDecision{
+                    qs(question), qs(answer), qs(request.selectedText), field.text,
+                    field.fieldToken, workspaceEpoch, pipelineSerial, field.processId, {}, {}};
             }
             finishWordRefinementRequest(suggestionId, boundVersion, sessionId, revisionId, textHash,
                                         request, result);
         });
     watcher->setFuture(QtConcurrent::run(
-        [transport, wordAuditTransport, request, groundingInput, cancellation, wordDeadline]() mutable -> Result {
+        [transport, wordAuditTransport, wordSurfaceTransport, answerCheckTransport, answerAccepted, answer, question, request, groundingInput, cancellation, wordDeadline]() mutable -> Result {
             try {
                 request.astContextXml = computeGroundedPromptContext(groundingInput).xml;
                 if (cancellation->load() || wordDeadline.hasExpired()) return makeError(ErrorCode::PreconditionFailed, "Superseded or expired word request");
+                if (!answer.empty()) {
+                    if (!answerCheckTransport) return makeError(ErrorCode::ProviderUnavailable, "Couldn't check your answer. Please try again.");
+                    bridge::ClarificationCheckRequest check;
+                    check.prompt = request.draftText; check.question = question; check.answer = answer;
+                    auto checked = answerCheckTransport(bridge::buildClarificationCheckPrompt(check));
+                    if (cancellation->load() || wordDeadline.hasExpired()) return makeError(ErrorCode::PreconditionFailed, "Superseded or expired answer check");
+                    if (!checked.ok()) return checked.error();
+                    const auto verdict = bridge::parseClarificationCheckResponse(checked.value());
+                    if (!verdict.ok()) return verdict.error();
+                    if (!verdict.value().accepted) return makeError(ErrorCode::ValidationFailed,
+                        "word_answer_rejected: " + (verdict.value().feedback.empty()
+                            ? std::string("That doesn't answer this question yet. Try describing the result you want.") : verdict.value().feedback));
+                    answerAccepted->store(true);
+                    request.approvedDecisions.push_back(question + " -> " + answer);
+                    request.intervention = bridge::WordIntervention::Rewrite;
+                }
                 auto raw = transport(buildWordRefinementPrompt(request));
                 if (cancellation->load() || wordDeadline.hasExpired()) return makeError(ErrorCode::PreconditionFailed, "Superseded or expired word request");
                 if (!raw.ok()) return raw.error();
                 auto proposed = parseWordRefinementResponse(raw.value(), request);
-                if (!proposed.ok() || proposed.value().candidates.empty()) return proposed;
+                if (!proposed.ok()) return proposed;
+                // An accepted answer is not another unanswered question. Let the
+                // user carry it into a full rewrite instead of repeating the loop.
+                if (answerAccepted->load() && (proposed.value().needsClarification || proposed.value().candidates.empty()))
+                    return makeError(ErrorCode::ValidationFailed, "No usable local wording for the accepted answer");
+                // A question can itself be an unnecessary detour. One focused
+                // surface check can repair clear prose or preserve exact text.
+                // It shares the original ticket/deadline and cannot approve an edit.
+                if (proposed.value().needsClarification) {
+                    if (!wordSurfaceTransport) return makeError(ErrorCode::PreconditionFailed, "Word surface check unavailable");
+                    auto surfaceRaw = wordSurfaceTransport(bridge::buildWordSurfaceCheckPrompt(request));
+                    if (cancellation->load() || wordDeadline.hasExpired()) return makeError(ErrorCode::PreconditionFailed, "Superseded or expired word surface check");
+                    if (!surfaceRaw.ok()) return surfaceRaw.error();
+                    auto surface = bridge::parseWordSurfaceCheckResponse(surfaceRaw.value(), request);
+                    if (!surface.ok()) return surface.error();
+                    if (surface.value().handled) proposed = std::move(surface).value().response;
+                }
+                if (proposed.value().candidates.empty()) return proposed;
                 if (!wordAuditTransport) return makeError(ErrorCode::PreconditionFailed, "Word audit unavailable");
                 auto audit = wordAuditTransport(buildWordRefinementAuditPrompt(request, proposed.value()));
                 if (cancellation->load() || wordDeadline.hasExpired()) return makeError(ErrorCode::PreconditionFailed, "Superseded or expired word audit");
                 if (!audit.ok()) return audit.error();
-                return auditWordRefinementResponse(audit.value(), request, proposed.value());
+                auto audited = auditWordRefinementResponse(audit.value(), request, proposed.value());
+                if (answerAccepted->load() && audited.ok() && audited.value().candidates.empty())
+                    return makeError(ErrorCode::ValidationFailed, "No local wording passed the sentence audit for the accepted answer");
+                return audited;
             } catch (const std::exception& ex) {
                 return makeError(ErrorCode::Internal,
                                  std::string("Word refinement crashed: ") + ex.what());
@@ -3763,10 +4158,27 @@ void HostController::finishWordRefinementRequest(quint64 suggestionId, quint64 s
         return;
     }
     if (!result.ok()) {
-        // A failed context request is not a prompt to fall back to canned advice. Keep the
-        // companion available for a full analysis instead.
-        clearWordRefinement();
-        setAmbientStatus(QStringLiteral("Couldn't prepare a contextual suggestion. Explore in the companion instead."));
+        m_wordClarificationAnswer.clear();
+        constexpr std::string_view prefix = "word_answer_rejected: ";
+        const auto& message = result.error().message;
+        if (m_hasWordRefinement && m_wordRefinementNeedsClarification && !m_acceptedWordClarification) {
+            setWordCompanionState(QStringLiteral("ready"), message.starts_with(prefix)
+                ? qs(message.substr(prefix.size())) : QStringLiteral("Couldn't check that answer. Try again; your draft is unchanged."));
+            return;
+        }
+        // Keep the exact draft binding so Full rewrite remains an explicit exit.
+        // Failed or unaudited candidates must never remain applicable.
+        m_hasWordRefinement = false;
+        m_wordRefinementCandidates.clear();
+        m_wordRefinementAlternatives.clear();
+        m_wordRefinementReplacement.clear();
+        m_wordRefinementSelectedCandidateId.clear();
+        m_wordRefinementNeedsClarification = false;
+        m_wordClarificationChoices.clear();
+        m_wordRefinementClarificationQuestion.clear();
+        setWordCompanionState(QStringLiteral("failed"), m_acceptedWordClarification
+            ? QStringLiteral("Your answer is kept. Use Full rewrite to include it; your draft is unchanged.")
+            : QStringLiteral("Couldn't check this phrase. Try again or use Full rewrite."));
         emit wordRefinementChanged();
         return;
     }
@@ -3797,6 +4209,9 @@ void HostController::finishWordRefinementRequest(quint64 suggestionId, quint64 s
         m_wordRefinementCandidates.append(item);
     }
     m_wordRefinementNeedsClarification = response.needsClarification;
+    m_wordClarificationChoices.clear();
+    for (const auto& choice : response.clarificationChoices) m_wordClarificationChoices.append(qs(choice));
+    m_wordClarificationAnswer.clear();
     m_wordRefinementClarificationQuestion = qs(response.clarificationQuestion);
     if (firstApplicableId.isEmpty()) {
         m_wordRefinementNeedsClarification = true;
@@ -3816,8 +4231,1599 @@ void HostController::finishWordRefinementRequest(quint64 suggestionId, quint64 s
         m_wordRefinementAssumption = first.value(QStringLiteral("assumption")).toString();
     }
     m_wordRefinementOriginal = qs(request.selectedText);
+    m_wordCompanionState = QStringLiteral("ready");
+    m_wordCompanionMessage.clear();
     m_hasWordRefinement = true;
     emit wordRefinementChanged();
+}
+
+// ----------------------------------------------------------------------------------------------
+// Shared intent brief and adaptive interview
+// ----------------------------------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] QString boundedText(const std::string& text, std::size_t maximum) {
+    if (text.size() <= maximum) return qs(text);
+    std::size_t end = maximum;
+    while (end > 0 && (static_cast<unsigned char>(text[end]) & 0xC0U) == 0x80U) --end;
+    return qs(text.substr(0, end));
+}
+
+[[nodiscard]] QString joinedConsequence(const std::vector<core::intent::InterviewChoice>& choices) {
+    QStringList parts;
+    for (const auto& choice : choices) {
+        if (choice.consequence.empty()) continue;
+        const auto text = boundedText(choice.consequence, 120).trimmed();
+        if (!text.isEmpty() && !parts.contains(text)) parts << text;
+    }
+    return parts.join(QStringLiteral("; ")).left(400);
+}
+
+} // namespace
+
+core::intent::IntentBrief HostController::buildIntentBrief() const {
+    core::intent::IntentBriefInputs inputs;
+    inputs.sessionId = m_revisionState ? currentSessionId() : std::string();
+    inputs.revisionId = m_revisionState ? m_revisionState->currentRevision().revisionId().value() : std::string();
+    inputs.revisionText = m_revisionState ? m_revisionState->currentRevision().text() : std::string();
+    inputs.workspaceIdentity = ss(m_workspaceRootIdentity);
+    inputs.workspaceEpoch = m_workspaceEpoch;
+    inputs.stateVersion = m_revisionState ? m_revisionState->stateVersion() : 0;
+    if (m_currentSnapshot) {
+        inputs.snapshotId = m_currentSnapshot->id;
+        inputs.snapshotHash = m_currentSnapshot->snapshotHash;
+        inputs.analysis = &m_currentSnapshot->normalized;
+        inputs.policy = &m_currentPolicyResult;
+    } else if (m_currentAnalysis) {
+        inputs.analysis = &*m_currentAnalysis;
+        inputs.policy = &m_currentPolicyResult;
+    }
+    inputs.confirmedIntent = m_confirmedIntent ? &*m_confirmedIntent : nullptr;
+    inputs.workingIntent = &m_workingIntent;
+    inputs.interviewRecords = m_interviewRecords;
+
+    // Only non-user constraints are passed as source-linked constraints; user clauses
+    // are extracted verbatim by the brief builder so decisions are not duplicated.
+    if (m_confirmedIntent && m_revisionState) {
+        for (auto& constraint : extractSessionConstraints(m_revisionState->currentRevision().text(), *m_confirmedIntent)) {
+            if (constraint.origin != core::Origin::User) inputs.sourceConstraints.push_back(std::move(constraint));
+        }
+    }
+    for (const auto& evidence : m_activeGroundedEvidence) {
+        if (inputs.evidence.size() >= 8) break;
+        core::intent::BriefEvidenceRef ref;
+        ref.ref = evidence.filePath.empty() ? evidence.target : evidence.filePath + ":" + evidence.target;
+        ref.excerpt = !evidence.signature.empty() ? evidence.signature : evidence.target;
+        ref.detail = evidence.status + " " + evidence.target;
+        if (!evidence.filePath.empty()) ref.detail += " (" + evidence.filePath + ")";
+        inputs.evidence.push_back(std::move(ref));
+    }
+
+    // The frozen word selection is preserved in the shared brief as a proposed
+    // assumption: the user's selected phrase is verbatim, the model's wording is
+    // explicitly not confirmed.
+    auto brief = core::intent::IntentBriefBuilder::build(inputs);
+    if (m_interviewWordContext.has_value() && !m_interviewWordContext->original.isEmpty()) {
+        core::intent::BriefItem item;
+        item.id = "word_selection";
+        item.kind = core::intent::BriefItemKind::ProposedAssumption;
+        item.status = core::intent::BriefItemStatus::Proposed;
+        item.text = "Selected phrase: \"" + ss(m_interviewWordContext->original) + "\"";
+        if (!m_interviewWordContext->replacement.isEmpty()) {
+            item.text += " - proposed wording: \"" + ss(m_interviewWordContext->replacement) + "\"";
+        }
+        item.sourceExcerpt = ss(m_interviewWordContext->original);
+        item.sourceRef = "word:" + std::to_string(m_interviewWordContext->startOffset) + "-" +
+                         std::to_string(m_interviewWordContext->endOffset);
+        item.consequential = false;
+        item.analysisItemId = "word_selection";
+        brief.items.push_back(std::move(item));
+    }
+    return brief;
+}
+
+bool HostController::hasIntentBrief() const {
+    return m_currentAnalysis.has_value() || m_confirmedIntent.has_value() || !m_interviewRecords.empty();
+}
+
+QVariantList HostController::intentBriefItems() const {
+    QVariantList list;
+    const auto brief = buildIntentBrief();
+    list.reserve(static_cast<qsizetype>(brief.items.size()));
+    for (const auto& item : brief.items) {
+        QVariantMap map;
+        map[QStringLiteral("id")] = qs(item.id);
+        map[QStringLiteral("kind")] = QString::fromUtf8(core::intent::toString(item.kind));
+        map[QStringLiteral("text")] = qs(item.text);
+        map[QStringLiteral("sourceExcerpt")] = qs(item.sourceExcerpt);
+        map[QStringLiteral("sourceRef")] = qs(item.sourceRef);
+        map[QStringLiteral("rawAnswer")] = qs(item.rawAnswer);
+        map[QStringLiteral("status")] = QString::fromUtf8(core::intent::toString(item.status));
+        map[QStringLiteral("consequential")] = item.consequential;
+        map[QStringLiteral("analysisItemId")] = qs(item.analysisItemId);
+        list.append(map);
+    }
+    return list;
+}
+
+QStringList HostController::intentOpenChoiceIds() const {
+    QStringList ids;
+    for (const auto& id : buildIntentBrief().openChoiceIds()) ids << qs(id);
+    return ids;
+}
+
+QString HostController::intentBriefSummary() const {
+    return qs(buildIntentBrief().displaySummary);
+}
+
+bool HostController::canExploreInterview() const {
+    if (m_interviewActive) return false;
+    return m_hasWordRefinement || m_currentAnalysis.has_value() || m_confirmedIntent.has_value() ||
+           (m_revisionState && !m_revisionState->currentRevision().text().empty()) ||
+           m_ambientObservation.has_value();
+}
+
+std::vector<core::intent::SupplementalDecision> HostController::supplementalDecisionsFrom(
+    const std::vector<core::intent::InterviewRecord>& records) {
+    std::vector<core::intent::SupplementalDecision> decisions;
+    for (const auto& record : records) {
+        if (!record.analysisItemId.empty() || !record.isDecision()) continue;
+        std::string text = record.rawAnswer;
+        if (!record.selectedChoiceId.empty()) {
+            for (const auto& choice : record.choices) {
+                if (choice.id == record.selectedChoiceId) {
+                    text = choice.label;
+                    break;
+                }
+            }
+        }
+        if (text.empty()) continue;
+        core::intent::SupplementalDecision decision;
+        decision.itemId = record.id;
+        decision.text = text;
+        decision.rationale = record.question;
+        decision.provenance = record.origin;
+        decisions.push_back(std::move(decision));
+    }
+    return decisions;
+}
+
+std::vector<core::intent::SupplementalDecision> HostController::supplementalInterviewDecisions() const {
+    return supplementalDecisionsFrom(m_interviewRecords);
+}
+
+core::intent::InterviewRecord* HostController::findInterviewRecord(std::string_view id) {
+    for (auto& record : m_interviewRecords) {
+        if (record.id == id) return &record;
+    }
+    return nullptr;
+}
+
+const core::intent::InterviewRecord* HostController::findInterviewRecord(std::string_view id) const {
+    return const_cast<HostController*>(this)->findInterviewRecord(id);
+}
+
+void HostController::captureWordContextForInterview() {
+    if (!m_hasWordRefinement || m_wordRefinementStartOffset < 0) return;
+    InterviewWordContext context;
+    context.draftText = m_wordRefinementFieldText;
+    context.startOffset = m_wordRefinementStartOffset;
+    context.endOffset = m_wordRefinementEndOffset;
+    context.original = m_wordRefinementOriginal;
+    context.replacement = m_wordRefinementReplacement;
+    context.explanation = m_wordRefinementExplanation;
+    context.assumption = m_wordRefinementAssumption;
+    context.selectedCandidateId = m_wordRefinementSelectedCandidateId;
+    context.candidates = m_wordRefinementCandidates;
+    context.fieldToken = m_wordRefinementFieldToken;
+    context.workspaceEpoch = m_workspaceEpoch;
+    context.textHash = m_wordRefinementTextHash;
+    m_interviewWordContext = std::move(context);
+}
+
+void HostController::publishInterviewQuestion(const core::intent::InterviewRecord& record) {
+    m_interviewCurrentRecordId = record.id;
+    ++m_interviewQuestionSerial;
+    m_interviewQuestion = qs(record.question);
+    m_interviewConsequence = qs(record.consequence);
+    m_interviewChoices.clear();
+    for (const auto& choice : record.choices) {
+        QVariantMap map;
+        map[QStringLiteral("id")] = qs(choice.id);
+        map[QStringLiteral("label")] = qs(choice.label);
+        map[QStringLiteral("consequence")] = qs(choice.consequence);
+        m_interviewChoices.append(map);
+    }
+    emit interviewChanged();
+}
+
+void HostController::seedInterviewFromDecision() {
+    if (!m_interviewActive || !m_currentAnalysis) return;
+    if (m_currentDecision.verdict != intent::InterventionVerdict::Clarify ||
+        !m_currentDecision.activeItemId.has_value()) {
+        m_interviewQuestion.clear();
+        m_interviewConsequence.clear();
+        m_interviewChoices.clear();
+        m_interviewCurrentRecordId.clear();
+        emit interviewChanged();
+        return;
+    }
+    const std::string id = *m_currentDecision.activeItemId;
+    auto* record = findInterviewRecord(id);
+    if (record == nullptr) {
+        core::intent::InterviewRecord created;
+        created.id = id;
+        created.analysisItemId = id;
+        created.origin = "analysis";
+        created.asked = true;
+        const auto& a = *m_currentAnalysis;
+        switch (m_currentDecision.activeItemKind) {
+            case intent::ActiveItemKind::ChoiceGroup: {
+                const auto group = std::find_if(a.choiceGroups.begin(), a.choiceGroups.end(),
+                                                [&](const analysis::ChoiceGroup& g) { return g.id == id; });
+                if (group == a.choiceGroups.end()) return;
+                created.question = group->question;
+                for (const auto& alt : group->alternatives) {
+                    core::intent::InterviewChoice choice;
+                    choice.id = alt.id;
+                    choice.label = alt.interpretation;
+                    choice.consequence = alt.whyMaterial.empty()
+                                             ? "This changes what the result emphasizes."
+                                             : alt.whyMaterial;
+                    created.choices.push_back(std::move(choice));
+                    if (created.sourceExcerpt.empty() && !alt.evidence.empty() && m_revisionState &&
+                        analysis::isValidSpan(m_revisionState->currentRevision().text(), alt.evidence.front())) {
+                        created.sourceExcerpt = m_revisionState->currentRevision().text().substr(
+                            alt.evidence.front().startByte, alt.evidence.front().length());
+                        created.sourceRef = "revision:" + m_revisionState->currentRevision().revisionId().value() +
+                                            "#bytes:" + std::to_string(alt.evidence.front().startByte) + "-" +
+                                            std::to_string(alt.evidence.front().endByte);
+                    }
+                }
+                created.consequence = ss(joinedConsequence(created.choices));
+                break;
+            }
+            case intent::ActiveItemKind::Assumption: {
+                const auto assumption = std::find_if(a.assumptions.begin(), a.assumptions.end(),
+                                                     [&](const analysis::Assumption& item) { return item.id == id; });
+                if (assumption == a.assumptions.end()) return;
+                created.question = assumption->statement;
+                created.consequence = std::string(
+                    "Accepting this adds the premise to the rewrite; rejecting it keeps the premise out.");
+                created.choices.push_back(
+                    core::intent::InterviewChoice{"assume_yes", "Yes, that's right",
+                                                  "The rewrite will follow this assumption."});
+                created.choices.push_back(
+                    core::intent::InterviewChoice{"assume_no", "No, don't assume that",
+                                                  "The rewrite will avoid relying on it."});
+                if (!assumption->evidence.empty() && m_revisionState &&
+                    analysis::isValidSpan(m_revisionState->currentRevision().text(), assumption->evidence.front())) {
+                    created.sourceExcerpt = m_revisionState->currentRevision().text().substr(
+                        assumption->evidence.front().startByte, assumption->evidence.front().length());
+                }
+                break;
+            }
+            case intent::ActiveItemKind::MissingDecision: {
+                const auto missing = std::find_if(a.missingDecisions.begin(), a.missingDecisions.end(),
+                                                  [&](const analysis::MissingDecision& item) { return item.id == id; });
+                if (missing == a.missingDecisions.end()) return;
+                created.question = missing->question;
+                created.consequence = std::string(
+                    "A faithful rewrite needs this detail; otherwise it would have to guess.");
+                break;
+            }
+            case intent::ActiveItemKind::Conflict: {
+                const auto conflict = std::find_if(a.conflicts.begin(), a.conflicts.end(),
+                                                   [&](const analysis::Conflict& item) { return item.id == id; });
+                if (conflict == a.conflicts.end()) return;
+                created.question = conflict->description;
+                created.consequence = std::string(
+                    "These requirements conflict; the rewrite cannot preserve both without your decision.");
+                break;
+            }
+            case intent::ActiveItemKind::None:
+                return;
+        }
+        if (created.question.empty()) return;
+        m_interviewRecords.push_back(std::move(created));
+        record = &m_interviewRecords.back();
+    }
+    if (record->disposition == "rejected") record->disposition = "asked";
+    publishInterviewQuestion(*record);
+}
+
+void HostController::advanceInterview() {
+    if (!m_interviewActive) return;
+    // 1) The sealed analysis still has a higher-priority open item.
+    if (m_currentAnalysis && m_currentDecision.verdict == intent::InterventionVerdict::Clarify &&
+        m_currentDecision.activeItemId.has_value()) {
+        seedInterviewFromDecision();
+        return;
+    }
+    // 2) An interview-owned question (follow-up or review finding) is still open.
+    for (auto it = m_interviewRecords.rbegin(); it != m_interviewRecords.rend(); ++it) {
+        if (!it->analysisItemId.empty() || !it->asked) continue;
+        if (it->isOpen() && it->disposition != "rejected") {
+            publishInterviewQuestion(*it);
+            return;
+        }
+    }
+    // 3) Nothing left to ask. Reassess with one bounded model request only while the
+    //    interview has not already concluded.
+    if (m_interviewComplete) {
+        m_interviewQuestion.clear();
+        m_interviewConsequence.clear();
+        m_interviewChoices.clear();
+        m_interviewCurrentRecordId.clear();
+        emit interviewChanged();
+        return;
+    }
+    if (!m_interviewBusy) requestInterviewFollowUp();
+}
+
+void HostController::setInterviewFeedback(const QString& feedback) {
+    if (m_interviewFeedback == feedback) return;
+    m_interviewFeedback = feedback;
+    emit interviewChanged();
+}
+
+void HostController::cancelInterview() {
+    ++m_interviewSerial;
+    ++m_interviewQuestionSerial;
+    if (m_interviewCancellation) m_interviewCancellation->store(true);
+    m_interviewCancellation.reset();
+    m_interviewBusy = false;
+    m_interviewActive = false;
+    m_interviewComplete = false;
+    m_interviewTurnsCompleted = 0;
+    if (!m_interviewOpenPending) m_interviewWordContext.reset();
+    m_interviewRecords.clear();
+    m_interviewQuestion.clear();
+    m_interviewConsequence.clear();
+    m_interviewFeedback.clear();
+    m_interviewChoices.clear();
+    m_interviewCurrentRecordId.clear();
+    emit interviewChanged();
+    emit intentBriefChanged();
+}
+
+quint64 HostController::openInterviewFromCompanion(quint64 expectedVersion) {
+    if (m_revisionState) {
+        if (expectedVersion != stateVersion()) {
+            setLastError(core::makeError(core::ErrorCode::StaleVersion,
+                                         "The prompt changed. Review the current state and try again."));
+            setInterviewFeedback(QStringLiteral("The prompt changed before the interview opened. Try again."));
+            return 0;
+        }
+    } else if (expectedVersion != 0) {
+        setInterviewFeedback(QStringLiteral("The prompt changed before the interview opened. Try again."));
+        return 0;
+    }
+
+    if (m_interviewActive) {
+        // Idempotent re-entry: never restart the explanation or discard answers.
+        if (!isCardVisible()) {
+            if (m_revisionState) showCardInternal(false);
+            else openFromAmbient();
+        }
+        return stateVersion();
+    }
+
+    captureWordContextForInterview();
+    if (!m_wordRefinementKey.isEmpty()) m_wordRefinementDismissedKeys.insert(m_wordRefinementKey);
+    clearWordRefinement();
+
+    // Opening the larger interview is an explicit request for a deeper look. It
+    // must not inherit the automatic route's QUITE/ORIGINAL dead end.
+    m_reviewTrigger = analysis::ReviewTrigger::ExplicitReview;
+    ++m_interviewSerial;
+    m_interviewActive = true;
+    m_interviewComplete = false;
+    m_interviewBusy = false;
+    m_interviewFeedback.clear();
+    emit interviewChanged();
+    emit intentBriefChanged();
+
+    if (!m_revisionState) {
+        if (!m_ambientObservation.has_value()) {
+            setInterviewFeedback(QStringLiteral("There is no captured draft to explore yet."));
+            m_interviewActive = false;
+            emit interviewChanged();
+            return 0;
+        }
+        m_interviewOpenPending = true;
+        openFromAmbient();
+        return 1; // The new session's root revision version.
+    }
+
+    showCardInternal(false);
+    const bool emptyAnalysis = m_currentAnalysis.has_value() &&
+        m_currentAnalysis->choiceGroups.empty() && m_currentAnalysis->assumptions.empty() &&
+        m_currentAnalysis->missingDecisions.empty() && m_currentAnalysis->conflicts.empty();
+    const bool hasAnyDecision = !m_workingIntent.confirmedAlternatives.empty() ||
+        !m_workingIntent.customResolutions.empty() || !m_workingIntent.assumptionDecisions.empty() ||
+        !m_workingIntent.keptOriginalItemIds.empty() || !m_interviewRecords.empty();
+    const bool needsExplicitDiscovery = !m_currentAnalysis || (emptyAnalysis && !hasAnyDecision);
+    if (needsExplicitDiscovery && !isAnalyzing()) {
+        // The measured automatic ORIGINAL/QUIET route stores an empty snapshot and
+        // never calls Granite. Explicit Explore must not inherit that dead end: start
+        // a fresh bounded discovery, even though an empty snapshot already exists.
+        // Completed interview answers are preserved by never restarting here.
+        if (m_routedAnalysisGroup && !m_routedAnalysisGroup->terminal) {
+            m_routedAnalysisGroup->superseded = true;
+            m_routedAnalysisGroup->terminal = true;
+        }
+        m_routedAnalysisGroup = std::make_shared<AnalysisGroup>(analysisGroupBudgetMs());
+        m_routedAnalysisGroup->id = newOpaqueId("grp_");
+        // Publish the accepted interview version first: the discovery ticket captures
+        // the state version it starts under, and advancing it afterwards would make
+        // the analysis result look stale and strand the UI in ANALYZING.
+        enqueueStorageCommand("openInterview", [this, expectedVersion]() { return advanceCommandVersion(expectedVersion); });
+        enqueueStorageCommand("openInterviewStartAnalysis", [this]() { return startDiscovery(); });
+        return expectedVersion + 1;
+    }
+    if (isAnalyzing()) {
+        // An analysis is already in flight for this draft; let it finish rather than
+        // invalidating its ticket with a new state version.
+        return stateVersion();
+    }
+    advanceInterview();
+    enqueueStorageCommand("openInterview", [this, expectedVersion]() { return advanceCommandVersion(expectedVersion); });
+    return expectedVersion + 1;
+}
+
+void HostController::requestInterviewFollowUp() {
+    if (!m_interviewActive || m_interviewBusy || m_interviewComplete) return;
+    if (!m_currentAnalysis || !m_revisionState || m_revisionState->isDraftDirty()) return;
+    if (m_hostState == HostState::Quitting) return;
+    constexpr int maxOptionalFollowUps = 3;
+    const auto followUps = std::count_if(m_interviewRecords.begin(), m_interviewRecords.end(),
+        [](const auto& record) { return record.origin == "model_followup"; });
+    if (followUps >= maxOptionalFollowUps) {
+        m_interviewComplete = true;
+        m_interviewFeedback = QStringLiteral("Your answers are saved. You can rewrite when ready.");
+        advanceInterview();
+        return;
+    }
+    const auto runtime = m_graniteAdapter->state();
+    if (runtime != bridge::GraniteRuntimeState::Ready && !usesTransportOverride()) {
+        setInterviewFeedback(QStringLiteral(
+            "The local model isn't ready to explore further. You can retry, skip this, or ask for the rewrite."));
+        return;
+    }
+
+    const auto brief = buildIntentBrief();
+    std::vector<std::string> settled;
+    for (const auto* item : brief.confirmedDecisions()) {
+        if (settled.size() >= 12) break;
+        if (item->text.empty()) continue;
+        settled.push_back(item->text);
+    }
+    // Exact source values/units are settled too. Give them to the follow-up as
+    // authoritative source wording so the model does not re-ask a supplied value.
+    for (const auto& item : brief.items) {
+        if (settled.size() >= 14) break;
+        if (item.kind != core::intent::BriefItemKind::SourceRequirement &&
+            item.kind != core::intent::BriefItemKind::Prohibition) {
+            continue;
+        }
+        if (core::intent::exactRequirementTokens(item.sourceExcerpt).empty()) continue;
+        settled.push_back("Source requirement: " + item.sourceExcerpt);
+    }
+    std::vector<std::string> open;
+    for (const auto& id : brief.openChoiceIds()) {
+        if (open.size() >= 8) break;
+        if (const auto* item = brief.find(id)) open.push_back(item->text);
+    }
+
+    PipelineTicket ticket = makeTicket();
+    ticket.analysisGroup = std::make_shared<AnalysisGroup>(analysisGroupBudgetMs());
+    ticket.analysisGroup->id = newOpaqueId("interview_grp_");
+    // This follow-up is a foreground interview turn, not a persisted rewrite attempt.
+    // The native helper still requires a stable request identity for traceability and
+    // for the frozen cancellation/deadline envelope.
+    ticket.attemptId = newOpaqueId("att_interview_");
+    const auto deadline = ticket.analysisGroup->deadline;
+    const auto revisionText = m_revisionState->currentRevision().text();
+
+    bridge::GraniteOptionDiscoveryRequest request;
+    request.sessionId = ticket.sessionId;
+    request.revisionId = ticket.revisionId;
+    request.promptString = revisionText;
+    request.hostContextCategory = ss(m_hostContext.categoryString());
+    request.reviewTrigger = analysis::ReviewTrigger::ExplicitReview;
+    request.maximumQuestions = 1;
+    request.interviewFollowUp = true;
+    request.substantialInterview = true;
+    request.settledDecisions = std::move(settled);
+    request.openChoices = std::move(open);
+    const auto transport = currentTransport(bridge::discoveryResponseSchema(revisionText, 1), &ticket,
+                                            QStringLiteral("granite_analyze"), qs(revisionText), {}, {}, {},
+                                            QStringLiteral("interview"));
+    if (!transport) {
+        setInterviewFeedback(QStringLiteral("The local model is not available for a follow-up question."));
+        return;
+    }
+
+    const quint64 serial = ++m_interviewSerial;
+    const quint64 workspaceEpoch = m_workspaceEpoch;
+    const quint64 pipelineSerial = m_pipelineSerial;
+    const std::string revisionId = ticket.revisionId;
+    const auto cancellation = std::make_shared<std::atomic_bool>(false);
+    m_interviewCancellation = cancellation;
+    m_interviewBusy = true;
+    m_interviewFeedback.clear();
+    emit interviewChanged();
+
+    auto adapter = m_graniteAdapter;
+    const bool nativeWork = nativeGraniteSelected() && !usesTransportOverride();
+    ++m_inFlight;
+    if (nativeWork) ++m_nativeSemanticInFlight;
+    using Result = core::Result<bridge::GraniteOptionDiscoveryResponse>;
+    auto* watcher = new QFutureWatcher<Result>(this);
+    connect(watcher, &QFutureWatcherBase::finished, this,
+        [this, watcher, serial, revisionId, workspaceEpoch, pipelineSerial, nativeWork, cancellation]() {
+            auto result = watcher->result();
+            watcher->deleteLater();
+            --m_inFlight;
+            if (nativeWork) --m_nativeSemanticInFlight;
+            m_interviewCancellation.reset();
+            emit modelEngineStatusChanged();
+            finishQuitWhenRuntimesStopped();
+            if (cancellation->load()) return;
+            finishInterviewFollowUp(serial, revisionId, workspaceEpoch, pipelineSerial, std::move(result));
+        });
+    watcher->setFuture(QtConcurrent::run([adapter, request, transport, deadline, cancellation]() -> Result {
+        try {
+            if (cancellation->load() || deadline.hasExpired())
+                return makeError(core::ErrorCode::PreconditionFailed, "The interview follow-up expired");
+            auto result = adapter->discoverOptions(request, transport);
+            if (cancellation->load() || deadline.hasExpired())
+                return makeError(core::ErrorCode::PreconditionFailed, "The interview follow-up expired");
+            return result;
+        } catch (const std::exception& ex) {
+            return makeError(core::ErrorCode::Internal, std::string("Interview follow-up crashed: ") + ex.what());
+        }
+    }));
+}
+
+void HostController::finishInterviewFollowUp(quint64 serial, std::string revisionId,
+                                             std::uint64_t workspaceEpoch, std::uint64_t pipelineSerial,
+                                             core::Result<bridge::GraniteOptionDiscoveryResponse> result) {
+    if (serial != m_interviewSerial || !m_interviewActive) return;
+    m_interviewBusy = false;
+    if (!m_revisionState || revisionId != m_revisionState->currentRevision().revisionId().value() ||
+        workspaceEpoch != m_workspaceEpoch || pipelineSerial != m_pipelineSerial) {
+        emit interviewChanged();
+        return;
+    }
+    if (!result.ok()) {
+        setInterviewFeedback(QStringLiteral(
+            "Couldn't prepare another question. Your answers are kept; retry, skip, or ask for the rewrite."));
+        emit interviewChanged();
+        return;
+    }
+    auto response = std::move(result).value();
+    if (response.outcome == bridge::DiscoveryOutcome::NoAmbiguity) {
+        m_interviewComplete = true;
+        m_interviewQuestion.clear();
+        m_interviewConsequence.clear();
+        m_interviewChoices.clear();
+        m_interviewCurrentRecordId.clear();
+        m_interviewFeedback = QStringLiteral("Enough is understood for a faithful rewrite. You can continue editing or ask for the rewrite.");
+        emit interviewChanged();
+        emit intentBriefChanged();
+        return;
+    }
+
+    const auto& a = response.analysis;
+    core::intent::InterviewRecord created;
+    created.origin = "model_followup";
+    created.asked = true;
+    created.id = "iv_q_" + std::to_string(m_interviewRecords.size() + 1);
+    const auto excerptFor = [&](const analysis::SourceSpan& span) {
+        if (!m_revisionState || !analysis::isValidSpan(m_revisionState->currentRevision().text(), span)) return;
+        created.sourceExcerpt = m_revisionState->currentRevision().text().substr(span.startByte, span.length());
+        created.sourceRef = "revision:" + revisionId + "#bytes:" + std::to_string(span.startByte) + "-" +
+                            std::to_string(span.endByte);
+    };
+    bool grounded = false;
+    if (!a.choiceGroups.empty()) {
+        const auto& group = a.choiceGroups.front();
+        created.question = group.question;
+        for (std::size_t i = 0; i < group.alternatives.size(); ++i) {
+            const auto& alt = group.alternatives[i];
+            core::intent::InterviewChoice choice;
+            choice.id = created.id + "_c" + std::to_string(i + 1);
+            choice.label = alt.interpretation;
+            choice.consequence = alt.whyMaterial.empty() ? "This changes what the result emphasizes." : alt.whyMaterial;
+            created.choices.push_back(std::move(choice));
+        }
+        if (!group.alternatives.empty() && !group.alternatives.front().evidence.empty()) {
+            excerptFor(group.alternatives.front().evidence.front());
+        }
+        created.consequence = ss(joinedConsequence(created.choices));
+        grounded = !created.sourceExcerpt.empty();
+    } else if (!a.assumptions.empty()) {
+        const auto& assumption = a.assumptions.front();
+        created.question = assumption.statement;
+        created.choices.push_back(core::intent::InterviewChoice{
+            created.id + "_yes", "Accept: " + assumption.statement,
+            "The rewrite will follow this assumption."});
+        created.choices.push_back(core::intent::InterviewChoice{
+            created.id + "_no", "Do not assume: " + assumption.statement,
+            "The rewrite will avoid relying on it."});
+        created.consequence = std::string("Accepting adds this premise; rejecting keeps it out of the rewrite.");
+        if (!assumption.evidence.empty()) excerptFor(assumption.evidence.front());
+        grounded = !created.sourceExcerpt.empty();
+    } else if (!a.missingDecisions.empty()) {
+        created.question = a.missingDecisions.front().question;
+        created.consequence = std::string("A faithful rewrite needs this detail; otherwise it would have to guess.");
+        // A missing fact has no option evidence in the source by definition. Accept it
+        // only when the model also supplied a source-grounded question elsewhere.
+        grounded = true;
+    } else if (!a.conflicts.empty()) {
+        created.question = a.conflicts.front().description;
+        created.consequence = std::string("These requirements conflict; the rewrite cannot preserve both without your decision.");
+        grounded = true;
+    }
+    if (!grounded || created.question.empty()) {
+        m_interviewComplete = true;
+        setInterviewFeedback(QStringLiteral(
+            "The model did not produce a grounded follow-up. Your answers are kept; ask for the rewrite when ready."));
+        return;
+    }
+    m_interviewRecords.push_back(std::move(created));
+    publishInterviewQuestion(m_interviewRecords.back());
+    emit intentBriefChanged();
+}
+
+void HostController::recordInterviewTurn(core::intent::InterviewRecord& record, std::string disposition,
+                                         std::string rawAnswer, std::string selectedChoiceId) {
+    record.disposition = std::move(disposition);
+    record.rawAnswer = std::move(rawAnswer);
+    record.selectedChoiceId = std::move(selectedChoiceId);
+    record.asked = true;
+    ++m_interviewTurnsCompleted;
+}
+
+AsyncTask<core::Status> HostController::commitInterviewRecordChange(
+    quint64 expectedVersion, std::vector<core::intent::InterviewRecord> nextRecords) {
+    if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
+    if (!m_currentAnalysis || !m_currentSnapshot || !m_revisionState) {
+        co_return makeError(core::ErrorCode::PreconditionFailed, "There's nothing to answer yet.");
+    }
+    if (m_revisionState->isDraftDirty()) {
+        co_return makeError(core::ErrorCode::StaleVersion, "The prompt changed after it was analyzed.");
+    }
+    const auto operationWorkspaceEpoch = m_workspaceEpoch;
+    const auto operationPipelineSerial = m_pipelineSerial;
+    const auto operationEditSerial = m_liveEditSerial;
+    auto decision = intent::InterventionStateMachine::evaluate(*m_currentAnalysis, m_currentPolicyResult,
+                                                               m_currentSnapshotEval, m_workingIntent);
+    intent::InterventionStateMachine::recordPresented(decision, m_workingIntent);
+    auto nextState = *m_revisionState;
+    const bool clearProposal = m_currentProposal.has_value() || m_proposalStatus == ProposalUiStatus::Generating;
+    const auto advanced = clearProposal ? nextState.noteProposalEdit(expectedVersion)
+                                        : nextState.advanceState(expectedVersion);
+    if (!advanced.ok()) co_return advanced;
+    std::optional<intent::ConfirmedIntent> confirmed;
+    if (decision.verdict == intent::InterventionVerdict::Quiet) {
+        auto built = intent::IntentProvenanceBuilder::buildConfirmedIntent(
+            *m_currentSnapshot, m_currentPolicyResult, m_workingIntent, nowMs(),
+            supplementalDecisionsFrom(nextRecords));
+        if (!built.ok()) co_return built.error();
+        confirmed = std::move(built).value();
+        if (auto status = (co_await m_repository->insertIntentVersion(*confirmed, nowMs(), expectedVersion));
+            !status.ok()) {
+            co_return status;
+        }
+    } else {
+        if (auto status = (co_await m_repository->advanceSessionState(nextState, expectedVersion, nowMs()));
+            !status.ok()) {
+            co_return status;
+        }
+    }
+    const bool stillCurrent = operationWorkspaceEpoch == m_workspaceEpoch &&
+                              operationPipelineSerial == m_pipelineSerial;
+    if (operationEditSerial == m_liveEditSerial) *m_revisionState = std::move(nextState);
+    if (!stillCurrent) {
+        emit stateVersionChanged();
+        co_return makeError(core::ErrorCode::StaleVersion, "The prompt changed before the answer was saved.");
+    }
+    m_interviewRecords = std::move(nextRecords);
+    m_currentDecision = std::move(decision);
+    m_confirmedIntent = std::move(confirmed);
+    m_currentApproval.reset();
+    if (clearProposal) {
+        m_currentProposal.reset();
+        m_proposalWorkspaceEpoch = 0;
+        m_acknowledgedConstraints.clear();
+        clearActiveGroundingBinding(m_activeGroundedEvidence, m_activeGroundingPrompt,
+                                    m_activeGroundingActiveFile, m_activeGroundingProposalId,
+                                    m_activeGroundingSessionId, m_activeGroundingRevisionId,
+                                    m_groundingValidationSerial);
+        m_proposalStatus = ProposalUiStatus::None;
+        m_proposalMessage.clear();
+        markComprehensionReviewStale();
+        emit rewriteProposalChanged();
+    }
+    refreshActiveItemPresentation();
+    emit interventionChanged();
+    emit intentChanged();
+    emit intentBriefChanged();
+    emit stateVersionChanged();
+    emit approvalChanged();
+    co_return Status::success();
+}
+
+quint64 HostController::submitInterviewResponse(const QString& text, const QString& disposition,
+                                                quint64 expectedVersion) {
+    if (!m_interviewActive) {
+        setInterviewFeedback(QStringLiteral("Open the interview before answering."));
+        return 0;
+    }
+    if (m_interviewBusy) {
+        setInterviewFeedback(QStringLiteral("Your previous answer is still being checked."));
+        return 0;
+    }
+    if (expectedVersion != stateVersion()) {
+        setInterviewFeedback(QStringLiteral("The prompt changed before that answer was saved. Review the current state."));
+        return 0;
+    }
+    if (m_interviewCurrentRecordId.empty()) {
+        setInterviewFeedback(QStringLiteral("There is no open interview question."));
+        return 0;
+    }
+    auto* record = findInterviewRecord(m_interviewCurrentRecordId);
+    if (record == nullptr || !record->asked || record->isDecision()) {
+        setInterviewFeedback(QStringLiteral("That question is no longer open."));
+        return 0;
+    }
+    const auto disp = disposition.trimmed().toLower();
+    if (disp != QStringLiteral("answer") && disp != QStringLiteral("custom") &&
+        disp != QStringLiteral("unknown") && disp != QStringLiteral("skip")) {
+        setInterviewFeedback(QStringLiteral("Unknown answer disposition."));
+        return 0;
+    }
+    const auto trimmed = text.trimmed();
+    if ((disp == QStringLiteral("answer") || disp == QStringLiteral("custom")) && trimmed.isEmpty()) {
+        setInterviewFeedback(QStringLiteral("Type an answer or choose one of the options."));
+        return 0;
+    }
+    if (disp == QStringLiteral("answer") && !record->choices.empty()) {
+        bool matched = false;
+        for (const auto& choice : record->choices) {
+            if (choice.id == ss(trimmed)) { matched = true; break; }
+        }
+        if (!matched) {
+            for (const auto& choice : record->choices) {
+                if (QString::fromStdString(choice.label).compare(trimmed, Qt::CaseInsensitive) == 0) {
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        if (!matched) {
+            setInterviewFeedback(QStringLiteral("Choose one of the offered options, or use a custom answer."));
+            return 0;
+        }
+    }
+    if (disp == QStringLiteral("custom") && trimmed.size() > 4096) {
+        setInterviewFeedback(QStringLiteral("Keep the answer within 4096 characters."));
+        return 0;
+    }
+    if (disp == QStringLiteral("custom") || (disp == QStringLiteral("answer") && record->choices.empty())) {
+        m_interviewBusy = true;
+        emit interviewChanged();
+    }
+    const auto questionId = record->id;
+    const auto questionSerial = m_interviewQuestionSerial;
+    enqueueStorageCommand("submitInterviewResponse",
+        [=, this]() { return submitInterviewResponseOperation(text, disposition, expectedVersion, questionId, questionSerial); });
+    return expectedVersion + 1;
+}
+
+AsyncTask<core::Status> HostController::submitInterviewResponseOperation(QString text, QString disposition,
+                                                                         quint64 expectedVersion,
+                                                                         std::string questionId,
+                                                                         quint64 questionSerial) {
+    if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) {
+        m_interviewBusy = false;
+        emit interviewChanged();
+        co_return status;
+    }
+    if (!m_interviewActive || questionSerial != m_interviewQuestionSerial ||
+        m_interviewCurrentRecordId != questionId) {
+        m_interviewBusy = false;
+        emit interviewChanged();
+        co_return makeError(core::ErrorCode::StaleVersion, "The interview question changed before that answer was saved.");
+    }
+    auto* record = findInterviewRecord(questionId);
+    if (record == nullptr || !record->asked || record->isDecision()) {
+        m_interviewBusy = false;
+        emit interviewChanged();
+        co_return makeError(core::ErrorCode::StaleVersion, "That question is no longer open.");
+    }
+    const auto disp = ss(disposition.trimmed().toLower());
+    const bool isBase = !record->analysisItemId.empty();
+
+    if (disp == "skip" || disp == "unknown") {
+        const auto raw = ss(text);
+        if (isBase) {
+            const auto status = co_await applyTransition("interviewDisposition", expectedVersion,
+                [&, this](intent::WorkingIntentState& state) {
+                    return disp == "skip"
+                        ? intent::InterventionStateMachine::applyInterviewSkip(*m_currentAnalysis, state, questionId)
+                        : intent::InterventionStateMachine::applyInterviewUnknown(*m_currentAnalysis, state, questionId, raw);
+                }, false);
+            if (!status.ok()) {
+                m_interviewBusy = false;
+                setInterviewFeedback(plainError(status.error()));
+                co_return status;
+            }
+            if (auto* updated = findInterviewRecord(questionId)) {
+                recordInterviewTurn(*updated, disp, raw, {});
+            }
+            advanceInterview();
+            co_return Status::success();
+        }
+        auto next = m_interviewRecords;
+        for (auto& item : next) {
+            if (item.id == questionId) {
+                recordInterviewTurn(item, disp, raw, {});
+                break;
+            }
+        }
+        if (auto status = (co_await commitInterviewRecordChange(expectedVersion, std::move(next))); !status.ok()) {
+            m_interviewBusy = false;
+            setInterviewFeedback(plainError(status.error()));
+            co_return status;
+        }
+        advanceInterview();
+        co_return Status::success();
+    }
+
+    if (disp == "answer" && !record->choices.empty()) {
+        const auto trimmed = text.trimmed();
+        std::string selectedId;
+        for (const auto& choice : record->choices) {
+            if (choice.id == ss(trimmed)) { selectedId = choice.id; break; }
+        }
+        if (selectedId.empty()) {
+            for (const auto& choice : record->choices) {
+                if (QString::fromStdString(choice.label).compare(trimmed, Qt::CaseInsensitive) == 0) {
+                    selectedId = choice.id;
+                    break;
+                }
+            }
+        }
+        std::string selectedLabel;
+        for (const auto& choice : record->choices) {
+            if (choice.id == selectedId) { selectedLabel = choice.label; break; }
+        }
+        const auto raw = ss(trimmed);
+        if (isBase) {
+            const auto kind = intent::classifyItem(*m_currentAnalysis, questionId);
+            const auto status = co_await applyTransition("interviewAnswer", expectedVersion,
+                [&, this](intent::WorkingIntentState& state) {
+                    if (kind == intent::ActiveItemKind::Assumption) {
+                        const bool accepted = selectedId == "assume_yes";
+                        return intent::InterventionStateMachine::applyInterviewAssumption(
+                            *m_currentAnalysis, state, questionId, accepted);
+                    }
+                    return intent::InterventionStateMachine::applyInterviewChoice(
+                        *m_currentAnalysis, state, questionId, selectedId);
+                }, false);
+            if (!status.ok()) {
+                m_interviewBusy = false;
+                setInterviewFeedback(plainError(status.error()));
+                co_return status;
+            }
+            if (auto* updated = findInterviewRecord(questionId)) {
+                recordInterviewTurn(*updated, "answer", raw, selectedId);
+            }
+            advanceInterview();
+            co_return Status::success();
+        }
+        auto next = m_interviewRecords;
+        for (auto& item : next) {
+            if (item.id == questionId) {
+                recordInterviewTurn(item, "answer", raw.empty() ? selectedLabel : raw, selectedId);
+                break;
+            }
+        }
+        if (auto status = (co_await commitInterviewRecordChange(expectedVersion, std::move(next))); !status.ok()) {
+            m_interviewBusy = false;
+            setInterviewFeedback(plainError(status.error()));
+            co_return status;
+        }
+        advanceInterview();
+        co_return Status::success();
+    }
+
+    // Custom answer (or an answer to a question without options): validate relevance with a
+    // bounded, fresh model check before it can become a confirmed decision.
+    const auto runtime = m_graniteAdapter->state();
+    if (runtime != bridge::GraniteRuntimeState::Ready && !usesTransportOverride()) {
+        m_interviewBusy = false;
+        setInterviewFeedback(QStringLiteral("The local model isn't ready to check this answer. Your text is kept."));
+        co_return makeError(core::ErrorCode::ProviderUnavailable, "Interview answer check unavailable");
+    }
+    PipelineTicket ticket = makeTicket();
+    ticket.analysisGroup = std::make_shared<AnalysisGroup>(analysisGroupBudgetMs());
+    ticket.analysisGroup->id = newOpaqueId("interview_check_");
+    bridge::ClarificationCheckRequest request;
+    request.prompt = m_revisionState->currentRevision().text();
+    request.question = record->question;
+    request.answer = ss(text.trimmed());
+    for (const auto& choice : record->choices) request.alternatives.push_back(choice.label);
+    for (const auto& [itemId, answer] : m_workingIntent.customResolutions) {
+        if (request.previousAnswers.size() >= 8) break;
+        const auto* previous = findInterviewRecord(itemId);
+        request.previousAnswers.emplace_back(previous != nullptr ? previous->question : itemId, answer);
+    }
+    for (const auto& previous : m_interviewRecords) {
+        if (request.previousAnswers.size() >= 8) break;
+        if (!previous.isDecision()) continue;
+        request.previousAnswers.emplace_back(previous.question, previous.rawAnswer);
+    }
+    if (auto status = co_await beginAttempt(ticket, "interview_clarification_check"); !status.ok()) {
+        m_interviewBusy = false;
+        setInterviewFeedback(plainError(status.error()));
+        co_return status;
+    }
+    // Build the native transport only after beginAttempt assigns the authoritative
+    // attempt identity. The helper rejects a context with an empty attempt ID.
+    const auto transport = currentTransport(bridge::clarificationCheckResponseSchema(), &ticket,
+                                            QStringLiteral("granite_analyze"), qs(m_revisionState->currentRevision().text()),
+                                            {}, {}, {}, QStringLiteral("interview"));
+    if (!transport) {
+        co_await completeAttempt(ticket, storage::AttemptStatus::Failed, "Interview answer check transport unavailable");
+        m_interviewBusy = false;
+        setInterviewFeedback(QStringLiteral("The local model is not available to check this answer. Your text is kept."));
+        co_return makeError(core::ErrorCode::ProviderUnavailable, "Interview answer check unavailable");
+    }
+    // Bound the visible wait to this turn's own deadline. The runtime transport has
+    // its own timeout; this timer prevents a stuck injected transport from leaving
+    // the interview busy indefinitely. A late result is discarded by serial.
+    const qint64 remaining = ticket.analysisGroup->deadline.isForever()
+                                 ? analysisGroupBudgetMs()
+                                 : ticket.analysisGroup->deadline.remainingTime();
+    if (remaining > 0) {
+        QTimer::singleShot(static_cast<int>(std::min<qint64>(remaining, 120000)), this,
+            [this, questionSerial]() {
+                if (!m_interviewActive || questionSerial != m_interviewQuestionSerial || !m_interviewBusy) return;
+                m_interviewBusy = false;
+                ++m_interviewQuestionSerial;
+                setInterviewFeedback(QStringLiteral(
+                    "Checking that answer took too long. Your text is kept; retry, choose an option, or skip."));
+                advanceInterview();
+            });
+    }
+    auto adapter = m_graniteAdapter;
+    const bool nativeWork = nativeGraniteSelected() && !usesTransportOverride();
+    ++m_inFlight;
+    if (nativeWork) ++m_nativeSemanticInFlight;
+    using CheckResult = core::Result<bridge::ClarificationCheckResponse>;
+    auto* watcher = new QFutureWatcher<CheckResult>(this);
+    connect(watcher, &QFutureWatcherBase::finished, this,
+        [this, watcher, ticket, expectedVersion, questionId, questionSerial, text, nativeWork]() {
+            auto result = watcher->result();
+            watcher->deleteLater();
+            --m_inFlight;
+            if (nativeWork) --m_nativeSemanticInFlight;
+            emit modelEngineStatusChanged();
+            queueModelCompletion("finishInterviewCustomCheck",
+                [this, ticket, expectedVersion, questionId, questionSerial, text, result]() mutable {
+                    return finishInterviewCustomCheck(ticket, expectedVersion, questionId, questionSerial, text,
+                                                      std::move(result));
+                });
+            finishQuitWhenRuntimesStopped();
+        });
+    watcher->setFuture(QtConcurrent::run([adapter, request, transport]() {
+        return adapter->checkClarification(request, transport);
+    }));
+    co_return Status::success();
+}
+
+AsyncTask<void> HostController::finishInterviewCustomCheck(
+    PipelineTicket ticket, quint64 expectedVersion, std::string questionId, quint64 questionSerial,
+    QString answer, core::Result<bridge::ClarificationCheckResponse> result) {
+    const bool current = m_interviewActive && questionSerial == m_interviewQuestionSerial &&
+                         m_interviewCurrentRecordId == questionId && expectedVersion == stateVersion() &&
+                         isTicketCurrent(ticket, false);
+    if (!current) {
+        co_await completeAttempt(ticket, storage::AttemptStatus::DiscardedStale,
+                                 "The interview question or prompt changed during the answer check");
+        m_interviewBusy = false;
+        emit interviewChanged();
+        co_return;
+    }
+    co_await completeAttempt(ticket, result.ok() ? storage::AttemptStatus::Succeeded : storage::AttemptStatus::Failed,
+                             result.ok() ? "" : result.error().message);
+    m_interviewBusy = false;
+    if (!result.ok() || !result.value().accepted) {
+        m_interviewFeedback = result.ok()
+            ? qs(result.value().feedback)
+            : QStringLiteral("Couldn't check that answer. Your text is kept; retry, choose an option, or skip.");
+        if (m_interviewFeedback.isEmpty()) {
+            m_interviewFeedback = QStringLiteral("That answer doesn't settle this question yet. Try wording it differently.");
+        }
+        emit interviewChanged();
+        co_return;
+    }
+    auto* record = findInterviewRecord(questionId);
+    if (record == nullptr) {
+        emit interviewChanged();
+        co_return;
+    }
+    const bool isBase = !record->analysisItemId.empty();
+    const auto raw = ss(answer.trimmed());
+    if (isBase) {
+        const auto status = co_await applyTransition("interviewCustom", expectedVersion,
+            [&, this](intent::WorkingIntentState& state) {
+                return intent::InterventionStateMachine::applyInterviewCustomText(
+                    *m_currentAnalysis, state, questionId, raw);
+            }, false);
+        if (!status.ok()) {
+            setInterviewFeedback(plainError(status.error()));
+            co_return;
+        }
+        if (auto* updated = findInterviewRecord(questionId)) {
+            recordInterviewTurn(*updated, "custom", raw, {});
+        }
+    } else {
+        auto next = m_interviewRecords;
+        for (auto& item : next) {
+            if (item.id == questionId) {
+                recordInterviewTurn(item, "custom", raw, {});
+                break;
+            }
+        }
+        if (auto status = (co_await commitInterviewRecordChange(expectedVersion, std::move(next))); !status.ok()) {
+            setInterviewFeedback(plainError(status.error()));
+            co_return;
+        }
+    }
+    advanceInterview();
+    co_return;
+}
+
+quint64 HostController::changeIntentDecision(const QString& itemId, const QString& newText,
+                                             quint64 expectedVersion) {
+    if (itemId.trimmed().isEmpty()) {
+        setInterviewFeedback(QStringLiteral("Choose a saved decision to change."));
+        return 0;
+    }
+    if (newText.trimmed().isEmpty()) {
+        setInterviewFeedback(QStringLiteral("The corrected decision cannot be empty."));
+        return 0;
+    }
+    if (expectedVersion != stateVersion()) {
+        setInterviewFeedback(QStringLiteral("The prompt changed before that correction was saved."));
+        return 0;
+    }
+    const auto id = ss(itemId.trimmed());
+    const auto* followUp = findInterviewRecord(id);
+    const bool isFollowUpDecision = followUp != nullptr && followUp->analysisItemId.empty() && followUp->isDecision();
+    const bool isAnalysisDecision = m_currentAnalysis &&
+        intent::classifyItem(*m_currentAnalysis, id) != intent::ActiveItemKind::None &&
+        m_workingIntent.isResolved(id);
+    if (!isFollowUpDecision && !isAnalysisDecision) {
+        setInterviewFeedback(QStringLiteral("Only a settled decision can be corrected. Answer or skip the open item instead."));
+        return 0;
+    }
+    enqueueStorageCommand("changeIntentDecision",
+        [=, this]() { return changeIntentDecisionOperation(itemId, newText, expectedVersion); });
+    return expectedVersion + 1;
+}
+
+AsyncTask<core::Status> HostController::changeIntentDecisionOperation(QString itemId, QString newText,
+                                                                      quint64 expectedVersion) {
+    const auto id = ss(itemId.trimmed());
+    const auto text = ss(newText.trimmed());
+    const auto* followUp = findInterviewRecord(id);
+    if (followUp != nullptr && followUp->analysisItemId.empty() && followUp->isDecision()) {
+        auto next = m_interviewRecords;
+        for (auto& record : next) {
+            if (record.id != id) continue;
+            std::string previous = record.rawAnswer;
+            if (!record.selectedChoiceId.empty()) {
+                for (const auto& choice : record.choices) {
+                    if (choice.id == record.selectedChoiceId) { previous = choice.label; break; }
+                }
+            }
+            if (!previous.empty() && previous != text) record.previousAnswers.push_back(previous);
+            record.disposition = "custom";
+            record.rawAnswer = text;
+            record.selectedChoiceId.clear();
+            break;
+        }
+        co_return (co_await commitInterviewRecordChange(expectedVersion, std::move(next)));
+    }
+    if (!m_currentAnalysis) {
+        co_return makeError(core::ErrorCode::PreconditionFailed, "There's nothing to correct yet.");
+    }
+    const auto status = co_await applyTransition("changeIntentDecision", expectedVersion,
+        [&, this](intent::WorkingIntentState& state) {
+            return intent::InterventionStateMachine::applyDecisionChange(
+                *m_currentAnalysis, state, id, text, nowMs());
+        }, false);
+    if (status.ok() && m_interviewActive) advanceInterview();
+    co_return status;
+}
+
+// ----------------------------------------------------------------------------------------------
+// Independent comprehension review
+// ----------------------------------------------------------------------------------------------
+
+namespace {
+
+[[nodiscard]] std::string lowerAsciiText(std::string_view text) {
+    std::string lower;
+    lower.reserve(text.size());
+    for (const char c : text) {
+        lower.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    }
+    return lower;
+}
+
+[[nodiscard]] const char* reviewSeverityName(bridge::ReviewFindingSeverity severity) {
+    switch (severity) {
+        case bridge::ReviewFindingSeverity::Advisory: return "advisory";
+        case bridge::ReviewFindingSeverity::Required: return "required";
+        case bridge::ReviewFindingSeverity::Blocking: return "blocking";
+    }
+    return "advisory";
+}
+
+[[nodiscard]] const char* reviewKindName(bridge::ReviewFindingKind kind) {
+    switch (kind) {
+        case bridge::ReviewFindingKind::ComprehensionGap: return "comprehension";
+        case bridge::ReviewFindingKind::MeaningDrift: return "meaning_drift";
+        case bridge::ReviewFindingKind::Omission: return "omission";
+        case bridge::ReviewFindingKind::UnsupportedAssumption: return "unsupported_assumption";
+        case bridge::ReviewFindingKind::NegativeConstraint: return "negative_constraint";
+        case bridge::ReviewFindingKind::Readiness: return "readiness";
+    }
+    return "comprehension";
+}
+
+// The task kind is review scoping only, not an authority. It is deterministic
+// from the selected assistance mode and the user's own text.
+[[nodiscard]] std::string reviewTaskKind(const QString& assistanceMode, std::string_view prompt) {
+    const auto lower = lowerAsciiText(prompt);
+    const bool performance = lower.find("faster") != std::string::npos ||
+                             lower.find("latency") != std::string::npos ||
+                             lower.find("throughput") != std::string::npos ||
+                             lower.find("performance") != std::string::npos ||
+                             lower.find("millisecond") != std::string::npos;
+    if (assistanceMode == QStringLiteral("Create")) return "creative";
+    if (performance) return "performance";
+    if (assistanceMode == QStringLiteral("Tech")) return "code";
+    return "general";
+}
+
+// A concern about candidate wording can be decided by the person who wrote
+// the draft. Findings grounded in a source requirement must be repaired.
+[[nodiscard]] bool canConfirmCandidateWording(const bridge::ComprehensionFinding& finding) {
+    using Kind = bridge::ReviewFindingKind;
+    return finding.sourceRef == "candidate" && !finding.sourceExcerpt.empty() &&
+           finding.kind != Kind::Omission && finding.kind != Kind::NegativeConstraint;
+}
+
+[[nodiscard]] bool findingRequiresInterview(const bridge::ComprehensionFinding& finding) {
+    return finding.requiresUserDecision || finding.severity == bridge::ReviewFindingSeverity::Blocking;
+}
+
+} // namespace
+
+void HostController::setComprehensionReviewHandler(ComprehensionReviewHandler handler) {
+    m_reviewHandler = std::move(handler);
+}
+
+std::optional<HostController::ComprehensionBinding> HostController::currentReviewBinding() const {
+    if (!m_currentProposal || !m_revisionState || m_proposalWorkspaceEpoch != m_workspaceEpoch) {
+        return std::nullopt;
+    }
+    ComprehensionBinding binding;
+    binding.sessionId = currentSessionId();
+    binding.revisionId = m_revisionState->currentRevision().revisionId().value();
+    binding.proposalId = m_currentProposal->id;
+    binding.proposalHash = m_currentProposal->proposalHash;
+    binding.workspaceEpoch = m_workspaceEpoch;
+    binding.stateVersion = m_revisionState->stateVersion();
+    return binding;
+}
+
+bool HostController::reviewBindingMatchesCurrent() const {
+    const auto current = currentReviewBinding();
+    if (!current.has_value()) return false;
+    return m_reviewBinding.sessionId == current->sessionId &&
+           m_reviewBinding.revisionId == current->revisionId &&
+           m_reviewBinding.proposalId == current->proposalId &&
+           m_reviewBinding.proposalHash == current->proposalHash &&
+           m_reviewBinding.workspaceEpoch == current->workspaceEpoch;
+}
+
+bool HostController::findingIsResolved(std::string_view findingId) const {
+    const auto found = m_findingResolutions.find(std::string(findingId));
+    return found != m_findingResolutions.end() &&
+           (found->second == "acknowledge" || found->second == "confirm_intent");
+}
+
+bool HostController::hasUnresolvedRequiredFindings() const {
+    for (const auto& finding : m_reviewResult.findings) {
+        if (findingIsResolved(finding.id)) continue;
+        if (finding.requiresUserDecision) return true;
+        if (finding.severity == bridge::ReviewFindingSeverity::Blocking) return true;
+        if (finding.id.empty()) return true;
+        if (finding.severity == bridge::ReviewFindingSeverity::Required && !findingIsResolved(finding.id)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool HostController::reviewIsFreshAndComplete() const {
+    if (m_reviewState != ReviewState::Ready || !reviewBindingMatchesCurrent() ||
+        m_reviewResult.status != bridge::ComprehensionReviewStatus::Completed ||
+        m_reviewResult.interpretedOutcome.empty()) return false;
+    if (m_reviewResult.readyForTask) return true;
+    // A not-ready result can only be cleared by an explicit decision about
+    // every reported concern, and only for findings about candidate wording.
+    return !m_reviewResult.findings.empty() && std::all_of(
+        m_reviewResult.findings.begin(), m_reviewResult.findings.end(),
+        [this](const auto& finding) {
+            const auto resolution = m_findingResolutions.find(finding.id);
+            return canConfirmCandidateWording(finding) && resolution != m_findingResolutions.end() &&
+                   resolution->second == "confirm_intent";
+        });
+}
+
+bool HostController::canApplyReviewedOutput() const {
+    return hasProposal() && reviewIsFreshAndComplete() && !hasUnresolvedRequiredFindings();
+}
+
+QString HostController::comprehensionReviewState() const {
+    if (m_reviewState == ReviewState::Stale && !m_reviewReturnedFindingId.empty())
+        return QStringLiteral("waiting_for_answer");
+    if (m_reviewState == ReviewState::NotRun) return QStringLiteral("not_run");
+    if (m_reviewState == ReviewState::Running) return QStringLiteral("running");
+    if (!reviewBindingMatchesCurrent()) return QStringLiteral("stale");
+    switch (m_reviewState) {
+        case ReviewState::Ready: return QStringLiteral("ready");
+        case ReviewState::Failed: return QStringLiteral("failed");
+        case ReviewState::Stale: return QStringLiteral("stale");
+        case ReviewState::NotRun: return QStringLiteral("not_run");
+        case ReviewState::Running: return QStringLiteral("running");
+    }
+    return QStringLiteral("not_run");
+}
+
+QString HostController::comprehensionInterpretation() const {
+    // Display-only: the reviewer's inference is never authoritative. A stale or
+    // failed review belongs to another proposal/revision; do not show its text as
+    // if it described the current rewrite.
+    if (m_reviewState != ReviewState::Ready || !reviewBindingMatchesCurrent()) return QString();
+    return boundedText(m_reviewResult.interpretedOutcome, 1200);
+}
+
+QVariantList HostController::comprehensionFindings() const {
+    QVariantList list;
+    if (m_reviewState != ReviewState::Ready || !reviewBindingMatchesCurrent()) return list;
+    for (const auto& finding : m_reviewResult.findings) {
+        // Acknowledged findings are resolved in this review. Keep them in the host
+        // result for provenance/history, but do not keep asking the user to resolve
+        // an item that no longer blocks applicability.
+        if (findingIsResolved(finding.id)) continue;
+        QVariantMap map;
+        map[QStringLiteral("id")] = qs(finding.id);
+        map[QStringLiteral("severity")] = QString::fromUtf8(reviewSeverityName(finding.severity));
+        map[QStringLiteral("kind")] = QString::fromUtf8(reviewKindName(finding.kind));
+        map[QStringLiteral("summary")] = boundedText(finding.summary, 600);
+        map[QStringLiteral("sourceRef")] = boundedText(finding.sourceRef, 320);
+        map[QStringLiteral("sourceExcerpt")] = boundedText(finding.sourceExcerpt, 320);
+        map[QStringLiteral("requiresUserDecision")] = finding.requiresUserDecision;
+        map[QStringLiteral("canConfirmIntent")] = canConfirmCandidateWording(finding);
+        map[QStringLiteral("proposedRepair")] = boundedText(finding.proposedRepair, 600);
+        list.append(map);
+    }
+    return list;
+}
+
+void HostController::markComprehensionReviewStale() {
+    m_pendingNativeReview.reset();
+    if (m_reviewState == ReviewState::NotRun) return;
+    ++m_reviewSerial;
+    if (m_reviewCancellation) {
+        m_reviewCancellation->store(true);
+        m_reviewCancellation.reset();
+    }
+    m_reviewState = ReviewState::Stale;
+    m_findingResolutions.clear();
+    m_reviewReturnedFindingId.clear();
+    emit comprehensionReviewChanged();
+}
+
+AsyncTask<core::Status> HostController::requestComprehensionReviewOperation(quint64 expectedVersion) {
+    if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
+    if (m_proposalStatus != ProposalUiStatus::ReadyForReview || !m_currentProposal) {
+        co_return makeError(core::ErrorCode::PreconditionFailed,
+                            "There is no suggested rewrite to review.");
+    }
+    if (!m_revisionState || !m_confirmedIntent || !m_currentSnapshot || m_revisionState->isDraftDirty()) {
+        co_return makeError(core::ErrorCode::PreconditionFailed,
+                            "Review the current draft before requesting a review.");
+    }
+    if (m_reviewState == ReviewState::Running) {
+        co_return makeError(core::ErrorCode::PreconditionFailed, "A review is already running.");
+    }
+    if (!m_reviewHandler && nativeGraniteSelected() && !usesTransportOverride() && !m_native->isReady()) {
+        if (m_isDownloadingModel && m_downloadingNativeTag == m_activeModel)
+            co_return makeError(core::ErrorCode::ProviderUnavailable,
+                                "The model download is still running. Retry the reread when it finishes.");
+        const auto binding = currentReviewBinding();
+        if (!binding) co_return makeError(core::ErrorCode::PreconditionFailed,
+                                          "The rewrite is no longer bound to the current prompt.");
+        m_pendingNativeReview = PendingNativeReview{*binding, ++m_reviewSerial, m_configurationGeneration};
+        m_reviewBinding = *binding;
+        m_reviewState = ReviewState::Running;
+        m_reviewResult = bridge::ComprehensionReviewResult{};
+        m_findingResolutions.clear();
+        emit comprehensionReviewChanged();
+        emit rewriteProposalChanged();
+        prepareNativeModel();
+        co_return Status::success();
+    }
+    // Rereading is read-only. Binding the job to the proposal hash and
+    // review serial keeps it stale-safe without invalidating clicks on the HUD.
+    const auto binding = currentReviewBinding();
+    if (!binding.has_value()) {
+        co_return makeError(core::ErrorCode::PreconditionFailed,
+                            "The rewrite is no longer bound to the current prompt.");
+    }
+    ++m_reviewSerial;
+    m_reviewState = ReviewState::Running;
+    m_reviewResult = bridge::ComprehensionReviewResult{};
+    m_findingResolutions.clear();
+    m_reviewReturnedFindingId.clear();
+    m_reviewBinding = *binding;
+    m_reviewBinding.stateVersion = stateVersion();
+    emit comprehensionReviewChanged();
+    emit rewriteProposalChanged();
+
+    bridge::ComprehensionReviewRequest request;
+    request.candidatePrompt = m_currentProposal->rewrittenText;
+    request.originalPrompt = m_currentProposal->originalText;
+    request.constraints = extractSessionConstraints(request.originalPrompt, *m_confirmedIntent);
+    for (const auto& item : m_confirmedIntent->items) {
+        if (request.confirmedDecisions.size() >= 12) break;
+        const std::string wording = item.kind == intent::IntentResolutionKind::CustomText ? item.customText
+                                                                                          : item.chosenValue;
+        if (!wording.empty()) request.confirmedDecisions.push_back(wording.substr(0, 512));
+    }
+    const auto brief = buildIntentBrief();
+    for (const auto& item : brief.items) {
+        if (request.sourceExcerpts.size() >= 8) break;
+        if (item.sourceExcerpt.empty()) continue;
+        if (item.kind != core::intent::BriefItemKind::SourceRequirement &&
+            item.kind != core::intent::BriefItemKind::Prohibition &&
+            item.kind != core::intent::BriefItemKind::Preference &&
+            item.kind != core::intent::BriefItemKind::Evidence) {
+            continue;
+        }
+        const auto excerpt = item.sourceExcerpt.substr(0, 512);
+        if (std::find(request.sourceExcerpts.begin(), request.sourceExcerpts.end(), excerpt) ==
+            request.sourceExcerpts.end()) {
+            request.sourceExcerpts.push_back(excerpt);
+        }
+    }
+    request.taskKind = reviewTaskKind(assistanceMode(), request.originalPrompt);
+    request.sessionId = m_reviewBinding.sessionId;
+    request.revisionId = m_reviewBinding.revisionId;
+
+    // Production reviewer. The injected seam wins when a test supplies one; the
+    // production path builds exactly one fresh-context native request bound to a
+    // dedicated analysis group and cancellation token. The reviewer sees only the
+    // candidate/original/decisions/constraints/evidence assembled above. A missing
+    // or not-ready runtime fails closed and never authorizes apply.
+    ComprehensionReviewHandler handler = m_reviewHandler;
+    std::shared_ptr<std::atomic_bool> reviewCancellation;
+    if (!handler) {
+        PipelineTicket reviewTicket = makeTicket();
+        reviewTicket.analysisGroup = std::make_shared<AnalysisGroup>(45000);
+        reviewTicket.analysisGroup->id = newOpaqueId("review_grp_");
+        reviewTicket.attemptId = newOpaqueId("att_review_");
+        reviewTicket.reviewTrigger = analysis::ReviewTrigger::ExplicitReview;
+        reviewCancellation = std::make_shared<std::atomic_bool>(false);
+        const auto transport = currentTransport(bridge::comprehensionReviewResponseSchema(), &reviewTicket,
+            QStringLiteral("granite_analyze"), qs(request.originalPrompt),
+            qs(m_confirmedIntent ? m_confirmedIntent->id : std::string()), m_rewriteProfile,
+            reviewCancellation, QStringLiteral("review"));
+        if (!transport) {
+            m_reviewState = ReviewState::Failed;
+            m_reviewResult.status = bridge::ComprehensionReviewStatus::Unavailable;
+            m_reviewResult.readyForTask = false;
+            m_reviewResult.rationale =
+                "The independent reviewer could not start: the local model is not ready.";
+            emit comprehensionReviewChanged();
+            emit rewriteProposalChanged();
+            co_return Status::success();
+        }
+        m_reviewCancellation = reviewCancellation;
+        handler = [transport](const bridge::ComprehensionReviewRequest& req) {
+            bridge::GraniteGoldfishAdapter reviewer;
+            return reviewer.reviewComprehension(req, transport);
+        };
+    }
+    const quint64 serial = m_reviewSerial;
+    const auto bindingForWorker = m_reviewBinding;
+    const bool nativeWork = nativeGraniteSelected() && !usesTransportOverride();
+    ++m_inFlight;
+    if (nativeWork) ++m_nativeSemanticInFlight;
+    auto* watcher = new QFutureWatcher<bridge::ComprehensionReviewResult>(this);
+    connect(watcher, &QFutureWatcherBase::finished, this,
+        [this, watcher, serial, bindingForWorker, nativeWork]() {
+            const auto result = watcher->result();
+            watcher->deleteLater();
+            --m_inFlight;
+            if (nativeWork) --m_nativeSemanticInFlight;
+            finishQuitWhenRuntimesStopped();
+            if (serial != m_reviewSerial) return;
+            m_reviewCancellation.reset();
+            const auto current = currentReviewBinding();
+            const bool bound = current.has_value() &&
+                               bindingForWorker.sessionId == current->sessionId &&
+                               bindingForWorker.revisionId == current->revisionId &&
+                               bindingForWorker.proposalId == current->proposalId &&
+                               bindingForWorker.proposalHash == current->proposalHash &&
+                               bindingForWorker.workspaceEpoch == current->workspaceEpoch;
+            if (!bound) {
+                m_reviewState = ReviewState::Stale;
+                m_findingResolutions.clear();
+                emit comprehensionReviewChanged();
+                emit rewriteProposalChanged();
+                return;
+            }
+            const bool wellFormed = result.status == bridge::ComprehensionReviewStatus::Completed &&
+                                    !result.interpretedOutcome.empty();
+            const bool duplicateIds = [&]() {
+                std::set<std::string> ids;
+                for (const auto& finding : result.findings) {
+                    if (finding.id.empty()) return true;
+                    if (!ids.insert(finding.id).second) return true;
+                }
+                return false;
+            }();
+            if (!wellFormed || duplicateIds) {
+                m_reviewState = ReviewState::Failed;
+                m_reviewResult = bridge::ComprehensionReviewResult{};
+                m_reviewResult.status = bridge::ComprehensionReviewStatus::Malformed;
+                m_reviewResult.readyForTask = false;
+                m_findingResolutions.clear();
+                emit comprehensionReviewChanged();
+                emit rewriteProposalChanged();
+                return;
+            }
+            m_reviewResult = result;
+            m_reviewState = ReviewState::Ready;
+            m_findingResolutions.clear();
+            emit comprehensionReviewChanged();
+            emit rewriteProposalChanged();
+        });
+    const auto deadline = QDeadlineTimer(45000, Qt::PreciseTimer);
+    watcher->setFuture(QtConcurrent::run([handler, request, deadline]() -> bridge::ComprehensionReviewResult {
+        bridge::ComprehensionReviewResult result;
+        result.status = bridge::ComprehensionReviewStatus::Unavailable;
+        result.readyForTask = false;
+        try {
+            result = handler(request);
+        } catch (const std::exception& ex) {
+            result = bridge::ComprehensionReviewResult{};
+            result.status = bridge::ComprehensionReviewStatus::Unavailable;
+            result.readyForTask = false;
+            result.rationale = std::string("Reviewer crashed: ") + ex.what();
+        } catch (...) {
+            result = bridge::ComprehensionReviewResult{};
+            result.status = bridge::ComprehensionReviewStatus::Unavailable;
+            result.readyForTask = false;
+        }
+        if (deadline.hasExpired()) {
+            result.status = bridge::ComprehensionReviewStatus::Unavailable;
+            result.readyForTask = false;
+            result.findings.clear();
+            result.rationale = "The independent review exceeded its deadline.";
+        }
+        return result;
+    }));
+    co_return Status::success();
+}
+
+AsyncTask<core::Status> HostController::resolveComprehensionFindingOperation(QString findingId,
+                                                                             QString resolution,
+                                                                             quint64 expectedVersion) {
+    if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
+    if (m_reviewState != ReviewState::Ready || !reviewBindingMatchesCurrent()) {
+        co_return makeError(core::ErrorCode::PreconditionFailed,
+                            "There is no current review finding to resolve.");
+    }
+    const auto id = ss(findingId.trimmed());
+    const auto res = ss(resolution.trimmed().toLower());
+    if (res != "acknowledge" && res != "confirm_intent" && res != "return_to_interview" && res != "keep_original") {
+        co_return makeError(core::ErrorCode::InvalidInput, "Unknown review resolution.");
+    }
+    const bridge::ComprehensionFinding* finding = nullptr;
+    for (const auto& candidate : m_reviewResult.findings) {
+        if (candidate.id == id) { finding = &candidate; break; }
+    }
+    if (finding == nullptr) {
+        co_return makeError(core::ErrorCode::InvalidInput, "That review finding does not belong to the current review.");
+    }
+    if (res == "confirm_intent") {
+        if (!canConfirmCandidateWording(*finding))
+            co_return makeError(core::ErrorCode::ValidationFailed, "This finding requires a correction before applying.");
+        if (auto status = (co_await advanceCommandVersion(expectedVersion)); !status.ok()) co_return status;
+        m_findingResolutions[id] = res;
+        emit comprehensionReviewChanged();
+        emit rewriteProposalChanged();
+        co_return Status::success();
+    }
+    if (res == "acknowledge") {
+        if (findingRequiresInterview(*finding)) {
+            co_return makeError(core::ErrorCode::ValidationFailed,
+                                "This finding needs your decision. Return it to the interview or keep the original prompt.");
+        }
+        if (auto status = (co_await advanceCommandVersion(expectedVersion)); !status.ok()) co_return status;
+        m_findingResolutions[id] = "acknowledge";
+        emit comprehensionReviewChanged();
+        emit rewriteProposalChanged();
+        co_return Status::success();
+    }
+    if (res == "return_to_interview") {
+        if (auto status = (co_await advanceCommandVersion(expectedVersion)); !status.ok()) co_return status;
+        const auto captured = *finding;
+        openReviewFindingInInterview(captured);
+        m_reviewState = ReviewState::Stale;
+        m_findingResolutions.clear();
+        m_reviewReturnedFindingId = captured.id;
+        emit comprehensionReviewChanged();
+        emit rewriteProposalChanged();
+        co_return Status::success();
+    }
+    // keep_original: discard the rewrite and retain the user's original prompt.
+    if (auto status = (co_await invalidateProposalArtifacts()); !status.ok()) co_return status;
+    m_reviewState = ReviewState::Stale;
+    m_findingResolutions.clear();
+    m_reviewReturnedFindingId.clear();
+    m_interviewFeedback = QStringLiteral("Kept your original prompt. No rewrite was applied.");
+    emit comprehensionReviewChanged();
+    emit rewriteProposalChanged();
+    emit interviewChanged();
+    co_return Status::success();
+}
+
+void HostController::openReviewFindingInInterview(const bridge::ComprehensionFinding& finding) {
+    core::intent::InterviewRecord record;
+    record.id = "iv_review_" + std::to_string(m_interviewRecords.size() + 1);
+    record.origin = "review_finding";
+    record.asked = true;
+    record.question = "What should the rewrite say here?";
+    if (!finding.sourceExcerpt.empty()) {
+        record.sourceExcerpt = boundedText(finding.sourceExcerpt, 320).toStdString();
+        record.sourceRef = finding.sourceRef.empty() ? finding.id : finding.sourceRef;
+    }
+    m_interviewRecords.push_back(std::move(record));
+    m_interviewActive = true;
+    m_interviewComplete = false;
+    m_interviewFeedback.clear();
+    m_interviewWordContext.reset();
+    publishInterviewQuestion(m_interviewRecords.back());
+    emit intentBriefChanged();
+    emit interviewChanged();
+    if (!isCardVisible()) showCardInternal(false);
 }
 
 AsyncTask<core::Status> HostController::discardProposalOperation(quint64 expectedVersion) {
@@ -4109,9 +6115,10 @@ QVariantList HostController::proposalConstraints() const {
             if (handledAuditIds.count(u.constraintId) == 0) {
                 QVariantMap map;
                 map[QStringLiteral("id")] = qs(u.constraintId);
-                map[QStringLiteral("description")] = qs("Audit uncertainty: " + (u.explanation.empty() ? std::string("Unresolved hard invariant") : u.explanation));
+                map[QStringLiteral("description")] = QStringLiteral("Check that the rewrite keeps your original requirements.");
                 map[QStringLiteral("status")] = QStringLiteral("SemanticReviewRequired");
-                map[QStringLiteral("evidence")] = qs(u.constraintId);
+                map[QStringLiteral("evidence")] = QString(); // An audit ID is not a user answer.
+                map[QStringLiteral("auditExplanation")] = qs(u.explanation);
                 map[QStringLiteral("needsReview")] = true;
                 map[QStringLiteral("acknowledged")] = m_acknowledgedConstraints.count(u.constraintId) > 0;
                 list.append(map);
@@ -4122,9 +6129,10 @@ QVariantList HostController::proposalConstraints() const {
         const std::string fallbackId = "deterministic_fallback";
         QVariantMap map;
         map[QStringLiteral("id")] = qs(fallbackId);
-        map[QStringLiteral("description")] = QStringLiteral("Deterministic fallback: Model transport offline; verify boundaries manually before approval.");
+        map[QStringLiteral("description")] = QStringLiteral("The model check is unavailable. Review your requirements before applying.");
         map[QStringLiteral("status")] = QStringLiteral("SemanticReviewRequired");
-        map[QStringLiteral("evidence")] = QStringLiteral("DeterministicOnly");
+        map[QStringLiteral("evidence")] = QString();
+        map[QStringLiteral("auditExplanation")] = QStringLiteral("DeterministicOnly: model transport offline.");
         map[QStringLiteral("needsReview")] = true;
         map[QStringLiteral("acknowledged")] = m_acknowledgedConstraints.count(fallbackId) > 0;
         list.append(map);
@@ -4137,7 +6145,8 @@ int HostController::pendingReviewCount() const {
 }
 
 bool HostController::canApprove() const {
-    return isStorageAvailable() && hasProposal() && validateCurrentProposal().isValid;
+    return isStorageAvailable() && hasProposal() && validateCurrentProposal().isValid &&
+           canApplyReviewedOutput();
 }
 
 QVariantList HostController::groundedEvidence() const {
@@ -4481,7 +6490,8 @@ AsyncTask<void> HostController::rebuildFromRestore(storage::RestoredSession r) {
     bool intentRestored = false;
     if (r.intent.has_value() && m_currentDecision.verdict == intent::InterventionVerdict::Quiet) {
         auto rebuilt = intent::IntentProvenanceBuilder::buildConfirmedIntent(*m_currentSnapshot, m_currentPolicyResult,
-                                                                             m_workingIntent, r.intent->createdAtMs);
+                                                                             m_workingIntent, r.intent->createdAtMs,
+                                                                             supplementalInterviewDecisions());
         if (rebuilt.ok() && rebuilt.value().intentHash == r.intent->intentHash &&
             intent::IntentProvenanceBuilder::isIntentValid(*r.intent,
                                                            m_revisionState->currentRevision().revisionId().value(),
@@ -4922,6 +6932,41 @@ AsyncTask<void> HostController::onNativeRuntimeChanged() {
                 co_return;
             });
         }
+        if (m_pendingNativeReview) {
+            const auto pending = std::exchange(m_pendingNativeReview, std::nullopt);
+            queueModelCompletion("resumeNativeReview", [this, pending]() -> AsyncTask<void> {
+                if (pending->serial != m_reviewSerial) co_return;
+                if (!reviewBindingMatchesCurrent() ||
+                    pending->configurationGeneration != m_configurationGeneration) {
+                    markComprehensionReviewStale();
+                    co_return;
+                }
+                m_reviewState = ReviewState::NotRun;
+                if (auto status = co_await requestComprehensionReviewOperation(stateVersion()); !status.ok()) {
+                    m_reviewState = ReviewState::Failed;
+                    emit comprehensionReviewChanged();
+                    setLastError(status.error());
+                }
+                co_return;
+            });
+        }
+        if (m_pendingNativeClarification) {
+            const auto pending = std::exchange(m_pendingNativeClarification, std::nullopt);
+            queueModelCompletion("resumeNativeClarification", [this, pending]() -> AsyncTask<void> {
+                if (pending->serial != m_clarificationCheckSerial) co_return;
+                const bool current = pending->stateVersion == stateVersion() &&
+                    pending->configurationGeneration == m_configurationGeneration &&
+                    pending->workspaceEpoch == m_workspaceEpoch && m_revisionState &&
+                    pending->revisionId == m_revisionState->currentRevision().revisionId().value() &&
+                    m_currentDecision.activeItemId && *m_currentDecision.activeItemId == pending->itemId;
+                resetClarificationCheck();
+                if (current) {
+                    if (auto status = co_await submitCustomIntentOperation(pending->answer, pending->stateVersion); !status.ok())
+                        setLastError(status.error());
+                }
+                co_return;
+            });
+        }
         if (m_ambientCheckPending) m_ambientDebounce.start();
         startPendingWordRefinement();
     } else if (state == QLatin1String("LOADING")) {
@@ -4932,9 +6977,25 @@ AsyncTask<void> HostController::onNativeRuntimeChanged() {
         }
     } else if (state == QLatin1String("FAILED")) {
         m_nativeWarming = false;
+        if (m_pendingWordRefinement && m_wordCompanionState == QLatin1String("checking")) {
+            m_pendingWordRefinement = {};
+            setWordCompanionState(QStringLiteral("failed"),
+                QStringLiteral("The local model couldn't load. Check its setup or try again."));
+        }
         if (m_graniteAdapter->state() != bridge::GraniteRuntimeState::Busy) m_graniteAdapter->failLoading(ss(m_native->detail()));
         if (m_discoveryQueued) { m_discoveryQueued = false; setAnalysisStatus(AnalysisStatus::Failed, m_native->detail()); }
         if (m_pendingNativeRewrite) { m_pendingNativeRewrite.reset(); setProposalStatus(ProposalUiStatus::Failed, m_native->detail()); }
+        if (m_pendingNativeReview) {
+            m_pendingNativeReview.reset();
+            m_reviewState = ReviewState::Failed;
+            emit comprehensionReviewChanged();
+            emit rewriteProposalChanged();
+        }
+        if (m_pendingNativeClarification) {
+            resetClarificationCheck();
+            m_clarificationFeedback = QStringLiteral("The local model could not load. Your answer has not been accepted. Retry to check it.");
+            emit clarificationCheckChanged();
+        }
     } else if (state == QLatin1String("UNLOADED")) {
         m_nativeWarming = false;
         if (m_graniteAdapter->state() == bridge::GraniteRuntimeState::Loading) static_cast<void>(m_graniteAdapter->cancelLoading());
@@ -5534,13 +7595,7 @@ bool HostController::requestAccessibilityPermission() {
 void HostController::applyAmbientObserving() {
     const bool active = isAmbientActive();
     m_accessibility->setObserving(active);
-    if (!active) {
-        clearWordRefinement();
-        m_ambientDebounce.stop();
-        m_ambientObservation.reset();
-        m_ambientCheckPending = false;
-        setAmbientBadge(false);
-    }
+    if (!active) onFieldLost();
     if (!m_ambientModeEnabled) {
         setAmbientStatus(QStringLiteral("Off. %1 opens Roclint with its own text box.").arg(shortcutLabel()));
     } else if (m_accessibility->access() == AccessibilityAccess::NotGranted) {
@@ -5575,12 +7630,33 @@ void HostController::setCaptureSource(CaptureSource source) {
     emit captureSourceChanged();
 }
 
+void HostController::setAmbientBadgeSuggestionsOnly(bool enabled) {
+    if (m_ambientBadgeSuggestionsOnly == enabled) return;
+    m_ambientBadgeSuggestionsOnly = enabled;
+    QSettings().setValue(QStringLiteral("ambient/badgeSuggestionsOnly"), enabled);
+    emit ambientBadgeChanged();
+}
+
+bool HostController::isAmbientBadgeVisible() const {
+    if (!isAmbientActive() || isCardVisible() || wordCompanionVisible()) return false;
+    if (!m_ambientObservation) return !m_ambientBadgeSuggestionsOnly && m_ambientBadgeRecovery.isActive();
+    if (m_ambientDismissed.count(m_ambientObservation->textHash)) return false;
+    return wordReplacementReady() || (!m_ambientBadgeSuggestionsOnly && m_ambientBadgeVisible);
+}
+
+void HostController::activateAmbientIndicator() {
+    if (!isAmbientActive() || isCardVisible() || !m_ambientObservation) return;
+    if (!m_hasWordRefinement && m_wordCompanionState == QLatin1String("idle")) return;
+    m_wordCompanionRequested = true;
+    emit wordRefinementChanged();
+}
+
 void HostController::setAmbientBadge(bool visible, const QString& label) {
     QPoint newPos = m_ambientBadgePos;
-    if (visible && m_ambientObservation.has_value()) {
+    if ((visible || m_hasWordRefinement || m_wordCompanionState != QLatin1String("idle")) && m_ambientObservation.has_value()) {
         const auto& f = m_ambientObservation->field;
         if (!f.fieldRect.isNull()) {
-            const auto placement = ScreenPlacement::determineAnchorPosition(f.fieldRect, 140, 26);
+            const auto placement = ScreenPlacement::determineIndicatorPosition(f.fieldRect);
             newPos = QPoint(placement.x, placement.y);
         } else if (!f.caretRect.isNull()) {
             newPos = QPoint(f.caretRect.right() + 8, f.caretRect.bottom() + 6);
@@ -5607,12 +7683,21 @@ void HostController::setAmbientStatus(const QString& status) {
     }
 }
 
-void HostController::onFieldLost() {
+void HostController::onFieldLost(bool interrupted) {
+    if (interrupted) {
+        if (!m_ambientObservation) return;
+        // Only presentation survives one missed read. Invalidate the draft and
+        // suggestion now so the indicator cannot open or edit stale text.
+        if (isAmbientBadgeVisible()) m_ambientBadgeRecovery.start();
+    } else {
+        m_ambientBadgeRecovery.stop();
+    }
     m_ambientDebounce.stop();
-    m_wordRefinementDebounce.stop();
+    m_ambientCheckPending = false;
     m_ambientObservation.reset();
     setAmbientBadge(false);
     clearWordRefinement();
+    emit ambientBadgeChanged();
 }
 
 void HostController::followAmbientDraft() {
@@ -5623,7 +7708,7 @@ void HostController::followAmbientDraft() {
                 << "target_token=" << m_captureTarget->field.fieldToken << "observed_token=" << m_ambientObservation->field.fieldToken
                 << "target_pid=" << m_captureTarget->field.processId << "observed_pid=" << m_ambientObservation->field.processId;
     }
-    if (!isCardVisible() || !m_ambientObservation || m_pendingDelivery) return;
+    if (!isCardVisible() || m_resumeMinimizedCard || !m_ambientObservation || m_pendingDelivery) return;
     const auto observed = *m_ambientObservation;
     const bool inReview = isClarifying() || hasConfirmedIntent() || m_currentProposal.has_value();
     const bool preserveHud = m_widgetDraftEdited || m_selectingInsertionTarget || inReview;
@@ -5677,7 +7762,14 @@ void HostController::followAmbientDraft() {
     setAnalysisStatus(AnalysisStatus::Idle, QStringLiteral("Live draft updated. Analyze when you are ready."));
 }
 
-void HostController::onFieldObserved(const ObservedField& field) {
+void HostController::onFieldObserved(const ObservedField& rawField) {
+    auto field = rawField;
+    if (field.geometryInNativePixels) {
+        field.fieldRect = ScreenPlacement::fromNativePixels(field.fieldRect);
+        field.caretRect = ScreenPlacement::fromNativePixels(field.caretRect);
+        for (auto& rect : field.wordRects) rect = ScreenPlacement::fromNativePixels(rect);
+        field.geometryInNativePixels = false;
+    }
     if (!isAmbientActive()) {
         return;
     }
@@ -5708,12 +7800,13 @@ void HostController::onFieldObserved(const ObservedField& field) {
     }
     prompt = qs(core::normalizeLineEndings(ss(prompt)));
     if (field.kind == FieldKind::GuiEditor && prompt.trimmed().isEmpty()) {
+        const bool recoveringBadge = m_ambientBadgeRecovery.isActive();
+        m_ambientBadgeRecovery.stop();
         clearWordRefinement();
         // An empty composer is still a valid destination for a draft authored in the HUD.
         m_ambientDebounce.stop();
         if (!m_ambientObservation.has_value() || m_ambientObservation->prompt.trimmed().isEmpty() ||
             m_ambientObservation->field.fieldToken == field.fieldToken) {
-            setAmbientBadge(false);
             m_ambientObservation = AmbientObservation{field, prompt, core::crypto::Sha256::hexDigest(ss(prompt))};
         } else {
             // A different destination field (box Y) was focused in the same app session.
@@ -5723,6 +7816,8 @@ void HostController::onFieldObserved(const ObservedField& field) {
             updated.field = field;
             m_ambientObservation = std::move(updated);
         }
+        setAmbientBadge(false);
+        if (recoveringBadge) emit ambientBadgeChanged();
         followAmbientDraft();
         setAmbientStatus(QStringLiteral("Ready to capture a prompt in %1.").arg(field.appDisplayName));
         if (m_captureOpenPending &&
@@ -5747,14 +7842,17 @@ void HostController::onFieldObserved(const ObservedField& field) {
     const bool rectChanged = m_ambientObservation.has_value() &&
                              m_ambientObservation->field.fieldRect != field.fieldRect;
     const bool textChanged = fieldTokenChanged || m_ambientObservation->textHash != observation.textHash;
-    if (fieldTokenChanged && m_ambientBadgeVisible) {
-        setAmbientBadge(false);
-    } else if (rectChanged && m_ambientBadgeVisible) {
-        // Smoothly update badge coordinates without hiding it
-        m_ambientObservation->field.fieldRect = field.fieldRect;
-        setAmbientBadge(true, m_ambientBadgeLabel);
-    }
     m_ambientObservation = std::move(observation);
+    const bool recoveringBadge = m_ambientBadgeRecovery.isActive();
+    m_ambientBadgeRecovery.stop();
+    if (promptTriageRoutingEnabled()) {
+        // The quiet entry point belongs to the composer. Current suggestions
+        // affect the badge styling, while draft edits keep the window in place.
+        setAmbientBadge(true, QStringLiteral("Check prompt"));
+    } else if (fieldTokenChanged || rectChanged) {
+        setAmbientBadge(!fieldTokenChanged && m_ambientBadgeVisible);
+    }
+    if (recoveringBadge || textChanged) emit ambientBadgeChanged();
     followAmbientDraft();
     detectWordRefinements(field);
     setAmbientStatus(QStringLiteral("Watching %1.").arg(field.appDisplayName));
@@ -5766,8 +7864,8 @@ void HostController::onFieldObserved(const ObservedField& field) {
         openFromAmbient();
         return;
     }
-    if (!textChanged) {
-        return; // Caret moved or the field re-reported the same text
+    if (promptTriageRoutingEnabled() || !textChanged) {
+        return; // Production indicator admission is synchronous with the observed composer.
     }
     if (m_ambientCheck.has_value() && m_ambientCheck->textHash == m_ambientObservation->textHash) {
         setAmbientBadge(m_ambientCheck->needsAttention && m_ambientDismissed.count(m_ambientCheck->textHash) == 0,
@@ -5788,8 +7886,6 @@ void HostController::onAmbientDebounce() {
     const std::string& hash = m_ambientObservation->textHash;
     if (promptTriageRoutingEnabled()) {
         m_ambientCheckPending = false;
-        const auto s1 = m_s1Adapter.triagePrompt(ss(m_ambientObservation->prompt));
-        setAmbientBadge(s1.isExecutable() && m_ambientDismissed.count(hash) == 0, QStringLiteral("Check prompt"));
         return;
     }
     if ((m_ambientCheck.has_value() && m_ambientCheck->textHash == hash) || m_ambientDismissed.count(hash) > 0) {
@@ -5945,6 +8041,9 @@ AsyncTask<core::Status> HostController::openFromAmbientOperation(std::optional<A
         if (!m_repository) {
             co_return storageUnavailable();
         }
+        const bool resumeInterview = m_interviewOpenPending;
+        m_interviewOpenPending = false;
+        const auto pendingWordContext = m_interviewWordContext;
         const AmbientObservation observation = *observationSnapshot;
         const std::string text = ss(observation.prompt);
 
@@ -6001,7 +8100,14 @@ AsyncTask<core::Status> HostController::openFromAmbientOperation(std::optional<A
             }
             invalidateDownstreamPipeline();
         }
-        const bool activeWork = hasActiveWork();
+        if (resumeInterview) {
+            ++m_interviewSerial;
+            m_interviewActive = true;
+            m_interviewComplete = false;
+            m_interviewFeedback.clear();
+            m_interviewWordContext = pendingWordContext;
+            emit interviewChanged();
+        }
         m_captureSource = CaptureSource::Ambient;
         m_captureTarget = observation;
         m_followAmbientDraft = !activeWork;
@@ -6010,6 +8116,7 @@ AsyncTask<core::Status> HostController::openFromAmbientOperation(std::optional<A
         }
         emit captureSourceChanged();
         emit ambientDraftUpdated(qs(text));
+        showCardInternal(false);
 
         if (!m_currentAnalysis) {
             bool rebound = false;
@@ -6039,21 +8146,57 @@ AsyncTask<core::Status> HostController::openFromAmbientOperation(std::optional<A
                 }
             }
         }
-        showCardInternal(false);
         co_return Status::success();
 
 }
 
 void HostController::dismissAmbientBadge() {
+    m_ambientBadgeRecovery.stop();
     if (m_ambientObservation.has_value()) {
         m_ambientDismissed.insert(m_ambientObservation->textHash);
     }
     setAmbientBadge(false);
+    emit ambientBadgeChanged();
 }
 
 #ifdef ROCLINT_ENABLE_TEST_MOCKS
 void HostController::setTransportOverrideForTesting(bridge::GraniteTransport transport) {
     m_transportOverride = std::move(transport);
+}
+
+quint64 HostController::startDiscoveryWithTriageForTesting(core::analysis::PromptTriage triage) {
+    if (!m_revisionState) return 0;
+    m_promptTriageRouting = true;
+    m_promptTriage = triage;
+    m_reviewTrigger = analysis::ReviewTrigger::Automatic;
+    m_promptTriageLoad.reset();
+    m_routedAnalysisGroup = std::make_shared<AnalysisGroup>(analysisGroupBudgetMs());
+    m_routedAnalysisGroup->id = newOpaqueId("grp_");
+    const auto sessionId = currentSessionId();
+    const auto revisionId = m_revisionState->currentRevision().revisionId().value();
+    return enqueueStorageCommand("startDiscoveryWithTriage",
+        [this, triage = std::move(triage), sessionId, revisionId]() -> AsyncTask<core::Status> {
+            // Production records the Julia triage attempt before the routed analysis.
+            // The test seam seals the same evidence, so persist the honest row too.
+            storage::ModelAttemptRecord record;
+            record.attemptId = triage.attemptId;
+            record.sessionId = sessionId;
+            record.revisionId = revisionId;
+            record.stage = "julia_triage";
+            record.status = storage::AttemptStatus::InProgress;
+            record.transport = "test_mock_triage";
+            record.modelId = triage.modelId;
+            record.modelDetail = "test classifier attempt";
+            record.startedAtMs = nowMs();
+            if (auto st = (co_await m_repository->beginModelAttempt(record)); !st.ok()) co_return st;
+            const auto detail = "test classifier attempt; prompt_triage_payload=" + storage::encodePromptTriage(triage);
+            if (auto st = (co_await m_repository->completeModelAttempt(
+                    triage.attemptId, storage::AttemptStatus::Succeeded, triage.modelId, detail, "", nowMs()));
+                !st.ok()) {
+                co_return st;
+            }
+            co_return (co_await startDiscovery());
+        });
 }
 
 bool HostController::setModelRuntimeUrlForTesting(const QUrl& url) {
@@ -6163,6 +8306,60 @@ quint64 HostController::submitCustomIntent(QString customText, quint64 expectedV
 
 quint64 HostController::confirmChoice(QString alternativeId, quint64 expectedVersion) {
     return enqueueStorageCommand("confirmChoice", [=, this]() { return confirmChoiceOperation(alternativeId, expectedVersion); });
+}
+
+quint64 HostController::requestComprehensionReview(quint64 expectedVersion) {
+    if (expectedVersion != stateVersion()) {
+        setLastError(core::makeError(core::ErrorCode::StaleVersion,
+                                     "The prompt changed. Review the current state and try again."));
+        return 0;
+    }
+    if (m_proposalStatus != ProposalUiStatus::ReadyForReview || !m_currentProposal) {
+        setLastError(core::makeError(core::ErrorCode::PreconditionFailed,
+                                     "There is no suggested rewrite to review."));
+        return 0;
+    }
+    if (m_reviewState == ReviewState::Running || !m_reviewReturnedFindingId.empty()) return 0;
+    return enqueueStorageCommand("requestComprehensionReview",
+        [=, this]() { return requestComprehensionReviewOperation(expectedVersion); });
+}
+
+quint64 HostController::resolveComprehensionFinding(const QString& findingId, const QString& resolution,
+                                                    quint64 expectedVersion) {
+    if (expectedVersion != stateVersion()) {
+        setLastError(core::makeError(core::ErrorCode::StaleVersion,
+                                     "The prompt changed. Review the current state and try again."));
+        return 0;
+    }
+    if (m_reviewState != ReviewState::Ready || !reviewBindingMatchesCurrent()) {
+        setLastError(core::makeError(core::ErrorCode::PreconditionFailed,
+                                     "There is no current review finding to resolve."));
+        return 0;
+    }
+    const auto res = resolution.trimmed().toLower();
+    if (res != QStringLiteral("acknowledge") && res != QStringLiteral("confirm_intent") &&
+        res != QStringLiteral("return_to_interview") && res != QStringLiteral("keep_original")) {
+        setLastError(core::makeError(core::ErrorCode::InvalidInput, "Unknown review resolution."));
+        return 0;
+    }
+    const bridge::ComprehensionFinding* finding = nullptr;
+    for (const auto& candidate : m_reviewResult.findings) {
+        if (candidate.id == ss(findingId)) { finding = &candidate; break; }
+    }
+    if (finding == nullptr) {
+        setLastError(core::makeError(core::ErrorCode::InvalidInput,
+                                     "That review finding does not belong to the current review."));
+        return 0;
+    }
+    if (res == QStringLiteral("confirm_intent") && !canConfirmCandidateWording(*finding)) return 0;
+    if (res == QStringLiteral("acknowledge") && findingRequiresInterview(*finding)) {
+        setLastError(core::makeError(core::ErrorCode::ValidationFailed,
+                                     "This finding needs your decision. Return it to the interview or keep the original prompt."));
+        return 0;
+    }
+    enqueueStorageCommand("resolveComprehensionFinding",
+        [=, this]() { return resolveComprehensionFindingOperation(findingId, resolution, expectedVersion); });
+    return expectedVersion + 1;
 }
 
 HostController::ParsedCommand HostController::parseCommandPrefix(QString text) {
@@ -6383,10 +8580,23 @@ std::vector<core::ScopedConstraint> HostController::extractSessionConstraints(
         };
         bool isNegative = false;
         for (const auto& marker : kNegPrefixes) {
-            if (lower.find(marker) != std::string::npos) {
+            std::size_t position = 0;
+            while ((position = lower.find(marker, position)) != std::string::npos) {
+                const auto after = position + marker.size();
+                // Negative opinions describe the problem or preference; they are
+                // not a prohibition on mutating every noun in that sentence.
+                // Keep scanning so a later "do not change ..." is still protected.
+                static const std::regex opinionSubject(R"(\b(?:i|we)\s+(?:(?:really|especially)\s+)?$)");
+                const bool negativeOpinion = std::regex_search(lower.substr(0, position), opinionSubject) &&
+                    (marker == "do not " || marker == "don't " || marker == "dont ") &&
+                    (std::string_view(lower).substr(after).starts_with("like ") ||
+                     std::string_view(lower).substr(after).starts_with("love ") ||
+                     std::string_view(lower).substr(after).starts_with("enjoy "));
+                if (negativeOpinion) { position = after; continue; }
                 isNegative = true;
                 break;
             }
+            if (isNegative) break;
         }
 
         if (isNegative) {
