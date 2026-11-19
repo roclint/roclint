@@ -1,0 +1,507 @@
+[
+  {
+    "case": "cache-proceed",
+    "route": "CLARIFY",
+    "instructions_sha256": "7dd45c88c72270467e78567188c990636720bf56a236d1e87c08bdd6bf78136b",
+    "discovery": {
+      "ms": 11815.88,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"question\",\"question\":\"What does Cache.lookup return for expired entries?\"}"
+    }
+  },
+  {
+    "case": "cache-ask",
+    "route": "CLARIFY",
+    "instructions_sha256": "5fe064fe18f318b2013e81251107fe7869eafd3b866cee8642289dd73ca8514a",
+    "discovery": {
+      "ms": 12836.21,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"preference\",\"question\":\"Should Cache.lookup return a cache miss for expired entries or serve the stale entry when the API owner chooses?\",\"source\":\"cache.py, inspect Cache.lookup\",\"options\":[{\"text\":\"serve stale entry\",\"effect\":\"serve stale\",\"assume\":\"\"},{\"text\":\"return cache miss\",\"effect\":\"miss\",\"assume\":\"\"}]}]}"
+    }
+  },
+  {
+    "case": "rename-proceed",
+    "route": "CLARIFY",
+    "instructions_sha256": "0de345b29f2aa0583cd96b78671ca0c7f35ac078ef4996be6e8e2fdf4bf287ae",
+    "discovery": {
+      "ms": 11221.19,
+      "validation": {
+        "id": "response",
+        "outcome": "no_ambiguity",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"none\"}"
+    }
+  },
+  {
+    "case": "rename-ask",
+    "route": "ORIGINAL",
+    "instructions_sha256": "45448d5cecc21bd3c6e3f109f8a764b955dcfab8c1e18afd742af096545944d6"
+  },
+  {
+    "case": "audio-log-proceed",
+    "route": "CLARIFY",
+    "instructions_sha256": "fa218ac9753448742821758a7fad925a94ed45bb725e8361d88232d082850af5",
+    "discovery": {
+      "ms": 11251.83,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"question\",\"question\":\"What condition determines when the retry loop stops in poller.py?\"}"
+    }
+  },
+  {
+    "case": "audio-log-ask",
+    "route": "CLARIFY",
+    "instructions_sha256": "72490989656dc01411c80b1bf17523bf76bfdaff8656b8f9acaec1a2051251ba",
+    "discovery": {
+      "ms": 12849.22,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"audience selection\",\"question\":\"Which audience does the sponsor intend to explain the retry loop to?\",\"source\":\"the audience: on-call\",\"options\":[{\"text\":\"on-call engineers\",\"effect\":\"target audience is on-call engineers\",\"assume\":\"\"},{\"text\":\"first-time operators\",\"effect\":\"target audience is first-time operators\",\"assume\":\"\"}]}]}"
+    }
+  },
+  {
+    "case": "ordering-proceed",
+    "route": "ORIGINAL",
+    "instructions_sha256": "c085bd9b79d85308bdce9ce2ce95250c1b3f6cba5642c3c4b122ef473f5cf0c3"
+  },
+  {
+    "case": "ordering-ask",
+    "route": "ORIGINAL",
+    "instructions_sha256": "84caccd2bda7f3669fd3f2f287ec8119660b46b6f232ea96c1438c5206383845"
+  },
+  {
+    "case": "sonnet-proceed",
+    "route": "CLARIFY",
+    "instructions_sha256": "849c425fef19d31640c2f739a64c1a1d2c10863732932249d90bfccf6f5d6eb4",
+    "discovery": {
+      "ms": 12665.13,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"creative\",\"groups\":[{\"focus\":\"style\",\"question\":\"Choose tone (e.g., hopeful, melancholic)\",\"source\":\"Write a poem\",\"options\":[{\"text\":\"hopeful tone\",\"effect\":\"warm, uplifting\",\"assume\":\"\"},{\"text\":\"melancholic tone\",\"effect\":\"reflective, wistful\",\"assume\":\"\"}]}]}"
+    }
+  },
+  {
+    "case": "sonnet-ask",
+    "route": "CLARIFY",
+    "instructions_sha256": "2a893287137a12ca6a25b1c91a585300864774b1b4adea9b9c2d338adfc0cb02",
+    "discovery": {
+      "ms": 11269.55,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"question\",\"question\":\"Specify sonnet or free verse.\"}"
+    }
+  },
+  {
+    "case": "ending-proceed",
+    "route": "CLARIFY",
+    "instructions_sha256": "036ddee98e815a0aa006d68700cbdcc3aec18e439e4e964a5a707f0cdfbcb7e9",
+    "discovery": {
+      "ms": 12133.4,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"creative\",\"groups\":[{\"focus\":\"scene_outline\",\"question\":\"What tone for keeper's fate?\",\"source\":\"Write the final\",\"options\":[{\"text\":\"keeper survives quietly\",\"effect\":\"quiet resolution\",\"assume\":\"\"},{\"text\":\"keeper dies mysteriously\",\"effect\":\"dramatic ending\",\"assume\":\"\"}]}]}"
+    }
+  },
+  {
+    "case": "ending-ask",
+    "route": "CLARIFY",
+    "instructions_sha256": "13e30c2861b287e84ae223d1ca421d9ae0df2f9e1549b3cd8ef2ff08fe40e192",
+    "discovery": {
+      "ms": 11212.03,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "DIRECT_CONFLICT_PRESENT",
+        "policy_verdict": "NEEDS_MANUAL_REVIEW",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"conflict\",\"description\":\"Ambiguous requirements between writing scene and producer approval of keeper survival.\"}"
+    }
+  },
+  {
+    "case": "trailer-proceed",
+    "route": "CLARIFY",
+    "instructions_sha256": "be0d8761197ce6f179904999641b19e22fb297233190e525b3e7e58dc69fb31e",
+    "discovery": {
+      "ms": 10779.63,
+      "validation": {
+        "id": "response",
+        "outcome": "no_ambiguity",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"none\"}"
+    }
+  },
+  {
+    "case": "trailer-ask",
+    "route": "ORIGINAL",
+    "instructions_sha256": "5f4cf1d6322cb5d12f4c400b93a08e9d720c2132b0218a2549c7b4d87638f260"
+  },
+  {
+    "case": "byline-proceed",
+    "route": "CLARIFY",
+    "instructions_sha256": "510d7ba544a31caa0803801d78e63c29561a1f08ac5c8379d98143d91f84f7b4",
+    "discovery": {
+      "ms": 11011.04,
+      "validation": {
+        "id": "response",
+        "outcome": "no_ambiguity",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"none\"}"
+    }
+  },
+  {
+    "case": "byline-ask",
+    "route": "CLARIFY",
+    "instructions_sha256": "3a2edac1f29ad5d915fc2b6c0791c2241a670e7f2afc5ea79f9ba67ed585a33e",
+    "discovery": {
+      "ms": 12503.0,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"creative\",\"groups\":[{\"focus\":\"profile content\",\"question\":\"What style tone for fictional profile?\",\"source\":\"Write a fictional\",\"options\":[{\"text\":\"formal minimal\",\"effect\":\"concise neutral\",\"assume\":\"\"},{\"text\":\"artistic narrative\",\"effect\":\"descriptive vivid\",\"assume\":\"\"}]}]}"
+    }
+  },
+  {
+    "case": "import-key-proceed",
+    "route": "CLARIFY",
+    "instructions_sha256": "fcbe35b8f852eeb374d6d9c4af752a7f55a75196141ad601ff215467aa9137eb",
+    "discovery": {
+      "ms": 15068.13,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"task intent\",\"question\":\"What specific output should be produced for the draft?\",\"source\":\"Join shipments to\",\"options\":[{\"text\":\"Provide revised draft text\",\"effect\":\"Reformulate draft maintaining constraint\",\"assume\":\"\"},{\"text\":\"Indicate no change needed\",\"effect\":\"Confirm draft is correct\",\"assume\":\"\"}]}]}"
+    }
+  },
+  {
+    "case": "import-key-ask",
+    "route": "CLARIFY",
+    "instructions_sha256": "4e6fbd7ae161dcfbd7374d0a06879eedae4d7439f10439e2b35b12795a1c721b",
+    "discovery": {
+      "ms": 13527.67,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"draft_intention\",\"question\":\"What is the concrete target for mapping selection (customer_uuid or billing_account_id)?\",\"source\":\"Two approved mappings\",\"options\":[{\"text\":\"Use customer_uuid mapping\",\"effect\":\"Apply mapping based on customer_uuid\",\"assume\":\"\"},{\"text\":\"Use billing_account_id mapping\",\"effect\":\"Apply mapping based on billing_account_id\",\"assume\":\"\"}]}]}"
+    }
+  },
+  {
+    "case": "null-date-proceed",
+    "route": "CLARIFY",
+    "instructions_sha256": "dfe81b5c15af68ce45e2de9ee785f296b594cd337ef3d6a0536d51ed9597d1b4",
+    "discovery": {
+      "ms": 15858.8,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"prompt\",\"question\":\"What constitutes an undated row?\",\"source\":\"Import legacy orders\",\"options\":[{\"text\":\"Rows missing a delivery date\",\"effect\":\"defines undated\",\"assume\":\"\"},{\"text\":\"Rows without any date field\",\"effect\":\"defines undated\",\"assume\":\"\"}]}]}"
+    }
+  },
+  {
+    "case": "null-date-ask",
+    "route": "CLARIFY",
+    "instructions_sha256": "0cef0e9d9c728a5021fc6c1b7ac75ff9c4400fb4de91087453b8b49251eef8da",
+    "discovery": {
+      "ms": 14823.74,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"intent\",\"question\":\"What specific constraint or behavior regarding invoice date dates should be applied for undated rows?\",\"source\":\"Import legacy orders\",\"options\":[{\"text\":\"Apply invoice date as delivery date when available\",\"effect\":\"constrain delivery based on invoice\",\"assume\":\"\"},{\"text\":\"Quarantine undated rows until invoice date provided\",\"effect\":\"delay processing\",\"assume\":\"\"}]}]}"
+    }
+  },
+  {
+    "case": "transcript-proceed",
+    "route": "ORIGINAL",
+    "instructions_sha256": "e9b6a61b55451ebee1dcbfb96030379baf289af98ed58d4c5889ff9f40e9dcfb"
+  },
+  {
+    "case": "transcript-ask",
+    "route": "CLARIFY",
+    "instructions_sha256": "055aeaf972b68e20a1297a59a1bb580eabdfc7f547aa95ca1c7451197c333ea6",
+    "discovery": {
+      "ms": 14132.19,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"due_date format\",\"question\":\"Should the due date be the literal phrase \\\"Friday\\\" or a normalized date like YYYY-MM-DD?\",\"source\":\"from this transcript:\",\"options\":[{\"text\":\"literal phrase Friday\",\"effect\":\"use literal phrase\",\"assume\":\"\"},{\"text\":\"normalized date Friday\",\"effect\":\"convert to normalized\",\"assume\":\"\"}]}]}"
+    }
+  },
+  {
+    "case": "spoken-kpi-proceed",
+    "route": "CLARIFY",
+    "instructions_sha256": "d3691a48a39d4710034e512b2eac719be96949d899a7ad839292c57047e0962b",
+    "discovery": {
+      "ms": 13280.71,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"required output format\",\"question\":\"Should the spoken update include only numbers or full sentences?\",\"source\":\"Prepare a spoken\",\"options\":[{\"text\":\"only numbers\",\"effect\":\"compact\",\"assume\":\"\"},{\"text\":\"full sentences\",\"effect\":\"rich\",\"assume\":\"\"}]}]}"
+    }
+  },
+  {
+    "case": "spoken-kpi-ask",
+    "route": "CLARIFY",
+    "instructions_sha256": "0aedcf9ff722f0eeeebf4a7b59fa2834b339509845b5d30f222c178a10e5a881",
+    "discovery": {
+      "ms": 14381.66,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"sponsor choice\",\"question\":\"Which rate should the sponsor feature?\",\"source\":\"Prepare a spoken\",\"options\":[{\"text\":\"renewal rate\",\"effect\":\"feature renewal\",\"assume\":\"\"},{\"text\":\"cancellation rate\",\"effect\":\"feature cancellation\",\"assume\":\"\"}]}]}"
+    }
+  },
+  {
+    "case": "recursion-proceed",
+    "route": "CLARIFY",
+    "instructions_sha256": "8013fb5134e42d61bdf28990a2de3ed9f444ce6ee807418cf3a9550db6c08a73",
+    "discovery": {
+      "ms": 12981.72,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"clarity\",\"question\":\"What specific countdown sequence should be used in the worked example?\",\"source\":\"Teach recursion\",\"options\":[{\"text\":\"1-2-3-0\",\"effect\":\"Simple decreasing numbers\",\"assume\":\"\"},{\"text\":\"0-1-2-3\",\"effect\":\"Increasing then decreasing\",\"assume\":\"\"}]}]}"
+    }
+  },
+  {
+    "case": "recursion-ask",
+    "route": "CLARIFY",
+    "instructions_sha256": "e656ae647d0cb416652d8cc9ff30483f32861f0f7780d45680cd9016146c76e3",
+    "discovery": {
+      "ms": 11056.79,
+      "validation": {
+        "id": "response",
+        "outcome": "no_ambiguity",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"none\"}"
+    }
+  },
+  {
+    "case": "oral-quiz-proceed",
+    "route": "ORIGINAL",
+    "instructions_sha256": "b1080187a5ddf4c72f6ee0ac1d8076dc0eb956371538c7b955d833cfbfe7a3b6"
+  },
+  {
+    "case": "oral-quiz-ask",
+    "route": "ORIGINAL",
+    "instructions_sha256": "b0c6216061fdd0f6c31642a6cabc076b8d320b33c02ba6479234dd42bb8de82e"
+  },
+  {
+    "case": "proof-proceed",
+    "route": "CLARIFY",
+    "instructions_sha256": "3128d7d955cff5fda2b4d18790fb11a0fb674aab5a1a1c4c643986b3a9896e33",
+    "discovery": {
+      "ms": 12708.94,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "OK",
+        "policy_verdict": "ELIGIBLE_FOR_CHOICE",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"clarification\",\"groups\":[{\"focus\":\"task_interpretation\",\"question\":\"What level of detail is desired for the explanation?\",\"source\":\"Explain why the\",\"options\":[{\"text\":\"Simple proof using parity\",\"effect\":\"Provide basic parity argument\",\"assume\":\"\"},{\"text\":\"Step-by-step addition example\",\"effect\":\"Show concrete addition with numbers\",\"assume\":\"\"}]}]}"
+    }
+  },
+  {
+    "case": "proof-ask",
+    "route": "ORIGINAL",
+    "instructions_sha256": "3eb46218a6fbab497fe29fdafd61d449dd697d71d364c6b347ae377a55eb6acb"
+  },
+  {
+    "case": "translation-proceed",
+    "route": "ORIGINAL",
+    "instructions_sha256": "d8d540a9840a8d73b9f15bd172a19561cce179da74feeef8f0309acbc663b92a"
+  },
+  {
+    "case": "translation-ask",
+    "route": "CLARIFY",
+    "instructions_sha256": "7b20d486b66b4d7dcff3809f4621122af83dc6c7d6b698a376b3a463a48e80fe",
+    "discovery": {
+      "ms": 11512.3,
+      "validation": {
+        "id": "response",
+        "outcome": "options_generated",
+        "parse_valid": true,
+        "policy_reason": "DIRECT_CONFLICT_PRESENT",
+        "policy_verdict": "NEEDS_MANUAL_REVIEW",
+        "quantization": "Q8_0",
+        "transport_ok": true,
+        "ungrounded_evidence_count": 0
+      },
+      "error": null,
+      "raw": "{\"kind\":\"conflict\",\"description\":\"explicit incompatible requirements\"}"
+    }
+  }
+]

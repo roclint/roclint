@@ -1,0 +1,9 @@
+# Masking the discovery host
+
+Retain host context pending stronger evidence. On the same 32 held-out drafts (16 clear, 16 requiring a decision), unnecessary review candidates and correctly surfaced decisions respectively were 9 and 8 in the code editor, 7 and 8 in the browser, 8 and 8 in the document, and 9 and 7 under UNKNOWN.
+
+The replay used the original corpus, S1 evidence and routes, workspace context, one-question automatic discovery contract, Granite manifest and release sampling. For each draft the harness reconstructed all three labeled instructions and verified them against their archived hashes. It verified that replacing only the host string produced the UNKNOWN instructions, with the same schema and route. The 23 eligible drafts received one new local decode each. The nine original-route drafts stayed quiet. All new outputs passed the production parser.
+
+Masking creates identical inputs across hosts, so reusing the UNKNOWN result eliminates label-driven differences by construction. The original run showed 11 of 32 drafts with differing final grades across hosts. That consistency alone earns no correctness credit. For the anonymous artist profile the masked response asked about writing style, matching the earlier browser and document misses. For the French-only versus English-only feedback requirement the masked response said only “explicit incompatible requirements”; it did not identify the language decision. Under the established on-target criterion this is a miss. Even giving this borderline response credit yields only a tie on required decisions.
+
+One evaluator compared the actual output against the frozen expected decision. This is one fixed-seed synthetic replay without live editors or independent human ratings. The labeled receipts came from the archived run. The adjacent JSON files store masked outputs and grades. Replay with build/runtime/julia-python/bin/python3 tools/probe_unknown_host.py from the repository root.
