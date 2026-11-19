@@ -61,15 +61,23 @@ QString JuliaRuntimeWorker::defaultModelDirectory() {
 
 QString JuliaRuntimeWorker::defaultPython() {
     const QDir app(QCoreApplication::applicationDirPath());
+    const QString home = QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    const QString appData = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
 #ifdef Q_OS_WIN
     const QStringList candidates = {app.filePath(QStringLiteral("python/python.exe")),
         app.filePath(QStringLiteral("runtime/julia-python/Scripts/python.exe")),
-        app.filePath(QStringLiteral("../runtime/julia-python/Scripts/python.exe"))};
+        app.filePath(QStringLiteral("../runtime/julia-python/Scripts/python.exe")),
+        QDir(appData).filePath(QStringLiteral("runtime/julia-python/Scripts/python.exe")),
+        QDir(home).filePath(QStringLiteral("roclint/build/runtime/julia-python/Scripts/python.exe")),
+        QDir(home).filePath(QStringLiteral("models/julia-python/Scripts/python.exe"))};
 #else
     const QStringList candidates = {app.filePath(QStringLiteral("python/bin/python3")),
         app.filePath(QStringLiteral("runtime/julia-python/bin/python3")),
         app.filePath(QStringLiteral("../runtime/julia-python/bin/python3")),
         app.filePath(QStringLiteral("../../../runtime/julia-python/bin/python3")),
+        QDir(appData).filePath(QStringLiteral("runtime/julia-python/bin/python3")),
+        QDir(home).filePath(QStringLiteral("roclint/build/runtime/julia-python/bin/python3")),
+        QDir(home).filePath(QStringLiteral("models/julia-python/bin/python3")),
         QStringLiteral("/opt/homebrew/bin/python3.13"),
         QStringLiteral("/opt/homebrew/bin/python3.12"),
         QStringLiteral("/opt/homebrew/bin/python3.11"),
@@ -232,7 +240,10 @@ void JuliaRuntimeWorker::startWorker() {
     failed_ = false;
     handshaken_ = false; runtimeStatusSupported_ = false;
     cancelled_.clear(); quiescing_.clear();
-    if (!launch_ || !QFileInfo(helperPath_).isFile() || launch_->python.isEmpty()) {
+    if (launch_ && (launch_->python.isEmpty() || !QFileInfo(launch_->python).isExecutable())) {
+        launch_->python = defaultPython();
+    }
+    if (!launch_ || !QFileInfo(helperPath_).isFile() || launch_->python.isEmpty() || !QFileInfo(launch_->python).isExecutable()) {
         fail(QStringLiteral("Julia's worker or Python runtime is missing. Rebuild with the runtime files and select a Julia Python environment."));
         return;
     }

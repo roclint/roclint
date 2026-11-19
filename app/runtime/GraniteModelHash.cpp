@@ -11,6 +11,10 @@
 #include <bcrypt.h>
 #endif
 
+#if defined(__APPLE__)
+#include <CommonCrypto/CommonDigest.h>
+#endif
+
 namespace roclint::runtime {
 namespace {
 #ifdef Q_OS_WIN
@@ -58,8 +62,10 @@ private:
 }
 
 const char* graniteModelHashBackend() {
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN)
     return "windows-cng-sha256";
+#elif defined(__APPLE__)
+    return "apple-commoncrypto-sha256";
 #else
     return "qt-sha256";
 #endif
@@ -68,9 +74,12 @@ const char* graniteModelHashBackend() {
 QByteArray graniteModelSha256(QIODevice& input, const std::function<void()>& checkpoint) {
     if (!input.isOpen() || !input.isReadable())
         throw GraniteFailure(QStringLiteral("MODEL_READ"), "The native model is not readable.");
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN)
     CngSha256 hash;
     hash.initialize();
+#elif defined(__APPLE__)
+    CC_SHA256_CTX hash;
+    CC_SHA256_Init(&hash);
 #else
     QCryptographicHash hash(QCryptographicHash::Sha256);
 #endif
@@ -83,15 +92,21 @@ QByteArray graniteModelSha256(QIODevice& input, const std::function<void()>& che
                 throw GraniteFailure(QStringLiteral("MODEL_READ"), "The native model could not be read completely.");
             break;
         }
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN)
         hash.add(bytes);
+#elif defined(__APPLE__)
+        CC_SHA256_Update(&hash, bytes.constData(), static_cast<CC_LONG>(bytes.size()));
 #else
         hash.addData(bytes);
 #endif
     }
     checkpoint();
-#ifdef Q_OS_WIN
+#if defined(Q_OS_WIN)
     return hash.finish();
+#elif defined(__APPLE__)
+    QByteArray digest(CC_SHA256_DIGEST_LENGTH, Qt::Uninitialized);
+    CC_SHA256_Final(reinterpret_cast<unsigned char*>(digest.data()), &hash);
+    return digest;
 #else
     return hash.result();
 #endif

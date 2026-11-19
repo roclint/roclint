@@ -314,6 +314,9 @@ HostController::HostController(const QString& dbPathOverride,
         m_modelsBaseDirectory = settings.value(QStringLiteral("models/baseDirectory"), m_modelsBaseDirectory).toString();
         m_juliaModelDirectory = settings.value(QStringLiteral("scoring/juliaDirectory"), m_modelsBaseDirectory + QStringLiteral("/s1")).toString();
         m_juliaPython = settings.value(QStringLiteral("scoring/juliaPython"), m_juliaPython).toString();
+        if (m_juliaPython.isEmpty() || !QFileInfo(m_juliaPython).isExecutable()) {
+            m_juliaPython = JuliaRuntime::defaultPython();
+        }
         m_juliaDevice = settings.value(QStringLiteral("scoring/juliaDevice"), QString{}).toString();
         m_tokenSpeedMode = settings.value(QStringLiteral("models/tokenSpeedMode"), QStringLiteral("BOTH")).toString();
         m_thinkingEnabled = settings.value(QStringLiteral("models/thinkingEnabled"), false).toBool();
@@ -6664,6 +6667,9 @@ void HostController::invalidateScorerConfiguration() {
 void HostController::refreshJuliaModel() {
     if (m_s1Adapter.engine() != bridge::ScorerEngine::JuliaLocal) return;
     invalidateScorerConfiguration();
+    if (m_juliaPython.isEmpty() || !QFileInfo(m_juliaPython).isExecutable()) {
+        m_juliaPython = JuliaRuntime::defaultPython();
+    }
     m_julia->setJuliaDevice(m_juliaDevice);
     m_julia->load(m_juliaModelDirectory, m_juliaPython);
 }
@@ -6672,6 +6678,9 @@ void HostController::downloadJuliaModel() {
     invalidateScorerConfiguration();
     if (m_juliaModelDirectory.isEmpty()) {
         m_juliaModelDirectory = m_modelsBaseDirectory + QStringLiteral("/s1");
+    }
+    if (m_juliaPython.isEmpty() || !QFileInfo(m_juliaPython).isExecutable()) {
+        m_juliaPython = JuliaRuntime::defaultPython();
     }
     QDir().mkpath(m_juliaModelDirectory);
     m_julia->load(m_juliaModelDirectory, m_juliaPython, true);

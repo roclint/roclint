@@ -655,7 +655,7 @@ void NativeGraniteRuntimeWorker::cancelCall(const std::shared_ptr<Call>& call, c
         cancelled_.insert(id, it->envelope); pending_.erase(it);
         quiescing_.insert(id);
         const auto generation = generation_;
-        QTimer::singleShot(2000, this, [this, id, generation]() {
+        QTimer::singleShot(4000, this, [this, id, generation]() {
             if (generation == generation_ && quiescing_.contains(id)) {
                 fail(QStringLiteral("Native Granite did not stop cancelled work within its deadline.")); killWorker();
             }
