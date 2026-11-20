@@ -55,7 +55,8 @@ enum class GuiCaptureRole { Edit, Document, ComboBox, Group, Custom, Other };
     // Recognize the Codex composer hint even if its provider omits label metadata.
     return candidate == u"Work with Codex" &&
            (executable.compare(u"codex.exe", Qt::CaseInsensitive) == 0 ||
-            executable.compare(u"chatgpt.exe", Qt::CaseInsensitive) == 0);
+            executable.compare(u"chatgpt.exe", Qt::CaseInsensitive) == 0 ||
+            executable.compare(u"com.openai.codex", Qt::CaseInsensitive) == 0);
 }
 
 // A page's document range may contain editable descendants without being an

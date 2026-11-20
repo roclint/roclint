@@ -15,6 +15,14 @@ roclint::core::rewrite::ValidationResult validate(const fx::Chain& c, const Rewr
     return RewriteValidator::validateProposal(p, c.session, c.revision, c.intent, acks);
 }
 
+void testRewriteInstructionsStayOutOfTheDraft() {
+    fx::Chain c;
+    const std::string echo = "Rewrite the user's prompt so another AI system can follow it without guessing.";
+    ROCLINT_CHECK(!RewriteValidator::validateFidelity("Make the website look like a retro console.", c.intent, echo).ok());
+    ROCLINT_CHECK(RewriteValidator::validateFidelity(echo, c.intent, echo).ok());
+    ROCLINT_CHECK(!RewriteValidator::validateFidelity("Queue it in Roclint", c.intent, "Queue it in RCLint").ok());
+}
+
 void testParsedProposalIsSealedAndBound() {
     fx::Chain c;
     const auto& p = c.proposal;
@@ -324,6 +332,7 @@ void testApprovalRecordAcceptsCustomProposalId() {
 
 int main() {
     std::cout << "[Test RewriteProposal] Starting...\n";
+    testRewriteInstructionsStayOutOfTheDraft();
     testParsedProposalIsSealedAndBound();
     testHashCoversBoundFieldsButNotTimestamp();
     testAstSnapshotHashSwitchesToV2Domain();

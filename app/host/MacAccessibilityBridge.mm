@@ -852,6 +852,17 @@ private:
         return pane && CFEqual(pane, target.pane);
     }
 
+    static bool belongsToWebArea(const KnownField& target, AXUIElementRef area) {
+        if (!area || target.kind != FieldKind::GuiEditor || !isElectronBundle(target.bundle) ||
+            copyStringAttribute(area, kAXRoleAttribute) != QLatin1String("AXWebArea")) return false;
+        auto parent = target.element;
+        for (int depth = 0; parent && depth < 32; ++depth) {
+            if (CFEqual(parent, area)) return true;
+            parent = (AXUIElementRef)axAttribute(parent, kAXParentAttribute);
+        }
+        return false;
+    }
+
     // Chromium can return focus to the containing web document when the
     // user clicks Roclint. Restore only the last observed editor inside that
     // exact focused document and window. A sibling input or pane is a veto.
@@ -859,7 +870,7 @@ private:
         if (target.kind != FieldKind::GuiEditor || !isElectronBundle(target.bundle) ||
             frontmostPid() != target.pid) return false;
         auto focused = (AXUIElementRef)axAttribute(app, kAXFocusedUIElementAttribute);
-        if (!focused || copyStringAttribute(focused, kAXRoleAttribute) != QLatin1String("AXWebArea")) return false;
+        if (!belongsToWebArea(target, focused)) return false;
         id window = axAttribute(app, kAXFocusedWindowAttribute);
         id capturedWindow = axAttribute(target.element, kAXWindowAttribute);
         if (!window || !capturedWindow || !CFEqual((CFTypeRef)window, (CFTypeRef)capturedWindow)) return false;
@@ -868,24 +879,35 @@ private:
         AXUIElementRef hit = nullptr;
         const auto center = rect.center();
         if (AXUIElementCopyElementAtPosition(app, center.x(), center.y(), &hit) != kAXErrorSuccess || !hit) return false;
-        const bool visible = CFEqual(hit, target.element);
+        bool visible = CFEqual(hit, target.element);
+        // Rich composers can expose the rendered text under the pointer as a child.
+        if (!visible && copyStringAttribute(hit, kAXRoleAttribute) == QLatin1String("AXStaticText")) {
+            auto parent = (AXUIElementRef)axAttribute(hit, kAXParentAttribute);
+            for (int depth = 0; parent && depth < 32; ++depth) {
+                if (CFEqual(parent, target.element)) { visible = true; break; }
+                if (copyStringAttribute(parent, kAXRoleAttribute) != QLatin1String("AXGroup")) break;
+                parent = (AXUIElementRef)axAttribute(parent, kAXParentAttribute);
+            }
+        }
         CFRelease(hit);
         if (!visible) return false;
-        auto parent = target.element;
-        for (int depth = 0; parent && depth < 32; ++depth) {
-            if (CFEqual(parent, focused)) {
-                return AXUIElementSetAttributeValue(target.element, kAXFocusedAttribute, kCFBooleanTrue) == kAXErrorSuccess;
-            }
-            parent = (AXUIElementRef)axAttribute(parent, kAXParentAttribute);
-        }
-        return false;
+        return AXUIElementSetAttributeValue(target.element, kAXFocusedAttribute, kCFBooleanTrue) == kAXErrorSuccess;
     }
 
     bool activateCapturedApp(AXUIElementRef app, const KnownField& target) {
         const auto front = frontmostPid();
-        if (front == target.pid) return targetFocused(app, target);
-        if (front != getpid() || target.token != m_token || !m_focused || !CFEqual(target.element, m_focused))
+        if (front == target.pid) {
+            if (targetFocused(app, target)) return true;
+            if (!focusReturnedWebEditor(app, target)) return false;
+            for (int attempt = 0; attempt < 18 && frontmostPid() == target.pid; ++attempt) {
+                if (targetFocused(app, target)) return true;
+                usleep(kPollMicros);
+            }
             return false;
+        }
+        if (front != getpid() || target.pid != m_pid || !m_focused) return false;
+        const bool sameField = target.token == m_token && CFEqual(target.element, m_focused);
+        if (!sameField && !belongsToWebArea(target, m_focused)) return false;
 
         @autoreleasepool {
             NSRunningApplication* application = [NSRunningApplication runningApplicationWithProcessIdentifier:target.pid];
@@ -918,7 +940,16 @@ private:
     }
 
     static std::optional<QString> captureText(const KnownField& target) {
-        if (target.kind == FieldKind::GuiEditor) return guiText(target.element, isElectronBundle(target.bundle));
+        if (target.kind == FieldKind::GuiEditor) {
+            auto text = guiText(target.element, isElectronBundle(target.bundle));
+            // Codex can expose its empty-composer hint as AX text with a trailing newline.
+            // Only query the selection for a candidate hint, off the ordinary typing path.
+            if (text && isRichComposerPlaceholder(*text, {}, {}, target.bundle, -1)) {
+                const auto selection = readSelection(target.element);
+                if (!selection || (selection->location == 0 && selection->length == 0)) return QString{};
+            }
+            return text;
+        }
         if (!isTerminalBundle(target.bundle)) {
             const auto pane = xtermPane(target.element);
             if (!pane || !target.pane || !CFEqual(pane, target.pane)) return std::nullopt;
@@ -1062,15 +1093,19 @@ private:
     }
 
     template<class Write>
-    InjectionOutcome withCapturedField(quint64 token, FieldKind kind, const QString& before, Write write) {
+    InjectionOutcome withCapturedField(quint64 token, FieldKind kind, const QString& before, Write write, QString* detail = nullptr) {
         if (!m_observing || !AXIsProcessTrusted()) return InjectionOutcome::NotSupported;
         const auto* target = capturedField(token, kind);
-        if (!target) return InjectionOutcome::FieldChanged;
+        if (!target) {
+            if (detail) *detail = QStringLiteral("The captured editor field is no longer available.");
+            return InjectionOutcome::FieldChanged;
+        }
         const auto subrole = copyStringAttribute(target->element, kAXSubroleAttribute);
         if (subrole == QLatin1String("AXSecureTextField")) return InjectionOutcome::NotSupported;
         const auto current = deliveryText(*target, kind);
         if (!current) return InjectionOutcome::NotSupported;
         if (!RangeInjectionPolicy::preconditionsHold(token, target->token, before, *current)) {
+            if (detail) *detail = QStringLiteral("The draft text changed after review.");
             if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
                 qInfo() << "[MacAX] captured draft changed before delivery";
             return InjectionOutcome::FieldChanged;
@@ -1079,6 +1114,7 @@ private:
         const std::unique_ptr<std::remove_pointer_t<AXUIElementRef>, decltype(&CFRelease)>
             app(AXUIElementCreateApplication(target->pid), CFRelease);
         if (!app || !activateCapturedApp(app.get(), *target)) {
+            if (detail) *detail = QStringLiteral("The original composer could not regain focus.");
             if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS"))
                 qInfo() << "[MacAX] delivery refused: original field did not regain focus";
             return InjectionOutcome::FieldChanged;
@@ -1101,6 +1137,7 @@ private:
 
     void performInjection(const InjectionRequest& r) {
         @autoreleasepool {
+            QString detail;
             const auto outcome = withCapturedField(r.fieldToken, r.kind, r.expectedCurrentText,
                 [&](AXUIElementRef app, const KnownField& target) {
                     if ((r.processId > 0 && r.processId != target.pid) ||
@@ -1109,8 +1146,8 @@ private:
                     if (r.kind == FieldKind::Terminal) return replaceTerminalDraft(app, target, r);
                     if (r.text.size() > kMaxReadChars) return InjectionOutcome::NotSupported;
                     return replaceGuiValue(app, target, r.expectedCurrentText, r.text);
-                });
-            emit injectionFinished(r.requestId, outcome, deliveryDetail(outcome));
+                }, &detail);
+            emit injectionFinished(r.requestId, outcome, detail.isEmpty() ? deliveryDetail(outcome) : detail);
         }
     }
 

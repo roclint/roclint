@@ -400,6 +400,9 @@ int main(int argc, char* argv[]) {
                     if (window->position() != position) window->setPosition(position);
                     if (!window->isVisible()) {
                         window->show();
+#ifdef Q_OS_MAC
+                        roclint::host::disableBadgeWindowDragging(window);
+#endif
                     }
                 } else {
                     if (window->isVisible()) {

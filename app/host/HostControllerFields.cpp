@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <utility>
 
 namespace roclint::host {
 namespace {
@@ -216,6 +217,7 @@ void HostController::restoreFieldInterview(const storage::RestoredSession &row) 
 }
 
 QString HostController::observeSessionField(const AmbientObservation &observation) {
+    m_retainedReviewField.clear();
     const auto &f = observation.field;
     const QString key = QStringLiteral("%1/%2/%3/%4/")
                             .arg(f.appIdentifier.toLower())
@@ -239,6 +241,10 @@ QString HostController::observeSessionField(const AmbientObservation &observatio
     slot.workspaceEpoch = m_workspaceEpoch;
     slot.source = observation;
     if (edited) {
+        if (!slot.queuedChoice.isEmpty()) {
+            slot.queuedChoice.clear();
+            m_explicitFields.removeAll(key);
+        }
         ++slot.draftVersion;
         slot.editedInHud = false;
         slot.draft = observation.prompt;
@@ -344,6 +350,7 @@ void HostController::forgetFieldSessions(const QString &sessionId) {
         m_explicitFields.removeAll(key);
         m_automaticFields.removeAll(key);
         if (m_detachedField == key) m_detachedField.clear();
+        if (m_retainedReviewField == key) m_retainedReviewField.clear();
         if (m_pipelineField == key)
             m_pipelineField.clear();
         if (m_focusedField == key)
@@ -388,6 +395,35 @@ quint64 HostController::admitFieldReview(const QString &key, bool requestReview)
         emit fieldViewChanged();
         co_return core::Status::success();
     });
+}
+
+void HostController::queueFocusedFieldChoice(const QVariantMap& choice) {
+    auto it = m_fields.find(m_focusedField);
+    if (!otherFieldVisible() || fieldReviewQueued() || it == m_fields.end() || !it->invoked || it->snapshotId.isEmpty() ||
+        !it->choices.contains(choice) || !choice.value("permitted", true).toBool() || choice.value("label").toString().isEmpty())
+        return;
+    it->queuedChoice = choice;
+    m_automaticFields.removeAll(m_focusedField);
+    if (!m_explicitFields.contains(m_focusedField)) m_explicitFields.append(m_focusedField);
+    emit fieldViewChanged();
+    scheduleFieldWork();
+}
+
+AsyncTask<core::Status> HostController::applyQueuedFieldChoice(QString key, quint64 version, QString snapshot,
+                                                               QString question, QVariantMap choice) {
+    const auto& choices = m_interviewActive ? m_interviewChoices : m_activeAlternatives;
+    if (m_pipelineField != key || !m_fields.contains(key) || m_fields.value(key).draftVersion != version ||
+        !m_currentSnapshot || q(m_currentSnapshot->id) != snapshot || isDraftDirty() ||
+        (m_interviewActive ? m_interviewQuestion : m_activeQuestion) != question || !choices.contains(choice))
+        co_return core::makeError(core::ErrorCode::StaleVersion, "The question changed. Choose an answer for the current draft.");
+    if (m_interviewActive)
+        co_return co_await submitInterviewResponseOperation(choice.value("label").toString(), QStringLiteral("answer"),
+                                                           stateVersion(), m_interviewCurrentRecordId, m_interviewQuestionSerial);
+    auto status = co_await confirmChoiceOperation(choice.value("id").toString(), stateVersion());
+    if (status.ok() && m_pipelineField == key && m_fields.value(key).draftVersion == version &&
+        hasConfirmedIntent() && isRewriteEnabled() && !m_currentProposal)
+        co_return co_await synthesizeRewriteOperation(stateVersion());
+    co_return status;
 }
 
 void HostController::queueAutomaticField(const QString &key) {
@@ -441,16 +477,24 @@ void HostController::scheduleFieldWork() {
             QTimer::singleShot(0, this, &HostController::scheduleFieldWork);
         return;
     }
+    auto& field = m_fields[key];
+    const auto choice = std::exchange(field.queuedChoice, QVariantMap{});
+    const auto version = field.draftVersion;
+    const auto snapshot = field.snapshotId;
+    const auto question = field.question;
     m_fieldSwitching = true;
     const auto epoch = m_fieldRegistryEpoch;
     emit fieldViewChanged();
     const auto id = enqueueStorageCommand(
         "activateField",
-        [this, key, review, explicitRequest, epoch]() -> AsyncTask<core::Status> {
+        [this, key, review, explicitRequest, epoch, choice, version, snapshot, question]() -> AsyncTask<core::Status> {
             core::Status status = core::Status::success();
             if (epoch == m_fieldRegistryEpoch && m_fields.contains(key) &&
-                m_fields.value(key).workspaceEpoch == m_workspaceEpoch)
-                status = co_await activateField(key, review, explicitRequest);
+                m_fields.value(key).workspaceEpoch == m_workspaceEpoch) {
+                status = co_await activateField(key, review && choice.isEmpty(), explicitRequest);
+                if (status.ok() && !choice.isEmpty())
+                    status = co_await applyQueuedFieldChoice(key, version, snapshot, question, choice);
+            }
             m_fieldSwitching = false;
             if (m_pipelineField == key && m_revisionState && m_captureTarget && m_fields.contains(key) &&
                 m_captureTarget->textHash != m_fields.value(key).source.textHash) {

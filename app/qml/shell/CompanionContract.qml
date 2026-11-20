@@ -170,7 +170,8 @@ QtObject {
         let count = 0;
         for (let i = 0; i < comprehensionFindings.length; ++i) {
             const finding = comprehensionFindings[i];
-            if (finding && finding.requiresUserDecision) ++count;
+            if (finding && (finding.requiresUserDecision || finding.canConfirmIntent ||
+                            finding.severity === "blocking" || finding.severity === "required")) ++count;
         }
         return count;
     }

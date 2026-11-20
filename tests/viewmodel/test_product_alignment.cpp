@@ -504,6 +504,14 @@ void testQuietAmbientIndicatorIsSmallAndExplicit() {
     ROCLINT_CHECK(window->flags().testFlag(Qt::WindowDoesNotAcceptFocus));
     window->show(); QTest::qWait(100);
     auto* indicator = requireVisual(window, "ambientIndicatorControl");
+    ROCLINT_CHECK(window->minimumSize() == QSize(28, 28));
+    ROCLINT_CHECK(window->maximumSize() == QSize(28, 28));
+    QTest::mouseMove(window, QPoint(14, 14));
+    QTRY_VERIFY(indicator->property("containsMouse").toBool());
+    QTest::qWait(150); // Let the hover color transition finish.
+    const auto hoveredBadge = window->grabWindow();
+    QTest::qWait(750); // A sustained hover must leave the mark visible.
+    ROCLINT_CHECK(!hoveredBadge.isNull() && hoveredBadge == window->grabWindow());
     clickVisual(window, indicator);
     ROCLINT_CHECK(lastMockCall(mock) == "openFullHud");
     auto* dot = requireVisual(window, "suggestionDot");
@@ -786,7 +794,7 @@ void testComprehensionReviewStatesAndApplyGate() {
     ROCLINT_CHECK(!requireVisual(window, "comprehensionRequestControl")->isVisible());
     auto wording = reviewFinding("wording", "blocking", "meaning_drift",
                                  "Ask the user to specify exact colors, decision:5.",
-                                 "Use a minimalist, modern tech-company style.", true,
+                                 "Use a minimalist, modern tech-company style.", false,
                                  "Request exact typography values.", "candidate");
     wording.insert("canConfirmIntent", true);
     mock->setProperty("comprehensionFindings", QVariantList{wording});
@@ -794,6 +802,10 @@ void testComprehensionReviewStatesAndApplyGate() {
     QTest::qWait(80);
     ROCLINT_CHECK(visualText(window, "comprehensionFindingSummary_0") == "Does this wording still mean what you intended?");
     ROCLINT_CHECK(!requireVisual(window, "comprehensionFindingReturn_0")->isVisible());
+    ROCLINT_CHECK(visualText(window, "comprehensionFindingCount").contains("1 need a decision"));
+    QVariant nextAction;
+    ROCLINT_CHECK(QMetaObject::invokeMethod(review, "nextReviewAction", Q_RETURN_ARG(QVariant, nextAction)));
+    ROCLINT_CHECK(nextAction.value<QObject*>() == requireVisual(window, "comprehensionFindingConfirm_0"));
     clickVisual(window, requireVisual(window, "comprehensionFindingConfirm_0"));
     ROCLINT_CHECK(lastMockDetail(mock).value("resolution").toString() == "confirm_intent");
     mock->setProperty("comprehensionFindings", QVariantList{});
@@ -2040,6 +2052,11 @@ void testFloatingWindowSwitchesToFocusedField() {
     ROCLINT_CHECK(preview->property("text") == second.text);
     ROCLINT_CHECK(controller.waitForIdleForTesting(5000));
     ROCLINT_CHECK(preview->isVisible() && preview->property("text") == second.text);
+    auto* reviewButton = requireVisual(window, "focusedFieldReviewButton");
+    QTRY_VERIFY(window->height() < 220);
+    const auto draftBottom = preview->mapToScene(QPointF(0, preview->height())).y();
+    const auto actionTop = reviewButton->mapToScene(QPointF()).y();
+    ROCLINT_CHECK(actionTop >= draftBottom && actionTop - draftBottom <= 16);
     const int compactWidth = window->width();
     clickVisual(window, requireVisual(window, "expandToggleButton"));
     QTRY_VERIFY(window->width() > compactWidth && preview->isVisible());
@@ -2057,6 +2074,14 @@ void testFloatingWindowSwitchesToFocusedField() {
     ROCLINT_CHECK(!preview->isVisible() && controller.isClarifying());
     auto* input = window->findChild<QQuickItem*>("promptInput");
     ROCLINT_CHECK(input && input->property("text") == first.text);
+    HostContextDetector::setMockObservation(HostContextObservation{
+        HostContextCategory::CodeEditor, first.appDisplayName, first.appIdentifier});
+    observed->lose();
+    ROCLINT_CHECK(controller.focusedFieldDraft().isEmpty() && !preview->isVisible());
+    ROCLINT_CHECK(requireVisual(window, "workflowViewport")->isVisible());
+    observed->observe(second);
+    ROCLINT_CHECK(preview->isVisible() && preview->property("text") == second.text);
+    HostContextDetector::resetMock();
 }
 
 void testLiveCapturedDraftAndCancelRetryInQml() {
@@ -2877,7 +2902,7 @@ void testUserRequestedRewriteFromNewDraft() {
     std::cout << "  [PASS] User-requested rewrite checks the new HUD draft then creates one unapproved preview.\n";
 }
 
-void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
+void testManualGraniteRewriteConnectsEditorWithoutLosingReview(bool manualApproval) {
     QSettings().clear();
     HostContextDetector::setMockObservation(HostContextObservation{});
     auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
@@ -2962,16 +2987,28 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview() {
     ROCLINT_CHECK(check && !check->property("checked").toBool());
     check->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
-    setApprovingReview(controller);
     const auto heldVersion = controller.stateVersion();
-    ROCLINT_CHECK(approve->property("label").toString() == "Resolve checks");
-    clickVisual(window, approve);
-    QTRY_COMPARE(controller.comprehensionReviewState(), QStringLiteral("ready"));
-    ROCLINT_CHECK(controller.stateVersion() == heldVersion && window->property("isDetailedExpanded").toBool());
-    auto* reviewStatus = findVisual(window->contentItem(), "comprehensionStateHeadline");
-    ROCLINT_CHECK(reviewStatus && !reviewStatus->isVisible());
-    ROCLINT_CHECK(approve->property("label").toString() == "Approve & Insert");
-    ROCLINT_CHECK(controller.canApprove() && !controller.hasApproval() && observed->injections.empty());
+    if (controller.comprehensionReviewState() != "failed" && controller.comprehensionReviewState() != "running")
+        clickVisual(window, approve);
+    QTRY_COMPARE(controller.comprehensionReviewState(), QStringLiteral("failed"));
+    ROCLINT_CHECK(approve->property("label").toString() == "Manually approve & Insert");
+    if (!manualApproval) {
+        controller.setComprehensionReviewForTesting([](const roclint::bridge::ComprehensionReviewRequest& request) {
+            using namespace roclint::bridge;
+            ComprehensionReviewResult result;
+            result.status = ComprehensionReviewStatus::Completed;
+            result.interpretedOutcome = "The wording could be more specific.";
+            result.findings.push_back({"wording", ReviewFindingKind::ComprehensionGap, ReviewFindingSeverity::Blocking,
+                                       "Check the wording.", "source:1", request.originalPrompt, true, {}});
+            return result;
+        });
+        auto* retry = requireVisual(window, "comprehensionRequestControl");
+        clickVisual(window, retry);
+        QTRY_COMPARE(controller.comprehensionReviewState(), QStringLiteral("ready"));
+        ROCLINT_CHECK(approve->property("label").toString() == "Accept wording & Insert");
+    }
+    ROCLINT_CHECK(controller.stateVersion() == heldVersion);
+    ROCLINT_CHECK(!controller.canApprove() && !controller.hasApproval() && observed->injections.empty());
     approve->forceActiveFocus(); QTest::keyClick(window, Qt::Key_Space);
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     QTest::qWait(30);
@@ -3108,6 +3145,11 @@ void testClarificationFeedbackKeepsRejectedText() {
     bool accept = false;
     bool sawPreviousAnswer = false;
     controller.setTransportOverrideForTesting([&](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("already_shown") != std::string_view::npos) {
+            if (prompt.find("easier to read") == std::string_view::npos ||
+                prompt.find("What text size?") == std::string_view::npos) return std::string("{}");
+            return std::string(R"({"options":["12pt","14pt"]})");
+        }
         if (prompt.find("granite.clarification_check.v1") != std::string_view::npos) {
             if (prompt.find("Which font family?") != std::string_view::npos) {
                 sawPreviousAnswer = prompt.find(R"("answer":"12pt")") != std::string_view::npos;
@@ -3136,6 +3178,15 @@ void testClarificationFeedbackKeepsRejectedText() {
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.analyzePrompt(draft, 0)));
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && controller.isClarifying());
     const auto version = controller.stateVersion();
+    field->setProperty("text", "easier to read");
+    controller.suggestOtherOptions("easier to read", version);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    ROCLINT_CHECK(controller.property("additionalOptions").toStringList() == QStringList{"14pt"});
+    ROCLINT_CHECK(field->property("text").toString() == "easier to read");
+    controller.suggestOtherOptions("easier to read", version);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    ROCLINT_CHECK(!controller.property("optionFeedback").toString().isEmpty());
+    ROCLINT_CHECK(controller.stateVersion() == version && controller.roundsCompleted() == 0);
     const QString nonsense = "iondwfwoefneiofneionfeio";
     field->setProperty("text", nonsense);
     ROCLINT_CHECK(QMetaObject::invokeMethod(panel, "handleAnswerSubmit", Q_ARG(QVariant, nonsense)));
@@ -3150,6 +3201,7 @@ void testClarificationFeedbackKeepsRejectedText() {
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(field->property("text").toString().isEmpty());
     ROCLINT_CHECK(controller.activeQuestion() == "Which font family?" && controller.roundsCompleted() == 1);
+    ROCLINT_CHECK(controller.property("additionalOptions").toStringList().isEmpty());
     accept = false;
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.submitCustomIntent("serif", controller.stateVersion())));
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && sawPreviousAnswer);
@@ -3344,7 +3396,8 @@ int main(int argc, char* argv[]) {
     run("testClipboardFallbackDoesNotDismissQmlCard", testClipboardFallbackDoesNotDismissQmlCard);
     run("testGenerationMeterUsesMeasuredProgress", testGenerationMeterUsesMeasuredProgress);
     run("testUserRequestedRewriteFromNewDraft", testUserRequestedRewriteFromNewDraft);
-    run("testManualGraniteRewriteConnectsEditorWithoutLosingReview", testManualGraniteRewriteConnectsEditorWithoutLosingReview);
+    run("testManualGraniteRewriteConnectsEditorWithoutLosingReview", [] { testManualGraniteRewriteConnectsEditorWithoutLosingReview(false); });
+    run("testInsertAfterFailedMeaningCheck", [] { testManualGraniteRewriteConnectsEditorWithoutLosingReview(true); });
     run("testCapturedAndClipboardDraftPresentation", testCapturedAndClipboardDraftPresentation);
     run("testFloatingWindowSwitchesToFocusedField", testFloatingWindowSwitchesToFocusedField);
     run("testLiveCapturedDraftAndCancelRetryInQml", testLiveCapturedDraftAndCancelRetryInQml);

@@ -194,11 +194,13 @@ public:
     Q_PROPERTY(bool storageNeedsRecovery READ storageNeedsRecovery NOTIFY storageChanged)
     Q_PROPERTY(bool isStorageAvailable READ isStorageAvailable NOTIFY storageChanged)
     Q_PROPERTY(bool fieldCaptureManaged READ fieldCaptureManaged NOTIFY fieldViewChanged)
+    Q_PROPERTY(bool retainedFieldReviewVisible READ retainedFieldReviewVisible NOTIFY fieldViewChanged)
     Q_PROPERTY(bool otherFieldVisible READ otherFieldVisible NOTIFY fieldViewChanged)
     Q_PROPERTY(QString focusedFieldDraft READ focusedFieldDraft NOTIFY fieldViewChanged)
     Q_PROPERTY(QString focusedFieldQuestion READ focusedFieldQuestion NOTIFY fieldViewChanged)
     Q_PROPERTY(QVariantList focusedFieldChoices READ focusedFieldChoices NOTIFY fieldViewChanged)
     Q_PROPERTY(QString focusedFieldName READ focusedFieldName NOTIFY fieldViewChanged)
+    Q_PROPERTY(QString pipelineEditorName READ pipelineEditorName NOTIFY fieldViewChanged)
     Q_PROPERTY(bool fieldReviewQueued READ fieldReviewQueued NOTIFY fieldViewChanged)
     Q_PROPERTY(QVariantList matchingFieldDrafts READ matchingFieldDrafts NOTIFY fieldViewChanged)
     Q_PROPERTY(int sessionCount READ sessionCount NOTIFY sessionListChanged)
@@ -218,6 +220,9 @@ public:
     Q_PROPERTY(QString activeItemKind READ activeItemKind NOTIFY interventionChanged)
     Q_PROPERTY(QString activeQuestion READ activeQuestion NOTIFY interventionChanged)
     Q_PROPERTY(bool isCheckingClarification READ isCheckingClarification NOTIFY clarificationCheckChanged)
+    Q_PROPERTY(QStringList additionalOptions MEMBER m_additionalOptions NOTIFY optionSuggestionsChanged)
+    Q_PROPERTY(bool refreshingOptions MEMBER m_refreshingOptions NOTIFY optionSuggestionsChanged)
+    Q_PROPERTY(QString optionFeedback MEMBER m_optionFeedback NOTIFY optionSuggestionsChanged)
     Q_PROPERTY(QString clarificationFeedback READ clarificationFeedback NOTIFY clarificationCheckChanged)
     Q_PROPERTY(QString activeDimension READ activeDimension NOTIFY interventionChanged)
     Q_PROPERTY(QVariantList activeAlternatives READ activeAlternatives NOTIFY interventionChanged)
@@ -323,6 +328,8 @@ public:
     Q_PROPERTY(QString comprehensionReviewState READ comprehensionReviewState NOTIFY comprehensionReviewChanged)
     Q_PROPERTY(QString comprehensionInterpretation READ comprehensionInterpretation NOTIFY comprehensionReviewChanged)
     Q_PROPERTY(QVariantList comprehensionFindings READ comprehensionFindings NOTIFY comprehensionReviewChanged)
+    Q_PROPERTY(bool canUseManualReview READ canUseManualReview NOTIFY rewriteProposalChanged)
+    Q_PROPERTY(bool canAcceptReviewedWording READ canAcceptReviewedWording NOTIFY comprehensionReviewChanged)
     Q_PROPERTY(bool canApplyReviewedOutput READ canApplyReviewedOutput NOTIFY comprehensionReviewChanged)
 
     Q_PROPERTY(QString scorerEngine READ scorerEngine NOTIFY scorerEngineChanged)
@@ -593,6 +600,8 @@ public:
     [[nodiscard]] QString comprehensionReviewState() const;
     [[nodiscard]] QString comprehensionInterpretation() const;
     [[nodiscard]] QVariantList comprehensionFindings() const;
+    [[nodiscard]] bool canUseManualReview() const;
+    [[nodiscard]] bool canAcceptReviewedWording() const;
     [[nodiscard]] bool canApplyReviewedOutput() const;
     Q_INVOKABLE quint64 requestComprehensionReview(quint64 expectedVersion);
     Q_INVOKABLE quint64 resolveComprehensionFinding(const QString& findingId, const QString& resolution,
@@ -793,11 +802,17 @@ public slots:
     Q_INVOKABLE void pauseAmbientFollowing();
     bool fieldCaptureManaged() const { return !m_pipelineField.isEmpty(); }
     bool otherFieldVisible() const;
+    bool retainedFieldReviewVisible() const {
+        return !m_fieldSwitching && m_focusedField.isEmpty() && !m_retainedReviewField.isEmpty() &&
+               m_retainedReviewField == m_pipelineField;
+    }
     QString focusedFieldDraft() const;
     QString focusedFieldQuestion() const { return m_fields.value(m_focusedField).question; }
     QVariantList focusedFieldChoices() const { return m_fields.value(m_focusedField).choices; }
     QString focusedFieldName() const;
+    QString pipelineEditorName() const { return m_fields.value(m_pipelineField).source.field.appDisplayName; }
     bool fieldReviewQueued() const;
+    Q_INVOKABLE void queueFocusedFieldChoice(const QVariantMap& choice);
     QVariantList matchingFieldDrafts() const { return m_fieldMatches; }
     Q_INVOKABLE void reviewFocusedField();
     Q_INVOKABLE void rememberHudDraft(const QString& text);
@@ -811,6 +826,7 @@ public slots:
     Q_INVOKABLE quint64 reviewPrompt(QString text, quint64 expectedVersion);
     Q_INVOKABLE quint64 cancelAnalysis(quint64 expectedVersion);
     Q_INVOKABLE quint64 confirmChoice(QString alternativeId, quint64 expectedVersion);
+    Q_INVOKABLE void suggestOtherOptions(QString direction, quint64 expectedVersion);
     Q_INVOKABLE quint64 submitCustomIntent(QString customText, quint64 expectedVersion);
     Q_INVOKABLE quint64 submitClarification(const QString& text, bool isDeferral, quint64 expectedVersion);
     Q_INVOKABLE quint64 submitClarification(const QString& text, quint64 expectedVersion);
@@ -829,6 +845,8 @@ public slots:
     Q_INVOKABLE quint64 acknowledgeConstraint(QString constraintId, bool acknowledged, quint64 expectedVersion);
     // Persists the approval, then delivers the approved text: into the captured field for an
     // ambient capture (falling back to the clipboard if that fails), otherwise to the clipboard.
+    Q_INVOKABLE quint64 manuallyApproveRewrite(quint64 expectedVersion);
+    Q_INVOKABLE quint64 acceptWordingAndDeliver(quint64 expectedVersion);
     Q_INVOKABLE quint64 approveAndCopyRewrite(quint64 expectedVersion);
     Q_INVOKABLE bool beginInsertionTargetSelection(quint64 expectedVersion);
     Q_INVOKABLE quint64 discardProposal(quint64 expectedVersion);
@@ -910,6 +928,7 @@ signals:
     void analysisStatusChanged();
     void interventionChanged();
     void clarificationCheckChanged();
+    void optionSuggestionsChanged();
     void clarificationAnswerChecked(bool accepted);
     void intentChanged();
     void rewriteProfileChanged(const QString& profile);
@@ -1031,16 +1050,19 @@ private:
         QString draft, project, sessionId, revisionId, snapshotId;
         QString question;
         QVariantList choices;
+        QVariantMap queuedChoice;
         std::string answers;
         quint64 generation{1}, workspaceEpoch{0}, draftVersion{0};
         QDeadlineTimer automaticDue;
         bool invoked{false}, editedInHud{false}, dirty{false};
     };
     QMap<QString, FieldSession> m_fields;
-    QString m_focusedField, m_pipelineField, m_detachedField;
+    QString m_focusedField, m_pipelineField, m_detachedField, m_retainedReviewField;
     QStringList m_explicitFields, m_automaticFields;
     QVariantList m_fieldMatches;
     QTimer m_fieldCheckpointTimer, m_fieldReviewTimer;
+    AsyncTask<core::Status> applyQueuedFieldChoice(QString key, quint64 version, QString snapshot,
+                                                 QString question, QVariantMap choice);
     void queueAutomaticField(const QString& key);
     bool m_restoredFieldDraft{false};
     std::optional<AsyncTask<void>> m_fieldSaveTask;
@@ -1089,7 +1111,7 @@ private:
     AsyncTask<core::Status> restoreSessionForReviewOperation(QString sessionId, quint64 expectedVersion);
     AsyncTask<core::Status> restoreRevisionOperation(QString revisionId, quint64 expectedVersion);
     AsyncTask<core::Status> discardProposalOperation(quint64 expectedVersion);
-    AsyncTask<core::Status> approveAndCopyRewriteOperation(quint64 expectedVersion);
+    AsyncTask<core::Status> approveAndCopyRewriteOperation(quint64 expectedVersion, bool manuallyReviewed = false);
     AsyncTask<core::Status> acknowledgeConstraintOperation(QString constraintId, bool acknowledged, quint64 expectedVersion);
     AsyncTask<core::Status> synthesizeRewriteOperation(quint64 expectedVersion);
     AsyncTask<core::Status> rewriteWithoutQuestionsOperation(quint64 expectedVersion);
@@ -1287,6 +1309,7 @@ private:
         bool operator==(const ComprehensionBinding&) const = default;
     };
     enum class ReviewState : quint8 { NotRun, Running, Ready, Failed, Stale };
+    [[nodiscard]] bridge::ComprehensionReviewRequest makeComprehensionRequest() const;
     [[nodiscard]] std::optional<ComprehensionBinding> currentReviewBinding() const;
     [[nodiscard]] bool reviewBindingMatchesCurrent() const;
     [[nodiscard]] bool findingIsResolved(std::string_view findingId) const;
@@ -1300,7 +1323,7 @@ private:
 
     void onFieldObserved(const ObservedField& field);
     void followAmbientDraft();
-    void onFieldLost(bool interrupted = false);
+    void onFieldLost(bool interrupted = false, bool editorFocusLost = false);
     void onAmbientDebounce();
     void startAmbientCheck();
     void setAmbientBadge(bool visible, const QString& label = QString());
@@ -1582,6 +1605,9 @@ private:
     QString m_activeQuestion;
     quint64 m_clarificationCheckSerial{0};
     bool m_checkingClarification{false};
+    QStringList m_additionalOptions, m_previousOptions;
+    QString m_optionFeedback;
+    bool m_refreshingOptions{false};
     QString m_clarificationFeedback;
     QString m_activeDimension;
     QVariantList m_activeAlternatives;

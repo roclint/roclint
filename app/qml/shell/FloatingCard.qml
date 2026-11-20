@@ -5,6 +5,7 @@ import QtCore
 
 Window {
     id: rootWindow
+    objectName: "reviewCardWindow"
     title: qsTr("Roclint — prompt assistant")
     property bool isDetailedExpanded: false
     readonly property bool isAmbientMode: hc && (hostController.isAmbientAttached || hostController.isAmbientActive)
@@ -18,7 +19,10 @@ Window {
     readonly property int compactWidth: 430
     // The reading surface grows with the bounded draft preview. Questions and
     // proposals keep a larger viewport for choices, diffs and review controls.
-    readonly property int compactHeight: (compactDraftActions && !showPromptEditor)
+    readonly property int compactHeight: fieldPreview
+        ? Math.min(380, Math.max(174, Math.ceil(fieldPreviewContent.implicitHeight + hudHeader.Layout.preferredHeight
+            + 2 * hudLayout.anchors.margins + hudLayout.spacing + 2)))
+        : (compactDraftActions && !showPromptEditor)
         ? Math.min(380, Math.max(174, Math.ceil(mainContent.implicitHeight + hudHeader.implicitHeight + hudFooter.implicitHeight
             + 2 * hudLayout.anchors.margins + 3 * hudLayout.spacing + 4)))
         : 380
@@ -85,10 +89,26 @@ Window {
         if (hostController.hasProposal && hostController.proposalStatus === "READY_FOR_REVIEW") {
             if (reviewContractAvailable && hostController.comprehensionReviewState === "running")
                 return {badge: "REVIEW", tone: neutral, label: qsTr("Checking rewrite…"), action: "NONE"};
-            if (!hostController.canApprove || !rootWindow.reviewedOutputApplicable)
-                return {badge: "REVIEW", tone: neutral,
-                    label: hostController.pendingReviewCount > 0 ? qsTr("Confirm changes") : qsTr("Resolve checks"),
-                    action: "REVIEW_REWRITE"};
+            if (!hostController.canApprove || !rootWindow.reviewedOutputApplicable) {
+                if (hostController.pendingReviewCount > 0)
+                    return {badge: "REVIEW", tone: neutral, label: qsTr("Confirm changes"), action: "REVIEW_REWRITE"};
+                if (hostController.canUseManualReview === true) {
+                    const insert = hostController.isAmbientCapture || hostController.isAmbientAttached;
+                    return {badge: "REVIEW", tone: neutral, label: insert ? qsTr("Manually approve & Insert") : qsTr("Manually approve & Copy"),
+                            action: "MANUAL_APPROVAL"};
+                }
+                if (hostController.canAcceptReviewedWording === true) {
+                    const insert = hostController.isAmbientCapture || hostController.isAmbientAttached;
+                    return {badge: "REVIEW", tone: neutral, label: insert ? qsTr("Accept wording & Insert") : qsTr("Accept wording & Copy"),
+                            action: "ACCEPT_WORDING"};
+                }
+                if (reviewContractAvailable && hostController.comprehensionReviewState === "waiting_for_answer")
+                    return {badge: "REVIEW", tone: neutral, label: qsTr("Answer question"), action: "ANSWER_REVIEW"};
+                if (reviewContractAvailable && hostController.comprehensionReviewState === "ready" &&
+                    hostController.comprehensionFindings.length > 0)
+                    return {badge: "REVIEW", tone: neutral, label: qsTr("Review wording"), action: "REVIEW_REWRITE"};
+                return {badge: "REVIEW", tone: neutral, label: qsTr("Recheck rewrite"), action: "REVIEW_REWRITE"};
+            }
             const connected = hostController.isAmbientCapture || hostController.isAmbientAttached;
             return {badge: "REVIEW", tone: neutral,
                 label: connected ? qsTr("Approve & Insert") : qsTr("Approve & Copy"),
@@ -106,7 +126,7 @@ Window {
         if (hostController.isOptionalHelp && hostController.isClarifying)
             return {badge: "OPTIONAL", tone: neutral, label: qsTr("Optional ideas"), action: "CLARIFY"};
         if (hostController.isClarifying || rootWindow.needsManualAnswer)
-            return {badge: "CLARIFY", tone: warning, label: qsTr("Answer question"), action: "CLARIFY"};
+            return {badge: "CLARIFY", tone: warning, label: qsTr("Answer question"), action: "ANSWER_REVIEW"};
         if (hostController.isManual) return {badge: "REVIEW NEEDED", tone: warning, label: qsTr("Review prompt"), action: "REVIEW_PROMPT"};
         if (hostController.hasConfirmedIntent && !hostController.isIntentStale && !hostController.isOriginalRoute && !hostController.isOptionalHelp)
             return {badge: "READY", tone: "#7EE787", label: qsTr("Improve wording"), action: "REWRITE"};
@@ -394,8 +414,14 @@ Window {
                     reviewFlow.advanceReview();
             });
             break;
+        case "MANUAL_APPROVAL": hostController.manuallyApproveRewrite(hostController.stateVersion); break;
+        case "ACCEPT_WORDING": hostController.acceptWordingAndDeliver(hostController.stateVersion); break;
         case "APPROVE": approveForCurrentDestination(); break;
         case "EDIT": revertToDraft(); break;
+        case "ANSWER_REVIEW":
+            if (isAmbientMode && !isDetailedExpanded) toggleDetailedExpanded();
+            Qt.callLater(reviewFlow.focusInterview);
+            break;
         case "CLARIFY": reviewFlow.focusClarification(); break;
         case "REWRITE": hostController.synthesizeRewrite(hostController.stateVersion); break;
         case "REVIEW_PROMPT": analyzeNow(); break;
@@ -541,7 +567,7 @@ Window {
         onActivated: rootWindow.openSettings()
     }
 
-    readonly property bool fieldPreview: hc && hostController.otherFieldVisible
+    readonly property bool fieldPreview: hc && hostController.otherFieldVisible && !hostController.retainedFieldReviewVisible
     onFieldPreviewChanged: if (fieldPreview) {
         cancelQueuedAnalysis();
         rewriteAfterReview = false;
@@ -803,47 +829,73 @@ Window {
 
                 Rectangle { visible: !rootWindow.compactPresentation; Layout.fillWidth: true; implicitHeight: 1; color: rootWindow.borderColor }
 
-                ColumnLayout {
+                Flickable {
+                    id: fieldPreviewViewport
                     visible: rootWindow.fieldPreview
                     Layout.fillWidth: true
                     Layout.fillHeight: true
                     Layout.minimumHeight: 0
                     clip: true
-                    Text {
-                        text: rootWindow.hc && hostController.focusedFieldName.length ? hostController.focusedFieldName : qsTr("Waiting for an editable field")
-                        textFormat: Text.PlainText
-                        color: rootWindow.mutedTextColor
-                    }
-                    Text {
-                        objectName: "focusedFieldPreview"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        text: rootWindow.hc ? hostController.focusedFieldDraft : ""
-                        color: rootWindow.fgColor
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
-                        elide: Text.ElideRight
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        text: rootWindow.fieldPreview ? hostController.focusedFieldQuestion : ""
-                        visible: text.length > 0
-                        color: rootWindow.fgColor
-                        textFormat: Text.PlainText
-                        wrapMode: Text.Wrap
-                    }
-                    Repeater {
-                        model: rootWindow.fieldPreview ? hostController.focusedFieldChoices : []
-                        Text { text: modelData.label; color: rootWindow.mutedTextColor; textFormat: Text.PlainText }
-                    }
-                    Repeater {
-                        model: rootWindow.fieldPreview ? hostController.matchingFieldDrafts : []
-                        Button { text: qsTr("Resume: %1").arg(modelData.preview); onClicked: hostController.resumeFieldDraft(modelData.sessionId) }
-                    }
-                    Button {
-                        text: rootWindow.hc && hostController.fieldReviewQueued ? qsTr("Review queued") : qsTr("Review prompt")
-                        enabled: rootWindow.hc && !hostController.fieldReviewQueued && hostController.focusedFieldDraft.trim().length > 0
-                        onClicked: hostController.reviewFocusedField()
+                    contentWidth: width
+                    contentHeight: fieldPreviewContent.implicitHeight
+                    boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: HudScrollBar { policy: ScrollBar.AsNeeded }
+
+                    ColumnLayout {
+                        id: fieldPreviewContent
+                        width: fieldPreviewViewport.width - 10
+                        spacing: 8
+                        Text {
+                            text: rootWindow.hc && hostController.focusedFieldName.length ? hostController.focusedFieldName : qsTr("Waiting for an editable field")
+                            textFormat: Text.PlainText
+                            color: rootWindow.mutedTextColor
+                        }
+                        Text {
+                            objectName: "focusedFieldPreview"
+                            Layout.fillWidth: true
+                            font.family: rootWindow.sansFont
+                            font.pixelSize: rootWindow.compactPresentation ? 17 : 14
+                            maximumLineCount: rootWindow.compactPresentation ? 4 : 2147483647
+                            text: rootWindow.hc ? hostController.focusedFieldDraft : ""
+                            color: rootWindow.fgColor
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            text: rootWindow.fieldPreview ? hostController.focusedFieldQuestion : ""
+                            visible: text.length > 0
+                            color: rootWindow.fgColor
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                        }
+                        Repeater {
+                            model: rootWindow.fieldPreview ? hostController.focusedFieldChoices : []
+                            HudButton {
+                                Layout.fillWidth: true
+                                label: modelData.label
+                                active: !hostController.fieldReviewQueued && modelData.permitted !== false
+                                onClicked: hostController.queueFocusedFieldChoice(modelData)
+                            }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            visible: rootWindow.fieldPreview && !!hostController.pipelineEditorName &&
+                                     (rootWindow.generationPending || hostController.isInterviewBusy ||
+                                      hostController.comprehensionReviewState === "running")
+                            text: visible ? qsTr("Working on %1.").arg(hostController.pipelineEditorName) : ""
+                            textFormat: Text.PlainText
+                            color: rootWindow.mutedTextColor
+                        }
+                        HudButton {
+                            objectName: "focusedFieldReviewButton"
+                            primary: true
+                            compact: rootWindow.compactPresentation
+                            label: rootWindow.hc && hostController.fieldReviewQueued ? qsTr("Queued for %1").arg(hostController.focusedFieldName) : qsTr("Review prompt")
+                            active: rootWindow.hc && !hostController.fieldReviewQueued && hostController.focusedFieldDraft.trim().length > 0
+                            onClicked: hostController.reviewFocusedField()
+                        }
                     }
                 }
 
@@ -868,14 +920,6 @@ Window {
 
                     ColumnLayout {
                         id: mainContent
-                        Repeater {
-                            model: rootWindow.hc && !rootWindow.fieldPreview ? hostController.matchingFieldDrafts : []
-                            Button {
-                                Layout.fillWidth: true
-                                text: qsTr("Resume: %1").arg(modelData.preview)
-                                onClicked: hostController.resumeFieldDraft(modelData.sessionId)
-                            }
-                        }
                         width: contentScroll.availableWidth
                         spacing: 14
 
@@ -1054,7 +1098,7 @@ Window {
                                 (!rootWindow.compactPresentation || rootWindow.generationPending ||
                                  (rootWindow.hc && (hostController.lastError.length > 0 ||
                                   hostController.shortcutWarning.length > 0 || hostController.analysisStatus === "FAILED")))
-                            text: rootWindow.autoAnalysisText.length ? qsTr("Checking after you pause typing…") : rootWindow.hc ? [hostController.shortcutWarning, hostController.lastError === hostController.analysisMessage ? "" : hostController.lastError, hostController.analysisMessage].filter(function(x) { return x.length > 0; }).join("\n") : ""
+                            text: rootWindow.autoAnalysisText.length ? qsTr("Checking after you pause typing…") : rootWindow.hc ? [hostController.shortcutWarning, hostController.lastError, hostController.hasProposal || hostController.lastError === hostController.analysisMessage ? "" : hostController.analysisMessage].filter(function(x) { return x.length > 0; }).join("\n") : ""
                             wrapMode: Text.WordWrap
                             font.family: rootWindow.sansFont; font.pixelSize: 12
                             color: rootWindow.mutedTextColor
@@ -1170,6 +1214,16 @@ Window {
                             tip: qsTr("Use your original wording")
                             active: promptInput.text.trim().length > 0 && rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy
                             onClicked: rootWindow.executeHardBypass()
+                        }
+                        HudButton {
+                            objectName: "pendingInsertControl"
+                            visible: rootWindow.hc && hostController.hasProposal &&
+                                hostController.proposalStatus === "READY_FOR_REVIEW" &&
+                                (hostController.isAmbientCapture || hostController.isAmbientAttached) &&
+                                ["REVIEW_REWRITE", "ANSWER_REVIEW", "NONE"].indexOf(rootWindow.presentation.action) >= 0
+                            label: qsTr("Insert")
+                            compact: true
+                            active: false
                         }
                         HudButton {
                             objectName: "approveRewriteControl"

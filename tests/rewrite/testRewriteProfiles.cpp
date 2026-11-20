@@ -21,6 +21,13 @@ void testRegistry() {
     }
     ROCLINT_CHECK(ProfileRegistry::defaultProfile().id == "GENERIC@1");
     ROCLINT_CHECK(ProfileRegistry::getProfile("ANTHROPIC_STRUCTURED")->id == "ANTHROPIC_STRUCTURED@1");
+    ROCLINT_CHECK(ProfileRegistry::getProfile("openai_structured")->id == "OPENAI_STRUCTURED@1");
+    ROCLINT_CHECK(ProfileRegistry::getProfile("anthropic_structured")->id == "ANTHROPIC_STRUCTURED@1");
+    ROCLINT_CHECK(ProfileRegistry::getProfile("generic")->id == "GENERIC@1");
+    ROCLINT_CHECK(ProfileRegistry::getProfile("local_compact")->id == "LOCAL_COMPACT@1");
+    ROCLINT_CHECK(ProfileRegistry::getProfile("OPENAI")->id == "OPENAI_STRUCTURED@1");
+    ROCLINT_CHECK(ProfileRegistry::getProfile("ANTHROPIC")->id == "ANTHROPIC_STRUCTURED@1");
+    ROCLINT_CHECK(ProfileRegistry::getProfile("COMPACT")->id == "LOCAL_COMPACT@1");
     ROCLINT_CHECK(!ProfileRegistry::getProfile("CLAUDE").has_value());
     ROCLINT_CHECK(!ProfileRegistry::isKnownProfile(""));
 }

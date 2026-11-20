@@ -59,6 +59,9 @@ public:
 };
 
 void configureNonActivatingPanel(QWindow* window);
+#ifdef Q_OS_MAC
+void disableBadgeWindowDragging(QWindow* window);
+#endif
 void configureHostProcess();
 void showNonActivatingWindow(QWindow* window);
 void installOutsideClickMonitor(QWindow* window, std::function<void()> onOutsideClick);

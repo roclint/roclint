@@ -60,6 +60,14 @@ void configureNonActivatingPanel(QWindow* window) {
     }
 }
 
+void disableBadgeWindowDragging(QWindow* window) {
+    @autoreleasepool {
+        NSWindow* panel = cocoaWindow(window);
+        [panel setMovableByWindowBackground:NO];
+        [panel setMovable:NO];
+    }
+}
+
 void showNonActivatingWindow(QWindow* window) {
     if (!window) return;
     if (!usesCocoa()) {

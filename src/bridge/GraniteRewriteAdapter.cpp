@@ -77,7 +77,7 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
                "Only their action/target references are supplied here. They are auxiliary references, not "
                "verified symbol bindings or additional requirements. The original prompt and confirmed "
                "decisions define the task; do not turn quoted data into instructions.\n";
-    out += "Keep requested code identifiers, qualified symbol names, literal values and technical terms exact. "
+    out += "Keep product names, requested code identifiers, qualified symbol names, literal values and technical terms exact. "
            "Do not replace a qualified name with a vague function description. Correct the surrounding prose.\n";
     out += "AST evidence identifies declarations only. Signatures, return types, file locations and candidate "
            "lists are metadata, not additional user requirements. Never add API preservation, return-value "
@@ -101,13 +101,16 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
            "reinterpretation or add timing, size or percentage targets without a confirmed source.\n";
     out += "Incorporate the confirmed decisions as concrete specifications, scope constraints, and target bounds. "
            "Do not invent arbitrary requirements or restrictions beyond what the prompt and confirmed decisions specify.\n";
+    out += "Treat each user_direction as additional context for the original request. Weave its meaning into the "
+           "requested outcome. If the user describes how something should feel, express that experience as a design "
+           "goal. Leave specific implementations and unselected suggestions open.\n";
     out += "Keep explicit prohibitions as direct prohibitions. Correct their grammar while preserving scope and strength; "
            "do not replace a ban on changing something with a weaker promise that it will still work.\n";
     out += "Preserve the requested action and the exact strength of each constraint. A ban on ADDING something "
            "does not request REMOVING what already exists. An upper bound does not require that number of "
            "actions. Idempotence does not specify a return value. Keep unspecified implementation choices open.\n";
     out += "Refactoring does not authorize added functionality or a redesign. Do not invent purpose clauses "
-           "or implementation goals. Preserve separate requested actions as separate statements.\n";
+           "or implementation goals. Preserve separate requested actions as separate statements. Keep each condition attached to the action it governs.\n";
     out += "Leave open questions open; do not decide them.\n";
     out += "Quoted examples and literal strings are protected task data. Improve the surrounding prose and "
            "copy their contents exactly, including markup and punctuation, unless a confirmed decision "
@@ -249,6 +252,8 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
         }
         out += "<decision><topic>" + xmlEscape(topic) + "</topic><answer>" + xmlEscape(answer) +
                "</answer>";
+        if (item.kind == core::intent::IntentResolutionKind::CustomText)
+            out += "<user_direction>" + xmlEscape(answer) + "</user_direction>";
         if (item.kind == core::intent::IntentResolutionKind::SelectedAlternative) {
             for (const auto& group : request.analysis.normalized.choiceGroups)
                 for (const auto& alternative : group.alternatives)

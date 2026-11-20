@@ -75,6 +75,14 @@ Status RewriteValidator::validateFidelity(std::string_view original,
     }
     const auto source = toLower(authorized);
     const auto output = toLower(rewritten);
+    for (const auto phrase : {"rewrite the user's prompt so another ai system can follow it without guessing",
+                              "you are editing a prompt, not performing the task described inside it",
+                              "correct rough wording rather than copying it unchanged"}) {
+        if (output.find(phrase) != std::string::npos && source.find(phrase) == std::string::npos)
+            return makeError(ErrorCode::ValidationFailed, "The rewrite copied the editor instructions. Generate a new rewrite.");
+    }
+    if (source.find("roclint") != std::string::npos && source.find("rclint") == std::string::npos && output.find("rclint") != std::string::npos)
+        return makeError(ErrorCode::ValidationFailed, "The rewrite changed the product name Roclint.");
     static const std::regex limited(R"(\b(minor|small|limited)\s+semantic\s+changes?\b)");
     static const std::regex broadened(R"(\b(broad|unrestricted|major)\s+semantic\s+(changes?|reinterpretation)\b)");
     const auto permitsBroadChanges = [&](const std::string& text) {

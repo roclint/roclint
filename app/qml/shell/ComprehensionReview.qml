@@ -14,7 +14,7 @@ FocusScope {
     property bool reducedMotion: false
     property bool proposalAvailable: true
     property bool embedded: false
-    readonly property bool compactSuccess: embedded && ready && findingCount === 0
+    readonly property bool compactSuccess: embedded && ready && contract.canApplyReviewedOutput && findingCount === 0
 
     signal applyRequested()
     signal returnToInterviewRequested()
@@ -141,6 +141,13 @@ FocusScope {
         return "";
     }
     readonly property alias statusItem: stateHeadline
+    function nextReviewAction() {
+        for (let i = 0; i < findingRows.count; ++i) {
+            const row = findingRows.itemAt(i);
+            if (row && row.resolutionControl.visible) return row.resolutionControl;
+        }
+        return stateHeadline;
+    }
     function focusStatus() { stateHeadline.forceActiveFocus(Qt.TabFocusReason); }
     readonly property bool needsAutomaticReview: embedded && proposalAvailable && contract.reviewInvokable &&
         (reviewState === "not_run" || reviewState === "stale")
@@ -363,13 +370,15 @@ FocusScope {
                     objectName: "comprehensionNoFindings"
                     Layout.fillWidth: true
                     visible: root.findingCount === 0
-                    text: qsTr("No unresolved findings. The reread did not find a gap in this rewrite.")
+                    text: contract.canApplyReviewedOutput ? qsTr("No unresolved findings. The reread did not find a gap in this rewrite.")
+                                                        : qsTr("The reviewer could not clear this rewrite. Select Recheck rewrite to try again.")
                     wrapMode: Text.WordWrap
                     font.family: root.sansFont
                     font.pixelSize: 12
                     color: rocTheme.success
                 }
                 Repeater {
+                    id: findingRows
                     model: root.ready ? root.presentedFindings : []
                     delegate: Rectangle {
                         id: findingRow
@@ -384,6 +393,8 @@ FocusScope {
                         readonly property string repair: modelData.proposedRepair !== undefined
                                                              ? String(modelData.proposedRepair) : ""
                         readonly property bool needsDecision: modelData.requiresUserDecision === true
+                        readonly property var resolutionControl: canConfirm ? confirmControl :
+                            (severity === "blocking" || needsDecision ? clarifyControl : acknowledgeControl)
                         readonly property bool canConfirm: modelData.canConfirmIntent === true
                         objectName: "comprehensionFinding_" + modelData.id
                         Layout.fillWidth: true
@@ -481,6 +492,7 @@ FocusScope {
                                 spacing: 6
                                 visible: root.embedded || findingRow.needsDecision || findingRow.severity !== "blocking"
                                 TinyButton {
+                                    id: confirmControl
                                     objectName: "comprehensionFindingConfirm_" + index
                                     visible: root.embedded && findingRow.canConfirm
                                     label: qsTr("This matches my intent")
@@ -495,13 +507,15 @@ FocusScope {
                                     onClicked: root.editDraftRequested()
                                 }
                                 TinyButton {
+                                    id: clarifyControl
                                     objectName: "comprehensionFindingReturn_" + index
-                                    visible: !root.embedded && findingRow.needsDecision
-                                    label: qsTr("Return to interview")
+                                    visible: root.embedded ? !findingRow.canConfirm && (findingRow.severity === "blocking" || findingRow.needsDecision) : findingRow.needsDecision
+                                    label: root.embedded ? qsTr("Clarify this point") : qsTr("Return to interview")
                                     active: contract.reviewInvokable
                                     onClicked: root.resolve(findingRow.modelData, "return_to_interview")
                                 }
                                 TinyButton {
+                                    id: acknowledgeControl
                                     objectName: "comprehensionFindingAcknowledge_" + index
                                     // Blocking or user-decision findings must be resolved
                                     // explicitly; they cannot be acknowledged into applicability.

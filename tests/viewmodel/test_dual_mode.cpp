@@ -129,7 +129,9 @@ void observeAndWaitForBadge(Harness& h, const QString& prompt = kPrompt) {
     ROCLINT_CHECK(pumpUntil([&]() { return h.c().isAmbientBadgeVisible(); }));
 }
 
-void testIndependentFieldSessions() {
+void completeApprovingReview(HostController& controller);
+
+void testIndependentFieldSessions(bool insertAfterFocusLoss) {
     Harness h;
     h.c().setFieldSessionsForTesting(true);
     h.c().setAmbientModeEnabled(true);
@@ -160,6 +162,11 @@ void testIndependentFieldSessions() {
     h.bridge->observe(first);
     ROCLINT_CHECK(h.c().focusedFieldDraft() == first.text);
     ROCLINT_CHECK(pumpUntil([&] { return !h.c().otherFieldVisible() && h.c().currentSessionIdString() == firstSession; }));
+    roclint::host::HostContextDetector::setMockObservation({{
+        roclint::host::HostContextCategory::CodeEditor, first.appDisplayName, first.appIdentifier}});
+    h.bridge->lose();
+    h.bridge->lose();
+    ROCLINT_CHECK(h.c().retainedFieldReviewVisible() && h.c().focusedFieldDraft().isEmpty());
     ROCLINT_CHECK(h.c().activeQuestion() == question && h.c().activeAlternatives() == options);
     ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().confirmChoice("alt_0_0", h.c().stateVersion())));
     ROCLINT_CHECK(h.c().hasConfirmedIntent());
@@ -167,6 +174,20 @@ void testIndependentFieldSessions() {
     ROCLINT_CHECK(pumpUntil([&] { return !h.c().otherFieldVisible() && h.c().currentSessionIdString() != firstSession; }));
     h.bridge->observe(first);
     ROCLINT_CHECK(pumpUntil([&] { return !h.c().otherFieldVisible() && h.c().hasConfirmedIntent(); }));
+    if (insertAfterFocusLoss) {
+        ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().synthesizeRewrite(h.c().stateVersion())));
+        ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
+        completeApprovingReview(h.c());
+        h.bridge->lose();
+        ROCLINT_CHECK(h.c().retainedFieldReviewVisible());
+        ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().approveAndCopyRewrite(h.c().stateVersion())));
+        ROCLINT_CHECK(h.bridge->injections.size() == 1);
+        const auto& delivery = h.bridge->injections.front();
+        ROCLINT_CHECK(delivery.appIdentifier == first.appIdentifier && delivery.processId == first.processId &&
+                      delivery.fieldToken == first.fieldToken && delivery.expectedCurrentText == first.text &&
+                      delivery.text == QString::fromStdString(kRewrite));
+        return;
+    }
     first.text += " New requirements.";
     h.bridge->observe(first);
     ROCLINT_CHECK(!h.c().hasConfirmedIntent() && h.c().focusedFieldDraft() == first.text);
@@ -197,6 +218,48 @@ void testQuietIndicatorFollowsAnotherEditorAfterReview() {
     h.bridge->observe(next);
     ROCLINT_CHECK(!h.c().isAmbientBadgeVisible());
     ROCLINT_CHECK(h.c().currentSessionIdString() == session);
+}
+
+void testChoiceWhileAnotherEditorIsWorking(bool editWhileQueued) {
+    Harness h;
+    h.c().setFieldSessionsForTesting(true);
+    h.c().setAmbientModeEnabled(true);
+    auto chat = cursorField(kPrompt);
+    chat.appDisplayName = "ChatGPT";
+    h.bridge->observe(chat);
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().openFromAmbient()));
+    ROCLINT_CHECK(pumpUntil([&] { return h.c().isClarifying(); }));
+    const auto chatSession = h.c().currentSessionIdString();
+    QSemaphore started, release;
+    h.c().setTransportOverrideForTesting([&](std::string_view prompt) -> Result<std::string> {
+        if (prompt.find("retro console") != std::string_view::npos) {
+            started.release();
+            release.tryAcquire(1, 5000);
+            return kClearReply;
+        }
+        if (prompt.find("<instructions>") != std::string_view::npos) return fx::rewriteReply(kRewrite);
+        return kClearReply;
+    });
+    auto retro = cursorField("Design a retro console", 42);
+    retro.appIdentifier = "com.google.antigravity";
+    retro.appDisplayName = "Antigravity";
+    h.bridge->observe(retro);
+    h.c().reviewFocusedField();
+    ROCLINT_CHECK(pumpUntil([&] { return started.available() > 0; }));
+    h.bridge->observe(chat);
+    ROCLINT_CHECK(h.c().pipelineEditorName() == "Antigravity" && !h.c().focusedFieldChoices().isEmpty());
+    h.c().queueFocusedFieldChoice(h.c().focusedFieldChoices().first().toMap());
+    ROCLINT_CHECK(h.c().fieldReviewQueued());
+    if (editWhileQueued) {
+        chat.text += " Updated scope.";
+        h.bridge->observe(chat);
+        ROCLINT_CHECK(!h.c().fieldReviewQueued());
+    }
+    release.release(10);
+    ROCLINT_CHECK(pumpUntil([&] { return h.c().currentSessionIdString() == chatSession && !h.c().otherFieldVisible(); }, 5000));
+    ROCLINT_CHECK(h.c().hasConfirmedIntent() == !editWhileQueued);
+    ROCLINT_CHECK(h.bridge->injections.empty());
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
 }
 
 void testExplicitReviewPrecedesCoalescedEdits() {
@@ -1060,8 +1123,11 @@ int main(int argc, char* argv[]) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
     std::cout << "[Test Dual Mode] Starting...\n";
-    testIndependentFieldSessions();
+    testIndependentFieldSessions(false);
+    testIndependentFieldSessions(true);
     testQuietIndicatorFollowsAnotherEditorAfterReview();
+    testChoiceWhileAnotherEditorIsWorking(false);
+    testChoiceWhileAnotherEditorIsWorking(true);
     testExplicitReviewPrecedesCoalescedEdits();
     testFieldResumeAfterRestart();
     testAmbientRouteWhenPermissionGranted();

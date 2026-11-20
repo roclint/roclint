@@ -13,8 +13,13 @@ Window {
     readonly property string hint: hasSuggestion ? qsTr("Wording suggestion ready · Open prompt review") : qsTr("Review prompt")
     flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
     color: "transparent"
-    width: 28
-    height: 28
+    readonly property int badgeSize: 28
+    width: badgeSize
+    height: badgeSize
+    minimumWidth: badgeSize
+    maximumWidth: badgeSize
+    minimumHeight: badgeSize
+    maximumHeight: badgeSize
     x: hc ? hostController.ambientBadgeX : 0
     y: hc ? hostController.ambientBadgeY : 0
     visible: false
@@ -50,6 +55,7 @@ Window {
             objectName: "ambientIndicatorControl"
             Accessible.role: Accessible.Button
             Accessible.name: badge.hint
+            Accessible.description: qsTr("Right-click to dismiss")
             anchors.fill: parent
             hoverEnabled: true
             acceptedButtons: Qt.LeftButton | Qt.RightButton
@@ -62,9 +68,6 @@ Window {
                 if (badge.hc && mouse.button === Qt.RightButton) hostController.dismissAmbientBadge();
             }
         }
-        ToolTip.visible: indicatorMouse.containsMouse
-        ToolTip.delay: 650
-        ToolTip.text: badge.hint + qsTr(" · Right-click to dismiss")
     }
 
 }

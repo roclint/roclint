@@ -48,9 +48,11 @@ FocusScope {
     function advanceReview() {
         if (focusPendingConstraint()) return;
         if (comprehensionCard.visible) {
-            comprehensionCard.focusStatus();
-            revealReviewItem(comprehensionCard.statusItem);
-            if (comprehensionCard.reviewState !== "ready" && comprehensionCard.reviewState !== "running")
+            const target = comprehensionCard.nextReviewAction();
+            target.forceActiveFocus(Qt.TabFocusReason);
+            revealReviewItem(target);
+            if (comprehensionCard.reviewState !== "running" &&
+                (!comprehensionCard.ready || comprehensionCard.findingCount === 0))
                 comprehensionCard.requestReview();
             return;
         }
@@ -523,6 +525,33 @@ FocusScope {
                         }
                     }
 
+                    Repeater {
+                        model: rootWindow.hc && !rootWindow.manualResolution ? hostController.additionalOptions : []
+                        delegate: ActionButton {
+                            required property string modelData
+                            label: modelData
+                            Layout.fillWidth: true
+                            onClicked: {
+                                const direction = customAnswer.text.trim()
+                                handleAnswerSubmit(direction.length ? direction + "\n" + modelData : modelData)
+                            }
+                        }
+                    }
+
+                    ActionButton {
+                        visible: rootWindow.hc && !rootWindow.manualResolution && hostController.activeItemKind === "CHOICE_GROUP"
+                        label: rootWindow.hc && hostController.refreshingOptions ? qsTr("Finding other options…") : qsTr("Suggest other options")
+                        active: rootWindow.hc && !hostController.refreshingOptions && !hostController.isCheckingClarification
+                        onClicked: hostController.suggestOtherOptions(customAnswer.text, hostController.stateVersion)
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        visible: text.length > 0
+                        text: rootWindow.hc ? hostController.optionFeedback : ""
+                        wrapMode: Text.WordWrap
+                        color: rootWindow.mutedTextColor
+                    }
+
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
@@ -546,7 +575,7 @@ FocusScope {
                             Layout.fillWidth: true
                             Layout.minimumWidth: 0
                             placeholderText: rootWindow.hc && hostController.activeItemKind === "CHOICE_GROUP"
-                                             ? qsTr("Or say what you meant in your own words")
+                                             ? qsTr("Add a direction in your own words")
                                              : qsTr("Type your answer")
                             font.family: rootWindow.sansFont
                             font.pixelSize: 14
@@ -573,7 +602,7 @@ FocusScope {
                             }
                         }
                         ActionButton {
-                            label: rootWindow.hc && hostController.isCheckingClarification ? qsTr("Checking answer…") : qsTr("Use this answer")
+                            label: rootWindow.hc && hostController.isCheckingClarification ? qsTr("Checking answer…") : qsTr("Use my direction")
                             active: customAnswer.text.trim().length > 0 && !(rootWindow.hc && hostController.isCheckingClarification)
                             onClicked: {
                                 handleAnswerSubmit(customAnswer.text);
@@ -842,7 +871,7 @@ FocusScope {
                         objectName: "comprehensionCard"
                         visible: rootWindow.reviewContractActive && reviewPanel.status === "READY_FOR_REVIEW" &&
                             comprehensionCard.reviewState !== "waiting_for_answer" &&
-                            (!comprehensionCard.ready || comprehensionCard.findingCount > 0)
+                            (!comprehensionCard.ready || !hostController.canApplyReviewedOutput)
                         Layout.fillWidth: true
                         Layout.minimumWidth: 0
                         currentTheme: rootWindow.currentTheme

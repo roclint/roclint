@@ -3125,6 +3125,21 @@ void testWaterBottleReviewDoesNotRequireUnspecifiedDesignDetails() {
     ROCLINT_CHECK(c.waitForIdleForTesting(5000));
     ROCLINT_CHECK(c.canApprove() && c.comprehensionFindings().isEmpty());
 
+    auto originalWording = optionalDesign;
+    originalWording.id = "original_wording";
+    originalWording.kind = bridge::ReviewFindingKind::MeaningDrift;
+    originalWording.sourceRef = "original";
+    originalWording.sourceExcerpt = "it is innovative";
+    originalWording.requiresUserDecision = false;
+    candidateReview.findings = {originalWording};
+    c.setComprehensionReviewForTesting([candidateReview](const auto&) { return candidateReview; });
+    ROCLINT_CHECK(c.requestComprehensionReview(c.stateVersion()) != 0);
+    waitForReviewState(c, QStringLiteral("ready"));
+    ROCLINT_CHECK(!c.canApprove());
+    ROCLINT_CHECK(c.resolveComprehensionFinding("original_wording", "confirm_intent", c.stateVersion()) != 0);
+    ROCLINT_CHECK(c.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(c.canApprove());
+
     ROCLINT_CHECK(!c.isInterviewActive() && !c.hasApproval());
     std::cout << "  [PASS] Water bottle review keeps product facts and accepts the user's design confirmation.\n";
 }

@@ -25,16 +25,16 @@ ColumnLayout {
         color: theme.inset
         border.color: theme.border
         border.width: 1
-        radius: 6
+        radius: 14
         ColumnLayout {
             id: cardColumn
             anchors.fill: parent
             anchors.margins: 14
-            spacing: 8
+            spacing: 10
             Text {
                 text: card.heading
                 font.family: dashboardWindow.sansFont
-                font.pixelSize: 13
+                font.pixelSize: 14
                 font.bold: true
                 color: theme.foreground
             }
@@ -68,21 +68,21 @@ ColumnLayout {
                 event.accepted = true;
             }
         }
-        implicitHeight: 28
-        implicitWidth: btnText.implicitWidth + 22
-        radius: 4
+        implicitHeight: 32
+        implicitWidth: btnText.implicitWidth + 24
+        radius: 8
         opacity: active ? 1.0 : 0.4
-        color: primary || selected ? theme.foreground : (btnMouse.containsMouse && active ? theme.hover : "transparent")
-        border.color: theme.foreground
-        border.width: activeFocus ? 3 : 1
+        color: primary || selected ? theme.accent : (btnMouse.containsMouse && active ? theme.hover : theme.surface)
+        border.color: primary || selected ? theme.accent : theme.border
+        border.width: activeFocus ? 2 : 1
         Text {
             id: btnText
             anchors.centerIn: parent
             text: btn.label
             font.family: dashboardWindow.sansFont
             font.pixelSize: 12
-            font.bold: btn.primary || btn.selected
-            color: btn.primary || btn.selected ? theme.background : theme.foreground
+            font.weight: btn.primary || btn.selected ? Font.DemiBold : Font.Medium
+            color: btn.primary || btn.selected ? "#FFFFFF" : theme.foreground
         }
         MouseArea {
             id: btnMouse

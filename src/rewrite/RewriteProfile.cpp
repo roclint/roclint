@@ -1,4 +1,6 @@
 #include "roclint/rewrite/RewriteProfile.hpp"
+#include <cctype>
+#include <string>
 
 namespace roclint::core::rewrite {
 
@@ -19,7 +21,7 @@ const RewriteProfileConfig kAnthropicProfile{
     .id = "ANTHROPIC_STRUCTURED@1",
     .family = ProfileFamily::AnthropicStructured,
     .version = 1,
-    .displayName = "Claude (XML sections)",
+    .displayName = "Anthropic (XML sections)",
     .structuralInstructions = "Put the request inside <task></task> tags and any background inside <context></context> tags.",
     .formatXmlTags = true,
     .formatMarkdownSections = false,
@@ -51,16 +53,21 @@ const RewriteProfileConfig kLocalCompactProfile{
 } // namespace
 
 std::optional<RewriteProfileConfig> ProfileRegistry::getProfile(std::string_view profileId) {
-    if (profileId == "GENERIC@1" || profileId == "GENERIC") {
+    std::string upper;
+    upper.reserve(profileId.size());
+    for (char c : profileId) {
+        upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+    }
+    if (upper == "GENERIC@1" || upper == "GENERIC") {
         return kGenericProfile;
     }
-    if (profileId == "ANTHROPIC_STRUCTURED@1" || profileId == "ANTHROPIC_STRUCTURED") {
+    if (upper == "ANTHROPIC_STRUCTURED@1" || upper == "ANTHROPIC_STRUCTURED" || upper == "ANTHROPIC") {
         return kAnthropicProfile;
     }
-    if (profileId == "OPENAI_STRUCTURED@1" || profileId == "OPENAI_STRUCTURED") {
+    if (upper == "OPENAI_STRUCTURED@1" || upper == "OPENAI_STRUCTURED" || upper == "OPENAI") {
         return kOpenAiProfile;
     }
-    if (profileId == "LOCAL_COMPACT@1" || profileId == "LOCAL_COMPACT") {
+    if (upper == "LOCAL_COMPACT@1" || upper == "LOCAL_COMPACT" || upper == "COMPACT") {
         return kLocalCompactProfile;
     }
     return std::nullopt;

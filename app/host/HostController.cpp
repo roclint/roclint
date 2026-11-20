@@ -3,6 +3,7 @@
 #include <iostream>
 #include <regex>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <utility>
 #include <QKeySequence>
 #include "ScreenPlacement.hpp"
@@ -415,8 +416,8 @@ HostController::HostController(const QString& dbPathOverride,
         applyAmbientObserving();
     });
     connect(m_accessibility.get(), &IAccessibilityBridge::fieldObserved, this, &HostController::onFieldObserved);
-    connect(m_accessibility.get(), &IAccessibilityBridge::fieldLost, this, [this]() { onFieldLost(); });
-    connect(m_accessibility.get(), &IAccessibilityBridge::fieldReadInterrupted, this, [this]() { onFieldLost(true); });
+    connect(m_accessibility.get(), &IAccessibilityBridge::fieldLost, this, [this]() { onFieldLost(false, true); });
+    connect(m_accessibility.get(), &IAccessibilityBridge::fieldReadInterrupted, this, [this]() { onFieldLost(true, true); });
     connect(m_accessibility.get(), &IAccessibilityBridge::injectionFinished, this,
             &HostController::onInjectionFinished);
     connect(m_accessibility.get(), &IAccessibilityBridge::rangeInjectionFinished, this,
@@ -804,6 +805,10 @@ bool HostController::setCardVisibility(CardVisibility visibility) {
         return false;
     }
     m_cardVisibility = visibility;
+    if (visibility == CardVisibility::Hidden && !m_retainedReviewField.isEmpty()) {
+        m_retainedReviewField.clear();
+        emit fieldViewChanged();
+    }
     if (m_accessibility) {
         m_accessibility->setCardVisible(visibility != CardVisibility::Hidden);
     }
@@ -1111,6 +1116,10 @@ void HostController::invalidateDownstreamPipeline() {
     m_activeQuestion.clear();
     m_activeDimension.clear();
     m_activeAlternatives.clear();
+    m_additionalOptions.clear();
+    m_previousOptions.clear();
+    m_optionFeedback.clear();
+    emit optionSuggestionsChanged();
     m_activeScore.reset();
     m_confirmedIntent.reset();
     m_currentProposal.reset();
@@ -2010,6 +2019,10 @@ void HostController::refreshActiveItemPresentation() {
     m_activeQuestion.clear();
     m_activeDimension.clear();
     m_activeAlternatives.clear();
+    m_additionalOptions.clear();
+    m_previousOptions.clear();
+    m_optionFeedback.clear();
+    emit optionSuggestionsChanged();
     m_activeScore.reset();
     if (!m_currentAnalysis || !m_currentDecision.activeItemId.has_value()) {
         return;
@@ -2241,6 +2254,76 @@ AsyncTask<core::Status> HostController::confirmChoiceOperation(QString alternati
             }
         }
         return intent::InterventionStateMachine::applyChoice(*m_currentAnalysis, m_currentDecision, state, alt);
+    }));
+}
+
+void HostController::suggestOtherOptions(QString direction, quint64 expectedVersion) {
+    if (!m_revisionState || stateVersion() != expectedVersion || m_revisionState->isDraftDirty() ||
+        activeItemKind() != QStringLiteral("CHOICE_GROUP") || m_refreshingOptions || m_checkingClarification)
+        return;
+    auto ticket = makeTicket();
+    ticket.attemptId = newOpaqueId("att_options_");
+    const auto schema = R"({"type":"object","properties":{"options":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"string"}}},"required":["options"],"additionalProperties":false})";
+    const auto transport = currentTransport(schema, &ticket, QStringLiteral("granite_analyze"), currentRevisionText());
+    if (!transport || m_inFlight) {
+        m_optionFeedback = tr("The local model is busy or unavailable. Try again shortly.");
+        emit optionSuggestionsChanged();
+        return;
+    }
+    direction = direction.trimmed();
+    QStringList seen = m_previousOptions;
+    for (const auto& item : m_activeAlternatives) seen.append(item.toMap().value("label").toString());
+    const QJsonObject data{{"draft", currentRevisionText()}, {"question", activeQuestion()},
+                           {"direction", direction}, {"already_shown", QJsonArray::fromStringList(seen)}};
+    const auto instruction = std::string("Suggest two distinct, previously unexplored answers to this same question. "
+        "Use the optional direction to guide both ideas. Honor the draft's requirements. Each answer must stand "
+        "alone as one short, actionable direction. Avoid synonyms of answers already shown. Return JSON with an "
+        "options array of strings. Input data:\n") + QJsonDocument(data).toJson(QJsonDocument::Compact).toStdString();
+    m_refreshingOptions = true;
+    m_optionFeedback.clear();
+    emit optionSuggestionsChanged();
+    ++m_inFlight;
+    const bool nativeWork = nativeGraniteSelected() && !usesTransportOverride();
+    if (nativeWork) ++m_nativeSemanticInFlight;
+    using Result = core::Result<std::string>;
+    auto* watcher = new QFutureWatcher<Result>(this);
+    connect(watcher, &QFutureWatcherBase::finished, this,
+            [this, watcher, ticket, item = activeItemId(), seen, nativeWork]() mutable {
+        const auto result = watcher->result();
+        watcher->deleteLater();
+        --m_inFlight;
+        if (nativeWork) --m_nativeSemanticInFlight;
+        m_refreshingOptions = false;
+        if (isTicketCurrent(ticket, false) && activeItemId() == item) {
+            QStringList fresh;
+            if (result.ok()) {
+                const auto json = QJsonDocument::fromJson(QByteArray::fromStdString(result.value()));
+                for (const auto& value : json.object().value("options").toArray()) {
+                    const auto label = value.toString().simplified();
+                    if (label.isEmpty() || label.size() > 300 || seen.contains(label, Qt::CaseInsensitive)) continue;
+                    fresh.append(label);
+                    seen.append(label);
+                    if (fresh.size() == 2) break;
+                }
+            }
+            if (fresh.isEmpty()) {
+                m_optionFeedback = tr("No new suggestions came back. Try again or add a direction.");
+            } else {
+                m_additionalOptions = fresh;
+                m_previousOptions.append(fresh);
+                while (m_previousOptions.size() > 24) m_previousOptions.removeFirst();
+            }
+        }
+        emit optionSuggestionsChanged();
+        emit modelEngineStatusChanged();
+        finishQuitWhenRuntimesStopped();
+    });
+    watcher->setFuture(QtConcurrent::run([transport, instruction]() -> Result {
+        try {
+            return transport(instruction);
+        } catch (const std::exception& ex) {
+            return makeError(ErrorCode::Internal, ex.what());
+        }
     }));
 }
 
@@ -3430,7 +3513,7 @@ bool HostController::beginInsertionTargetSelection(quint64 expectedVersion) {
     });
 }
 
-AsyncTask<core::Status> HostController::approveAndCopyRewriteOperation(quint64 expectedVersion) {
+AsyncTask<core::Status> HostController::approveAndCopyRewriteOperation(quint64 expectedVersion, bool manuallyReviewed) {
 
         if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
         if (m_proposalStatus != ProposalUiStatus::ReadyForReview || !m_currentProposal) {
@@ -3456,7 +3539,7 @@ AsyncTask<core::Status> HostController::approveAndCopyRewriteOperation(quint64 e
                              "Check the " + std::to_string(validation.pendingAcknowledgments.size()) +
                                  " highlighted item(s) before approving.");
         }
-        if (!canApplyReviewedOutput()) {
+        if (!(manuallyReviewed ? canUseManualReview() : canApplyReviewedOutput())) {
             co_return makeError(ErrorCode::PreconditionFailed,
                                 "Run a fresh independent review and resolve its required findings before applying this rewrite.");
         }
@@ -3513,7 +3596,8 @@ AsyncTask<core::Status> HostController::approveAndCopyRewriteOperation(quint64 e
 }
 
 Status HostController::deliver(const QString& text) {
-    if (otherFieldVisible() || (m_restoredFieldDraft && m_pipelineField.isEmpty() && isAmbientCapture()))
+    const bool retainedTarget = isAmbientCapture() && retainedFieldReviewVisible();
+    if ((otherFieldVisible() && !retainedTarget) || (m_restoredFieldDraft && m_pipelineField.isEmpty() && isAmbientCapture()))
         return makeError(ErrorCode::StaleVersion, "Return to the original field before delivery");
     if (fieldCaptureManaged() && isAmbientCapture()) {
         const auto owner = m_fields.constFind(m_pipelineField);
@@ -5488,11 +5572,13 @@ namespace {
     return "general";
 }
 
-// A concern about candidate wording can be decided by the person who wrote
-// the draft. Findings grounded in a source requirement must be repaired.
-[[nodiscard]] bool canConfirmCandidateWording(const bridge::ComprehensionFinding& finding) {
+// The author can settle a wording comparison quoted from either side.
+// Findings about a confirmed decision or constraint still require repair.
+[[nodiscard]] bool canConfirmWording(const bridge::ComprehensionFinding& finding) {
     using Kind = bridge::ReviewFindingKind;
-    return finding.sourceRef == "candidate" && !finding.sourceExcerpt.empty() &&
+    if (finding.sourceExcerpt.empty()) return false;
+    const bool quotesDraft = finding.sourceRef == "original" || finding.sourceRef.starts_with("source:");
+    return (quotesDraft || finding.sourceRef == "candidate") &&
            finding.kind != Kind::Omission && finding.kind != Kind::NegativeConstraint;
 }
 
@@ -5560,9 +5646,16 @@ bool HostController::reviewIsFreshAndComplete() const {
         m_reviewResult.findings.begin(), m_reviewResult.findings.end(),
         [this](const auto& finding) {
             const auto resolution = m_findingResolutions.find(finding.id);
-            return canConfirmCandidateWording(finding) && resolution != m_findingResolutions.end() &&
+            return canConfirmWording(finding) && resolution != m_findingResolutions.end() &&
                    resolution->second == "confirm_intent";
         });
+}
+
+bool HostController::canAcceptReviewedWording() const {
+    return m_reviewState == ReviewState::Ready && reviewBindingMatchesCurrent() &&
+           m_reviewResult.status == bridge::ComprehensionReviewStatus::Completed &&
+           !m_reviewResult.interpretedOutcome.empty() && !m_reviewResult.findings.empty() &&
+           std::all_of(m_reviewResult.findings.begin(), m_reviewResult.findings.end(), canConfirmWording);
 }
 
 bool HostController::canApplyReviewedOutput() const {
@@ -5609,7 +5702,7 @@ QVariantList HostController::comprehensionFindings() const {
         map[QStringLiteral("sourceRef")] = boundedText(finding.sourceRef, 320);
         map[QStringLiteral("sourceExcerpt")] = boundedText(finding.sourceExcerpt, 320);
         map[QStringLiteral("requiresUserDecision")] = finding.requiresUserDecision;
-        map[QStringLiteral("canConfirmIntent")] = canConfirmCandidateWording(finding);
+        map[QStringLiteral("canConfirmIntent")] = canConfirmWording(finding);
         map[QStringLiteral("proposedRepair")] = boundedText(finding.proposedRepair, 600);
         list.append(map);
     }
@@ -5628,6 +5721,46 @@ void HostController::markComprehensionReviewStale() {
     m_findingResolutions.clear();
     m_reviewReturnedFindingId.clear();
     emit comprehensionReviewChanged();
+}
+
+bridge::ComprehensionReviewRequest HostController::makeComprehensionRequest() const {
+    bridge::ComprehensionReviewRequest request;
+    request.candidatePrompt = m_currentProposal->rewrittenText;
+    request.originalPrompt = m_currentProposal->originalText;
+    request.constraints = extractSessionConstraints(request.originalPrompt, *m_confirmedIntent);
+    for (const auto& item : m_confirmedIntent->items) {
+        if (request.confirmedDecisions.size() >= 12) break;
+        const std::string wording = item.kind == intent::IntentResolutionKind::CustomText ? item.customText
+                                                                                          : item.chosenValue;
+        if (!wording.empty()) request.confirmedDecisions.push_back(wording.substr(0, 512));
+    }
+    const auto brief = buildIntentBrief();
+    for (const auto& item : brief.items) {
+        if (request.sourceExcerpts.size() >= 8) break;
+        if (item.sourceExcerpt.empty()) continue;
+        if (item.kind != core::intent::BriefItemKind::SourceRequirement &&
+            item.kind != core::intent::BriefItemKind::Prohibition &&
+            item.kind != core::intent::BriefItemKind::Preference &&
+            item.kind != core::intent::BriefItemKind::Evidence) {
+            continue;
+        }
+        const auto excerpt = item.sourceExcerpt.substr(0, 512);
+        if (std::find(request.sourceExcerpts.begin(), request.sourceExcerpts.end(), excerpt) ==
+            request.sourceExcerpts.end()) {
+            request.sourceExcerpts.push_back(excerpt);
+        }
+    }
+    request.taskKind = reviewTaskKind(assistanceMode(), request.originalPrompt);
+    request.sessionId = m_reviewBinding.sessionId;
+    request.revisionId = m_reviewBinding.revisionId;
+    return request;
+}
+
+bool HostController::canUseManualReview() const {
+    if (m_reviewState != ReviewState::Failed || !reviewBindingMatchesCurrent() || !m_confirmedIntent ||
+        !validateCurrentProposal().isValid) return false;
+    const auto checks = bridge::reviewComprehension(makeComprehensionRequest());
+    return checks.status == bridge::ComprehensionReviewStatus::Unavailable && checks.findings.empty();
 }
 
 AsyncTask<core::Status> HostController::requestComprehensionReviewOperation(quint64 expectedVersion) {
@@ -5677,35 +5810,7 @@ AsyncTask<core::Status> HostController::requestComprehensionReviewOperation(quin
     emit comprehensionReviewChanged();
     emit rewriteProposalChanged();
 
-    bridge::ComprehensionReviewRequest request;
-    request.candidatePrompt = m_currentProposal->rewrittenText;
-    request.originalPrompt = m_currentProposal->originalText;
-    request.constraints = extractSessionConstraints(request.originalPrompt, *m_confirmedIntent);
-    for (const auto& item : m_confirmedIntent->items) {
-        if (request.confirmedDecisions.size() >= 12) break;
-        const std::string wording = item.kind == intent::IntentResolutionKind::CustomText ? item.customText
-                                                                                          : item.chosenValue;
-        if (!wording.empty()) request.confirmedDecisions.push_back(wording.substr(0, 512));
-    }
-    const auto brief = buildIntentBrief();
-    for (const auto& item : brief.items) {
-        if (request.sourceExcerpts.size() >= 8) break;
-        if (item.sourceExcerpt.empty()) continue;
-        if (item.kind != core::intent::BriefItemKind::SourceRequirement &&
-            item.kind != core::intent::BriefItemKind::Prohibition &&
-            item.kind != core::intent::BriefItemKind::Preference &&
-            item.kind != core::intent::BriefItemKind::Evidence) {
-            continue;
-        }
-        const auto excerpt = item.sourceExcerpt.substr(0, 512);
-        if (std::find(request.sourceExcerpts.begin(), request.sourceExcerpts.end(), excerpt) ==
-            request.sourceExcerpts.end()) {
-            request.sourceExcerpts.push_back(excerpt);
-        }
-    }
-    request.taskKind = reviewTaskKind(assistanceMode(), request.originalPrompt);
-    request.sessionId = m_reviewBinding.sessionId;
-    request.revisionId = m_reviewBinding.revisionId;
+    const auto request = makeComprehensionRequest();
 
     // Production reviewer. The injected seam wins when a test supplies one; the
     // production path builds exactly one fresh-context native request bound to a
@@ -5845,7 +5950,7 @@ AsyncTask<core::Status> HostController::resolveComprehensionFindingOperation(QSt
         co_return makeError(core::ErrorCode::InvalidInput, "That review finding does not belong to the current review.");
     }
     if (res == "confirm_intent") {
-        if (!canConfirmCandidateWording(*finding))
+        if (!canConfirmWording(*finding))
             co_return makeError(core::ErrorCode::ValidationFailed, "This finding requires a correction before applying.");
         if (auto status = (co_await advanceCommandVersion(expectedVersion)); !status.ok()) co_return status;
         m_findingResolutions[id] = res;
@@ -6168,7 +6273,7 @@ QVariantList HostController::proposalConstraints() const {
         map[QStringLiteral("id")] = qs(c.id);
         map[QStringLiteral("description")] = qs(c.description);
         map[QStringLiteral("status")] = QString::fromUtf8(rewrite::toString(c.status));
-        map[QStringLiteral("evidence")] = qs(c.evidence);
+        map[QStringLiteral("evidence")] = c.id == "unresolved_" + c.evidence ? QString() : qs(c.evidence);
         bool needsReview = c.status == rewrite::ConstraintStatus::SemanticReviewRequired;
         bool acknowledged = m_acknowledgedConstraints.count(c.id) > 0;
 
@@ -7816,7 +7921,25 @@ void HostController::setAmbientStatus(const QString& status) {
     }
 }
 
-void HostController::onFieldLost(bool interrupted) {
+void HostController::onFieldLost(bool interrupted, bool editorFocusLost) {
+    // A click in the review panel can blur its source editor. Keep the review
+    // on screen while clearing live focus so delivery still requires its owner.
+    const auto previousReview = m_retainedReviewField;
+    m_retainedReviewField.clear();
+    if (editorFocusLost && isCardVisible() && fieldCaptureManaged() &&
+        (m_focusedField == m_pipelineField || previousReview == m_pipelineField)) {
+        const auto owner = m_fields.constFind(m_pipelineField);
+        if (owner != m_fields.cend() && owner->invoked) {
+            const auto front = HostContextDetector::captureFrontmost();
+            const auto* window = QGuiApplication::focusWindow();
+            const bool panelFocused = front.bundleOrExecutableId.isEmpty() && window &&
+                                      window->objectName() == QStringLiteral("reviewCardWindow");
+            if (panelFocused || front.bundleOrExecutableId.compare(owner->source.field.appIdentifier, Qt::CaseInsensitive) == 0) {
+                m_retainedReviewField = m_pipelineField;
+            }
+        }
+    }
+    if (m_focusedField.isEmpty() && previousReview != m_retainedReviewField) emit fieldViewChanged();
     if (fieldCaptureManaged() && !m_focusedField.isEmpty()) {
         if (!m_fields.value(m_focusedField).invoked) m_fields.remove(m_focusedField);
         m_focusedField.clear();
@@ -8500,6 +8623,29 @@ quint64 HostController::discardProposal(quint64 expectedVersion) {
     return enqueueStorageCommand("discardProposal", [=, this]() { return discardProposalOperation(expectedVersion); });
 }
 
+quint64 HostController::manuallyApproveRewrite(quint64 expectedVersion) {
+    const auto serial = m_reviewSerial;
+    return enqueueStorageCommand("manuallyApproveRewrite", [this, serial, expectedVersion]() -> AsyncTask<Status> {
+        if (serial != m_reviewSerial)
+            co_return makeError(ErrorCode::StaleVersion, "The review changed before approval.");
+        co_return co_await approveAndCopyRewriteOperation(expectedVersion, true);
+    });
+}
+
+quint64 HostController::acceptWordingAndDeliver(quint64 expectedVersion) {
+    const auto serial = m_reviewSerial;
+    return enqueueStorageCommand("acceptWordingAndDeliver", [this, expectedVersion, serial]() -> AsyncTask<Status> {
+        if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) co_return status;
+        if (serial != m_reviewSerial || !canAcceptReviewedWording() || !validateCurrentProposal().isValid)
+            co_return makeError(ErrorCode::PreconditionFailed, "Review the current rewrite before inserting.");
+        for (const auto& finding : m_reviewResult.findings)
+            m_findingResolutions[finding.id] = "confirm_intent";
+        emit comprehensionReviewChanged();
+        emit rewriteProposalChanged();
+        co_return co_await approveAndCopyRewriteOperation(expectedVersion);
+    });
+}
+
 quint64 HostController::approveAndCopyRewrite(quint64 expectedVersion) {
     return enqueueStorageCommand("approveAndCopyRewrite", [=, this]() { return approveAndCopyRewriteOperation(expectedVersion); });
 }
@@ -8587,7 +8733,7 @@ quint64 HostController::resolveComprehensionFinding(const QString& findingId, co
                                      "That review finding does not belong to the current review."));
         return 0;
     }
-    if (res == QStringLiteral("confirm_intent") && !canConfirmCandidateWording(*finding)) return 0;
+    if (res == QStringLiteral("confirm_intent") && !canConfirmWording(*finding)) return 0;
     if (res == QStringLiteral("acknowledge") && findingRequiresInterview(*finding)) {
         setLastError(core::makeError(core::ErrorCode::ValidationFailed,
                                      "This finding needs your decision. Return it to the interview or keep the original prompt."));

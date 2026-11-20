@@ -17,7 +17,8 @@ Window {
 
     readonly property bool isMac: Qt.platform.os === "osx" || Qt.platform.os === "macos"
     readonly property string monoFont: isMac ? "Menlo" : "Consolas"
-    readonly property string sansFont: "Inter Variable"
+    FontLoader { id: interFont; source: "assets/InterVariable.ttf" }
+    readonly property string sansFont: interFont.status === FontLoader.Ready ? interFont.name : (isMac ? "Helvetica Neue" : "Segoe UI")
 
     // Multi-Palette Theme System (Mirrors FloatingCard.qml exactly)
     Connections {
@@ -51,6 +52,15 @@ Window {
     function showToast(msg) {
         toastMessage = msg;
         toastTimer.restart();
+    }
+
+    function isProfileActive(profId) {
+        if (typeof hostController === "undefined" || !hostController || !hostController.rewriteProfile) return false;
+        const cur = String(hostController.rewriteProfile).toUpperCase();
+        const target = String(profId).toUpperCase();
+        const curBase = cur.replace(/@\d+$/, "");
+        const targetBase = target.replace(/@\d+$/, "");
+        return cur === target || curBase === targetBase;
     }
 
     function scrollToPosition(pos) {
@@ -115,6 +125,10 @@ Window {
     Rectangle {
         anchors.fill: parent
         color: dashboardWindow.bgColor
+        gradient: Gradient {
+            GradientStop { position: 0; color: theme.light ? "#F1F5FF" : "#172746" }
+            GradientStop { position: 0.62; color: dashboardWindow.bgColor }
+        }
 
         Item {
             anchors.fill: parent
@@ -131,53 +145,72 @@ Window {
                 RowLayout {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
-                    Layout.preferredHeight: 28
-                    spacing: 8
+                    Layout.preferredHeight: 32
+                    spacing: 10
 
                     Image {
                         source: "assets/roc-mark.png"
-                        Layout.preferredWidth: 30
-                        Layout.preferredHeight: 28
+                        Layout.preferredWidth: 32
+                        Layout.preferredHeight: 30
                         fillMode: Image.PreserveAspectFit
                     }
 
                     Text {
                         text: "roclint"
-                        font.family: dashboardWindow.monoFont
-                        font.bold: true
-                        font.pixelSize: 11
-                        font.letterSpacing: 1
+                        font.family: dashboardWindow.sansFont
+                        font.pixelSize: 22
+                        font.weight: Font.DemiBold
+                        font.letterSpacing: -0.6
                         color: dashboardWindow.fgColor
                     }
 
-                    Text { text: "│"; font.family: dashboardWindow.monoFont; font.pixelSize: 10; color: dashboardWindow.mutedTextColor }
+                    Rectangle {
+                        width: 4
+                        height: 4
+                        radius: 2
+                        color: dashboardWindow.mutedTextColor
+                        opacity: 0.5
+                        Layout.leftMargin: 2
+                        Layout.rightMargin: 2
+                    }
 
                     Text {
                         text: qsTr("Settings")
-                        font.family: dashboardWindow.monoFont
-                        font.bold: true
-                        font.pixelSize: 12
+                        font.family: dashboardWindow.sansFont
+                        font.pixelSize: 14
+                        font.weight: Font.Medium
                         color: dashboardWindow.mutedTextColor
                     }
 
                     Item { Layout.fillWidth: true }
 
-                    // Host resident status chip
+                    // Host resident status chip (modern rounded pill)
                     Rectangle {
-                        height: 20
-                        implicitWidth: resText.contentWidth + 16
-                        color: "transparent"
-                        border.color: "#7EE787"
+                        height: 24
+                        implicitWidth: resRow.implicitWidth + 20
+                        radius: 12
+                        color: theme.surface
+                        border.color: theme.border
                         border.width: 1
 
-                        Text {
-                            id: resText
+                        RowLayout {
+                            id: resRow
                             anchors.centerIn: parent
-                            text: qsTr("Running locally")
-                            font.family: dashboardWindow.monoFont
-                            font.bold: true
-                            font.pixelSize: 11
-                            color: "#7EE787"
+                            spacing: 6
+
+                            Rectangle {
+                                width: 6; height: 6; radius: 3
+                                color: "#34D399"
+                            }
+
+                            Text {
+                                id: resText
+                                text: qsTr("Running locally")
+                                font.family: dashboardWindow.sansFont
+                                font.weight: Font.Medium
+                                font.pixelSize: 11
+                                color: dashboardWindow.fgColor
+                            }
                         }
                     }
 
@@ -195,6 +228,7 @@ Window {
                     Layout.minimumWidth: 0
                     height: 1
                     color: dashboardWindow.borderColor
+                    opacity: 0.5
                 }
 
                 // =============================================================
@@ -204,53 +238,62 @@ Window {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     Layout.fillHeight: true
-                    spacing: 12
+                    spacing: 14
 
                     // LEFT SIDEBAR: TAB SELECTION MATRIX
                     Rectangle {
-                        Layout.preferredWidth: 220
+                        Layout.preferredWidth: 230
                         Layout.fillHeight: true
                         color: dashboardWindow.inputBgColor
                         border.color: dashboardWindow.borderColor
                         border.width: 1
+                        radius: 14
 
                         ColumnLayout {
                             anchors.fill: parent
-                            anchors.margins: 14
-                            spacing: 8
+                            anchors.margins: 12
+                            spacing: 6
 
                             Text {
-                                text: "/* NAVIGATION MATRIX */"
-                                font.family: dashboardWindow.monoFont
-                                font.pixelSize: 12
+                                text: qsTr("NAVIGATION")
+                                font.family: dashboardWindow.sansFont
+                                font.pixelSize: 10
                                 font.bold: true
-                                color: dashboardWindow.commentColor
+                                font.letterSpacing: 1.0
+                                color: dashboardWindow.mutedTextColor
+                                Layout.leftMargin: 6
+                                Layout.topMargin: 4
+                                Layout.bottomMargin: 4
                             }
 
                             Rectangle {
                                 Layout.fillWidth: true
-                                Layout.minimumWidth: 0
                                 height: 1
                                 color: dashboardWindow.borderColor
-                                Layout.bottomMargin: 4
+                                opacity: 0.5
+                                Layout.bottomMargin: 6
                             }
 
                             Repeater {
                                 model: [
-                                    { index: 0, tag: "01", label: "MODELS & REWRITE" },
-                                    { index: 1, tag: "02", label: "INTEGRATION & THEME" },
-                                    { index: 2, tag: "03", label: "SQLITE HISTORY" }
+                                    { index: 0, tag: "01", label: qsTr("Models & Rewrite") },
+                                    { index: 1, tag: "02", label: qsTr("Integration & Theme") },
+                                    { index: 2, tag: "03", label: qsTr("SQLite History") },
+                                    { index: 3, tag: "04", label: qsTr("Prompt Actions Guide") }
                                 ]
 
                                 delegate: Rectangle {
                                     id: navTabBtn
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    Layout.preferredHeight: Math.max(34, navLabel.implicitHeight + 12)
+                                    Layout.preferredHeight: Math.max(38, navLabel.implicitHeight + 14)
+                                    radius: 9
                                     color: dashboardWindow.currentTab === modelData.index
-                                        ? dashboardWindow.fgColor
-                                        : (tabMouse.containsMouse ? dashboardWindow.dimColor : "transparent")
-                                    border.color: dashboardWindow.borderColor
+                                        ? theme.accent
+                                        : (tabMouse.containsMouse ? theme.hover : "transparent")
+                                    border.color: dashboardWindow.currentTab === modelData.index
+                                        ? theme.accent
+                                        : (tabMouse.containsMouse ? theme.border : "transparent")
                                     border.width: 1
 
                                     RowLayout {
@@ -259,14 +302,28 @@ Window {
                                         anchors.rightMargin: 10
                                         spacing: 8
 
-                                        Text {
-                                            text: "[" + modelData.tag + "]"
-                                            font.family: dashboardWindow.monoFont
-                                            font.pixelSize: 12
-                                            font.bold: true
+                                        Rectangle {
+                                            implicitWidth: 26
+                                            height: 20
+                                            radius: 6
                                             color: dashboardWindow.currentTab === modelData.index
-                                                ? dashboardWindow.bgColor
-                                                : dashboardWindow.mutedTextColor
+                                                ? Qt.rgba(255, 255, 255, 0.22)
+                                                : theme.surface
+                                            border.color: dashboardWindow.currentTab === modelData.index
+                                                ? "transparent"
+                                                : theme.border
+                                            border.width: 1
+
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: modelData.tag
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 10
+                                                font.bold: true
+                                                color: dashboardWindow.currentTab === modelData.index
+                                                    ? "#FFFFFF"
+                                                    : dashboardWindow.mutedTextColor
+                                            }
                                         }
 
                                         Text {
@@ -275,11 +332,11 @@ Window {
                                             Layout.fillWidth: true
                                             Layout.minimumWidth: 0
                                             text: modelData.label
-                                            font.family: dashboardWindow.monoFont
+                                            font.family: dashboardWindow.sansFont
                                             font.pixelSize: 12
-                                            font.bold: dashboardWindow.currentTab === modelData.index
+                                            font.weight: dashboardWindow.currentTab === modelData.index ? Font.DemiBold : Font.Medium
                                             color: dashboardWindow.currentTab === modelData.index
-                                                ? dashboardWindow.bgColor
+                                                ? "#FFFFFF"
                                                 : dashboardWindow.fgColor
                                             wrapMode: Text.WordWrap
                                         }
@@ -290,6 +347,8 @@ Window {
                                         anchors.fill: parent
                                         hoverEnabled: true
                                         cursorShape: Qt.PointingHandCursor
+                                        focusRadius: navTabBtn.radius
+                                        focusColor: theme.accent
                                         onClicked: dashboardWindow.currentTab = modelData.index
                                     }
                                 }
@@ -297,36 +356,7 @@ Window {
 
                             Item { Layout.fillHeight: true }
 
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                height: 1
-                                color: dashboardWindow.borderColor
-                            }
 
-                            ColumnLayout {
-                                spacing: 2
-                                Layout.fillWidth: true
-                                Layout.minimumWidth: 0
-                                Text {
-                                    text: "SYSTEM: ROCLINT CORE"
-                                    font.family: dashboardWindow.monoFont
-                                    font.pixelSize: 11
-                                    color: dashboardWindow.mutedTextColor
-                                }
-                                Text {
-                                    text: "REVISION: v" + (typeof hostController !== "undefined" ? hostController.stateVersion : "0")
-                                    font.family: dashboardWindow.monoFont
-                                    font.pixelSize: 11
-                                    color: dashboardWindow.mutedTextColor
-                                }
-                                Text {
-                                    text: "BUILD: C++20 / QT 6.11"
-                                    font.family: dashboardWindow.monoFont
-                                    font.pixelSize: 11
-                                    color: dashboardWindow.mutedTextColor
-                                }
-                            }
                         }
                     }
 
@@ -365,195 +395,373 @@ Window {
                                 spacing: 14
 
                                 Text {
-                                    text: "/* 01: INFERENCE RUNTIME & PROMPT COMPILER */"
-                                    font.family: dashboardWindow.monoFont
-                                    font.pixelSize: 11
-                                    font.bold: true
+                                    text: qsTr("Inference Runtime & Prompt Compiler")
+                                    font.family: dashboardWindow.sansFont
+                                    font.pixelSize: 18
+                                    font.weight: Font.DemiBold
                                     color: dashboardWindow.fgColor
                                 }
 
-                                // Card 1: Semantic Decision Scorer
+                                // Card 1: Dual-Stage Local Inference Pipeline
                                 Rectangle {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    Layout.preferredHeight: 175
+                                    implicitHeight: card1Col.implicitHeight + 28
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
                                     border.width: 1
+                                    radius: 14
 
                                     ColumnLayout {
+                                        id: card1Col
                                         anchors.fill: parent
                                         anchors.margins: 14
-                                        spacing: 10
+                                        spacing: 12
 
                                         RowLayout {
                                             Text {
-                                                text: "S1 PROMPT CLASSIFIER :: LOCAL JULIA-1"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 10
-                                                font.bold: true
+                                                text: qsTr("Dual-Stage Local Inference Pipeline")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 13
+                                                font.weight: Font.DemiBold
                                                 color: dashboardWindow.fgColor
                                             }
                                             Item { Layout.fillWidth: true }
-                                            Text {
-                                                text: dashboardWindow.scorerMode === "jev" ? "[MODE: JEV CLOUD]" : "[MODE: LOCAL JULIA]"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 12
-                                                color: dashboardWindow.mutedTextColor
+                                            Rectangle {
+                                                implicitWidth: modeChipTxt.contentWidth + 16
+                                                height: 22
+                                                radius: 11
+                                                color: theme.surface
+                                                border.color: theme.border
+                                                border.width: 1
+                                                Text {
+                                                    id: modeChipTxt
+                                                    anchors.centerIn: parent
+                                                    text: (typeof hostController !== "undefined" && hostController.hasJuliaModel && (hostController.useLiveWeights || hostController.nativeGraniteResidency === "LOADED"))
+                                                          ? qsTr("● Both Models Loaded")
+                                                          : qsTr("100% On-Device · Private")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 11
+                                                    color: (typeof hostController !== "undefined" && hostController.hasJuliaModel && (hostController.useLiveWeights || hostController.nativeGraniteResidency === "LOADED"))
+                                                           ? "#34D399"
+                                                           : dashboardWindow.mutedTextColor
+                                                }
                                             }
                                         }
 
-                                        RowLayout {
+                                        // Stage 1 (Classifier) & Stage 2 (Reasoning SLM) Status & Quick-Warm
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
                                             spacing: 10
-                                            Rectangle {
-                                                implicitWidth: juliaTxt.contentWidth + 16
-                                                height: 26
-                                                color: dashboardWindow.scorerMode === "julia" ? dashboardWindow.fgColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
-                                                border.width: 1
 
-                                                Text {
-                                                    id: juliaTxt
-                                                    anchors.centerIn: parent
-                                                    text: dashboardWindow.scorerMode === "julia" ? "[ ● LOCAL JULIA-1 (AUTO GPU / CPU) ]" : "[ ○ LOCAL JULIA-1 (AUTO GPU / CPU) ]"
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 12
-                                                    font.bold: dashboardWindow.scorerMode === "julia"
-                                                    color: dashboardWindow.scorerMode === "julia" ? dashboardWindow.bgColor : dashboardWindow.fgColor
-                                                }
-                                                HudMouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: {
+                                            // Stage 1 Row
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
+                                                spacing: 10
 
-                                                        if (typeof hostController !== "undefined") { hostController.setScorerEngine("julia"); hostController.refreshJuliaModel(); }
-                                                        dashboardWindow.showToast("S1 CLASSIFIER: LOCAL JULIA-1");
+                                                Rectangle {
+                                                    implicitWidth: s1TagTxt.contentWidth + 14
+                                                    height: 24
+                                                    radius: 6
+                                                    color: theme.surface
+                                                    border.color: theme.border
+                                                    border.width: 1
+                                                    Text {
+                                                        id: s1TagTxt
+                                                        anchors.centerIn: parent
+                                                        text: qsTr("Stage 1 · Classifier")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.weight: Font.DemiBold
+                                                        color: dashboardWindow.mutedTextColor
                                                     }
                                                 }
+
+                                                Rectangle {
+                                                    implicitWidth: juliaStatusTxt.contentWidth + 18
+                                                    height: 24
+                                                    radius: 12
+                                                    color: theme.surface
+                                                    border.color: theme.border
+                                                    border.width: 1
+
+                                                    Text {
+                                                        id: juliaStatusTxt
+                                                        anchors.centerIn: parent
+                                                        text: (typeof hostController !== "undefined" && hostController.hasJuliaModel)
+                                                              ? qsTr("● Julia Loaded (%1)").arg(hostController.acceleratorName.length > 0 ? hostController.acceleratorName : "MPS")
+                                                              : (typeof hostController !== "undefined" && hostController.isJuliaModelInstalled)
+                                                                ? qsTr("⏸ S1 Ready on disk")
+                                                                : qsTr("○ S1 Not downloaded")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.weight: Font.Medium
+                                                        color: (typeof hostController !== "undefined" && hostController.hasJuliaModel) ? "#34D399" : dashboardWindow.fgColor
+                                                    }
+                                                }
+
+                                                Rectangle {
+                                                    visible: typeof hostController !== "undefined" && !hostController.hasJuliaModel && ["NOT_LOADED", "FAILED"].indexOf(hostController.juliaState) >= 0
+                                                    implicitWidth: dlJuliaCard1Txt.contentWidth + 20
+                                                    height: 24
+                                                    radius: 6
+                                                    color: dlJuliaCard1Mouse.containsMouse ? theme.hover : theme.surface
+                                                    border.color: (typeof hostController !== "undefined" && hostController.isJuliaModelInstalled) ? "#38BDF8" : theme.border
+                                                    border.width: 1
+
+                                                    Text {
+                                                        id: dlJuliaCard1Txt
+                                                        anchors.centerIn: parent
+                                                        text: (typeof hostController !== "undefined" && hostController.isJuliaModelInstalled)
+                                                              ? qsTr("⟳ Load Julia into GPU")
+                                                              : qsTr("⬇ Download Julia (600 MB)")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.weight: Font.Medium
+                                                        color: dlJuliaCard1Mouse.containsMouse ? theme.foreground : ((typeof hostController !== "undefined" && hostController.isJuliaModelInstalled) ? "#38BDF8" : theme.foreground)
+                                                    }
+
+                                                    HudMouseArea {
+                                                        id: dlJuliaCard1Mouse
+                                                        anchors.fill: parent
+                                                        hoverEnabled: true
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: {
+                                                            if (typeof hostController !== "undefined") {
+                                                                if (hostController.isJuliaModelInstalled) {
+                                                                    hostController.refreshJuliaModel();
+                                                                    dashboardWindow.showToast("LOADING JULIA INTO GPU MEMORY...");
+                                                                } else {
+                                                                    hostController.downloadJuliaModel();
+                                                                    dashboardWindow.showToast("DOWNLOADING AND VERIFYING JULIA-1...");
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                Item { Layout.fillWidth: true }
                                             }
 
-                                            Rectangle {
-                                                implicitWidth: jevTxt.contentWidth + 16
-                                                height: 26
-                                                color: dashboardWindow.scorerMode === "jev" ? dashboardWindow.fgColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
-                                                border.width: 1
+                                            // Stage 2 Row
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                Layout.minimumWidth: 0
+                                                spacing: 10
 
-                                                Text {
-                                                    id: jevTxt
-                                                    anchors.centerIn: parent
-                                                    text: dashboardWindow.scorerMode === "jev" ? "[ ● CLOUD JEV (BASELINE STUDY) ]" : "[ ○ CLOUD JEV (BASELINE STUDY) ]"
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 12
-                                                    font.bold: dashboardWindow.scorerMode === "jev"
-                                                    color: dashboardWindow.scorerMode === "jev" ? dashboardWindow.bgColor : dashboardWindow.fgColor
-                                                }
-                                                HudMouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: {
-
-                                                        if (typeof hostController !== "undefined") hostController.setScorerEngine("jev");
-                                                        dashboardWindow.showToast("JEV SELECTED; CLOUD TRANSPORT IS NOT CONFIGURED");
+                                                Rectangle {
+                                                    implicitWidth: s2TagTxt.contentWidth + 14
+                                                    height: 24
+                                                    radius: 6
+                                                    color: theme.surface
+                                                    border.color: theme.border
+                                                    border.width: 1
+                                                    Text {
+                                                        id: s2TagTxt
+                                                        anchors.centerIn: parent
+                                                        text: qsTr("Stage 2 · Reasoning SLM")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.weight: Font.DemiBold
+                                                        color: dashboardWindow.mutedTextColor
                                                     }
                                                 }
+
+                                                Rectangle {
+                                                    implicitWidth: graniteTopStatusTxt.contentWidth + 18
+                                                    height: 24
+                                                    radius: 12
+                                                    color: theme.surface
+                                                    border.color: theme.border
+                                                    border.width: 1
+
+                                                    Text {
+                                                        id: graniteTopStatusTxt
+                                                        anchors.centerIn: parent
+                                                        text: {
+                                                            if (typeof hostController === "undefined") return qsTr("○ S2 Offline");
+                                                            if (hostController.useLiveWeights || hostController.nativeGraniteResidency === "LOADED" || hostController.nativeGraniteMemoryStatus.indexOf("Loaded in GPU memory") !== -1) {
+                                                                return qsTr("● Granite Loaded (%1)").arg(hostController.acceleratorName);
+                                                            }
+                                                            if (hostController.isCheckingModel || hostController.nativeGraniteMemoryStatus.indexOf("Warming") !== -1) {
+                                                                return qsTr("⟳ Warming Granite...");
+                                                            }
+                                                            if (hostController.isNativeGraniteInstalled) {
+                                                                return qsTr("⏸ S2 Ready on disk");
+                                                            }
+                                                            return qsTr("○ S2 Not downloaded");
+                                                        }
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.weight: Font.Medium
+                                                        color: {
+                                                            if (typeof hostController === "undefined") return dashboardWindow.mutedTextColor;
+                                                            if (hostController.useLiveWeights || hostController.nativeGraniteResidency === "LOADED" || hostController.nativeGraniteMemoryStatus.indexOf("Loaded in GPU memory") !== -1) {
+                                                                return "#34D399";
+                                                            }
+                                                            if (hostController.isCheckingModel || hostController.nativeGraniteMemoryStatus.indexOf("Warming") !== -1) {
+                                                                return "#FBBF24";
+                                                            }
+                                                            return dashboardWindow.fgColor;
+                                                        }
+                                                    }
+                                                }
+
+                                                Rectangle {
+                                                    visible: typeof hostController !== "undefined" && hostController.nativeGraniteSelected && !hostController.useLiveWeights && hostController.nativeGraniteResidency !== "LOADED" && hostController.nativeGraniteMemoryStatus.indexOf("Loaded in GPU memory") === -1 && hostController.isNativeGraniteInstalled && !hostController.isCheckingModel
+                                                    implicitWidth: loadGraniteCard1Txt.contentWidth + 20
+                                                    height: 24
+                                                    radius: 6
+                                                    color: loadGraniteCard1Mouse.containsMouse ? theme.hover : theme.surface
+                                                    border.color: "#38BDF8"
+                                                    border.width: 1
+
+                                                    Text {
+                                                        id: loadGraniteCard1Txt
+                                                        anchors.centerIn: parent
+                                                        text: qsTr("⟳ Load Granite into GPU")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.weight: Font.Medium
+                                                        color: loadGraniteCard1Mouse.containsMouse ? theme.foreground : "#38BDF8"
+                                                    }
+
+                                                    HudMouseArea {
+                                                        id: loadGraniteCard1Mouse
+                                                        anchors.fill: parent
+                                                        hoverEnabled: true
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: {
+                                                            if (typeof hostController !== "undefined") {
+                                                                hostController.warmSelectedModel();
+                                                                dashboardWindow.showToast("WARMING GRANITE INTO GPU MEMORY...");
+                                                            }
+                                                        }
+                                                    }
+                                                }
+
+                                                Item { Layout.fillWidth: true }
                                             }
                                         }
 
-                                        // Julia Model Weights Status & Download Action
-                                        RowLayout {
+                                        Text {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            wrapMode: Text.WordWrap
+                                            text: qsTr("Julia classifies first: below 0.70 keeps the original; otherwise Granite supplies choices. Confirm intent explicitly.")
+                                            font.family: dashboardWindow.sansFont
+                                            font.pixelSize: 12
+                                            color: dashboardWindow.mutedTextColor
+                                        }
+                                    }
+                                }
+
+                                // Card 2: Rewrite Target Profile
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    implicitHeight: rewriteProfCol.implicitHeight + 28
+                                    color: dashboardWindow.inputBgColor
+                                    border.color: dashboardWindow.borderColor
+                                    border.width: 1
+                                    radius: 14
+
+                                    ColumnLayout {
+                                        id: rewriteProfCol
+                                        anchors.fill: parent
+                                        anchors.margins: 14
+                                        spacing: 12
+
+                                        Text {
+                                            text: qsTr("Rewrite target profile")
+                                            font.family: dashboardWindow.sansFont
+                                            font.pixelSize: 13
+                                            font.weight: Font.DemiBold
+                                            color: dashboardWindow.fgColor
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            wrapMode: Text.WordWrap
+                                            text: qsTr("Choose the structural format Roclint generates when clicking Rewrite prompt:")
+                                            font.family: dashboardWindow.sansFont
+                                            font.pixelSize: 12
+                                            color: dashboardWindow.mutedTextColor
+                                        }
+
+                                        Flow {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
                                             spacing: 8
-                                            visible: dashboardWindow.scorerMode === "julia"
+                                            Repeater {
+                                                model: [
+                                                    { id: "OPENAI_STRUCTURED", label: qsTr("OpenAI · Markdown") },
+                                                    { id: "ANTHROPIC_STRUCTURED", label: qsTr("Anthropic · XML") },
+                                                    { id: "GENERIC", label: qsTr("Generic Markdown") },
+                                                    { id: "LOCAL_COMPACT", label: qsTr("Compact") }
+                                                ]
 
-                                            // Status Badge
-                                            Rectangle {
-                                                implicitWidth: juliaStatusTxt.contentWidth + 14
-                                                height: 22
-                                                color: "transparent"
-                                                border.color: (typeof hostController !== "undefined" && hostController.hasJuliaModel)
-                                                              ? "#7EE787"
-                                                              : (typeof hostController !== "undefined" && hostController.isJuliaModelInstalled)
-                                                                ? "#38BDF8"
-                                                                : "#FFB000"
-                                                border.width: 1
+                                                Rectangle {
+                                                    required property var modelData
+                                                    implicitHeight: 32
+                                                    implicitWidth: targetBtnTxt.implicitWidth + 24
+                                                    radius: 8
+                                                    color: isProfileActive(modelData.id) ? theme.accent : theme.surface
+                                                    border.color: isProfileActive(modelData.id) ? theme.accent : theme.border
+                                                    border.width: 1
 
-                                                Text {
-                                                    id: juliaStatusTxt
-                                                    anchors.centerIn: parent
-                                                    text: (typeof hostController !== "undefined" && hostController.hasJuliaModel)
-                                                          ? "[ ● JULIA LOADED (MPS) ]"
-                                                          : (typeof hostController !== "undefined" && hostController.isJuliaModelInstalled)
-                                                            ? "[ ⏸ S1 READY ON DISK ]"
-                                                            : "[ ○ S1 NOT DOWNLOADED ]"
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 11
-                                                    font.bold: true
-                                                    color: (typeof hostController !== "undefined" && hostController.hasJuliaModel)
-                                                           ? "#7EE787"
-                                                           : (typeof hostController !== "undefined" && hostController.isJuliaModelInstalled)
-                                                             ? "#38BDF8"
-                                                             : "#FFB000"
-                                                }
-                                            }
+                                                    Text {
+                                                        id: targetBtnTxt
+                                                        anchors.centerIn: parent
+                                                        text: modelData.label
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 12
+                                                        font.weight: isProfileActive(modelData.id) ? Font.DemiBold : Font.Medium
+                                                        color: isProfileActive(modelData.id) ? "#FFFFFF" : dashboardWindow.fgColor
+                                                    }
 
-                                            // Action button: If installed on disk, load it; if missing, download it
-                                            Rectangle {
-                                                visible: typeof hostController !== "undefined" && !hostController.hasJuliaModel && ["NOT_LOADED", "FAILED"].indexOf(hostController.juliaState) >= 0
-                                                implicitWidth: dlJuliaCard1Txt.contentWidth + 14
-                                                height: 22
-                                                color: dlJuliaCard1Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
-                                                border.color: (typeof hostController !== "undefined" && hostController.isJuliaModelInstalled) ? "#38BDF8" : dashboardWindow.borderColor
-                                                border.width: 1
-
-                                                Text {
-                                                    id: dlJuliaCard1Txt
-                                                    anchors.centerIn: parent
-                                                    text: (typeof hostController !== "undefined" && hostController.isJuliaModelInstalled)
-                                                          ? "[ ⟳ LOAD JULIA-1 INTO GPU ]"
-                                                          : "[ ⬇ DOWNLOAD JULIA-1 (600 MB) ]"
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 11
-                                                    font.bold: true
-                                                    color: dlJuliaCard1Mouse.containsMouse ? dashboardWindow.bgColor : ((typeof hostController !== "undefined" && hostController.isJuliaModelInstalled) ? "#38BDF8" : dashboardWindow.fgColor)
-                                                }
-
-                                                HudMouseArea {
-                                                    id: dlJuliaCard1Mouse
-                                                    anchors.fill: parent
-                                                    hoverEnabled: true
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: {
-                                                        if (typeof hostController !== "undefined") {
-                                                            if (hostController.isJuliaModelInstalled) {
-                                                                hostController.refreshJuliaModel();
-                                                                dashboardWindow.showToast("LOADING JULIA-1 INTO GPU MEMORY...");
-                                                            } else {
-                                                                hostController.downloadJuliaModel();
-                                                                dashboardWindow.showToast("DOWNLOADING AND VERIFYING JULIA-1...");
+                                                    MouseArea {
+                                                        anchors.fill: parent
+                                                        hoverEnabled: true
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: {
+                                                            if (typeof hostController !== "undefined") {
+                                                                hostController.setRewriteProfile(modelData.id, hostController.stateVersion);
+                                                                dashboardWindow.showToast("REWRITE PROFILE: " + modelData.label);
                                                             }
                                                         }
                                                     }
                                                 }
                                             }
-
-                                            // Real-time downloading indicator
-                                            Text {
-                                                visible: typeof hostController !== "undefined" && ["LOADING", "DOWNLOADING"].indexOf(hostController.juliaState) >= 0
-                                                text: typeof hostController !== "undefined" ? hostController.juliaState : ""
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 11
-                                                font.bold: true
-                                                color: "#FFB000"
-                                            }
                                         }
 
-                                        Text {
-                                            text: dashboardWindow.scorerMode === "jev"
-                                                ? "Jev is not configured. The S1-first flow requires local Julia."
-                                                : "Julia classifies first: below 0.70 keeps the original; otherwise Granite supplies choices. Confirm intent explicitly."
-                                            font.family: dashboardWindow.monoFont
-                                            font.pixelSize: 12
-                                            color: dashboardWindow.commentColor
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            Layout.minimumWidth: 0
+                                            spacing: 6
+
+                                            Repeater {
+                                                model: [
+                                                    { id: "generic", label: "GENERIC", desc: qsTr("Clean standardized markdown envelope suitable for any AI assistant.") },
+                                                    { id: "anthropic_structured", label: "ANTHROPIC_STRUCTURED", desc: qsTr("Strict XML tags (<task>, <context>, <constraints>) optimized for Anthropic.") },
+                                                    { id: "openai_structured", label: "OPENAI_STRUCTURED", desc: qsTr("Markdown heading hierarchy (# Role, # Goal, # Constraints) optimized for OpenAI.") },
+                                                    { id: "local_compact", label: "LOCAL_COMPACT", desc: qsTr("Telegraphic, token-budget optimized encoding for local models.") }
+                                                ]
+
+                                                delegate: Text {
+                                                    objectName: "settingsProfileDesc_" + modelData.id
+                                                    Layout.fillWidth: true
+                                                    Layout.minimumWidth: 0
+                                                    wrapMode: Text.WordWrap
+                                                    text: "• " + modelData.desc
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 11
+                                                    color: isProfileActive(modelData.id) ? dashboardWindow.fgColor : dashboardWindow.mutedTextColor
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -562,755 +770,6 @@ Window {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
                                     currentTheme: dashboardWindow.currentTheme
-                                }
-
-                                // Card 2: Rewrite Profiles (Prompt Compiler)
-                                Rectangle {
-                                    Layout.fillWidth: true
-                                    Layout.minimumWidth: 0
-                                    Layout.preferredHeight: 170
-                                    color: dashboardWindow.inputBgColor
-                                    border.color: dashboardWindow.borderColor
-                                    border.width: 1
-
-                                    ColumnLayout {
-                                        anchors.fill: parent
-                                        anchors.margins: 14
-                                        spacing: 10
-
-                                        RowLayout {
-                                            Text {
-                                                text: "REWRITE PROFILES (PROMPT COMPILER ARCHITECTURE)"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 10
-                                                font.bold: true
-                                                color: dashboardWindow.fgColor
-                                            }
-                                            Item { Layout.fillWidth: true }
-                                            Text {
-                                                text: "[ACTIVE: " + (typeof hostController !== "undefined" ? hostController.rewriteProfile.toUpperCase() : "GENERIC") + "]"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 12
-                                                color: "#7EE787"
-                                            }
-                                        }
-
-                                        ColumnLayout {
-                                            spacing: 6
-
-                                            Repeater {
-                                                model: [
-                                                    { id: "generic", label: "GENERIC", desc: "Clean markdown envelope with standardized instructions and constraints" },
-                                                    { id: "anthropic_structured", label: "ANTHROPIC_STRUCTURED", desc: "Strict XML tags (<task>, <context>, <constraints>) for Claude 3.5 / 3.7" },
-                                                    { id: "openai_structured", label: "OPENAI_STRUCTURED", desc: "Markdown heading hierarchy (# System / # Goal / # Instructions) for GPT-4o" },
-                                                    { id: "local_compact", label: "LOCAL_COMPACT", desc: "Telegraphic, token-budget optimized encoding for local small models (3B)" }
-                                                ]
-
-                                                delegate: RowLayout {
-                                                    Layout.fillWidth: true
-                                                    Layout.minimumWidth: 0
-                                                    spacing: 10
-
-                                                    Rectangle {
-                                                        objectName: "settingsProfileButton_" + modelData.id
-                                                        implicitWidth: profBtnTxt.contentWidth + 14
-                                                        height: 22
-                                                        color: (typeof hostController !== "undefined" && hostController.rewriteProfile.toLowerCase().indexOf(modelData.id) !== -1) ? dashboardWindow.fgColor : "transparent"
-                                                        border.color: dashboardWindow.borderColor
-                                                        border.width: 1
-
-                                                        Text {
-                                                            id: profBtnTxt
-                                                            anchors.centerIn: parent
-                                                            text: (typeof hostController !== "undefined" && hostController.rewriteProfile.toLowerCase().indexOf(modelData.id) !== -1) ? "[ ● " + modelData.label + " ]" : "[ ○ " + modelData.label + " ]"
-                                                            font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 11
-                                                            font.bold: true
-                                                            color: (typeof hostController !== "undefined" && hostController.rewriteProfile.toLowerCase().indexOf(modelData.id) !== -1) ? dashboardWindow.bgColor : dashboardWindow.fgColor
-                                                        }
-
-                                                        HudMouseArea {
-                                                            anchors.fill: parent
-                                                            cursorShape: Qt.PointingHandCursor
-                                                            onClicked: {
-                                                                if (typeof hostController !== "undefined") {
-                                                                    hostController.setRewriteProfile(modelData.id, hostController.stateVersion);
-                                                                    dashboardWindow.showToast("REWRITE PROFILE: " + modelData.label);
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-
-                                                    Text {
-                                                        objectName: "settingsProfileDesc_" + modelData.id
-                                                        Layout.fillWidth: true
-                                                        Layout.minimumWidth: 0
-                                                        text: modelData.desc
-                                                        font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 11
-                                                        color: dashboardWindow.commentColor
-                                                        wrapMode: Text.WordWrap
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-
-                                // Card 3: IBM Granite SLM & Non-Invasive Model Repository
-                                Rectangle {
-                                    Layout.fillWidth: true
-                                    Layout.minimumWidth: 0
-                                    implicitHeight: graniteCardCol.implicitHeight + 28
-                                    color: dashboardWindow.inputBgColor
-                                    border.color: dashboardWindow.borderColor
-                                    border.width: 1
-
-                                    ColumnLayout {
-                                        id: graniteCardCol
-                                        anchors.fill: parent
-                                        anchors.margins: 14
-                                        spacing: 12
-
-                                        RowLayout {
-                                            Layout.fillWidth: true
-                                            Layout.minimumWidth: 0
-                                            Text {
-                                                Layout.fillWidth: true
-                                                Layout.minimumWidth: 0
-                                                text: "IBM GRANITE SLM :: LOCAL INFERENCE & WEIGHTS MANAGER"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 10
-                                                font.bold: true
-                                                color: dashboardWindow.fgColor
-                                                wrapMode: Text.WordWrap
-                                            }
-                                            Text {
-                                                text: (typeof hostController !== "undefined" && hostController.useLiveWeights)
-                                                      ? ((typeof hostController !== "undefined" && hostController.inferenceSpeed.length > 0)
-                                                          ? "[LIVE WEIGHTS IN GPU · " + hostController.inferenceSpeed + "]"
-                                                          : "[LIVE WEIGHTS IN GPU]")
-                                                      : (typeof hostController !== "undefined" && hostController.isCheckingModel)
-                                                        ? "[WARMING INTO GPU...]"
-                                                        : (typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
-                                                          ? "[STANDBY ON DISK · READY]"
-                                                          : "[NOT DOWNLOADED]"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 12
-                                                font.bold: true
-                                                color: (typeof hostController !== "undefined" && hostController.useLiveWeights)
-                                                       ? "#7EE787"
-                                                       : (typeof hostController !== "undefined" && (hostController.isCheckingModel || hostController.isNativeGraniteInstalled))
-                                                         ? "#38BDF8"
-                                                         : dashboardWindow.mutedTextColor
-                                            }
-                                        }
-
-                                        // Row 1: Engine Mode Toggle
-                                        Flow {
-                                            Layout.fillWidth: true
-                                            Layout.minimumWidth: 0
-                                            width: parent ? parent.width : undefined
-                                            spacing: 10
-
-                                            Rectangle {
-                                                objectName: "settingsRescanRuntimeAction"
-                                                implicitWidth: nativeBtnTxt.contentWidth + 16
-                                                height: 26
-                                                color: "transparent"
-                                                border.color: dashboardWindow.borderColor
-                                                border.width: 1
-
-                                                Text {
-                                                    id: nativeBtnTxt
-                                                    anchors.centerIn: parent
-                                                    text: "[ ⟳ RESCAN RUNTIME ]"
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 12
-                                                    font.bold: true
-                                                    color: dashboardWindow.fgColor
-                                                }
-                                                HudMouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: {
-                                                        if (typeof hostController !== "undefined") {
-                                                            hostController.refreshAvailableModels();
-                                                            dashboardWindow.showToast("RESCANNED LOCAL MODEL DIRECTORY");
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            Rectangle {
-                                                objectName: "settingsWarmModelAction"
-                                                implicitWidth: liveBtnTxt.contentWidth + 16
-                                                height: 26
-                                                color: (typeof hostController !== "undefined" && hostController.useLiveWeights) ? dashboardWindow.fgColor : "transparent"
-                                                border.color: (typeof hostController !== "undefined" && (hostController.useLiveWeights || hostController.isNativeGraniteInstalled)) ? "#7EE787" : dashboardWindow.borderColor
-                                                border.width: 1
-
-                                                Text {
-                                                    id: liveBtnTxt
-                                                    anchors.centerIn: parent
-                                                    text: (typeof hostController !== "undefined" && hostController.useLiveWeights)
-                                                          ? "[ ● WEIGHTS LOADED IN GPU (READY) ]"
-                                                          : (typeof hostController !== "undefined" && hostController.isCheckingModel)
-                                                            ? "[ ⟳ WARMING INTO GPU MEMORY... ]"
-                                                            : (typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
-                                                              ? "[ ⏵ WARM MODEL INTO GPU ]"
-                                                              : "[ ○ NO WEIGHTS ON DISK (DOWNLOAD BELOW) ]"
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 12
-                                                    font.bold: (typeof hostController !== "undefined" && (hostController.useLiveWeights || hostController.isNativeGraniteInstalled))
-                                                    color: (typeof hostController !== "undefined" && hostController.useLiveWeights)
-                                                           ? dashboardWindow.bgColor
-                                                           : (typeof hostController !== "undefined" && hostController.isNativeGraniteInstalled)
-                                                             ? "#7EE787"
-                                                             : dashboardWindow.fgColor
-                                                }
-                                                HudMouseArea {
-                                                    anchors.fill: parent
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: {
-                                                        if (typeof hostController !== "undefined") {
-                                                            if (hostController.isNativeGraniteInstalled && !hostController.useLiveWeights) {
-                                                                hostController.warmSelectedModel();
-                                                                dashboardWindow.showToast("WARMING MODEL INTO GPU MEMORY...");
-                                                            } else {
-                                                                hostController.refreshAvailableModels();
-                                                                dashboardWindow.showToast("CHECKING LOCAL MODEL RUNTIME");
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        // Status bar
-                                        Rectangle {
-                                            Layout.fillWidth: true
-                                            Layout.minimumWidth: 0
-                                            height: 24
-                                            color: dashboardWindow.dimColor
-                                            border.color: dashboardWindow.borderColor
-                                            border.width: 1
-
-                                            RowLayout {
-                                                anchors.fill: parent
-                                                anchors.leftMargin: 8
-                                                anchors.rightMargin: 8
-                                                spacing: 6
-
-                                                Rectangle {
-                                                    width: 6; height: 6
-                                                    color: (typeof hostController !== "undefined" && hostController.availableModels.length > 0) ? "#7EE787" : "#FFB000"
-                                                }
-
-                                                Text {
-                                                    objectName: "settingsModelEngineStatus"
-                                                    Layout.fillWidth: true
-                                                    Layout.minimumWidth: 0
-                                                    text: typeof hostController !== "undefined" ? hostController.modelEngineStatus : "LOADING STATUS..."
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 11
-                                                    font.bold: true
-                                                    color: dashboardWindow.fgColor
-                                                    elide: Text.ElideRight
-                                                }
-
-                                                Text {
-                                                    visible: typeof hostController !== "undefined" && hostController.inferenceSpeed.length > 0
-                                                    textFormat: Text.StyledText
-                                                    text: {
-                                                        if (typeof hostController === "undefined") return "";
-                                                        if (hostController.tokenSpeedMode === "BOTH" && hostController.generationTokensPerSecond > 0 && hostController.decodeTokensPerSecond > 0) {
-                                                            return "SPEED: <font color='#34D399'>" + hostController.generationSpeedLabel + " (gen)</font> · <font color='#94A3B8'>" + hostController.decodeSpeedLabel + " (dec)</font>";
-                                                        }
-                                                        return "SPEED: " + hostController.inferenceSpeed;
-                                                    }
-                                                    font.family: dashboardWindow.monoFont
-                                                    font.pixelSize: 11
-                                                    font.bold: true
-                                                    color: "#38BDF8"
-                                                }
-                                            }
-                                        }
-
-                                        // Row 2: Non-Invasive Model Folder Connection
-                                        ColumnLayout {
-                                            Layout.fillWidth: true
-                                            Layout.minimumWidth: 0
-                                            spacing: 4
-
-                                            Text {
-                                                text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
-                                                      ? "CONNECTED MODEL FOLDER (S2 GRANITE MODELS):"
-                                                      : "CONNECTED MODEL FOLDER (NON-INVASIVE ACCESS):"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 11
-                                                font.bold: true
-                                                color: dashboardWindow.mutedTextColor
-                                            }
-
-                                            RowLayout {
-                                                Layout.fillWidth: true
-                                                Layout.minimumWidth: 0
-                                                spacing: 8
-
-                                                Rectangle {
-                                                    Layout.fillWidth: true
-                                                    Layout.minimumWidth: 0
-                                                    height: 28
-                                                    color: dashboardWindow.bgColor
-                                                    border.color: dashboardWindow.borderColor
-                                                    border.width: 1
-
-                                                    RowLayout {
-                                                        anchors.fill: parent
-                                                        anchors.leftMargin: 8
-                                                        anchors.rightMargin: 8
-
-                                                        Text {
-                                                            Layout.fillWidth: true
-                                                            Layout.minimumWidth: 0
-                                                            text: (typeof hostController !== "undefined" && hostController.effectiveModelDirectory.length > 0)
-                                                                  ? hostController.effectiveModelDirectory
-                                                                  : "No folder connected"
-                                                            font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 12
-                                                            color: dashboardWindow.fgColor
-                                                            elide: Text.ElideMiddle
-                                                        }
-                                                    }
-                                                }
-
-                                                Rectangle {
-                                                    implicitWidth: connBtnTxt.contentWidth + 16
-                                                    height: 28
-                                                    color: connectMouse.containsMouse ? dashboardWindow.fgColor : "transparent"
-                                                    border.color: dashboardWindow.borderColor
-                                                    border.width: 1
-
-                                                    Text {
-                                                        id: connBtnTxt
-                                                        anchors.centerIn: parent
-                                                        text: "[ 📂 CONNECT FOLDER... ]"
-                                                        font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 11
-                                                        font.bold: true
-                                                        color: connectMouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
-                                                    }
-
-                                                    HudMouseArea {
-                                                        id: connectMouse
-                                                        anchors.fill: parent
-                                                        hoverEnabled: true
-                                                        cursorShape: Qt.PointingHandCursor
-                                                        onClicked: {
-                                                            if (typeof hostController !== "undefined") {
-                                                                const chosen = hostController.openModelFolderDialog();
-                                                                if (chosen && chosen.length > 0) {
-                                                                    dashboardWindow.showToast("CONNECTED MODEL FOLDER: " + chosen);
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-
-                                                Rectangle {
-                                                    objectName: "settingsRescanFolderAction"
-                                                    implicitWidth: refreshBtnTxt.contentWidth + 14
-                                                    height: 28
-                                                    color: refreshMouse.containsMouse ? dashboardWindow.fgColor : "transparent"
-                                                    border.color: dashboardWindow.borderColor
-                                                    border.width: 1
-
-                                                    Text {
-                                                        id: refreshBtnTxt
-                                                        anchors.centerIn: parent
-                                                        text: "[ ⟳ RESCAN FOLDER ]"
-                                                        font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 11
-                                                        font.bold: true
-                                                        color: refreshMouse.containsMouse ? dashboardWindow.bgColor : dashboardWindow.fgColor
-                                                    }
-
-                                                    HudMouseArea {
-                                                        id: refreshMouse
-                                                        anchors.fill: parent
-                                                        hoverEnabled: true
-                                                        cursorShape: Qt.PointingHandCursor
-                                                        onClicked: {
-                                                            if (typeof hostController !== "undefined") {
-                                                                hostController.refreshAvailableModels();
-                                                                dashboardWindow.showToast("RESCANNED CONNECTED FOLDER");
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            Text {
-                                                objectName: "settingsFolderStatusMessage"
-                                                Layout.fillWidth: true
-                                                Layout.minimumWidth: 0
-                                                wrapMode: Text.WordWrap
-                                                text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
-                                                      ? (hostController.isNativeGraniteInstalled
-                                                         ? "✓ Model weights verified on disk in this folder. Ready to load into " + (typeof hostController !== "undefined" ? hostController.acceleratorName : "GPU") + " GPU memory."
-                                                         : "⚠️ No model weights found in this folder. Download Granite below or click '[ 📂 CONNECT FOLDER... ]' to point to your existing models.")
-                                                      : "* Non-invasive isolation: Roclint only reads models inside this specific folder. Your hard drive and personal files are never searched."
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 11
-                                                color: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
-                                                       ? (hostController.isNativeGraniteInstalled ? "#7EE787" : "#FFB000")
-                                                       : dashboardWindow.commentColor
-                                            }
-                                        }
-
-                                        // Row 3: Detected Models
-                                        ColumnLayout {
-                                            Layout.fillWidth: true
-                                            Layout.minimumWidth: 0
-                                            spacing: 6
-
-                                            Text {
-                                                text: "DETECTED LOCAL MODELS IN FOLDER / RUNNER:"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 11
-                                                font.bold: true
-                                                color: dashboardWindow.mutedTextColor
-                                            }
-
-                                            Repeater {
-                                                model: (typeof hostController !== "undefined") ? hostController.availableModels : []
-
-                                                delegate: Rectangle {
-                                                    objectName: "detectedModelRow_" + index
-                                                    Layout.fillWidth: true
-                                                    Layout.minimumWidth: 0
-                                                    implicitHeight: Math.max(28, modelRowLayout.implicitHeight + 8)
-                                                    color: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name)
-                                                           ? dashboardWindow.dimColor
-                                                           : "transparent"
-                                                    border.color: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name)
-                                                                  ? dashboardWindow.fgColor
-                                                                  : dashboardWindow.borderColor
-                                                    border.width: 1
-
-                                                    RowLayout {
-                                                        id: modelRowLayout
-                                                        anchors.fill: parent
-                                                        anchors.leftMargin: 8
-                                                        anchors.rightMargin: 8
-                                                        spacing: 8
-
-                                                        Text {
-                                                            text: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name)
-                                                                  ? (hostController.useLiveWeights ? "[ ● LOADED IN GPU ]" : "[ ★ SELECTED (STANDBY) ]")
-                                                                  : (modelData.requiresImport ? "[ IMPORT ]" : "[ ○ SELECT ]")
-                                                            font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 11
-                                                            font.bold: true
-                                                            color: (typeof hostController !== "undefined" && hostController.activeModel === modelData.name)
-                                                                   ? (hostController.useLiveWeights ? "#7EE787" : "#38BDF8")
-                                                                   : dashboardWindow.mutedTextColor
-                                                        }
-
-                                                        Text {
-                                                            text: modelData.name
-                                                            font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 12
-                                                            font.bold: true
-                                                            color: dashboardWindow.fgColor
-                                                        }
-
-                                                        Text {
-                                                            objectName: "detectedModelDetails_" + index
-                                                            Layout.fillWidth: true
-                                                            Layout.minimumWidth: 0
-                                                            text: "(" + modelData.size + ", " + modelData.source + ", " + modelData.quantization + ") · [✓ Verified on disk]"
-                                                            font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 11
-                                                            color: dashboardWindow.commentColor
-                                                            elide: Text.ElideRight
-                                                        }
-
-                                                        Item { Layout.fillWidth: true }
-                                                    }
-
-                                                    HudMouseArea {
-                                                        anchors.fill: parent
-                                                        cursorShape: Qt.PointingHandCursor
-                                                        onClicked: {
-                                                            if (typeof hostController !== "undefined") {
-                                                                if (modelData.requiresImport) hostController.importLocalModel(modelData.path);
-                                                                else hostController.setActiveModel(modelData.name);
-                                                                dashboardWindow.showToast(modelData.requiresImport ? "IMPORTING LOCAL GGUF..." : "ACTIVE MODEL: " + modelData.name);
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            // Fallback banner when 0 models
-                                            Rectangle {
-                                                visible: (typeof hostController !== "undefined" && hostController.availableModels.length === 0)
-                                                Layout.fillWidth: true
-                                                Layout.minimumWidth: 0
-                                                height: 32
-                                                color: dashboardWindow.dimColor
-                                                border.color: dashboardWindow.borderColor
-                                                border.width: 1
-
-                                                RowLayout {
-                                                    anchors.fill: parent
-                                                    anchors.leftMargin: 10
-                                                    anchors.rightMargin: 10
-
-                                                    Text {
-                                                        text: "NO MODELS FOUND. Connect your model directory or download a model below."
-                                                        font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 11
-                                                        color: dashboardWindow.mutedTextColor
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        // Row 4: Download / Pull Models & Live Test
-                                        ColumnLayout {
-                                            Layout.fillWidth: true
-                                            Layout.minimumWidth: 0
-                                            spacing: 6
-
-                                            Text {
-                                                text: "MODEL DOWNLOAD & REPOSITORY ACTIONS:"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 11
-                                                font.bold: true
-                                                color: dashboardWindow.mutedTextColor
-                                            }
-
-                                            // Active download progress
-                                            Rectangle {
-                                                visible: typeof hostController !== "undefined" && hostController.isDownloadingModel
-                                                Layout.fillWidth: true
-                                                Layout.minimumWidth: 0
-                                                height: 44
-                                                color: dashboardWindow.dimColor
-                                                border.color: "#FFB000"
-                                                border.width: 1
-
-                                                ColumnLayout {
-                                                    anchors.fill: parent
-                                                    anchors.margins: 6
-                                                    spacing: 4
-
-                                                    RowLayout {
-                                                        Text {
-                                                            text: "DOWNLOADING MODEL: " + (typeof hostController !== "undefined" ? hostController.downloadProgress : 0) + "%"
-                                                            font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 11
-                                                            font.bold: true
-                                                            color: "#FFB000"
-                                                        }
-                                                        Item { Layout.fillWidth: true }
-                                                        Text {
-                                                            text: "[ CANCEL ]"
-                                                            font.family: dashboardWindow.monoFont
-                                                            font.pixelSize: 11
-                                                            font.bold: true
-                                                            color: dashboardWindow.fgColor
-                                                            HudMouseArea {
-                                                                anchors.fill: parent
-                                                                cursorShape: Qt.PointingHandCursor
-                                                                onClicked: {
-                                                                    if (typeof hostController !== "undefined") {
-                                                                        hostController.cancelModelDownload();
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-
-                                                    Text {
-                                                        text: typeof hostController !== "undefined" ? hostController.downloadStatusMessage : ""
-                                                        font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 11
-                                                        color: dashboardWindow.commentColor
-                                                        elide: Text.ElideRight
-                                                    }
-                                                }
-                                            }
-
-                                            // Download Action Buttons
-                                            Flow {
-                                                id: modelDownloadActionsFlow
-                                                visible: typeof hostController === "undefined" || !hostController.isDownloadingModel
-                                                Layout.fillWidth: true
-                                                Layout.minimumWidth: 0
-                                                width: parent ? parent.width : undefined
-                                                spacing: 8
-
-                                                Rectangle {
-                                                    objectName: "settingsDownloadQ4Action"
-                                                    implicitWidth: dl0Txt.contentWidth + 14
-                                                    height: 24
-                                                    color: dl0Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
-                                                    border.color: (typeof hostController !== "undefined" && hostController.isNativeGraniteQ4Installed) ? "#7EE787" : dashboardWindow.borderColor
-                                                    border.width: 1
-
-                                                    Text {
-                                                        id: dl0Txt
-                                                        anchors.centerIn: parent
-                                                        text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
-                                                              ? (hostController.isNativeGraniteQ4Installed
-                                                                 ? "[ ✓ Q4_K_M INSTALLED (2.09 GiB) · RE-DOWNLOAD ]"
-                                                                 : "[ ⬇ DOWNLOAD GRANITE 4.2 Q4_K_M (2.09 GiB) · FASTEST ]")
-                                                              : "[ ⬇ PULL GRANITE 4.2 3B Q4 ]"
-                                                        font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 11
-                                                        font.bold: true
-                                                        color: dl0Mouse.containsMouse ? dashboardWindow.bgColor : ((typeof hostController !== "undefined" && hostController.isNativeGraniteQ4Installed) ? "#7EE787" : dashboardWindow.fgColor)
-                                                    }
-
-                                                    HudMouseArea {
-                                                        id: dl0Mouse
-                                                        anchors.fill: parent
-                                                        hoverEnabled: true
-                                                        cursorShape: Qt.PointingHandCursor
-                                                        onClicked: {
-                                                             if (typeof hostController !== "undefined") {
-                                                                 hostController.downloadModel(hostController.nativeGraniteSelected ? "native-granite:Q4_K_M" : "granite4.2:3b-q4_k_m");
-                                                                 dashboardWindow.showToast("DOWNLOADING GRANITE 4.2 3B (Q4_K_M)...");
-                                                             }
-                                                        }
-                                                    }
-                                                }
-
-                                                Rectangle {
-                                                    objectName: "settingsDownloadQ8Action"
-                                                    implicitWidth: dl1Txt.contentWidth + 14
-                                                    height: 24
-                                                    color: dl1Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
-                                                    border.color: (typeof hostController !== "undefined" && hostController.isNativeGraniteQ8Installed) ? "#7EE787" : dashboardWindow.borderColor
-                                                    border.width: 1
-
-                                                    Text {
-                                                        id: dl1Txt
-                                                        anchors.centerIn: parent
-                                                        text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
-                                                              ? (hostController.isNativeGraniteQ8Installed
-                                                                 ? "[ ✓ Q8_0 INSTALLED (3.63 GiB) · RE-DOWNLOAD ]"
-                                                                 : "[ ⬇ DOWNLOAD GRANITE 4.2 Q8_0 (3.63 GiB) ]")
-                                                              : "[ ⬇ PULL GRANITE 4.2 3B (3.63 GiB) ]"
-                                                        font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 11
-                                                        font.bold: true
-                                                        color: dl1Mouse.containsMouse ? dashboardWindow.bgColor : ((typeof hostController !== "undefined" && hostController.isNativeGraniteQ8Installed) ? "#7EE787" : dashboardWindow.fgColor)
-                                                    }
-
-                                                    HudMouseArea {
-                                                        id: dl1Mouse
-                                                        anchors.fill: parent
-                                                        hoverEnabled: true
-                                                        cursorShape: Qt.PointingHandCursor
-                                                        onClicked: {
-                                                             if (typeof hostController !== "undefined") {
-                                                                 hostController.downloadModel(hostController.nativeGraniteSelected ? "native-granite:Q8_0" : "granite4.2:3b-q8_0");
-                                                                 dashboardWindow.showToast("DOWNLOADING GRANITE 4.2 3B (Q8_0)...");
-                                                             }
-                                                        }
-                                                    }
-                                                }
-
-                                                Rectangle {
-                                                    objectName: "settingsDownloadQ5Action"
-                                                    implicitWidth: dl2Txt.contentWidth + 14
-                                                    height: 24
-                                                    color: dl2Mouse.containsMouse ? dashboardWindow.fgColor : "transparent"
-                                                    border.color: (typeof hostController !== "undefined" && hostController.isNativeGraniteQ5Installed) ? "#7EE787" : dashboardWindow.borderColor
-                                                    border.width: 1
-
-                                                    Text {
-                                                        id: dl2Txt
-                                                        anchors.centerIn: parent
-                                                        text: (typeof hostController !== "undefined" && hostController.nativeGraniteSelected)
-                                                              ? (hostController.isNativeGraniteQ5Installed
-                                                                 ? "[ ✓ Q5_K_M INSTALLED (2.43 GiB) · RE-DOWNLOAD ]"
-                                                                 : "[ ⬇ DOWNLOAD GRANITE 4.2 Q5_K_M (2.43 GiB) ]")
-                                                              : "[ ⬇ PULL GRANITE 3.1 2B (1.5 GB) ]"
-                                                        font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 11
-                                                        font.bold: true
-                                                        color: dl2Mouse.containsMouse ? dashboardWindow.bgColor : ((typeof hostController !== "undefined" && hostController.isNativeGraniteQ5Installed) ? "#7EE787" : dashboardWindow.fgColor)
-                                                    }
-
-                                                    HudMouseArea {
-                                                        id: dl2Mouse
-                                                        anchors.fill: parent
-                                                        hoverEnabled: true
-                                                        cursorShape: Qt.PointingHandCursor
-                                                        onClicked: {
-                                                             if (typeof hostController !== "undefined") {
-                                                                 hostController.downloadModel(hostController.nativeGraniteSelected ? "native-granite:Q5_K_M" : "granite3.1-dense:2b");
-                                                                 dashboardWindow.showToast(hostController.nativeGraniteSelected ? "DOWNLOADING PINNED GRANITE 4.2 (Q5_K_M)..." : "DOWNLOADING GRANITE 3.1 2B...");
-                                                             }
-                                                        }
-                                                    }
-                                                }
-
-                                                Rectangle {
-                                                    objectName: "settingsTestRuntimeAction"
-                                                    implicitWidth: testInfTxt.contentWidth + 14
-                                                    height: 24
-                                                    color: testInfMouse.containsMouse ? dashboardWindow.fgColor : "transparent"
-                                                    border.color: "#7EE787"
-                                                    border.width: 1
-
-                                                    Text {
-                                                        id: testInfTxt
-                                                        anchors.centerIn: parent
-                                                        text: (typeof hostController !== "undefined" && hostController.isInferring)
-                                                              ? "[ WORKING... ]"
-                                                              : (typeof hostController !== "undefined" && hostController.useLiveWeights)
-                                                                ? "[ ● MODEL READY (GPU) ]"
-                                                                : "[ ⟳ TEST MODEL RUNTIME ]"
-                                                        font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 11
-                                                        font.bold: true
-                                                        color: testInfMouse.containsMouse ? dashboardWindow.bgColor : "#7EE787"
-                                                    }
-
-                                                    HudMouseArea {
-                                                        id: testInfMouse
-                                                        anchors.fill: parent
-                                                        hoverEnabled: true
-                                                        cursorShape: Qt.PointingHandCursor
-                                                        onClicked: {
-                                                             if (typeof hostController !== "undefined") {
-                                                                 dashboardWindow.showToast("CHECKING AND WARMING THE SELECTED MODEL...");
-                                                                 hostController.warmSelectedModel();
-                                                             }
-                                                        }
-                                                    }
-                                                }
-                                            }
-
-                                            Text {
-                                                objectName: "settingsStorageDisclaimer"
-                                                Layout.fillWidth: true
-                                                Layout.minimumWidth: 0
-                                                text: "Storage: Models are stored in your configured folder (S1 in /s1, S2 in /s2). Click '[ 📂 CONNECT FOLDER... ]' above to use existing models from any directory."
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 11
-                                                color: dashboardWindow.commentColor
-                                                wrapMode: Text.WordWrap
-                                            }
-                                        }
-                                    }
                                 }
                             }
 
@@ -1324,10 +783,10 @@ Window {
                                 spacing: 14
 
                                 Text {
-                                    text: "/* 02: EDITOR INTEGRATION & THEME */"
-                                    font.family: dashboardWindow.monoFont
-                                    font.pixelSize: 11
-                                    font.bold: true
+                                    text: qsTr("Editor Integration & Theme")
+                                    font.family: dashboardWindow.sansFont
+                                    font.pixelSize: 18
+                                    font.weight: Font.DemiBold
                                     color: dashboardWindow.fgColor
                                 }
 
@@ -1340,12 +799,13 @@ Window {
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
                                     border.width: 1
+                                    radius: 14
 
                                     ColumnLayout {
                                         id: injectionLayout
                                         anchors.fill: parent
                                         anchors.margins: 14
-                                        spacing: 10
+                                        spacing: 12
 
                                         RowLayout {
                                             Layout.fillWidth: true
@@ -1354,10 +814,10 @@ Window {
                                                 objectName: "editorInjectionHeading"
                                                 Layout.fillWidth: true
                                                 Layout.minimumWidth: 0
-                                                text: "DIRECT IN-PLACE EDITOR INJECTION (ACCESSIBILITY API)"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 10
-                                                font.bold: true
+                                                text: qsTr("Direct In-Place Editor Injection (Accessibility API)")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 13
+                                                font.weight: Font.DemiBold
                                                 color: dashboardWindow.fgColor
                                                 wrapMode: Text.WordWrap
                                             }
@@ -1365,8 +825,8 @@ Window {
                                                 objectName: "ambientCaptureStatus"
                                                 Layout.alignment: Qt.AlignTop
                                                 text: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? "[STATUS: ENABLED]" : "[STATUS: DISABLED]"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 12
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 11
                                                 font.bold: true
                                                 color: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? "#7EE787" : dashboardWindow.mutedTextColor
                                             }
@@ -1377,20 +837,21 @@ Window {
                                             Layout.minimumWidth: 0
                                             spacing: 10
                                             Rectangle {
-                                                implicitWidth: injEnTxt.contentWidth + 14
-                                                height: 24
-                                                color: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? dashboardWindow.fgColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
+                                                implicitWidth: injEnTxt.contentWidth + 24
+                                                height: 32
+                                                radius: 8
+                                                color: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? theme.accent : theme.surface
+                                                border.color: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? theme.accent : theme.border
                                                 border.width: 1
 
                                                 Text {
                                                     id: injEnTxt
                                                     anchors.centerIn: parent
-                                                    text: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? "[ ● ENABLED (Captured Field) ]" : "[ ○ ENABLED (Captured Field) ]"
-                                                    font.family: dashboardWindow.monoFont
+                                                    text: qsTr("Enabled (Captured Field)")
+                                                    font.family: dashboardWindow.sansFont
                                                     font.pixelSize: 12
-                                                    font.bold: (typeof hostController !== "undefined" && hostController.ambientModeEnabled)
-                                                    color: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                    font.weight: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? Font.DemiBold : Font.Medium
+                                                    color: (typeof hostController !== "undefined" && hostController.ambientModeEnabled) ? "#FFFFFF" : dashboardWindow.fgColor
                                                 }
                                                 HudMouseArea {
                                                     anchors.fill: parent
@@ -1406,20 +867,21 @@ Window {
                                             }
 
                                             Rectangle {
-                                                implicitWidth: injDisTxt.contentWidth + 14
-                                                height: 24
-                                                color: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled) ? dashboardWindow.fgColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
+                                                implicitWidth: injDisTxt.contentWidth + 24
+                                                height: 32
+                                                radius: 8
+                                                color: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled) ? theme.accent : theme.surface
+                                                border.color: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled) ? theme.accent : theme.border
                                                 border.width: 1
 
                                                 Text {
                                                     id: injDisTxt
                                                     anchors.centerIn: parent
-                                                    text: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled) ? "[ ● DISABLED (Clipboard Fallback) ]" : "[ ○ DISABLED (Clipboard Fallback) ]"
-                                                    font.family: dashboardWindow.monoFont
+                                                    text: qsTr("Disabled (Clipboard Fallback)")
+                                                    font.family: dashboardWindow.sansFont
                                                     font.pixelSize: 12
-                                                    font.bold: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled)
-                                                    color: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled) ? dashboardWindow.bgColor : dashboardWindow.fgColor
+                                                    font.weight: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled) ? Font.DemiBold : Font.Medium
+                                                    color: (typeof hostController !== "undefined" && !hostController.ambientModeEnabled) ? "#FFFFFF" : dashboardWindow.fgColor
                                                 }
                                                 HudMouseArea {
                                                     anchors.fill: parent
@@ -1440,11 +902,11 @@ Window {
                                             Layout.fillWidth: true
                                             Layout.minimumWidth: 0
                                             text: (typeof hostController !== "undefined" && hostController.accessibilityTrusted)
-                                                ? "Live capture watches the focused editable field. Insert replaces that captured draft after approval."
-                                                : "Accessibility is unavailable. Copy the approved prompt, then paste it into your editor."
-                                            font.family: dashboardWindow.monoFont
+                                                ? qsTr("Live capture watches the focused editable field. Insert replaces that captured draft after approval.")
+                                                : qsTr("Accessibility is unavailable. Copy the approved prompt, then paste it into your editor.")
+                                            font.family: dashboardWindow.sansFont
                                             font.pixelSize: 12
-                                            color: dashboardWindow.commentColor
+                                            color: dashboardWindow.mutedTextColor
                                             wrapMode: Text.WordWrap
                                         }
                                     }
@@ -1459,18 +921,19 @@ Window {
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
                                     border.width: 1
+                                    radius: 14
 
                                     ColumnLayout {
                                         id: themeLayout
                                         anchors.fill: parent
                                         anchors.margins: 14
-                                        spacing: 10
+                                        spacing: 12
 
                                         Text {
-                                            text: "COLOR PALETTE THEME"
-                                            font.family: dashboardWindow.monoFont
-                                            font.pixelSize: 10
-                                            font.bold: true
+                                            text: qsTr("Color Palette Theme")
+                                            font.family: dashboardWindow.sansFont
+                                            font.pixelSize: 13
+                                            font.weight: Font.DemiBold
                                             color: dashboardWindow.fgColor
                                         }
 
@@ -1480,30 +943,47 @@ Window {
                                             spacing: 10
                                             Repeater {
                                                 model: [
-                                                    { id: "dark", label: "[ OBSIDIAN SLATE ]", sample: "#050505" },
-                                                    { id: "acid", label: "[ ACID PHOSPHOR ]", sample: "#070D08" },
-                                                    { id: "amber", label: "[ AMBER GLOW CRT ]", sample: "#0F0902" },
-                                                    { id: "light", label: "[ CLEAN LIGHT ]", sample: "#F4F4F4" }
+                                                    { id: "dark", label: qsTr("Obsidian Slate"), dotColor: "#345CFF" },
+                                                    { id: "acid", label: qsTr("Acid Phosphor"), dotColor: "#33B78D" },
+                                                    { id: "amber", label: qsTr("Amber Glow CRT"), dotColor: "#D79124" },
+                                                    { id: "light", label: qsTr("Clean Light"), dotColor: "#94A3B8" }
                                                 ]
                                                 delegate: Rectangle {
+                                                    id: thmBtn
                                                     objectName: "settingsThemeChoice_" + modelData.id
-                                                    implicitWidth: thmTxt.contentWidth + 20
-                                                    height: 34
-                                                    color: modelData.sample
-                                                    border.color: dashboardWindow.currentTheme === modelData.id ? dashboardWindow.fgColor : dashboardWindow.borderColor
-                                                    border.width: dashboardWindow.currentTheme === modelData.id ? 2 : 1
+                                                    implicitWidth: thmRow.implicitWidth + 24
+                                                    height: 32
+                                                    radius: 8
+                                                    color: dashboardWindow.currentTheme === modelData.id ? theme.accent : (thmMouse.containsMouse ? theme.hover : theme.surface)
+                                                    border.color: dashboardWindow.currentTheme === modelData.id ? theme.accent : theme.border
+                                                    border.width: 1
 
-                                                    Text {
-                                                        id: thmTxt
+                                                    RowLayout {
+                                                        id: thmRow
                                                         anchors.centerIn: parent
-                                                        text: modelData.label
-                                                        font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 12
-                                                        font.bold: true
-                                                        color: modelData.id === "light" ? "#050505" : "#C9D1D9"
+                                                        spacing: 8
+
+                                                        Rectangle {
+                                                            width: 8
+                                                            height: 8
+                                                            radius: 4
+                                                            color: modelData.dotColor
+                                                        }
+
+                                                        Text {
+                                                            id: thmTxt
+                                                            text: modelData.label
+                                                            font.family: dashboardWindow.sansFont
+                                                            font.pixelSize: 12
+                                                            font.weight: dashboardWindow.currentTheme === modelData.id ? Font.DemiBold : Font.Medium
+                                                            color: dashboardWindow.currentTheme === modelData.id ? "#FFFFFF" : dashboardWindow.fgColor
+                                                        }
                                                     }
+
                                                     HudMouseArea {
+                                                        id: thmMouse
                                                         anchors.fill: parent
+                                                        hoverEnabled: true
                                                         cursorShape: Qt.PointingHandCursor
                                                         onClicked: {
                                                             dashboardWindow.currentTheme = modelData.id;
@@ -1533,46 +1013,49 @@ Window {
                                 spacing: 14
 
                                 Text {
-                                    text: "/* 03: SQLITE PROMPT REVISION STORAGE & LINEAGE */"
-                                    font.family: dashboardWindow.monoFont
-                                    font.pixelSize: 11
-                                    font.bold: true
+                                    text: qsTr("SQLite History & Prompt Lineage")
+                                    font.family: dashboardWindow.sansFont
+                                    font.pixelSize: 18
+                                    font.weight: Font.DemiBold
                                     color: dashboardWindow.fgColor
                                 }
 
                                 Rectangle {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    Layout.preferredHeight: 140
+                                    implicitHeight: dbStatCol.implicitHeight + 28
                                     color: dashboardWindow.inputBgColor
                                     border.color: dashboardWindow.borderColor
                                     border.width: 1
+                                    radius: 14
 
                                     ColumnLayout {
+                                        id: dbStatCol
                                         anchors.fill: parent
                                         anchors.margins: 14
-                                        spacing: 8
+                                        spacing: 10
 
                                         Text {
-                                            text: "SQLITE DATABASE STATUS (WAL MODE ACID STORAGE)"
-                                            font.family: dashboardWindow.monoFont
-                                            font.pixelSize: 10
-                                            font.bold: true
+                                            text: qsTr("SQLite Database Status · WAL Mode ACID Storage")
+                                            font.family: dashboardWindow.sansFont
+                                            font.pixelSize: 13
+                                            font.weight: Font.DemiBold
                                             color: dashboardWindow.fgColor
                                         }
 
                                         RowLayout {
                                             Text {
-                                                text: "LOCATION:"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 12
+                                                text: qsTr("Location:")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 11
+                                                font.bold: true
                                                 color: dashboardWindow.mutedTextColor
                                                 Layout.preferredWidth: 100
                                             }
                                             Text {
                                                 text: (typeof hostController !== "undefined" && hostController.databasePath.length > 0) ? hostController.databasePath : "Storage unavailable"
                                                 font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 12
+                                                font.pixelSize: 11
                                                 color: dashboardWindow.fgColor
                                                 elide: Text.ElideMiddle
                                                 Layout.fillWidth: true
@@ -1582,36 +1065,39 @@ Window {
 
                                         RowLayout {
                                             Text {
-                                                text: "STORAGE STATS:"
-                                                font.family: dashboardWindow.monoFont
-                                                font.pixelSize: 12
+                                                text: qsTr("Storage Stats:")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 11
+                                                font.bold: true
                                                 color: dashboardWindow.mutedTextColor
                                                 Layout.preferredWidth: 100
                                             }
                                             Text {
                                                 text: (typeof hostController !== "undefined" && hostController.databaseStats.length > 0) ? hostController.databaseStats : "Storage unavailable"
-                                                font.family: dashboardWindow.monoFont
+                                                font.family: dashboardWindow.sansFont
                                                 font.pixelSize: 12
-                                                font.bold: true
-                                                color: "#7EE787"
+                                                font.weight: Font.DemiBold
+                                                color: dashboardWindow.fgColor
                                             }
                                         }
 
                                         RowLayout {
                                             spacing: 10
                                             Rectangle {
-                                                implicitWidth: vacTxt.contentWidth + 14
-                                                height: 24
-                                                color: vacMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
+                                                implicitWidth: vacTxt.contentWidth + 24
+                                                height: 32
+                                                radius: 8
+                                                color: vacMouse.containsMouse ? theme.hover : theme.surface
+                                                border.color: theme.border
                                                 border.width: 1
 
                                                 Text {
                                                     id: vacTxt
                                                     anchors.centerIn: parent
-                                                    text: "[ REFRESH STATS ]"
-                                                    font.family: dashboardWindow.monoFont
+                                                    text: qsTr("⟳ Refresh Stats")
+                                                    font.family: dashboardWindow.sansFont
                                                     font.pixelSize: 12
+                                                    font.weight: Font.Medium
                                                     color: dashboardWindow.fgColor
                                                 }
                                                 HudMouseArea {
@@ -1629,8 +1115,9 @@ Window {
                                             }
 
                                             Rectangle {
-                                                implicitWidth: delHistTxt.contentWidth + 14
-                                                height: 24
+                                                implicitWidth: delHistTxt.contentWidth + 24
+                                                height: 32
+                                                radius: 8
                                                 color: delHistMouse.containsMouse ? "#8B1E1E" : "transparent"
                                                 border.color: "#8B1E1E"
                                                 border.width: 1
@@ -1638,9 +1125,10 @@ Window {
                                                 Text {
                                                     id: delHistTxt
                                                     anchors.centerIn: parent
-                                                    text: "[ PURGE HISTORY ]"
-                                                    font.family: dashboardWindow.monoFont
+                                                    text: qsTr("Purge History")
+                                                    font.family: dashboardWindow.sansFont
                                                     font.pixelSize: 12
+                                                    font.weight: Font.Medium
                                                     color: "#EF4444"
                                                 }
                                                 HudMouseArea {
@@ -1664,10 +1152,10 @@ Window {
                                 }
 
                                 Text {
-                                    text: "/* RECENT PROMPT SESSIONS & REVISION LINEAGE */"
-                                    font.family: dashboardWindow.monoFont
-                                    font.pixelSize: 11
-                                    font.bold: true
+                                    text: qsTr("Recent Prompt Sessions & Revision Lineage")
+                                    font.family: dashboardWindow.sansFont
+                                    font.pixelSize: 13
+                                    font.weight: Font.DemiBold
                                     color: dashboardWindow.fgColor
                                 }
 
@@ -1689,14 +1177,15 @@ Window {
 
                                     delegate: Rectangle {
                                         width: sessionListView.width
-                                        height: 60
-                                        color: dashboardWindow.inputBgColor
-                                        border.color: dashboardWindow.borderColor
+                                        height: 64
+                                        radius: 10
+                                        color: theme.surface
+                                        border.color: theme.border
                                         border.width: 1
 
                                         RowLayout {
                                             anchors.fill: parent
-                                            anchors.margins: 10
+                                            anchors.margins: 12
                                             spacing: 12
 
                                             ColumnLayout {
@@ -1715,15 +1204,15 @@ Window {
                                                     }
                                                     Text {
                                                         text: "• " + modelData.formattedTime
-                                                        font.family: dashboardWindow.monoFont
-                                                        font.pixelSize: 12
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
                                                         color: dashboardWindow.mutedTextColor
                                                     }
                                                 }
 
                                                 Text {
                                                     text: (typeof modelData.latestPrompt !== "undefined" && modelData.latestPrompt.length > 0) ? modelData.latestPrompt : "(empty prompt)"
-                                                    font.family: dashboardWindow.monoFont
+                                                    font.family: dashboardWindow.sansFont
                                                     font.pixelSize: 12
                                                     color: dashboardWindow.fgColor
                                                     elide: Text.ElideRight
@@ -1733,19 +1222,21 @@ Window {
                                             }
 
                                             Rectangle {
-                                                implicitWidth: restTxt.contentWidth + 12
-                                                height: 22
-                                                color: restMouse.containsMouse ? dashboardWindow.dimColor : "transparent"
-                                                border.color: dashboardWindow.borderColor
+                                                implicitWidth: restTxt.contentWidth + 18
+                                                height: 26
+                                                radius: 6
+                                                color: restMouse.containsMouse ? theme.hover : theme.surface
+                                                border.color: "#227B62"
                                                 border.width: 1
 
                                                 Text {
                                                     id: restTxt
                                                     anchors.centerIn: parent
-                                                    text: "[ RESTORE ]"
-                                                    font.family: dashboardWindow.monoFont
+                                                    text: qsTr("Restore")
+                                                    font.family: dashboardWindow.sansFont
                                                     font.pixelSize: 11
-                                                    color: "#7EE787"
+                                                    font.weight: Font.Medium
+                                                    color: dashboardWindow.fgColor
                                                 }
                                                 HudMouseArea {
                                                     id: restMouse
@@ -1763,18 +1254,20 @@ Window {
                                             }
 
                                             Rectangle {
-                                                implicitWidth: delItemTxt.contentWidth + 12
-                                                height: 22
-                                                color: delItemMouse.containsMouse ? "#8B1E1E" : "transparent"
-                                                border.color: dashboardWindow.borderColor
+                                                implicitWidth: delItemTxt.contentWidth + 18
+                                                height: 26
+                                                radius: 6
+                                                color: delItemMouse.containsMouse ? "#8B1E1E" : theme.surface
+                                                border.color: "#8B1E1E"
                                                 border.width: 1
 
                                                 Text {
                                                     id: delItemTxt
                                                     anchors.centerIn: parent
-                                                    text: "[ DELETE ]"
-                                                    font.family: dashboardWindow.monoFont
+                                                    text: qsTr("Delete")
+                                                    font.family: dashboardWindow.sansFont
                                                     font.pixelSize: 11
+                                                    font.weight: Font.Medium
                                                     color: "#EF4444"
                                                 }
                                                 HudMouseArea {
@@ -1794,6 +1287,434 @@ Window {
                                     }
                                 }
                             }
+
+                            // =================================================
+                            // TAB 3: PROMPT ACTIONS & REWRITE GUIDE
+                            // =================================================
+                            ColumnLayout {
+                                visible: dashboardWindow.currentTab === 3
+                                width: rightScrollView.availableWidth
+                                spacing: 14
+
+                                Text {
+                                    text: qsTr("Prompt Actions, Rewrite Profiles & Workflow Guide")
+                                    font.family: dashboardWindow.sansFont
+                                    font.pixelSize: 18
+                                    font.weight: Font.DemiBold
+                                    color: dashboardWindow.fgColor
+                                }
+
+                                // Card 1: Prompt Actions Reference
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    implicitHeight: guideCol.implicitHeight + 28
+                                    color: dashboardWindow.inputBgColor
+                                    border.color: dashboardWindow.borderColor
+                                    border.width: 1
+                                    radius: 14
+
+                                    ColumnLayout {
+                                        id: guideCol
+                                        anchors.fill: parent
+                                        anchors.margins: 14
+                                        spacing: 14
+
+                                        RowLayout {
+                                            Text {
+                                                text: qsTr("Prompt Actions Reference · Clarify vs. Rewrite vs. Edit")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 13
+                                                font.weight: Font.DemiBold
+                                                color: dashboardWindow.fgColor
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                            Rectangle {
+                                                implicitWidth: coreChipTxt.contentWidth + 14
+                                                height: 20
+                                                radius: 10
+                                                color: theme.surface
+                                                border.color: theme.border
+                                                border.width: 1
+                                                Text {
+                                                    id: coreChipTxt
+                                                    anchors.centerIn: parent
+                                                    text: qsTr("Core Workflow")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 10
+                                                    font.weight: Font.Medium
+                                                    color: dashboardWindow.mutedTextColor
+                                                }
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            height: 1
+                                            color: dashboardWindow.borderColor
+                                            opacity: 0.5
+                                        }
+
+                                        // Clarify block
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+                                            RowLayout {
+                                                spacing: 8
+                                                Rectangle {
+                                                    implicitWidth: clrTagTxt.contentWidth + 14
+                                                    height: 22
+                                                    radius: 6
+                                                    color: theme.surface
+                                                    border.color: theme.border
+                                                    border.width: 1
+                                                    Text {
+                                                        id: clrTagTxt
+                                                        anchors.centerIn: parent
+                                                        text: qsTr("Clarify")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.weight: Font.DemiBold
+                                                        color: dashboardWindow.fgColor
+                                                    }
+                                                }
+                                                Text {
+                                                    text: qsTr("Discovery & Progressive Interview")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 12
+                                                    font.weight: Font.DemiBold
+                                                    color: dashboardWindow.fgColor
+                                                }
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: qsTr("Diagnose before treating. The local reasoning model (currently Granite) scans your draft for missing context, ambiguities, or contradictory requirements. It asks 1–2 focused questions with concrete trade-off options before any rewrite occurs, ensuring your intent is pinned down without guessing.")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 12
+                                                color: dashboardWindow.mutedTextColor
+                                                wrapMode: Text.WordWrap
+                                            }
+                                            Text {
+                                                text: qsTr("→ Use when: Your idea is raw, incomplete, or contains conflicting requirements.")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 11
+                                                color: dashboardWindow.mutedTextColor
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            height: 1
+                                            color: dashboardWindow.borderColor
+                                            opacity: 0.5
+                                        }
+
+                                        // Rewrite block
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+                                            RowLayout {
+                                                spacing: 8
+                                                Rectangle {
+                                                    implicitWidth: rwTagTxt.contentWidth + 14
+                                                    height: 22
+                                                    radius: 6
+                                                    color: theme.accent
+                                                    border.color: theme.accent
+                                                    border.width: 1
+                                                    Text {
+                                                        id: rwTagTxt
+                                                        anchors.centerIn: parent
+                                                        text: qsTr("Rewrite prompt")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.bold: true
+                                                        color: "#FFFFFF"
+                                                    }
+                                                }
+                                                Text {
+                                                    text: qsTr("Contract Synthesis & Hardening")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 12
+                                                    font.weight: Font.DemiBold
+                                                    color: dashboardWindow.fgColor
+                                                }
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: qsTr("Direct translation into a production prompt contract. Restructures your draft for downstream AI (Anthropic, OpenAI, Google). Strictly preserves negative prohibitions ('do not touch X'), code identifiers, and quoted data without altering your core task. Validated by an independent adversarial Goldfish audit pass.")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 12
+                                                color: dashboardWindow.mutedTextColor
+                                                wrapMode: Text.WordWrap
+                                            }
+                                            Text {
+                                                text: qsTr("→ Use when: Your intent is clear and you want clean, structured prompt engineering.")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 11
+                                                color: dashboardWindow.mutedTextColor
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            height: 1
+                                            color: dashboardWindow.borderColor
+                                            opacity: 0.5
+                                        }
+
+                                        // Edit draft block
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+                                            RowLayout {
+                                                spacing: 8
+                                                Rectangle {
+                                                    implicitWidth: edTagTxt.contentWidth + 14
+                                                    height: 22
+                                                    radius: 6
+                                                    color: theme.surface
+                                                    border.color: theme.border
+                                                    border.width: 1
+                                                    Text {
+                                                        id: edTagTxt
+                                                        anchors.centerIn: parent
+                                                        text: qsTr("Edit draft")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.weight: Font.DemiBold
+                                                        color: dashboardWindow.fgColor
+                                                    }
+                                                }
+                                                Text {
+                                                    text: qsTr("Manual Control")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 12
+                                                    font.weight: Font.DemiBold
+                                                    color: dashboardWindow.fgColor
+                                                }
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: qsTr("In-place editing. Pauses model inference and lets you modify the raw prompt text directly inside Roclint without running any local neural passes.")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 12
+                                                color: dashboardWindow.mutedTextColor
+                                                wrapMode: Text.WordWrap
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            height: 1
+                                            color: dashboardWindow.borderColor
+                                            opacity: 0.5
+                                        }
+
+                                        // Workspace options block
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+                                            RowLayout {
+                                                spacing: 8
+                                                Rectangle {
+                                                    implicitWidth: wsTagTxt.contentWidth + 14
+                                                    height: 22
+                                                    radius: 6
+                                                    color: theme.surface
+                                                    border.color: theme.border
+                                                    border.width: 1
+                                                    Text {
+                                                        id: wsTagTxt
+                                                        anchors.centerIn: parent
+                                                        text: qsTr("Workspace options")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.weight: Font.DemiBold
+                                                        color: dashboardWindow.fgColor
+                                                    }
+                                                }
+                                                Text {
+                                                    text: qsTr("Local Code Grounding")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 12
+                                                    font.weight: Font.DemiBold
+                                                    color: dashboardWindow.fgColor
+                                                }
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: qsTr("Repository symbol awareness. Extracts matching class and function declarations from your active workspace so rewritten prompts don't guess names. (100% on-device; zero code leaves your machine).")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 12
+                                                color: dashboardWindow.mutedTextColor
+                                                wrapMode: Text.WordWrap
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Card 2: Rewrite Profiles Selector
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    implicitHeight: profCardCol.implicitHeight + 28
+                                    color: dashboardWindow.inputBgColor
+                                    border.color: dashboardWindow.borderColor
+                                    border.width: 1
+                                    radius: 14
+
+                                    ColumnLayout {
+                                        id: profCardCol
+                                        anchors.fill: parent
+                                        anchors.margins: 14
+                                        spacing: 12
+
+                                        RowLayout {
+                                            Text {
+                                                text: qsTr("Rewrite Profiles · Choose Target Prompt Format")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 13
+                                                font.weight: Font.DemiBold
+                                                color: dashboardWindow.fgColor
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                            Rectangle {
+                                                implicitWidth: activeProfRow2.implicitWidth + 16
+                                                height: 22
+                                                radius: 11
+                                                color: theme.surface
+                                                border.color: theme.border
+                                                border.width: 1
+                                                RowLayout {
+                                                    id: activeProfRow2
+                                                    anchors.centerIn: parent
+                                                    spacing: 6
+                                                    Rectangle {
+                                                        width: 6; height: 6; radius: 3
+                                                        color: theme.accent
+                                                    }
+                                                    Text {
+                                                        id: activeProfTxt2
+                                                        text: qsTr("Active: ") + (typeof hostController !== "undefined" ? hostController.rewriteProfile.toUpperCase() : "GENERIC")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.weight: Font.Medium
+                                                        color: dashboardWindow.fgColor
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        ColumnLayout {
+                                            spacing: 8
+                                            Repeater {
+                                                model: [
+                                                    { id: "openai_structured", label: "OPENAI_STRUCTURED", desc: "Markdown heading hierarchy (# Role, # Goal, # Constraints) optimized for OpenAI" },
+                                                    { id: "anthropic_structured", label: "ANTHROPIC_STRUCTURED", desc: "Strict XML tags (<task>, <context>, <constraints>) optimized for Anthropic" },
+                                                    { id: "generic", label: "GENERIC", desc: "Clean standardized markdown envelope with standardized instructions and constraints" },
+                                                    { id: "local_compact", label: "LOCAL_COMPACT", desc: "Telegraphic, token-budget optimized encoding for local models" }
+                                                ]
+
+                                                delegate: RowLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 10
+
+                                                    Rectangle {
+                                                        implicitWidth: profBtnTxt2.contentWidth + 20
+                                                        height: 28
+                                                        radius: 8
+                                                        color: isProfileActive(modelData.id) ? theme.accent : theme.surface
+                                                        border.color: isProfileActive(modelData.id) ? theme.accent : theme.border
+                                                        border.width: 1
+
+                                                        Text {
+                                                            id: profBtnTxt2
+                                                            anchors.centerIn: parent
+                                                            text: modelData.label
+                                                            font.family: dashboardWindow.sansFont
+                                                            font.pixelSize: 11
+                                                            font.weight: isProfileActive(modelData.id) ? Font.DemiBold : Font.Medium
+                                                            color: isProfileActive(modelData.id) ? "#FFFFFF" : dashboardWindow.fgColor
+                                                        }
+
+                                                        HudMouseArea {
+                                                            anchors.fill: parent
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onClicked: {
+                                                                if (typeof hostController !== "undefined") {
+                                                                    hostController.setRewriteProfile(modelData.id, hostController.stateVersion);
+                                                                    dashboardWindow.showToast("REWRITE PROFILE: " + modelData.label);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    Text {
+                                                        Layout.fillWidth: true
+                                                        text: modelData.desc
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        color: dashboardWindow.mutedTextColor
+                                                        wrapMode: Text.WordWrap
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Card 3: Two-stage engine & delivery
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    implicitHeight: delivCol.implicitHeight + 28
+                                    color: dashboardWindow.inputBgColor
+                                    border.color: dashboardWindow.borderColor
+                                    border.width: 1
+                                    radius: 14
+
+                                    ColumnLayout {
+                                        id: delivCol
+                                        anchors.fill: parent
+                                        anchors.margins: 14
+                                        spacing: 10
+
+                                        Text {
+                                            text: qsTr("Universal Editor Delivery & 100% Private Execution")
+                                            font.family: dashboardWindow.sansFont
+                                            font.pixelSize: 13
+                                            font.weight: Font.DemiBold
+                                            color: dashboardWindow.fgColor
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: qsTr("• In-Place Injection: Accepting a rewrite replaces your draft directly inside your active editor, IDE, or chat box (supports Antigravity, VS Code, Cursor, Codex, Xcode, terminal CLIs, and more) with the finalized contract.")
+                                            font.family: dashboardWindow.sansFont
+                                            font.pixelSize: 12
+                                            color: dashboardWindow.fgColor
+                                            wrapMode: Text.WordWrap
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: qsTr("• Non-Destructive: Click 'Keep original' or press Esc at any time to preserve your draft untouched.")
+                                            font.family: dashboardWindow.sansFont
+                                            font.pixelSize: 12
+                                            color: dashboardWindow.mutedTextColor
+                                            wrapMode: Text.WordWrap
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: qsTr("• 100% Offline & Local: S1 Julia-1 and S2 Granite are currently supported out of the box, running completely on your local device hardware (GPU / CPU) with extensible support for additional models. Zero telemetry, zero cloud calls, zero prompt leakage.")
+                                            font.family: dashboardWindow.sansFont
+                                            font.pixelSize: 12
+                                            color: dashboardWindow.fgColor
+                                            wrapMode: Text.WordWrap
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -1808,8 +1729,9 @@ Window {
                     spacing: 10
 
                     Rectangle {
-                        height: 24
-                        implicitWidth: toastTextLabel.contentWidth + 16
+                        height: 26
+                        implicitWidth: toastTextLabel.contentWidth + 20
+                        radius: 13
                         color: dashboardWindow.dimColor
                         border.color: dashboardWindow.borderColor
                         border.width: 1
@@ -1819,9 +1741,9 @@ Window {
                             id: toastTextLabel
                             anchors.centerIn: parent
                             text: dashboardWindow.toastMessage.length ? dashboardWindow.toastMessage : (typeof hostController !== "undefined" ? hostController.lastError : "")
-                            font.family: dashboardWindow.monoFont
-                            font.pixelSize: 12
-                            font.bold: true
+                            font.family: dashboardWindow.sansFont
+                            font.pixelSize: 11
+                            font.weight: Font.Medium
                             color: dashboardWindow.fgColor
                         }
                     }
