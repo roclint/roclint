@@ -17,7 +17,10 @@ inline constexpr const char* kPromptTriageTemplateId = "julia.prompt_triage.cate
 // Version of the cryptographic seal.
 // V1: bakes kPromptTriageThreshold into the hash domain (legacy; read-only for historical records).
 // V2: commits only to model evidence (scores, identity, latency, prompt binding); threshold-independent.
-enum class TriageHashVersion { V1 = 1, V2 = 2 };
+// V3 also binds an explicit ownership cue derived from the frozen prompt.
+enum class TriageHashVersion { V1 = 1, V2 = 2, V3 = 3 };
+
+enum class DecisionOwnership { Unspecified, Reserved, Delegated };
 
 enum class PromptCategory { Action, Target, Rule, RuleConflict };
 
@@ -71,7 +74,8 @@ struct PromptTriage {
     double ambiguityScore{0}; // Derived from categoryScores; not per-Granite-alternative evidence.
     PromptCategory primaryCategory{PromptCategory::Action};
     double latencyMs{0};
-    TriageHashVersion hashVersion{TriageHashVersion::V2}; // V1 for historical records; V2 for new seals.
+    TriageHashVersion hashVersion{TriageHashVersion::V2}; // Promoted to V3 when a clear ownership cue is present.
+    DecisionOwnership ownership{DecisionOwnership::Unspecified};
     bool operator==(const PromptTriage&) const = default;
 
     // Single source of truth for evidence field iteration across hashing and serialization
@@ -94,6 +98,7 @@ struct PromptTriage {
         v("ambiguity", ambiguityScore);
         v("primary_category", primaryCategory);
         v("latency_ms", latencyMs);
+        if (hashVersion == TriageHashVersion::V3) v("decision_ownership", ownership);
     }
 
     template <typename Visitor>
@@ -115,6 +120,7 @@ struct PromptTriage {
         v("ambiguity", ambiguityScore);
         v("primary_category", primaryCategory);
         v("latency_ms", latencyMs);
+        if (hashVersion == TriageHashVersion::V3) v("decision_ownership", ownership);
     }
 };
 

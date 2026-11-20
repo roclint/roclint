@@ -25,6 +25,71 @@ bool scoresValid(const PromptTriage& triage) {
 std::size_t primary(const PromptTriage& triage) {
     return static_cast<std::size_t>(std::max_element(triage.categoryScores.begin(), triage.categoryScores.end()) - triage.categoryScores.begin());
 }
+// Only a complete, unconditional closing directive can override all four heads.
+DecisionOwnership decisionOwnership(std::string_view prompt) {
+    std::string normalized;
+    normalized.reserve(prompt.size());
+    for (std::size_t i = 0; i < prompt.size(); ++i) {
+        char c = prompt[i];
+        if (prompt.substr(i).starts_with("’")) {
+            c = '\'';
+            i += std::string_view("’").size() - 1;
+        }
+        if (c == ' ' || c == '\t' || c == '\n') {
+            if (!normalized.empty() && normalized.back() != ' ') normalized.push_back(' ');
+        } else {
+            normalized.push_back(c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c);
+        }
+    }
+    std::string_view text(normalized);
+    if (text.ends_with(' ')) text.remove_suffix(1);
+    if (text.ends_with('.') || text.ends_with('!')) text.remove_suffix(1);
+    const auto boundary = text.find_last_of(".!?");
+    auto directive = text.substr(boundary == text.npos ? 0 : boundary + 1);
+    if (directive.starts_with(' ')) directive.remove_prefix(1);
+
+    constexpr std::string_view reserved[]{"i'll decide", "i will decide", "my call", "it's my call",
+        "hold for my decision"};
+    constexpr std::string_view delegated[]{"you decide", "your call", "it's your call", "handle it yourself"};
+    const auto has = [](const auto& cues, auto predicate) {
+        return std::any_of(std::begin(cues), std::end(cues), predicate);
+    };
+    const auto matches = [directive](auto cue) { return directive == cue; };
+    // Permit a short named object ("you choose the layout") or subject
+    // ("the layout is my call"). Leave qualifications and mixed clauses to S1.
+    const auto simpleSubject = [](std::string_view phrase) {
+        if (!phrase.starts_with("the ")) return false;
+        phrase.remove_prefix(4);
+        unsigned words = 0;
+        while (!phrase.empty()) {
+            const auto end = phrase.find(' ');
+            const auto word = phrase.substr(0, end);
+            if (word.empty() || ++words > 3 ||
+                !std::all_of(word.begin(), word.end(), [](char c) { return c >= 'a' && c <= 'z'; }) ||
+                word == "if" || word == "unless" || word == "and" || word == "or" || word == "when")
+                return false;
+            if (end == phrase.npos) break;
+            phrase.remove_prefix(end + 1);
+        }
+        return words > 0;
+    };
+    const auto verb = [&](std::string_view prefix) {
+        return directive.starts_with(prefix) && simpleSubject(directive.substr(prefix.size()));
+    };
+    const auto call = [&](std::string_view suffix) {
+        return directive.ends_with(suffix) && simpleSubject(directive.substr(0, directive.size() - suffix.size()));
+    };
+    constexpr std::string_view reserveVerbs[]{"i'll decide ", "i will decide ", "i'll choose ",
+        "i will choose ", "i'll select ", "i will select "};
+    constexpr std::string_view delegateVerbs[]{"you decide ", "you choose ", "you select ", "you may choose "};
+    const bool reserves = has(reserved, matches) || call(" is my call") || has(reserveVerbs, verb);
+    const bool delegates = has(delegated, matches) || call(" is your call") || has(delegateVerbs, verb);
+    const auto earlier = text.substr(0, boundary == text.npos ? 0 : boundary);
+    const auto mentioned = [earlier](auto cue) { return earlier.find(cue) != earlier.npos; };
+    if (reserves && !has(delegated, mentioned) && !has(delegateVerbs, mentioned)) return DecisionOwnership::Reserved;
+    if (delegates && !has(reserved, mentioned) && !has(reserveVerbs, mentioned)) return DecisionOwnership::Delegated;
+    return DecisionOwnership::Unspecified;
+}
 void hashDouble(crypto::CanonicalHasher& hash, double value) { hash.number(std::bit_cast<std::uint64_t>(value == 0 ? 0.0 : value)); }
 }
 
@@ -50,7 +115,7 @@ const char* toString(PromptTriageRoute route) noexcept {
 std::string computePromptTriageHash(const PromptTriage& triage) {
     const char* domain = (triage.hashVersion == TriageHashVersion::V1)
         ? "roclint.prompt_triage.v1"
-        : "roclint.prompt_triage.v2";
+        : triage.hashVersion == TriageHashVersion::V3 ? "roclint.prompt_triage.v3" : "roclint.prompt_triage.v2";
     crypto::CanonicalHasher hash(domain);
     if (triage.hashVersion == TriageHashVersion::V1) {
         // V1 legacy sequence: threshold was baked in right before latencyMs
@@ -72,6 +137,13 @@ std::string computePromptTriageHash(const PromptTriage& triage) {
 }
 
 Status validatePromptTriage(const PromptTriage& triage) {
+    if (triage.hashVersion == TriageHashVersion::V3) {
+        if (triage.ownership != DecisionOwnership::Reserved && triage.ownership != DecisionOwnership::Delegated)
+            return invalid("Invalid sealed ownership cue");
+    } else if ((triage.hashVersion != TriageHashVersion::V1 && triage.hashVersion != TriageHashVersion::V2) ||
+               triage.ownership != DecisionOwnership::Unspecified) {
+        return invalid("Invalid triage evidence version or ownership cue");
+    }
     for (const auto& value : {triage.sessionId, triage.revisionId, triage.requestGroupId, triage.attemptId,
                              triage.modelId, triage.modelRevision, triage.configurationId})
         if (!token(value)) return invalid("Prompt triage is missing a bounded identity/binding");
@@ -101,6 +173,10 @@ Result<PromptTriage> sealPromptTriage(PromptTriage triage, std::string_view froz
         triage.revisionTextHash != crypto::Sha256::hexDigest(frozenPrompt)) return invalid("Prompt triage input differs from the bounded frozen revision").error();
     if (!scoresValid(triage)) return invalid("Prompt triage contains nonfinite or out-of-range model scores").error();
     const auto index = primary(triage);
+    if (triage.hashVersion == TriageHashVersion::V2 || triage.hashVersion == TriageHashVersion::V3) {
+        triage.ownership = decisionOwnership(frozenPrompt);
+        triage.hashVersion = triage.ownership == DecisionOwnership::Unspecified ? TriageHashVersion::V2 : TriageHashVersion::V3;
+    }
     triage.primaryCategory = static_cast<PromptCategory>(index);
     triage.ambiguityScore = triage.categoryScores[index];
     triage.triageHash = computePromptTriageHash(triage);
@@ -115,6 +191,8 @@ Result<PromptTriageRoute> routePromptTriage(const PromptTriage& triage) {
 
 Result<PromptTriageRoute> routePromptTriage(const PromptTriage& triage, const TriagePolicy& policy) {
     if (const auto status = validatePromptTriage(triage); !status.ok()) return status.error();
+    if (triage.ownership == DecisionOwnership::Reserved) return PromptTriageRoute::Clarify;
+    if (triage.ownership == DecisionOwnership::Delegated) return PromptTriageRoute::Original;
     bool inDeadBand = false;
     for (std::size_t i = 0; i < triage.categoryScores.size(); ++i) {
         const double score = triage.categoryScores[i];

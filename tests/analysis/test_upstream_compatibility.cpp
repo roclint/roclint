@@ -204,6 +204,42 @@ void testRouteWithDefaultPolicyVectors() {
     }
 }
 
+void testOwnershipOverrides() {
+    struct Case { const char* prompt; double score; PromptTriageRoute expected; bool cue; };
+    const Case cases[]{
+        {"Pick red or blue. I’ll decide.", 0.0, PromptTriageRoute::Clarify, true},
+        {"The layout is my call.", 0.0, PromptTriageRoute::Clarify, true},
+        {"You select the ordering.", 1.0, PromptTriageRoute::Original, true},
+        {"You decide the layout if required.", 1.0, PromptTriageRoute::Clarify, false},
+        {"My call!", 0.0, PromptTriageRoute::Clarify, true},
+        {"Hold for my decision.", 0.0, PromptTriageRoute::Clarify, true},
+        {"Choose a layout. YOU decide.", 1.0, PromptTriageRoute::Original, true},
+        {"Your call.", 1.0, PromptTriageRoute::Original, true},
+        {"Handle it yourself.", 1.0, PromptTriageRoute::Original, true},
+        {"Did you decide?", 1.0, PromptTriageRoute::Clarify, false},
+        {"The example says: \"your call.\"", 1.0, PromptTriageRoute::Clarify, false},
+        {"Don't handle it yourself.", 1.0, PromptTriageRoute::Clarify, false},
+        {"I'll decide on size. You decide.", 1.0, PromptTriageRoute::Clarify, false},
+    };
+    for (const auto& c : cases) {
+        auto fixture = makeFixture(c.prompt, TriageHashVersion::V2);
+        fixture.categoryScores.fill(c.score);
+        const auto sealed = sealPromptTriage(fixture, c.prompt);
+        ROCLINT_CHECK(sealed.ok());
+        ROCLINT_CHECK(sealed.value().categoryScores == fixture.categoryScores);
+        ROCLINT_CHECK((sealed.value().hashVersion == TriageHashVersion::V3) == c.cue);
+        const auto restored = decodePromptTriage(encodePromptTriage(sealed.value()));
+        ROCLINT_CHECK(restored.ok() && restored.value() == sealed.value());
+        ROCLINT_CHECK(routePromptTriage(restored.value()).value() == c.expected);
+        if (c.cue) {
+            auto tampered = restored.value();
+            tampered.ownership = tampered.ownership == DecisionOwnership::Reserved ?
+                DecisionOwnership::Delegated : DecisionOwnership::Reserved;
+            ROCLINT_CHECK(!validatePromptTriage(tampered).ok());
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -214,6 +250,7 @@ int main() {
     testCodecPreservesHashVersion();
     testMissingHashVersionDecodesAsV1();
     testRouteWithDefaultPolicyVectors();
+    testOwnershipOverrides();
     std::cout << "[Test UpstreamCompatibility] All tests PASSED.\n";
     return 0;
 }

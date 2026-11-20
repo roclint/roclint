@@ -138,8 +138,8 @@ Result<an::PromptTriage> decodePromptTriage(std::string_view payload) {
     // hash_version is absent in records written before Phase 1; treat missing as V1 for backwards compatibility.
     if (const auto* hv = root.find("hash_version")) {
         if (!hv->isNumber()) return makeError(ErrorCode::InvalidInput, "Invalid hash_version field");
-        const auto val = static_cast<std::uint64_t>(hv->asNumber());
-        if (val != 1 && val != 2) return makeError(ErrorCode::InvalidInput, "Unknown hash_version value");
+        const auto val = hv->asNumber();
+        if (val != 1 && val != 2 && val != 3) return makeError(ErrorCode::InvalidInput, "Unknown hash_version value");
         t.hashVersion = static_cast<an::TriageHashVersion>(val);
     } else {
         t.hashVersion = an::TriageHashVersion::V1; // historical record pre-dating Phase 1
