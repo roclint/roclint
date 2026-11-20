@@ -382,6 +382,10 @@ public:
         perform(^{ this->applyObserving(observing); });
     }
 
+    void setCardVisible(bool visible) override {
+        m_cardVisible.store(visible);
+    }
+
     void inject(const InjectionRequest& request) override {
         const InjectionRequest copy = request;
         perform(^{ this->performInjection(copy); });
@@ -530,10 +534,6 @@ private:
                 // Preserve the source target while Roclint itself is foreground.
                 return;
             }
-            bool roclintActive = [NSApp keyWindow] != nil || [NSApp isActive];
-            if (roclintActive) {
-                return;
-            }
             if (frontPid > 0 && frontPid != m_pid) {
                 this->onAppActivated(frontPid);
                 return;
@@ -557,14 +557,6 @@ private:
             CFRelease(value);
             m_consecutiveFocusMisses = 0;
         } else if (m_focused != nullptr) {
-            bool roclintActive = false;
-            @autoreleasepool {
-                roclintActive = [NSApp keyWindow] != nil || [NSApp isActive];
-            }
-            if (roclintActive) {
-                m_consecutiveFocusMisses = 0;
-                return;
-            }
             if (++m_consecutiveFocusMisses >= 5) {
                 detachFocused();
                 emit fieldLost();
@@ -696,11 +688,8 @@ private:
         if (m_app == nullptr) {
             return;
         }
-        bool roclintActive = false;
-        @autoreleasepool {
-            roclintActive = [NSApp keyWindow] != nil || [NSApp isActive];
-        }
-        if (roclintActive) {
+        // A floating panel can retain a key window while an editor owns input.
+        if (frontmostPid() != m_pid) {
             return;
         }
         CFTypeRef value = nullptr;
@@ -798,7 +787,9 @@ private:
         if (f.caretOffset > f.text.size()) {
             f.caretOffset = static_cast<int>(f.text.size());
         }
-        if (f.kind == FieldKind::GuiEditor && f.caretOffset >= 0) {
+        // Inline word marks are hidden while the HUD follows text. Avoid spelling
+        // and ancestor/glyph AX round trips on the critical path of each edit.
+        if (!m_cardVisible.load() && f.kind == FieldKind::GuiEditor && f.caretOffset >= 0) {
             if (QStringView(f.text).mid(f.caretOffset).trimmed().isEmpty()) {
                 if (m_spellingText != f.text) {
                     m_spellingText = f.text;
@@ -1160,6 +1151,7 @@ private:
     std::mutex m_mutex;
     std::condition_variable m_ready;
     CFRunLoopRef m_loop{nullptr};
+    std::atomic<bool> m_cardVisible{false};
     std::atomic<bool> m_trusted{false};
     id m_activationToken{nil};
 

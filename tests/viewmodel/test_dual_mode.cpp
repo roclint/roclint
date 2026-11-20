@@ -622,6 +622,40 @@ void testOpenHudFollowsFocusedDraftUntilHudEdit() {
     ROCLINT_CHECK(h.bridge->injections.back().expectedCurrentText == otherField.text); // Retain the stale guard.
 }
 
+void testCaptureSwitchAndRestoreFollowLiveEdits() {
+    Harness h;
+    h.c().setAmbientModeEnabled(true);
+    h.bridge->observe(cursorField(kPrompt));
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().openFromAmbient()));
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
+    auto editor = cursorField(QStringLiteral("A new VS Code draft"), 44);
+    editor.appIdentifier = QStringLiteral("com.microsoft.VSCode");
+    editor.appDisplayName = QStringLiteral("Code");
+    ++editor.processId;
+    roclint::host::HostContextDetector::setMockObservation({
+        roclint::host::HostContextObservation{roclint::host::HostContextCategory::CodeEditor,
+                                             editor.appDisplayName, editor.appIdentifier}});
+    h.bridge->echoOnRefresh = false;
+    h.c().toggleCard();
+    h.bridge->observe(editor);
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
+    ROCLINT_CHECK(h.c().captureTargetName() == editor.appDisplayName);
+    QString visible = editor.text;
+    QObject::connect(&h.c(), &HostController::ambientDraftUpdated, [&](const QString& text) { visible = text; });
+    h.c().minimizeCard();
+    editor.text.chop(1);
+    h.bridge->observe(editor);
+    h.c().toggleCard();
+    ROCLINT_CHECK(visible == editor.text);
+    editor.text.clear();
+    h.bridge->observe(editor);
+    ROCLINT_CHECK(visible.isEmpty());
+    editor.text = QStringLiteral("Replacement draft");
+    h.bridge->observe(editor);
+    ROCLINT_CHECK(visible == editor.text);
+    roclint::host::HostContextDetector::resetMock();
+}
+
 void testSourceEditSupersedesReviewWithoutChangingDestination() {
     Harness h; reachApprovableRewrite(h);
     h.c().pauseAmbientFollowing(); // Reviewing a decision does not author a replacement draft.
@@ -883,6 +917,7 @@ int main(int argc, char* argv[]) {
     testDeliveryRemainsBoundWhenOtherFieldsReceiveFocus();
     testTypingIsObservedWhileWidgetRemainsOpen();
     testOpenHudFollowsFocusedDraftUntilHudEdit();
+    testCaptureSwitchAndRestoreFollowLiveEdits();
     testSourceEditSupersedesReviewWithoutChangingDestination();
     testClearingBoundComposerInvalidatesEachReviewStage();
     testIndependentClipboardReviewDoesNotAdoptSourceChanges();

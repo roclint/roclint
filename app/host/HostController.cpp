@@ -521,11 +521,15 @@ void HostController::activateCard() {
 }
 
 void HostController::showCard() {
+    const auto frontmost = HostContextDetector::captureFrontmost();
+    if (canSwitchCaptureTo(frontmost.bundleOrExecutableId)) {
+        beginCaptureInvocation(frontmost);
+        return;
+    }
     if (m_resumeMinimizedCard && !m_selectingInsertionTarget) {
         showCardInternal(false);
         return;
     }
-    const auto frontmost = HostContextDetector::captureFrontmost();
     if (m_selectingInsertionTarget && !isAmbientEligibleApp(frontmost.bundleOrExecutableId)) {
         m_selectingInsertionTarget = false;
         showCardInternal(false);
@@ -552,6 +556,14 @@ void HostController::showCard() {
     setCaptureSource(CaptureSource::Widget);
     m_captureRequestedApp.clear();
     showCardInternal(false);
+}
+
+bool HostController::canSwitchCaptureTo(const QString& app) const {
+    return isAmbientActive() && isAmbientCapture() && m_captureTarget && isAmbientEligibleApp(app) &&
+        app.compare(m_captureTarget->field.appIdentifier, Qt::CaseInsensitive) != 0 &&
+        !m_widgetDraftEdited && !m_pendingDelivery && !m_selectingInsertionTarget &&
+        !hasProposal() && !m_interviewActive && m_workingIntent.roundsCompleted == 0 &&
+        m_interviewRecords.empty();
 }
 
 void HostController::beginCaptureInvocation(const HostContextObservation& frontmost) {
@@ -597,7 +609,13 @@ void HostController::showCardInternal(bool captureClipboard) {
     if (!promptTriageRoutingEnabled()) setAmbientBadge(false);
 
     const auto placement = calculateAmbientAnchor(480, 380);
+    const bool restoring = m_resumeMinimizedCard;
+    m_resumeMinimizedCard = false;
     setCardVisibility(CardVisibility::Focused);
+    if (restoring && m_captureTarget && m_ambientObservation &&
+        m_captureTarget->field.fieldToken == m_ambientObservation->field.fieldToken &&
+        m_captureTarget->field.processId == m_ambientObservation->field.processId)
+        followAmbientDraft();
     emit showCardRequested(placement.x(), placement.y());
 }
 
@@ -630,11 +648,15 @@ QPoint HostController::calculateAmbientAnchor(int width, int height) {
 }
 
 void HostController::toggleCard() {
+    const auto frontmost = HostContextDetector::captureFrontmost();
+    if (canSwitchCaptureTo(frontmost.bundleOrExecutableId)) {
+        beginCaptureInvocation(frontmost);
+        return;
+    }
     if (m_resumeMinimizedCard && !isCardVisible() && !m_selectingInsertionTarget) {
         showCardInternal(false);
         return;
     }
-    const auto frontmost = HostContextDetector::captureFrontmost();
     if (m_selectingInsertionTarget && !isAmbientEligibleApp(frontmost.bundleOrExecutableId)) {
         m_selectingInsertionTarget = false;
         showCardInternal(false);
@@ -7717,7 +7739,7 @@ void HostController::followAmbientDraft() {
                 << "target_token=" << m_captureTarget->field.fieldToken << "observed_token=" << m_ambientObservation->field.fieldToken
                 << "target_pid=" << m_captureTarget->field.processId << "observed_pid=" << m_ambientObservation->field.processId;
     }
-    if (!isCardVisible() || m_resumeMinimizedCard || !m_ambientObservation || m_pendingDelivery) return;
+    if (!isCardVisible() || m_captureOpenPending || m_resumeMinimizedCard || !m_ambientObservation || m_pendingDelivery) return;
     const auto observed = *m_ambientObservation;
     const bool inReview = isClarifying() || hasConfirmedIntent() || m_currentProposal.has_value();
     const bool preserveHud = m_widgetDraftEdited || m_selectingInsertionTarget || inReview;
@@ -8076,7 +8098,7 @@ AsyncTask<core::Status> HostController::openFromAmbientOperation(std::optional<A
                 m_captureTarget->field.fieldToken == observation.field.fieldToken &&
                 m_captureTarget->field.processId == observation.field.processId &&
                 m_captureTarget->field.appIdentifier.compare(observation.field.appIdentifier, Qt::CaseInsensitive) == 0;
-            if (!sameField && hasActiveWork()) {
+            if (!sameField && hasActiveWork() && !canSwitchCaptureTo(observation.field.appIdentifier)) {
                 showCardInternal(false);
                 co_return Status::success();
             }
@@ -8097,7 +8119,7 @@ AsyncTask<core::Status> HostController::openFromAmbientOperation(std::optional<A
             m_revisionState->currentRevision().text().ends_with(text)
         );
 
-        if (!sameDraft && hasActiveWork()) {
+        if (!sameDraft && hasActiveWork() && !canSwitchCaptureTo(observation.field.appIdentifier)) {
             showCardInternal(false);
             co_return Status::success();
         }

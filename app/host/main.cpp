@@ -212,6 +212,14 @@ int main(int argc, char* argv[]) {
             if (customHeight > 0) {
                 window->setHeight(customHeight);
             }
+            if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+                QObject::connect(controller, &roclint::host::HostController::ambientDraftUpdated,
+                    window, [window](const QString& text) {
+                        const auto* preview = window->findChild<QObject*>(QStringLiteral("draftPreviewText"));
+                        qInfo() << "[Roclint preview] characters=" << text.size() << "matches="
+                                << (preview && preview->property("text").toString() == text);
+                    }, Qt::QueuedConnection);
+            }
             QObject::connect(controller, &roclint::host::HostController::showCardRequested,
                              window, [window, controller]() {
                 // Use the actual retained HUD size for each invocation, including Copy mode.

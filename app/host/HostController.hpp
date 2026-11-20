@@ -1159,6 +1159,7 @@ private:
     // discovery and by rebinding an ambient check's reply to the frozen revision.
     AsyncTask<void> acceptDiscovery(PipelineTicket ticket, bridge::GraniteOptionDiscoveryResponse response);
     void showCardInternal(bool captureClipboard);
+    bool canSwitchCaptureTo(const QString& app) const;
     void beginCaptureInvocation(const HostContextObservation& frontmost);
     // Delivers text for the current capture: injection for ambient captures, clipboard otherwise.
     core::Status deliver(const QString& text);
