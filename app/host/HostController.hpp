@@ -193,6 +193,14 @@ public:
     Q_PROPERTY(bool storageBusy READ storageBusy NOTIFY storageBusyChanged)
     Q_PROPERTY(bool storageNeedsRecovery READ storageNeedsRecovery NOTIFY storageChanged)
     Q_PROPERTY(bool isStorageAvailable READ isStorageAvailable NOTIFY storageChanged)
+    Q_PROPERTY(bool fieldCaptureManaged READ fieldCaptureManaged NOTIFY fieldViewChanged)
+    Q_PROPERTY(bool otherFieldVisible READ otherFieldVisible NOTIFY fieldViewChanged)
+    Q_PROPERTY(QString focusedFieldDraft READ focusedFieldDraft NOTIFY fieldViewChanged)
+    Q_PROPERTY(QString focusedFieldQuestion READ focusedFieldQuestion NOTIFY fieldViewChanged)
+    Q_PROPERTY(QVariantList focusedFieldChoices READ focusedFieldChoices NOTIFY fieldViewChanged)
+    Q_PROPERTY(QString focusedFieldName READ focusedFieldName NOTIFY fieldViewChanged)
+    Q_PROPERTY(bool fieldReviewQueued READ fieldReviewQueued NOTIFY fieldViewChanged)
+    Q_PROPERTY(QVariantList matchingFieldDrafts READ matchingFieldDrafts NOTIFY fieldViewChanged)
     Q_PROPERTY(int sessionCount READ sessionCount NOTIFY sessionListChanged)
 
     Q_PROPERTY(QString analysisStatus READ analysisStatus NOTIFY analysisStatusChanged)
@@ -681,6 +689,7 @@ public:
     // Test seams. Compiled only into the *_testing libraries.
 #ifdef ROCLINT_ENABLE_TEST_MOCKS
     // Retains coverage of historical scoring contracts; production always uses S1 first.
+    void setFieldSessionsForTesting(bool enabled) { m_testFieldSessions = enabled; }
     void setLegacyDiscoveryForTesting(bool legacy) { m_promptTriageRouting = !legacy; }
     void setTransportOverrideForTesting(bridge::GraniteTransport transport);
     [[nodiscard]] bool setModelRuntimeUrlForTesting(const QUrl& url);
@@ -782,6 +791,17 @@ public slots:
 
     // Draft lifecycle. expectedVersion is the stateVersion the caller last observed.
     Q_INVOKABLE void pauseAmbientFollowing();
+    bool fieldCaptureManaged() const { return !m_pipelineField.isEmpty(); }
+    bool otherFieldVisible() const;
+    QString focusedFieldDraft() const;
+    QString focusedFieldQuestion() const { return m_fields.value(m_focusedField).question; }
+    QVariantList focusedFieldChoices() const { return m_fields.value(m_focusedField).choices; }
+    QString focusedFieldName() const;
+    bool fieldReviewQueued() const;
+    QVariantList matchingFieldDrafts() const { return m_fieldMatches; }
+    Q_INVOKABLE void reviewFocusedField();
+    Q_INVOKABLE void rememberHudDraft(const QString& text);
+    Q_INVOKABLE void resumeFieldDraft(const QString& sessionId);
     Q_INVOKABLE quint64 noteDraftEdited(quint64 expectedVersion);
     Q_INVOKABLE quint64 commitPrompt(QString text, quint64 expectedVersion);
     Q_INVOKABLE quint64 hardBypass(QString text, quint64 expectedVersion);
@@ -885,6 +905,7 @@ signals:
     void draftCaptured(const QString& text);
     void storageChanged();
     void sessionListChanged();
+    void fieldViewChanged();
     void revisionRestored(const QString& text);
     void analysisStatusChanged();
     void interventionChanged();
@@ -954,6 +975,8 @@ private:
         }
     };
     struct PipelineTicket {
+        QString fieldKey;
+        quint64 fieldVersion{0};
         std::string sessionId;
         std::string revisionId;
         std::uint64_t stateVersion{0};
@@ -1003,6 +1026,48 @@ private:
         int questionCount{0};
     };
 
+    struct FieldSession {
+        AmbientObservation source;
+        QString draft, project, sessionId, revisionId, snapshotId;
+        QString question;
+        QVariantList choices;
+        std::string answers;
+        quint64 generation{1}, workspaceEpoch{0}, draftVersion{0};
+        QDeadlineTimer automaticDue;
+        bool invoked{false}, editedInHud{false}, dirty{false};
+    };
+    QMap<QString, FieldSession> m_fields;
+    QString m_focusedField, m_pipelineField, m_detachedField;
+    QStringList m_explicitFields, m_automaticFields;
+    QVariantList m_fieldMatches;
+    QTimer m_fieldCheckpointTimer, m_fieldReviewTimer;
+    void queueAutomaticField(const QString& key);
+    bool m_restoredFieldDraft{false};
+    std::optional<AsyncTask<void>> m_fieldSaveTask;
+    AsyncTask<void> writeFieldCheckpoints();
+    quint64 admitFieldReview(const QString& key, bool requestReview);
+    bool m_fieldSwitching{false}, m_fieldSaveRunning{false};
+    quint64 m_fieldRegistryEpoch{0};
+    bool fieldSessionsEnabled() const {
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+        return m_testFieldSessions || promptTriageRoutingEnabled();
+#else
+        return true;
+#endif
+    }
+#ifdef ROCLINT_ENABLE_TEST_MOCKS
+    bool m_testFieldSessions{false};
+#endif
+    QString observeSessionField(const AmbientObservation& observation);
+    void scheduleFieldWork();
+    void markFieldDirty(FieldSession& field);
+    void checkpointWorkingAnswers();
+    void restoreFieldInterview(const storage::RestoredSession& row);
+    static std::optional<core::intent::WorkingIntentState> checkpointAnswers(const storage::RestoredSession& row);
+    AsyncTask<void> flushFieldCheckpoints();
+    AsyncTask<void> findFieldMatches(QString key);
+    AsyncTask<core::Status> activateField(QString key, bool review, bool explicitRequest);
+    void forgetFieldSessions(const QString& sessionId = {});
     struct PendingDelivery {
         quint64 requestId{0};
         QString text;

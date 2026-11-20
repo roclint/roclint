@@ -339,6 +339,20 @@ HostController::HostController(const QString& dbPathOverride,
         m_juliaModelDirectory = resolveJuliaDirectory(m_juliaModelDirectory, m_modelsBaseDirectory);
         m_nativeDirectory = resolveNativeGraniteDirectory(m_nativeDirectory, m_modelsBaseDirectory);
     }
+    connect(this, &HostController::interviewChanged, this, [this] {
+        if (!m_fieldSwitching) checkpointWorkingAnswers();
+    });
+    m_fieldReviewTimer.setSingleShot(true);
+    connect(&m_fieldReviewTimer, &QTimer::timeout, this, &HostController::scheduleFieldWork);
+    m_fieldCheckpointTimer.setInterval(250);
+    m_fieldCheckpointTimer.setSingleShot(true);
+    connect(&m_fieldCheckpointTimer,&QTimer::timeout,this,[this]{ flushFieldCheckpoints(); });
+    connect(this,&HostController::storageBusyChanged,this,[this]{
+        if (!m_commandRunning && m_storageCommands.empty()) QTimer::singleShot(0,this,&HostController::scheduleFieldWork);
+    });
+    connect(this,&HostController::analysisStatusChanged,this,[this]{
+        QTimer::singleShot(0,this,&HostController::scheduleFieldWork);
+    });
     initStorage(dbPathOverride);
     connect(this, &HostController::modelEngineStatusChanged, this,
             &HostController::startPendingWordRefinement, Qt::QueuedConnection);
@@ -568,7 +582,7 @@ bool HostController::canSwitchCaptureTo(const QString& app) const {
 
 void HostController::beginCaptureInvocation(const HostContextObservation& frontmost) {
     m_captureOpenPending = true;
-    m_widgetDraftEdited = false; // This explicit invocation asks to adopt the newly focused draft.
+    if (!fieldCaptureManaged()) m_widgetDraftEdited = false;
     m_captureRequestedApp = frontmost.bundleOrExecutableId;
     m_ambientObservation.reset(); // A cached field may belong to the last control, not this invocation.
     const auto generation = ++m_captureOpenGeneration;
@@ -601,8 +615,10 @@ void HostController::showCardInternal(bool captureClipboard) {
         return;
     }
     clearWordRefinement();
-    m_hostContext = m_hostContextEnabled ? HostContextDetector::captureFrontmost() : HostContextObservation{};
-    emit hostContextChanged();
+    if (!otherFieldVisible()) {
+        m_hostContext = m_hostContextEnabled ? HostContextDetector::captureFrontmost() : HostContextObservation{};
+        emit hostContextChanged();
+    }
     if (captureClipboard) {
         captureClipboardDraft();
     }
@@ -649,6 +665,10 @@ QPoint HostController::calculateAmbientAnchor(int width, int height) {
 
 void HostController::toggleCard() {
     const auto frontmost = HostContextDetector::captureFrontmost();
+    if (otherFieldVisible() && isAmbientActive() && isAmbientEligibleApp(frontmost.bundleOrExecutableId)) {
+        beginCaptureInvocation(frontmost);
+        return;
+    }
     if (canSwitchCaptureTo(frontmost.bundleOrExecutableId)) {
         beginCaptureInvocation(frontmost);
         return;
@@ -730,6 +750,8 @@ void HostController::requestQuit() {
     if (m_hostState == HostState::Quitting) {
         return;
     }
+    checkpointWorkingAnswers();
+    flushFieldCheckpoints();
     hideCard();
     hideDashboard();
     if (m_cancelWorkspaceScan) m_cancelWorkspaceScan();
@@ -751,7 +773,10 @@ void HostController::requestQuit() {
 }
 
 void HostController::finishQuitWhenRuntimesStopped() {
-    if (m_hostState == HostState::Quitting && !m_quitSignalSent && !m_julia->isRunning() && !m_native->isRunning() && m_nativeSemanticInFlight == 0 && !m_wordRefinementGenerating) {
+    if (m_hostState != HostState::Quitting && !m_inFlight &&
+        (!m_explicitFields.isEmpty() || !m_automaticFields.isEmpty() || otherFieldVisible()))
+        QTimer::singleShot(0, this, &HostController::scheduleFieldWork);
+    if (m_hostState == HostState::Quitting && !m_fieldSaveRunning && !m_quitSignalSent && !m_julia->isRunning() && !m_native->isRunning() && m_nativeSemanticInFlight == 0 && !m_wordRefinementGenerating) {
         if (m_pendingDraft && !m_storageFault) { flushDraftEdits(); return; }
         if (m_commandRunning || !m_storageCommands.empty() || m_draftWriting || m_draftNotifications > 0 || m_historyRefreshRunning || (m_storage && m_storage->pending())) return;
         if (m_storage && !m_storage->closed()) { m_storage->close([this]() { finishQuitWhenRuntimesStopped(); }); return; }
@@ -908,6 +933,11 @@ AsyncTask<core::Status> HostController::ensureSession(std::string canonicalText,
         co_return st;
     }
     m_revisionState = std::make_unique<core::RevisionState>(root);
+    if (auto slot = m_fields.find(m_pipelineField); slot != m_fields.end() && slot->invoked) {
+        slot->sessionId = qs(sessionId.value());
+        slot->revisionId = currentRevisionId();
+        markFieldDirty(*slot);
+    }
     emit stateVersionChanged();
     emit sessionListChanged();
     refreshStorageStats();
@@ -950,6 +980,11 @@ AsyncTask<core::Status> HostController::commitRevision(std::string canonicalText
         co_return st;
     }
     *m_revisionState = std::move(next);
+    auto field = m_fields.find(m_pipelineField.isEmpty() ? m_detachedField : m_pipelineField);
+    if (field != m_fields.end() && field->sessionId == currentSessionIdString() && field->draft == currentRevisionText()) {
+        field->revisionId = currentRevisionId();
+        markFieldDirty(*field);
+    }
     emit stateVersionChanged();
     emit sessionListChanged();
     refreshStorageStats();
@@ -1170,6 +1205,8 @@ AsyncTask<core::Status> HostController::invalidateProposalArtifacts() {
 }
 
 void HostController::resetSessionState() {
+    m_restoredFieldDraft = false;
+    m_detachedField.clear();
     m_resumeMinimizedCard = false;
     m_followAmbientDraft = false;
     m_widgetDraftEdited = false;
@@ -1187,6 +1224,8 @@ void HostController::resetSessionState() {
 
 HostController::PipelineTicket HostController::makeTicket() const {
     PipelineTicket t;
+    t.fieldKey = m_pipelineField;
+    t.fieldVersion = m_fields.value(t.fieldKey).draftVersion;
     t.sessionId = currentSessionId();
     t.revisionId = m_revisionState->currentRevision().revisionId().value();
     t.stateVersion = m_revisionState->stateVersion();
@@ -1202,6 +1241,10 @@ bool HostController::isTicketCurrent(const PipelineTicket& ticket, bool checkPro
     if (!m_revisionState) {
         return false;
     }
+    if (!ticket.fieldKey.isEmpty() &&
+        (ticket.fieldKey != m_pipelineField || !m_fields.contains(ticket.fieldKey) ||
+         ticket.fieldVersion != m_fields.value(ticket.fieldKey).draftVersion))
+        return false;
     return ticket.serial == m_pipelineSerial && ticket.workspaceEpoch == m_workspaceEpoch &&
            ticket.sessionId == currentSessionId() &&
            ticket.revisionId == m_revisionState->currentRevision().revisionId().value() &&
@@ -2157,6 +2200,7 @@ AsyncTask<core::Status> HostController::applyTransition(const char* /*name*/, qu
             co_return Status::success();
         }
         m_workingIntent = std::move(next);
+        checkpointWorkingAnswers();
         m_followAmbientDraft = false; // An explicit decision freezes the reviewed draft and destination.
         m_currentDecision = std::move(decision);
         m_confirmedIntent = std::move(confirmed);
@@ -3368,6 +3412,8 @@ AsyncTask<core::Status> HostController::acknowledgeConstraintOperation(QString c
 bool HostController::beginInsertionTargetSelection(quint64 expectedVersion) {
     return runCommand("beginInsertionTargetSelection", [&]() -> Status {
         if (auto status = checkExpectedVersion(expectedVersion); !status.ok()) return status;
+        if (!m_pipelineField.isEmpty() || m_restoredFieldDraft)
+            return makeError(ErrorCode::PreconditionFailed, "This rewrite belongs to its original editor field.");
         if (!isAmbientActive())
             return makeError(ErrorCode::PreconditionFailed, "Enable Live prompt capture in Settings to connect an insertion field.");
         if (!m_revisionState || !m_currentProposal || m_proposalStatus != ProposalUiStatus::ReadyForReview ||
@@ -3467,6 +3513,17 @@ AsyncTask<core::Status> HostController::approveAndCopyRewriteOperation(quint64 e
 }
 
 Status HostController::deliver(const QString& text) {
+    if (otherFieldVisible() || (m_restoredFieldDraft && m_pipelineField.isEmpty() && isAmbientCapture()))
+        return makeError(ErrorCode::StaleVersion, "Return to the original field before delivery");
+    if (fieldCaptureManaged() && isAmbientCapture()) {
+        const auto owner = m_fields.constFind(m_pipelineField);
+        if (owner == m_fields.cend() || owner->workspaceEpoch != m_workspaceEpoch || !m_captureTarget ||
+            owner->source.field.fieldToken != m_captureTarget->field.fieldToken ||
+            owner->source.field.processId != m_captureTarget->field.processId ||
+            owner->source.field.appIdentifier != m_captureTarget->field.appIdentifier ||
+            owner->source.textHash != m_captureTarget->textHash)
+            return makeError(ErrorCode::StaleVersion, "The original field changed. Review its current draft.");
+    }
     if (m_pendingDelivery.has_value()) {
         return makeError(ErrorCode::PreconditionFailed, "An insertion is already in progress.");
     }
@@ -6441,6 +6498,34 @@ AsyncTask<core::Status> HostController::restoreSessionOperation(QString sessionI
             co_return restored.error();
         }
         auto& r = restored.value();
+        if (!m_fieldSwitching) {
+            checkpointWorkingAnswers();
+            co_await flushFieldCheckpoints();
+            m_focusedField.clear();
+            m_pipelineField.clear();
+            m_detachedField.clear();
+            if (r.fieldCheckpoint) {
+                forgetFieldSessions(sessionId);
+                m_detachedField = QStringLiteral("saved/") + sessionId;
+                auto& slot = m_fields[m_detachedField];
+                const auto& saved = *r.fieldCheckpoint;
+                slot.sessionId = sessionId;
+                slot.invoked = true;
+                slot.generation = saved.generation;
+                slot.source.field.appIdentifier = qs(saved.app);
+                slot.project = qs(saved.project);
+                slot.draft = qs(saved.draft);
+                slot.revisionId = qs(saved.revisionId);
+                slot.snapshotId = qs(saved.snapshotId);
+                slot.answers = saved.answers;
+            }
+            m_explicitFields.clear();
+            m_automaticFields.clear();
+            m_fieldMatches.clear();
+            setCaptureSource(CaptureSource::Widget);
+            emit fieldViewChanged();
+        }
+        m_restoredFieldDraft = r.fieldCheckpoint.has_value();
 
         // Switching sessions does not invalidate the saved approval; the restored copy is re-validated below.
         m_followAmbientDraft = false;
@@ -6452,9 +6537,13 @@ AsyncTask<core::Status> HostController::restoreSessionOperation(QString sessionI
             r.latestRevision.revision, r.session.highestRevisionSeq, r.session.stateVersion,
             r.session.draftEditGeneration, r.session.proposalEditGeneration);
         emit stateVersionChanged();
-        emit revisionRestored(qs(r.latestRevision.revision.text()));
-
-        (co_await rebuildFromRestore(r));
+        if (r.fieldCheckpoint && (r.fieldCheckpoint->revisionId.empty() || r.fieldCheckpoint->draft != r.latestRevision.revision.text())) {
+            if (!noteDraftEditedInternal(stateVersion(),false)) co_return makeError(ErrorCode::StaleVersion,"Draft restore failed");
+            emit revisionRestored(qs(r.fieldCheckpoint->draft));
+        } else {
+            emit revisionRestored(qs(r.latestRevision.revision.text()));
+            (co_await rebuildFromRestore(r));
+        }
         co_return Status::success();
 
 }
@@ -6473,6 +6562,8 @@ AsyncTask<void> HostController::rebuildFromRestore(storage::RestoredSession r) {
         co_return;
     }
     m_currentPolicyResult = analysis::MaterialityPolicyV1::evaluatePrompt(r.analysis->normalized, text);
+    m_promptTriage = r.analysis->promptTriage;
+    m_reviewTrigger = r.analysis->reviewPolicy.trigger;
     m_currentSnapshot = *r.analysis;
     m_currentSnapshotEval = r.analysis->evaluation;
     m_currentAnalysis = r.analysis->normalized;
@@ -6509,7 +6600,8 @@ AsyncTask<void> HostController::rebuildFromRestore(storage::RestoredSession r) {
                                            intent::InterventionStateMachine::kMaxClarificationBudget);
     }
 
-    m_workingIntent = working;
+    m_workingIntent = checkpointAnswers(r).value_or(working);
+    restoreFieldInterview(r);
     m_currentDecision = intent::InterventionStateMachine::evaluate(*m_currentAnalysis, m_currentPolicyResult,
                                                                    m_currentSnapshotEval, m_workingIntent);
     bool intentRestored = false;
@@ -6527,7 +6619,7 @@ AsyncTask<void> HostController::rebuildFromRestore(storage::RestoredSession r) {
         }
     }
     if (!intentRestored) {
-        m_workingIntent = intent::WorkingIntentState{};
+        m_workingIntent = checkpointAnswers(r).value_or(intent::WorkingIntentState{});
         m_confirmedIntent.reset();
         m_currentDecision = intent::InterventionStateMachine::evaluate(*m_currentAnalysis, m_currentPolicyResult,
                                                                        m_currentSnapshotEval, m_workingIntent);
@@ -6608,6 +6700,7 @@ AsyncTask<core::Status> HostController::deleteSessionOperation(QString sessionId
         if (auto st = (co_await m_repository->deleteSession(core::SessionId(id))); !st.ok()) {
             co_return st;
         }
+        forgetFieldSessions(sessionId);
         if (id == currentSessionId()) {
             resetSessionState();
         }
@@ -6625,6 +6718,7 @@ AsyncTask<core::Status> HostController::purgeHistoryOperation() {
         if (auto st = (co_await m_repository->purgeHistory()); !st.ok()) {
             co_return st;
         }
+        forgetFieldSessions();
         resetSessionState();
         refreshStorageStats();
         emit sessionListChanged();
@@ -7626,7 +7720,15 @@ bool HostController::requestAccessibilityPermission() {
 void HostController::applyAmbientObserving() {
     const bool active = isAmbientActive();
     m_accessibility->setObserving(active);
-    if (!active) onFieldLost();
+    if (!active) {
+        onFieldLost();
+        if (fieldCaptureManaged()) {
+            checkpointWorkingAnswers();
+            flushFieldCheckpoints();
+            forgetFieldSessions();
+            setCaptureSource(CaptureSource::Widget);
+        }
+    }
     if (!m_ambientModeEnabled) {
         setAmbientStatus(QStringLiteral("Off. %1 opens Roclint with its own text box.").arg(shortcutLabel()));
     } else if (m_accessibility->access() == AccessibilityAccess::NotGranted) {
@@ -7715,6 +7817,12 @@ void HostController::setAmbientStatus(const QString& status) {
 }
 
 void HostController::onFieldLost(bool interrupted) {
+    if (fieldCaptureManaged() && !m_focusedField.isEmpty()) {
+        if (!m_fields.value(m_focusedField).invoked) m_fields.remove(m_focusedField);
+        m_focusedField.clear();
+        m_fieldMatches.clear();
+        emit fieldViewChanged();
+    }
     if (interrupted) {
         if (!m_ambientObservation) return;
         // Only presentation survives one missed read. Invalidate the draft and
@@ -7748,6 +7856,19 @@ void HostController::followAmbientDraft() {
     if (!isAmbientCapture() && !m_captureOpenPending && !m_captureRequestedApp.isEmpty() &&
         observed.field.appIdentifier.compare(m_captureRequestedApp, Qt::CaseInsensitive) == 0) {
         if (!preserveHud && m_revisionState && !noteDraftEditedInternal(stateVersion(), false)) return;
+        if (fieldSessionsEnabled() && !m_restoredFieldDraft && observed.field.fieldToken && observed.field.processId > 0) {
+            m_pipelineField = observeSessionField(observed);
+            auto& slot = m_fields[m_pipelineField];
+            slot.invoked = true;
+            if (m_revisionState) {
+                slot.sessionId = currentSessionIdString();
+                slot.revisionId = currentRevisionId();
+                if (preserveHud) slot.draft = currentRevisionText();
+                markFieldDirty(slot);
+            }
+            slot.editedInHud = preserveHud;
+            emit fieldViewChanged();
+        }
         m_widgetDraftEdited = preserveHud;
         m_captureSource = CaptureSource::Ambient;
         m_captureTarget = observed;
@@ -7763,7 +7884,7 @@ void HostController::followAmbientDraft() {
             : QStringLiteral("Live capture connected. Continue typing in your editor, then Analyze when ready."));
         return;
     }
-    if (!isAmbientCapture() || !m_captureTarget) return;
+    if (otherFieldVisible() || !isAmbientCapture() || !m_captureTarget) return;
     if (m_widgetDraftEdited || m_selectingInsertionTarget) {
         m_followAmbientDraft = false;
         return;
@@ -7808,6 +7929,10 @@ void HostController::onFieldObserved(const ObservedField& rawField) {
         onFieldLost();
         return;
     }
+    if (fieldCaptureManaged() && (!field.fieldToken || field.processId <= 0)) {
+        onFieldLost();
+        return;
+    }
     if (field.elevationMismatch) {
         onFieldLost();
         setAmbientStatus(QStringLiteral("%1 is running as administrator, so Roclint can't read it. Use %2 instead.")
@@ -7830,13 +7955,52 @@ void HostController::onFieldObserved(const ObservedField& rawField) {
         qInfo() << "[HostController] onFieldObserved: app=" << field.appDisplayName << "characters=" << prompt.size();
     }
     prompt = qs(core::normalizeLineEndings(ss(prompt)));
+    if (fieldSessionsEnabled() && !m_pipelineField.isEmpty() && field.fieldToken && field.processId > 0 && prompt.size() <= kAmbientMaxChars) {
+        const AmbientObservation source{field,prompt,core::crypto::Sha256::hexDigest(ss(prompt))};
+        const auto previous=m_focusedField;
+        const auto key=observeSessionField(source);
+        if (key!=m_pipelineField || m_fieldSwitching) {
+            m_ambientDebounce.stop();
+            m_ambientCheckPending = false;
+            m_ambientObservation = source;
+            if (promptTriageRoutingEnabled()) {
+                const bool hasPrompt = !prompt.trimmed().isEmpty();
+                m_ambientBadgeRecovery.stop();
+                setAmbientBadge(hasPrompt, QStringLiteral("Check prompt"));
+                detectWordRefinements(field);
+                if (previous != key) emit ambientBadgeChanged();
+            } else if (previous != key) {
+                clearWordRefinement();
+                setAmbientBadge(false);
+            }
+            if (m_captureOpenPending && (field.refreshRequestId == 0 || field.refreshRequestId == m_captureOpenGeneration) && field.appIdentifier.compare(m_captureRequestedApp,Qt::CaseInsensitive)==0) {
+                m_captureOpenPending=false;
+                ++m_captureOpenGeneration;
+                openFromAmbient();
+            }
+            return;
+        }
+        if (m_captureTarget && m_captureTarget->textHash != source.textHash && !m_fields[key].editedInHud) {
+            m_widgetDraftEdited = false;
+            if (!isCardVisible() && m_revisionState) {
+                noteDraftEditedInternal(stateVersion(), false);
+                m_captureTarget = source;
+            }
+        }
+        if (previous!=key && m_fields.contains(key)) emit ambientDraftUpdated(m_fields[key].draft);
+        if (prompt.trimmed().isEmpty() && field.kind == FieldKind::Terminal) {
+            m_ambientObservation = source;
+            followAmbientDraft();
+            return;
+        }
+    }
     if (field.kind == FieldKind::GuiEditor && prompt.trimmed().isEmpty()) {
         const bool recoveringBadge = m_ambientBadgeRecovery.isActive();
         m_ambientBadgeRecovery.stop();
         clearWordRefinement();
         // An empty composer is still a valid destination for a draft authored in the HUD.
         m_ambientDebounce.stop();
-        if (!m_ambientObservation.has_value() || m_ambientObservation->prompt.trimmed().isEmpty() ||
+        if (fieldSessionsEnabled() || !m_ambientObservation.has_value() || m_ambientObservation->prompt.trimmed().isEmpty() ||
             m_ambientObservation->field.fieldToken == field.fieldToken) {
             m_ambientObservation = AmbientObservation{field, prompt, core::crypto::Sha256::hexDigest(ss(prompt))};
         } else {
@@ -8072,6 +8236,16 @@ AsyncTask<core::Status> HostController::openFromAmbientOperation(std::optional<A
         if (!m_repository) {
             co_return storageUnavailable();
         }
+        if (fieldSessionsEnabled() && m_pipelineField.isEmpty() && !m_selectingInsertionTarget &&
+            !m_restoredFieldDraft && !m_revisionState && observationSnapshot->field.fieldToken &&
+            observationSnapshot->field.processId > 0) {
+            m_pipelineField = observeSessionField(*observationSnapshot);
+            m_fields[m_pipelineField].invoked = true;
+        }
+        if (m_restoredFieldDraft && m_pipelineField.isEmpty()) {
+            showCardInternal(false);
+            co_return Status::success();
+        }
         const bool resumeInterview = m_interviewOpenPending;
         m_interviewOpenPending = false;
         const auto pendingWordContext = m_interviewWordContext;
@@ -8173,6 +8347,7 @@ AsyncTask<core::Status> HostController::openFromAmbientOperation(std::optional<A
                 }
             }
             if (!rebound) {
+                if (fieldCaptureManaged()) m_reviewTrigger = analysis::ReviewTrigger::ExplicitReview;
                 if (auto st = (co_await startDiscovery()); !st.ok()) {
                     setLastError(st.error());
                 }
@@ -8269,6 +8444,35 @@ bool HostController::waitForIdleForTesting(int timeoutMs) {
 
 quint64 HostController::openFromAmbient() {
     const auto observation = m_ambientObservation;
+    if (fieldSessionsEnabled() && observation && observation->field.fieldToken && observation->field.processId > 0 && !m_selectingInsertionTarget &&
+        (!m_pipelineField.isEmpty() || !hasActiveWork() || (m_interviewOpenPending && !m_revisionState))) {
+        const auto key=observeSessionField(*observation);
+        auto& field=m_fields[key];
+        const bool fresh=!field.invoked;
+        field.invoked=true;
+        if (m_pipelineField.isEmpty()) {
+            m_pipelineField=key;
+        } else {
+            showCardInternal(false);
+            return admitFieldReview(key, fresh || key != m_pipelineField);
+        }
+        return enqueueStorageCommand("openFromAmbient",[this,key,observation]() -> AsyncTask<Status> {
+            auto status=co_await openFromAmbientOperation(observation);
+            if (status.ok() && m_fields.contains(key) && m_revisionState) {
+                auto& slot=m_fields[key];
+                slot.sessionId=qs(currentSessionId());
+                if (slot.draft == currentRevisionText()) slot.revisionId = currentRevisionId();
+                else {
+                    noteDraftEditedInternal(stateVersion(), false);
+                    if (m_focusedField == key) emit ambientDraftUpdated(slot.draft);
+                }
+                m_captureTarget = slot.source;
+                markFieldDirty(slot);
+            }
+            emit fieldViewChanged();
+            co_return status;
+        });
+    }
     return enqueueStorageCommand("openFromAmbient", [=, this]() { return openFromAmbientOperation(observation); });
 }
 
@@ -8670,12 +8874,20 @@ quint64 HostController::analyzePrompt(QString text, quint64 expectedVersion) {
 }
 
 quint64 HostController::reviewPrompt(QString text, quint64 expectedVersion) {
+    if (fieldCaptureManaged() && expectedVersion == stateVersion() && !otherFieldVisible() &&
+        text == m_fields.value(m_pipelineField).draft) {
+        return admitFieldReview(m_pipelineField, true);
+    }
     return enqueueStorageCommand("reviewPrompt", [=, this]() {
         return analyzePromptOperation(text, expectedVersion, analysis::ReviewTrigger::ExplicitReview);
     });
 }
 
 quint64 HostController::cancelAnalysis(quint64 expectedVersion) {
+    if (expectedVersion == stateVersion()) {
+        m_automaticFields.removeAll(m_pipelineField);
+        m_explicitFields.removeAll(m_pipelineField);
+    }
     return enqueueStorageCommand("cancelAnalysis", [=, this]() { return cancelAnalysisOperation(expectedVersion); });
 }
 

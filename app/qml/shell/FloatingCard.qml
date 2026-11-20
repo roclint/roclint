@@ -313,6 +313,7 @@ Window {
     }
     function queueAutoAnalysis() {
         cancelQueuedAnalysis();
+        if (hc && (hostController.otherFieldVisible || hostController.fieldCaptureManaged)) return;
         if (!hc || !visible || visibility === Window.Minimized || !promptInput.text.trim().length || hostController.storageNeedsRecovery) return;
         autoAnalysisText = promptInput.text;
         autoAnalysisTimer.restart();
@@ -491,47 +492,48 @@ Window {
         onActivated: rootWindow.dismissCard()
     }
     Shortcut {
+        enabled: !rootWindow.fieldPreview
         sequences: rootWindow.isMac ? ["Meta+Return", "Meta+Enter", "Ctrl+Return", "Ctrl+Enter"] : ["Ctrl+Return", "Ctrl+Enter"]
         onActivated: rootWindow.enterAction()
     }
     Shortcut {
         sequences: ["Shift+Return", "Shift+Enter"]
-        enabled: rootWindow.hc && !promptInput.activeFocus && !reviewFlow.customAnswerHasFocus
+        enabled: !rootWindow.fieldPreview && rootWindow.hc && !promptInput.activeFocus && !reviewFlow.customAnswerHasFocus
         onActivated: rootWindow.sendAsTyped()
     }
     Shortcut {
         sequence: "1"
-        enabled: rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
+        enabled: !rootWindow.fieldPreview && rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
         onActivated: reviewFlow.chooseAlternative(0)
     }
     Shortcut {
         sequence: "2"
-        enabled: rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
+        enabled: !rootWindow.fieldPreview && rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
         onActivated: reviewFlow.chooseAlternative(1)
     }
     Shortcut {
         sequence: "3"
-        enabled: rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
+        enabled: !rootWindow.fieldPreview && rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
         onActivated: reviewFlow.chooseAlternative(2)
     }
     Shortcut {
         sequences: ["Ctrl+Shift+Return", "Ctrl+Shift+Enter"]
-        enabled: rootWindow.hc && hostController.canApprove
+        enabled: !rootWindow.fieldPreview && rootWindow.hc && hostController.canApprove
         onActivated: rootWindow.approveForCurrentDestination()
     }
     Shortcut {
         sequence: "Alt+1"
-        enabled: rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
+        enabled: !rootWindow.fieldPreview && rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
         onActivated: reviewFlow.chooseAlternative(0)
     }
     Shortcut {
         sequence: "Alt+2"
-        enabled: rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
+        enabled: !rootWindow.fieldPreview && rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
         onActivated: reviewFlow.chooseAlternative(1)
     }
     Shortcut {
         sequence: "Alt+3"
-        enabled: rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
+        enabled: !rootWindow.fieldPreview && rootWindow.hc && reviewFlow.choiceHasFocus && hostController.isClarifying && !reviewFlow.customAnswerHasFocus
         onActivated: reviewFlow.chooseAlternative(2)
     }
     Shortcut {
@@ -539,6 +541,11 @@ Window {
         onActivated: rootWindow.openSettings()
     }
 
+    readonly property bool fieldPreview: hc && hostController.otherFieldVisible
+    onFieldPreviewChanged: if (fieldPreview) {
+        cancelQueuedAnalysis();
+        rewriteAfterReview = false;
+    }
     Rectangle {
         id: posterBoard
         anchors.fill: parent
@@ -676,10 +683,9 @@ Window {
                             objectName: "minButton"
                             compact: true; quiet: true; iconName: "minus"; tip: qsTr("Minimize")
                             onClicked: {
-                                if (rootWindow.isMac) {
-                                    if (rootWindow.hc) hostController.hideCard(); else rootWindow.hide();
-                                } else if (Qt.platform.os === "windows") {
-                                    hostController.minimizeCard(); rootWindow.hide();
+                                if (rootWindow.isMac || Qt.platform.os === "windows") {
+                                    if (rootWindow.hc) hostController.minimizeCard();
+                                    rootWindow.hide();
                                 } else {
                                     rootWindow.showMinimized();
                                 }
@@ -695,7 +701,7 @@ Window {
 
                 RowLayout {
                     objectName: "hudStatusRow"
-                    visible: !rootWindow.compactPresentation
+                    visible: !rootWindow.fieldPreview && !rootWindow.compactPresentation
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     spacing: 8
@@ -797,8 +803,53 @@ Window {
 
                 Rectangle { visible: !rootWindow.compactPresentation; Layout.fillWidth: true; implicitHeight: 1; color: rootWindow.borderColor }
 
+                ColumnLayout {
+                    visible: rootWindow.fieldPreview
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 0
+                    clip: true
+                    Text {
+                        text: rootWindow.hc && hostController.focusedFieldName.length ? hostController.focusedFieldName : qsTr("Waiting for an editable field")
+                        textFormat: Text.PlainText
+                        color: rootWindow.mutedTextColor
+                    }
+                    Text {
+                        objectName: "focusedFieldPreview"
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
+                        text: rootWindow.hc ? hostController.focusedFieldDraft : ""
+                        color: rootWindow.fgColor
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                        elide: Text.ElideRight
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: rootWindow.fieldPreview ? hostController.focusedFieldQuestion : ""
+                        visible: text.length > 0
+                        color: rootWindow.fgColor
+                        textFormat: Text.PlainText
+                        wrapMode: Text.Wrap
+                    }
+                    Repeater {
+                        model: rootWindow.fieldPreview ? hostController.focusedFieldChoices : []
+                        Text { text: modelData.label; color: rootWindow.mutedTextColor; textFormat: Text.PlainText }
+                    }
+                    Repeater {
+                        model: rootWindow.fieldPreview ? hostController.matchingFieldDrafts : []
+                        Button { text: qsTr("Resume: %1").arg(modelData.preview); onClicked: hostController.resumeFieldDraft(modelData.sessionId) }
+                    }
+                    Button {
+                        text: rootWindow.hc && hostController.fieldReviewQueued ? qsTr("Review queued") : qsTr("Review prompt")
+                        enabled: rootWindow.hc && !hostController.fieldReviewQueued && hostController.focusedFieldDraft.trim().length > 0
+                        onClicked: hostController.reviewFocusedField()
+                    }
+                }
+
                 Flickable {
                     id: contentScroll
+                    visible: !rootWindow.fieldPreview
                     objectName: "workflowViewport"
                     Layout.fillWidth: true
                     Layout.fillHeight: true
@@ -817,6 +868,14 @@ Window {
 
                     ColumnLayout {
                         id: mainContent
+                        Repeater {
+                            model: rootWindow.hc && !rootWindow.fieldPreview ? hostController.matchingFieldDrafts : []
+                            Button {
+                                Layout.fillWidth: true
+                                text: qsTr("Resume: %1").arg(modelData.preview)
+                                onClicked: hostController.resumeFieldDraft(modelData.sessionId)
+                            }
+                        }
                         width: contentScroll.availableWidth
                         spacing: 14
 
@@ -932,6 +991,7 @@ Window {
                                     TapHandler { onTapped: { rootWindow.requestActivate(); promptInput.forceActiveFocus(); } }
                                     onTextChanged: if (rootWindow.hc && !rootWindow.suppressEditSignal) {
                                         rootWindow.rewriteAfterReview = false;
+                                        hostController.rememberHudDraft(text);
                                         hostController.noteDraftEdited(hostController.stateVersion);
                                         rootWindow.queueAutoAnalysis();
                                     }
@@ -1059,12 +1119,12 @@ Window {
                 }
 
                 Rectangle {
-                    visible: !rootWindow.compactQuestion
+                    visible: !rootWindow.fieldPreview && !rootWindow.compactQuestion
                     Layout.fillWidth: true; implicitHeight: 1; color: rootWindow.borderColor
                 }
                 GridLayout {
                     id: hudFooter
-                    visible: !rootWindow.compactQuestion
+                    visible: !rootWindow.fieldPreview && !rootWindow.compactQuestion
                     Layout.fillWidth: true
                     Layout.minimumWidth: 0
                     columns: rootWindow.width < 600 ? 1 : 2

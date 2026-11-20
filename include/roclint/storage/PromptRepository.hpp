@@ -91,9 +91,15 @@ struct DeliveryEventRecord {
 
 // Everything needed to rebuild in-memory state after reopen. Downstream artifacts are loaded only
 // when they are bound to the latest revision and to each other.
+struct FieldCheckpoint {
+    std::string sessionId, app, project, draft, revisionId, snapshotId, answers;
+    std::uint64_t generation{0};
+};
+
 struct RestoredSession {
     SessionRecord session;
     RevisionRecord latestRevision;
+    std::optional<FieldCheckpoint> fieldCheckpoint{};
     std::optional<DeliveryEventRecord> lastDelivery{};
     std::optional<core::analysis::AnalysisSnapshot> analysis{};
     bool legacyAnalysisRequiresReview{false};
@@ -134,7 +140,7 @@ struct RevisionSummaryPage {
 
 class PromptRepository {
 public:
-    static constexpr int CURRENT_SCHEMA_VERSION = 7;
+    static constexpr int CURRENT_SCHEMA_VERSION = 8;
 
     // Requires an open Database; throws std::invalid_argument otherwise.
     explicit PromptRepository(Database& db);
@@ -216,6 +222,8 @@ public:
     // Marks every IN_PROGRESS attempt INTERRUPTED; returns the number of rows changed.
     [[nodiscard]] core::Result<std::size_t> interruptOrphanedAttemptsOnStartup(std::int64_t nowMs);
 
+    [[nodiscard]] core::Status saveFieldCheckpoint(const FieldCheckpoint& checkpoint);
+    [[nodiscard]] core::Result<std::vector<FieldCheckpoint>> matchingFields(const std::string& app, const std::string& project) const;
     [[nodiscard]] core::Result<RestoredSession> restoreSession(const core::SessionId& sessionId) const;
 
 private:

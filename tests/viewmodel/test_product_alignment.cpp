@@ -1996,6 +1996,69 @@ void testCapturedAndClipboardDraftPresentation() {
     std::cout << "  [PASS] Captured draft opens compactly, explicit editing preserves input, disabling capture detaches insertion.\n";
 }
 
+void testFloatingWindowSwitchesToFocusedField() {
+    QSettings().clear();
+    auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
+    auto* observed = bridge.get();
+    observed->accessValue = AccessibilityAccess::Granted;
+    HostController controller(QStringLiteral(":memory:"), std::move(bridge));
+    ROCLINT_CHECK(controller.waitForStorageForTesting());
+    controller.setLegacyDiscoveryForTesting(true);
+    controller.setFieldSessionsForTesting(true);
+    std::atomic<int> calls{0};
+    prepare(controller, calls, 180);
+    controller.setAmbientModeEnabled(true);
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("hostController"), &controller);
+    engine.load(QUrl(QStringLiteral("qrc:/shell/FloatingCard.qml")));
+    ROCLINT_CHECK(engine.rootObjects().size() == 1);
+    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().first());
+    ROCLINT_CHECK(window);
+    auto* preview = window->findChild<QQuickItem*>("focusedFieldPreview");
+    ROCLINT_CHECK(preview);
+    ObservedField first;
+    first.fieldToken = 31;
+    first.processId = 100;
+    first.appIdentifier = QStringLiteral("com.google.antigravity");
+    first.text = QString::fromStdString(fx::kChainPrompt);
+    observed->observe(first);
+    ROCLINT_CHECK(controller.waitForCommandForTesting(controller.openFromAmbient()));
+    window->show();
+    ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
+    auto second = first;
+    second.fieldToken++;
+    second.processId++;
+    second.appIdentifier = QStringLiteral("com.microsoft.VSCode");
+    second.text = QStringLiteral("The VS Code draft");
+    observed->observe(second);
+    ROCLINT_CHECK(preview->isVisible() && preview->property("text") == second.text);
+    second.text.clear();
+    observed->observe(second);
+    ROCLINT_CHECK(preview->isVisible() && preview->property("text").toString().isEmpty());
+    second.text = QStringLiteral("Retyped in VS Code");
+    observed->observe(second);
+    ROCLINT_CHECK(preview->property("text") == second.text);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(5000));
+    ROCLINT_CHECK(preview->isVisible() && preview->property("text") == second.text);
+    const int compactWidth = window->width();
+    clickVisual(window, requireVisual(window, "expandToggleButton"));
+    QTRY_VERIFY(window->width() > compactWidth && preview->isVisible());
+    clickVisual(window, requireVisual(window, "expandToggleButton"));
+    QTRY_COMPARE(window->width(), compactWidth);
+#if defined(Q_OS_MACOS) || defined(Q_OS_WIN)
+    clickVisual(window, requireVisual(window, "minButton"));
+    QTRY_VERIFY(!window->isVisible() && !controller.isCardVisible());
+    controller.activateCard();
+    window->show();
+    ROCLINT_CHECK(QTest::qWaitForWindowExposed(window));
+    ROCLINT_CHECK(preview->isVisible() && preview->property("text") == second.text);
+#endif
+    observed->observe(first);
+    ROCLINT_CHECK(!preview->isVisible() && controller.isClarifying());
+    auto* input = window->findChild<QQuickItem*>("promptInput");
+    ROCLINT_CHECK(input && input->property("text") == first.text);
+}
+
 void testLiveCapturedDraftAndCancelRetryInQml() {
     QSettings().clear();
     auto bridge = std::make_unique<roclint::test::MockAccessibilityBridge>();
@@ -3283,6 +3346,7 @@ int main(int argc, char* argv[]) {
     run("testUserRequestedRewriteFromNewDraft", testUserRequestedRewriteFromNewDraft);
     run("testManualGraniteRewriteConnectsEditorWithoutLosingReview", testManualGraniteRewriteConnectsEditorWithoutLosingReview);
     run("testCapturedAndClipboardDraftPresentation", testCapturedAndClipboardDraftPresentation);
+    run("testFloatingWindowSwitchesToFocusedField", testFloatingWindowSwitchesToFocusedField);
     run("testLiveCapturedDraftAndCancelRetryInQml", testLiveCapturedDraftAndCancelRetryInQml);
     run("testHudPresentationSurvivesDraftAndDelivery", testHudPresentationSurvivesDraftAndDelivery);
     run("testTypingDebouncesAnalysisInQml", testTypingDebouncesAnalysisInQml);

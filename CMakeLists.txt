@@ -285,6 +285,7 @@ if(BUILD_DESKTOP)
             app/host/AsyncRepository.hpp
             app/host/HostController.hpp
             app/host/HostController.cpp
+            app/host/HostControllerFields.cpp
             app/host/HostControllerWorkspace.cpp
             app/host/CodebaseWatcher.hpp
             app/host/CodebaseWatcher.cpp

@@ -7,6 +7,9 @@
 #include <QClipboard>
 #include <QElapsedTimer>
 #include <QGuiApplication>
+#include <QTemporaryDir>
+#include <QSemaphore>
+#include <QMutex>
 
 #include <functional>
 #include <iostream>
@@ -44,13 +47,14 @@ struct Harness {
     std::shared_ptr<int> rewriteCalls = std::make_shared<int>(0);
 
     explicit Harness(AccessibilityAccess access = AccessibilityAccess::Granted,
-                     const std::string& discoveryReply = kAmbiguousReply) {
+                     const std::string& discoveryReply = kAmbiguousReply,
+                     const QString& database = QStringLiteral(":memory:")) {
         // Native desktop focus must not decide a controller unit test's invocation path.
         roclint::host::HostContextDetector::setMockObservation(roclint::host::HostContextObservation{});
         auto mock = std::make_unique<MockAccessibilityBridge>();
         mock->accessValue = access;
         bridge = mock.get();
-        controller = std::make_unique<HostController>(QStringLiteral(":memory:"), std::move(mock));
+        controller = std::make_unique<HostController>(database, std::move(mock));
         ROCLINT_CHECK(controller->waitForStorageForTesting());
         controller->setLegacyDiscoveryForTesting(true);
         auto c = calls;
@@ -123,6 +127,164 @@ QString clipboardText() {
 void observeAndWaitForBadge(Harness& h, const QString& prompt = kPrompt) {
     h.bridge->observe(cursorField(prompt));
     ROCLINT_CHECK(pumpUntil([&]() { return h.c().isAmbientBadgeVisible(); }));
+}
+
+void testIndependentFieldSessions() {
+    Harness h;
+    h.c().setFieldSessionsForTesting(true);
+    h.c().setAmbientModeEnabled(true);
+    auto first = cursorField(kPrompt);
+    first.appIdentifier = QStringLiteral("com.google.antigravity");
+    auto second = cursorField("Write a different prompt here", 42);
+    second.appIdentifier = QStringLiteral("com.microsoft.VSCode");
+    second.processId++;
+    h.bridge->observe(first);
+    const auto opening = h.c().openFromAmbient();
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(opening));
+    const auto firstSession = h.c().currentSessionIdString();
+    h.bridge->observe(second);
+    ROCLINT_CHECK(h.c().otherFieldVisible() && h.c().focusedFieldDraft() == second.text);
+    second.text.clear();
+    h.bridge->observe(second);
+    ROCLINT_CHECK(h.c().focusedFieldDraft().isEmpty());
+    second.text = QStringLiteral("Retyped in a different field");
+    h.bridge->observe(second);
+    ROCLINT_CHECK(h.c().focusedFieldDraft() == second.text);
+    ROCLINT_CHECK(pumpUntil([&] { return h.c().isClarifying(); }));
+    const auto question = h.c().activeQuestion();
+    const auto options = h.c().activeAlternatives();
+    ROCLINT_CHECK(h.c().sessionCount() == 1);
+    h.c().reviewFocusedField();
+    ROCLINT_CHECK(pumpUntil([&] { return !h.c().otherFieldVisible() && h.c().currentRevisionText() == second.text; }));
+    ROCLINT_CHECK(h.c().currentSessionIdString() != firstSession);
+    h.bridge->observe(first);
+    ROCLINT_CHECK(h.c().focusedFieldDraft() == first.text);
+    ROCLINT_CHECK(pumpUntil([&] { return !h.c().otherFieldVisible() && h.c().currentSessionIdString() == firstSession; }));
+    ROCLINT_CHECK(h.c().activeQuestion() == question && h.c().activeAlternatives() == options);
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().confirmChoice("alt_0_0", h.c().stateVersion())));
+    ROCLINT_CHECK(h.c().hasConfirmedIntent());
+    h.bridge->observe(second);
+    ROCLINT_CHECK(pumpUntil([&] { return !h.c().otherFieldVisible() && h.c().currentSessionIdString() != firstSession; }));
+    h.bridge->observe(first);
+    ROCLINT_CHECK(pumpUntil([&] { return !h.c().otherFieldVisible() && h.c().hasConfirmedIntent(); }));
+    first.text += " New requirements.";
+    h.bridge->observe(first);
+    ROCLINT_CHECK(!h.c().hasConfirmedIntent() && h.c().focusedFieldDraft() == first.text);
+    auto sibling = first;
+    ++sibling.fieldToken;
+    h.bridge->observe(sibling);
+    ROCLINT_CHECK(h.c().otherFieldVisible());
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
+}
+
+void testQuietIndicatorFollowsAnotherEditorAfterReview() {
+    Harness h;
+    h.c().setAmbientModeEnabled(true);
+    h.c().setFieldSessionsForTesting(true);
+    auto first = cursorField(kPrompt);
+    h.bridge->observe(first);
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().openFromAmbient()));
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
+    const auto session = h.c().currentSessionIdString();
+    h.c().hideCard();
+    h.c().setLegacyDiscoveryForTesting(false);
+    auto next = cursorField("A second draft", 42);
+    next.appIdentifier = QStringLiteral("com.microsoft.VSCode");
+    next.processId++;
+    h.bridge->observe(next);
+    ROCLINT_CHECK(h.c().isAmbientBadgeVisible() && h.c().focusedFieldDraft() == next.text);
+    next.text.clear();
+    h.bridge->observe(next);
+    ROCLINT_CHECK(!h.c().isAmbientBadgeVisible());
+    ROCLINT_CHECK(h.c().currentSessionIdString() == session);
+}
+
+void testExplicitReviewPrecedesCoalescedEdits() {
+    Harness h(AccessibilityAccess::Granted, kClearReply);
+    h.c().setFieldSessionsForTesting(true);
+    h.c().setAmbientModeEnabled(true);
+    auto automatic = cursorField("Initial automatic field", 3);
+    const auto running = cursorField("Hold the running review", 4);
+    const auto explicitField = cursorField("Prioritize my explicit review", 5);
+    h.bridge->observe(automatic);
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().openFromAmbient()));
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
+    QSemaphore started, release;
+    std::atomic_bool held{false};
+    QMutex mutex;
+    QStringList order;
+    h.c().setTransportOverrideForTesting([&](std::string_view instruction) -> Result<std::string> {
+        if (instruction.find("granite.goldfish_audit.v2") != std::string_view::npos ||
+            instruction.find("granite.goldfish_discovery_audit.v1") != std::string_view::npos)
+            return std::string(R"({"outcome":"Pass","violations":[],"unresolved":[]})");
+        if (instruction.find("Hold the running review") != std::string_view::npos && !held.exchange(true)) {
+            started.release();
+            release.tryAcquire(1, 5000);
+        }
+        QMutexLocker lock(&mutex);
+        for (const auto phrase : {"Hold the running review", "Prioritize my explicit review", "Intermediate text", "Latest edit"})
+            if (instruction.find(phrase) != std::string_view::npos) order.append(QString::fromLatin1(phrase));
+        return kClearReply;
+    });
+    h.bridge->observe(running);
+    h.c().reviewFocusedField();
+    ROCLINT_CHECK(pumpUntil([&] { return started.available() > 0; }));
+    h.bridge->observe(automatic);
+    automatic.text = "Intermediate text";
+    h.bridge->observe(automatic);
+    automatic.text = "Latest edit";
+    h.bridge->observe(automatic);
+    ROCLINT_CHECK(h.c().focusedFieldDraft() == automatic.text);
+    pumpFor(850); // The automatic check becomes eligible while the explicit review still owns the worker.
+    h.bridge->observe(explicitField);
+    h.c().reviewFocusedField();
+    ROCLINT_CHECK(pumpUntil([&] { return h.c().fieldReviewQueued(); }));
+    release.release();
+    const bool finished = pumpUntil([&] { QMutexLocker lock(&mutex); return order.size() >= 3; }, 5000);
+    if (!finished) {
+        QMutexLocker lock(&mutex);
+        qWarning() << "Unexpected field review order" << order << h.c().lastError() << h.c().currentRevisionText() << h.c().analysisMessage();
+    }
+    ROCLINT_CHECK(finished);
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
+    QMutexLocker lock(&mutex);
+    ROCLINT_CHECK(order == QStringList({running.text, explicitField.text, automatic.text}));
+}
+
+void testFieldResumeAfterRestart() {
+    QTemporaryDir directory;
+    ROCLINT_CHECK(directory.isValid());
+    const auto database = directory.filePath("fields.sqlite");
+    QString savedId;
+    auto field = cursorField(kPrompt);
+    {
+        Harness h(AccessibilityAccess::Granted, kAmbiguousReply, database);
+        h.c().setFieldSessionsForTesting(true);
+        h.c().setAmbientModeEnabled(true);
+        h.bridge->observe(field);
+        ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().openFromAmbient()));
+        savedId = h.c().currentSessionIdString();
+        field.text += " This part is still a draft.";
+        h.bridge->observe(field);
+        bool quit = false;
+        QObject::connect(&h.c(), &HostController::quitRequested, [&] { quit = true; });
+        h.c().requestQuit();
+        ROCLINT_CHECK(pumpUntil([&] { return quit; }, 5000));
+    }
+    Harness h(AccessibilityAccess::Granted, kAmbiguousReply, database);
+    h.c().setFieldSessionsForTesting(true);
+    h.c().setAmbientModeEnabled(true);
+    auto fresh = cursorField("A new prompt after reopening", 81);
+    h.bridge->observe(fresh);
+    ROCLINT_CHECK(h.c().waitForCommandForTesting(h.c().openFromAmbient()));
+    ROCLINT_CHECK(pumpUntil([&] { return !h.c().matchingFieldDrafts().isEmpty(); }));
+    ROCLINT_CHECK(h.c().currentSessionIdString() != savedId);
+    QString draft;
+    QObject::connect(&h.c(), &HostController::revisionRestored, [&](QString text) { draft = text; });
+    h.c().resumeFieldDraft(savedId);
+    ROCLINT_CHECK(pumpUntil([&] { return h.c().currentSessionIdString() == savedId && draft == field.text; }));
+    ROCLINT_CHECK(!h.c().isAmbientAttached() && !h.c().isClarifying() && h.bridge->injections.empty());
+    ROCLINT_CHECK(h.c().waitForIdleForTesting(5000));
 }
 
 void testAmbientRouteWhenPermissionGranted() {
@@ -898,6 +1060,10 @@ int main(int argc, char* argv[]) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QGuiApplication app(argc, argv);
     std::cout << "[Test Dual Mode] Starting...\n";
+    testIndependentFieldSessions();
+    testQuietIndicatorFollowsAnotherEditorAfterReview();
+    testExplicitReviewPrecedesCoalescedEdits();
+    testFieldResumeAfterRestart();
     testAmbientRouteWhenPermissionGranted();
     testWidgetFallbackWhenPermissionDenied();
     testAmbientOffUsesWidgetEvenWithPermission();

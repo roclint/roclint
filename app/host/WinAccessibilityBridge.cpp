@@ -630,7 +630,15 @@ private:
 
         Focused next;
         next.element = element;
-        next.token = ++m_tokenCounter;
+        for (const auto& [token, saved] : m_capturedFields) {
+            BOOL same = FALSE;
+            if (saved.pid == pid && saved.exe == exe && saved.element &&
+                SUCCEEDED(m_uia->CompareElements(saved.element.Get(), element.Get(), &same)) && same) {
+                next.token = token;
+                break;
+            }
+        }
+        if (!next.token) next.token = ++m_tokenCounter;
         next.pid = pid;
         next.exe = exe;
         if (!HostContextDetector::isAmbientEligibleApp(next.exe)) {

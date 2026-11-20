@@ -412,6 +412,20 @@ CREATE TABLE delivery_events (
 CREATE INDEX idx_delivery_events_session ON delivery_events(session_id, completed_at DESC, event_id DESC);
 )SQL";
 
+constexpr const char* kSchemaV8 = R"SQL(
+CREATE TABLE field_checkpoints(
+    session_id TEXT PRIMARY KEY REFERENCES sessions(session_id) ON DELETE CASCADE,
+    app TEXT NOT NULL, project TEXT NOT NULL, draft TEXT NOT NULL, revision_id TEXT NOT NULL,
+    snapshot_id TEXT NOT NULL, answers TEXT NOT NULL, generation INTEGER NOT NULL
+);
+CREATE INDEX idx_field_context ON field_checkpoints(app,project);
+)SQL";
+
+FieldCheckpoint readCheckpoint(Statement& s) {
+    return {s.columnText(0), s.columnText(1), s.columnText(2), s.columnText(3),
+            s.columnText(4), s.columnText(5), s.columnText(6), s.columnUInt(7)};
+}
+
 // Called within the same write transaction as an artifact insert where applicable.
 void advanceStoredState(Database& db, const std::string& sessionId, const std::string& revisionId,
                         std::uint64_t expectedVersion, std::int64_t nowMs,
@@ -599,7 +613,7 @@ Status PromptRepository::migrateTo(int targetVersion) {
         if (targetVersion < 0 || targetVersion > CURRENT_SCHEMA_VERSION) {
             fail(ErrorCode::InvalidInput, "Unknown schema version " + std::to_string(targetVersion));
         }
-        const char* steps[] = {kSchemaV1, kSchemaV2, kSchemaV3, kSchemaV4, kSchemaV5, kSchemaV6, kSchemaV7};
+        const char* steps[] = {kSchemaV1, kSchemaV2, kSchemaV3, kSchemaV4, kSchemaV5, kSchemaV6, kSchemaV7, kSchemaV8};
         for (;;) {
             // Serialize the version read with the migration. Another connection may
             // have completed any number of steps while BEGIN IMMEDIATE waited.
@@ -697,8 +711,8 @@ Result<SessionSummaryPage> PromptRepository::listSessionSummariesPaged(
         if (limit <= 0 || limit > 50) limit = 50;
         std::string sql =
             "SELECT s.session_id, s.created_at, s.updated_at, s.highest_revision_seq, "
-            "       r.revision_id, SUBSTR(r.content, 1, 512) "
-            "FROM sessions s "
+            "       r.revision_id, SUBSTR(COALESCE(f.draft,r.content), 1, 512) "
+            "FROM sessions s LEFT JOIN field_checkpoints f ON f.session_id=s.session_id "
             "LEFT JOIN revisions r ON r.session_id = s.session_id AND r.revision_seq = s.highest_revision_seq ";
         const bool hasCursor = afterUpdatedAt.has_value() && afterSessionId.has_value();
         if (hasCursor) {
@@ -1303,6 +1317,31 @@ Result<std::size_t> PromptRepository::interruptOrphanedAttemptsOnStartup(std::in
     });
 }
 
+Status PromptRepository::saveFieldCheckpoint(const FieldCheckpoint& c) {
+    return guarded([&]() -> Status {
+        Statement s(db_.rawHandle(), "INSERT INTO field_checkpoints(session_id,app,project,draft,revision_id,snapshot_id,answers,generation) "
+            "VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(session_id) DO UPDATE SET "
+            "app=excluded.app,project=excluded.project,draft=excluded.draft,revision_id=excluded.revision_id,"
+            "snapshot_id=excluded.snapshot_id,answers=excluded.answers,generation=excluded.generation "
+            "WHERE excluded.generation>=field_checkpoints.generation");
+        s.text(1,c.sessionId).text(2,c.app).text(3,c.project).text(4,c.draft).text(5,c.revisionId)
+            .text(6,c.snapshotId).text(7,c.answers).integer(8,c.generation);
+        s.step();
+        return Status::success();
+    });
+}
+
+Result<std::vector<FieldCheckpoint>> PromptRepository::matchingFields(const std::string& app, const std::string& project) const {
+    return guarded([&]() -> Result<std::vector<FieldCheckpoint>> {
+        Statement s(db_.rawHandle(), "SELECT f.* FROM field_checkpoints f JOIN sessions s USING(session_id) "
+            "WHERE app=?1 AND project=?2 ORDER BY s.updated_at DESC LIMIT 20");
+        s.text(1,app).text(2,project);
+        std::vector<FieldCheckpoint> result;
+        while (s.step()) result.push_back(readCheckpoint(s));
+        return result;
+    });
+}
+
 Result<RestoredSession> PromptRepository::restoreSession(const core::SessionId& sessionId) const {
     auto session = getSession(sessionId);
     if (!session.ok()) {
@@ -1318,6 +1357,9 @@ Result<RestoredSession> PromptRepository::restoreSession(const core::SessionId& 
 
     return guarded([&]() -> Result<RestoredSession> {
         RestoredSession restored{session.value(), *latest.value()};
+        Statement checkpoint(db_.rawHandle(), "SELECT * FROM field_checkpoints WHERE session_id=?1");
+        checkpoint.text(1,sessionId.value());
+        if (checkpoint.step()) restored.fieldCheckpoint = readCheckpoint(checkpoint);
         auto deliveries = getDeliveryEvents(sessionId);
         if (!deliveries.ok()) return deliveries.error();
         if (!deliveries.value().empty()) restored.lastDelivery = deliveries.value().front();

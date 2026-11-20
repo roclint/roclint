@@ -452,7 +452,7 @@ public:
     }
 
 private:
-    struct KnownField { AXUIElementRef element; pid_t pid; QString bundle; quint64 token; AXUIElementRef pane; FieldKind kind; };
+    struct KnownField { AXUIElementRef element; pid_t pid; QString bundle; quint64 token; AXUIElementRef pane; FieldKind kind; QString documentUrl; };
 
     void run() {
         {
@@ -571,13 +571,19 @@ private:
         }
     }
 
+    static QString documentUrlFor(AXUIElementRef element) {
+        auto window = (AXUIElementRef)axAttribute(element, kAXWindowAttribute);
+        return window ? copyStringAttribute(window, kAXDocumentAttribute) : QString{};
+    }
+
     quint64 tokenFor(AXUIElementRef element) {
         const bool embedded = isElectronBundle(m_bundleId) && hasClass(element, @"xterm-helper-textarea");
         const auto pane = embedded ? xtermPane(element) : nullptr;
         const auto kind = embedded || isTerminalBundle(m_bundleId) ? FieldKind::Terminal : FieldKind::GuiEditor;
+        const auto documentUrl = kind == FieldKind::GuiEditor ? documentUrlFor(element) : QString{};
         for (const auto& field : m_knownFields) {
             const bool samePane = pane == field.pane || (pane && field.pane && CFEqual(pane, field.pane));
-            if (field.kind == kind && samePane && field.pid == m_pid && field.bundle == m_bundleId &&
+            if (field.kind == kind && field.documentUrl == documentUrl && samePane && field.pid == m_pid && field.bundle == m_bundleId &&
                 CFEqual(field.element, element)) return field.token;
         }
         if (m_knownFields.size() == 32) {
@@ -587,7 +593,7 @@ private:
         const auto token = ++m_nextFieldToken;
         CFRetain(element);
         if (pane) CFRetain(pane);
-        m_knownFields.push_back({element, m_pid, m_bundleId, token, pane, kind});
+        m_knownFields.push_back({element, m_pid, m_bundleId, token, pane, kind, documentUrl});
         return token;
     }
     static void releaseField(const KnownField& field) {
@@ -709,6 +715,9 @@ private:
         AXUIElementRef element = static_cast<AXUIElementRef>(value);
         if (m_focused != nullptr && CFEqual(m_focused, element)) {
             CFRelease(element);
+            const auto previous = m_token;
+            m_token = tokenFor(m_focused);
+            if (previous != m_token) readAndEmit();
             return;
         }
         detachFocused();
@@ -752,6 +761,7 @@ private:
         const auto target = std::find_if(m_knownFields.begin(), m_knownFields.end(), [this](const KnownField& known) { return known.token == m_token; });
         if (target == m_knownFields.end()) return std::nullopt;
         f.kind = target->kind;
+        f.documentUrl = target->documentUrl;
         f.isPassword = copyStringAttribute(m_focused, kAXSubroleAttribute) == QLatin1String("AXSecureTextField");
         if (f.isPassword) {
             return f;
@@ -1073,6 +1083,8 @@ private:
                 qInfo() << "[MacAX] delivery refused: original field did not regain focus";
             return InjectionOutcome::FieldChanged;
         }
+        if (!target->documentUrl.isEmpty() && documentUrlFor(target->element) != target->documentUrl)
+            return InjectionOutcome::FieldChanged;
         if (!exactText(app.get(), *target, kind, before)) return InjectionOutcome::FieldChanged;
         return write(app.get(), *target);
     }

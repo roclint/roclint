@@ -154,7 +154,6 @@ void testSchemaV6AndKeysetPagination() {
     ROCLINT_CHECK(repo.migrateTo(5).ok());
     ROCLINT_CHECK(repo.getSchemaVersion().value() == 5);
     ROCLINT_CHECK(repo.migrate().ok());
-    ROCLINT_CHECK(repo.getSchemaVersion().value() == 7);
     ROCLINT_CHECK(repo.getSchemaVersion().value() == PromptRepository::CURRENT_SCHEMA_VERSION);
 
     // Verify index exists
@@ -201,6 +200,29 @@ void testSchemaV6AndKeysetPagination() {
     ROCLINT_CHECK(pagedRevs2[0].sequence == 2);
 }
 
+void testFieldCheckpointDurability() {
+    Database db;
+    ROCLINT_CHECK(db.open(":memory:").ok());
+    PromptRepository repo(db);
+    ROCLINT_CHECK(repo.migrateTo(7).ok());
+    const SessionId id("field");
+    const PromptRevision root(id, RevisionId("rev_field_1"), std::nullopt, "Original draft", 1000);
+    ROCLINT_CHECK(repo.createSessionWithRootRevision(root, 1000).ok());
+    ROCLINT_CHECK(repo.migrate().ok());
+    roclint::storage::FieldCheckpoint checkpoint{"field", "editor", "/project", "Edited draft", "rev_field_1", "", "", 3};
+    ROCLINT_CHECK(repo.saveFieldCheckpoint(checkpoint).ok());
+    auto older = checkpoint;
+    older.generation--;
+    older.draft.clear();
+    ROCLINT_CHECK(repo.saveFieldCheckpoint(older).ok());
+    ROCLINT_CHECK(repo.restoreSession(id).value().fieldCheckpoint->draft == checkpoint.draft);
+    ROCLINT_CHECK(repo.matchingFields("editor", "/project").value().size() == 1);
+    ROCLINT_CHECK(repo.matchingFields("editor", "/other").value().empty());
+    ROCLINT_CHECK(repo.matchingFields("other", "/project").value().empty());
+    ROCLINT_CHECK(repo.deleteSession(id).ok());
+    ROCLINT_CHECK(repo.matchingFields("editor", "/project").value().empty());
+}
+
 void testDeliveryEventMigrationAndHistory() {
     Database db; ROCLINT_CHECK(db.open(":memory:").ok()); PromptRepository repo(db);
     ROCLINT_CHECK(repo.migrateTo(6).ok());
@@ -209,7 +231,7 @@ void testDeliveryEventMigrationAndHistory() {
     }, nullptr);
     ROCLINT_CHECK(!repo.migrate().ok() && repo.getSchemaVersion().value()==6);
     sqlite3_set_authorizer(db.rawHandle(),nullptr,nullptr);
-    ROCLINT_CHECK(repo.migrate().ok() && repo.getSchemaVersion().value()==7);
+    ROCLINT_CHECK(repo.migrate().ok() && repo.getSchemaVersion().value()==PromptRepository::CURRENT_SCHEMA_VERSION);
     const auto revision=PromptRevision(SessionId("delivery_session"),RevisionId("rev_delivery_session_1"),std::nullopt,"A harmless draft",1000);
     ROCLINT_CHECK(repo.createSessionWithRootRevision(revision,1000).ok());
     roclint::storage::DeliveryEventRecord event;
@@ -268,6 +290,7 @@ int main() {
     testLegacyMigrationToCompositeSchema();
     testNewerSchemaIsRefused();
     testSchemaV6AndKeysetPagination();
+    testFieldCheckpointDurability();
     testDeliveryEventMigrationAndHistory();
     testSummaryTiesAndMigrationRollback();
     std::cout << "[Test Database] All tests PASSED.\n";
