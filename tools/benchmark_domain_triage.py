@@ -57,14 +57,18 @@ def infer(case, julia, engine):
                 triage_ms=triage_ms, task_ms=elapsed)
 
 
-def fixture(case, host, evidence, julia):
+def fixture_inputs(case, host, evidence, julia):
     prompt = case["prompt"]
     technical = bool(re.search(r'\.(?:html|css|js|ts|tsx|jsx|qml|cpp|hpp|c|h|py|rs|go|java|swift|json|yaml|sql)\b|\b(?:function|class|const|let|var|import|export|co_return|struct|enum|void|public|private)\b', prompt, re.I)
                      or len(re.findall(r'[{}<>()\[\];:=#]', prompt)) >= 3)
-    return contracts("--discovery-fixture", dict(synthetic=True, explicit_review=False, non_technical=not technical,
+    return dict(synthetic=True, explicit_review=False, non_technical=not technical,
                      prompt=prompt, host=host, workspace_files=case["workspace_files"], workspace_symbols=case["workspace_symbols"],
                      model_revision=julia.REVISION, weights_sha256=julia.WEIGHTS_SHA256,
-                     configuration_id=evidence["configuration"], category_scores=evidence["scores"]))
+                     configuration_id=evidence["configuration"], category_scores=evidence["scores"])
+
+
+def fixture(case, host, evidence, julia):
+    return contracts("--discovery-fixture", fixture_inputs(case, host, evidence, julia))
 
 
 def check_routes(julia):

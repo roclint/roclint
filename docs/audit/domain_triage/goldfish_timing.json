@@ -1,0 +1,647 @@
+[
+  {
+    "family": "alias",
+    "stage": "typing",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "PROMPT_ALREADY_CLEAR",
+        "review_outcome": "READY",
+        "verdict": "QUIET"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "PROMPT_ALREADY_CLEAR",
+        "review_outcome": "READY",
+        "verdict": "QUIET"
+      },
+      "conflicts": [],
+      "groups": [],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 4659.9,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "alias",
+    "stage": "settled",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "PROMPT_ALREADY_CLEAR",
+        "review_outcome": "READY",
+        "verdict": "QUIET"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "PROMPT_ALREADY_CLEAR",
+        "review_outcome": "READY",
+        "verdict": "QUIET"
+      },
+      "conflicts": [],
+      "groups": [],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 4519.9,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "alias",
+    "stage": "delegated",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "PROMPT_ALREADY_CLEAR",
+        "review_outcome": "READY",
+        "verdict": "QUIET"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "PROMPT_ALREADY_CLEAR",
+        "review_outcome": "READY",
+        "verdict": "QUIET"
+      },
+      "conflicts": [],
+      "groups": [],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 4517.81,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "alias",
+    "stage": "open",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_MISSING_DECISION",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "conflicts": [],
+      "groups": [],
+      "host_fallback_questions": [],
+      "missing": [
+        "Should we keep readBatch alias or remove it?"
+      ],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 6820.07,
+        "ok": true,
+        "raw": "{\"outcome\":\"Fail\",\"violations\":[{\"item_id\":\"grp_0\",\"explanation\":\"Missing source quote specifying the exact motivating phrase; also alternatives do not clearly represent distinct practical outcomes or resolve one parameter; alternatives merely list compatibility\"}],\"unresolved\":[{\"item_id\":\"grp_0\",\"explanation\":\"The decision question is well-formed, but the analysis does not provide distinct practical outcomes based on the original prompt\"}]}",
+        "error": null
+      },
+      {
+        "stage": "audit",
+        "ms": 4608.51,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "archive",
+    "stage": "typing",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "conflicts": [],
+      "groups": [
+        {
+          "choices": [
+            "Use existing warehouse schema",
+            "Define custom schema mapping"
+          ],
+          "question": "What specific reporting warehouse schema or format are you using?"
+        }
+      ],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 5051.33,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "archive",
+    "stage": "settled",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "PROMPT_ALREADY_CLEAR",
+        "review_outcome": "READY",
+        "verdict": "QUIET"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "PROMPT_ALREADY_CLEAR",
+        "review_outcome": "READY",
+        "verdict": "QUIET"
+      },
+      "conflicts": [],
+      "groups": [],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 4586.45,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "archive",
+    "stage": "delegated",
+    "route": "ORIGINAL",
+    "result": {
+      "after": {
+        "error": "Automatic review does not follow the classifier route"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "error": "Automatic review does not follow the classifier route"
+      },
+      "conflicts": [],
+      "groups": [
+        {
+          "choices": [
+            "cold storage",
+            "active reporting table"
+          ],
+          "question": "Which storage option should be selected? cold storage or active reporting table?"
+        }
+      ],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 4974.92,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "archive",
+    "stage": "open",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "NEEDS_MANUAL_REVIEW",
+        "reason": "BLOCKING_CONFLICT_PRESENT",
+        "review_outcome": "QUESTION",
+        "verdict": "MANUAL"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "NEEDS_MANUAL_REVIEW",
+        "reason": "BLOCKING_CONFLICT_PRESENT",
+        "review_outcome": "QUESTION",
+        "verdict": "MANUAL"
+      },
+      "conflicts": [
+        "Ambiguity between ownership choice (cold storage vs active reporting) and required constraint may create contradictory conditions."
+      ],
+      "groups": [],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 4661.29,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "lesson",
+    "stage": "typing",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "conflicts": [],
+      "groups": [
+        {
+          "choices": [
+            "simple integer coefficients",
+            "includes systems of equations"
+          ],
+          "question": "What specific type of linear equations should be included?"
+        }
+      ],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 4952.04,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "lesson",
+    "stage": "settled",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "conflicts": [],
+      "groups": [
+        {
+          "choices": [
+            "Two equations",
+            "Four equations"
+          ],
+          "question": "How many linear equations should be included in the classroom exercise?"
+        }
+      ],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 5021.3,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "lesson",
+    "stage": "delegated",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "OPTIONAL_HELP",
+        "verdict": "CLARIFY"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "OPTIONAL_HELP",
+        "verdict": "CLARIFY"
+      },
+      "conflicts": [],
+      "groups": [
+        {
+          "choices": [
+            "include solution",
+            "exclude solution"
+          ],
+          "question": "Include solution in student sheet?"
+        }
+      ],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 4976.25,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "lesson",
+    "stage": "open",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "conflicts": [],
+      "groups": [
+        {
+          "choices": [
+            "hints only",
+            "complete solution"
+          ],
+          "question": "Should the teacher provide hints only or a complete worked solution?"
+        }
+      ],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 6101.77,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "narrator",
+    "stage": "typing",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "conflicts": [],
+      "groups": [
+        {
+          "choices": [
+            "Include ambient sounds, distant announcements, and brief dialogue.",
+            "Focus on mood and atmosphere without specific details."
+          ],
+          "question": "What specific sensory details or characters should be included in the opening scene?"
+        }
+      ],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 6815.46,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "narrator",
+    "stage": "settled",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "conflicts": [],
+      "groups": [
+        {
+          "choices": [
+            "Brief station sounds",
+            "Narrative hook statement"
+          ],
+          "question": "What specific opening scene content is desired?"
+        }
+      ],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 5410.44,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "narrator",
+    "stage": "delegated",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "OPTIONAL_HELP",
+        "verdict": "CLARIFY"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "OPTIONAL_HELP",
+        "verdict": "CLARIFY"
+      },
+      "conflicts": [],
+      "groups": [
+        {
+          "choices": [
+            "Playful narrator",
+            "Serious narrator"
+          ],
+          "question": "What narrator voice tone would you prefer?"
+        }
+      ],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 5366.04,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  },
+  {
+    "family": "narrator",
+    "stage": "open",
+    "route": "CLARIFY",
+    "result": {
+      "after": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "assumptions": [],
+      "audit": "Pass",
+      "before": {
+        "policy": "ELIGIBLE_FOR_CHOICE",
+        "reason": "UNRESOLVED_CHOICE_GROUP",
+        "review_outcome": "QUESTION",
+        "verdict": "CLARIFY"
+      },
+      "conflicts": [],
+      "groups": [
+        {
+          "choices": [
+            "conductor narrator",
+            "passenger narrator"
+          ],
+          "question": "Which narrator(s) should be selected for the opening scene?"
+        }
+      ],
+      "host_fallback_questions": [],
+      "missing": [],
+      "status": "Completed"
+    },
+    "calls": [
+      {
+        "stage": "audit",
+        "ms": 5110.75,
+        "ok": true,
+        "raw": "{\"outcome\":\"Pass\",\"violations\":[],\"unresolved\":[]}",
+        "error": null
+      }
+    ]
+  }
+]

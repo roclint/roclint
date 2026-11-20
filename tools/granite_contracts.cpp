@@ -165,6 +165,93 @@ QJsonArray contracts(const QJsonObject& fixtures) {
     return output;
 }
 
+// Replay a saved discovery through the native repair loop. The driver supplies
+// fresh worker replies on stdin so the auditor controls pruning and regeneration.
+QJsonObject replayDiscovery(const roclint::bridge::GraniteOptionDiscoveryRequest& request,
+                            const std::string& raw) {
+    namespace bridge = roclint::bridge;
+    namespace core = roclint::core;
+    auto parsed = bridge::parseDiscoveryResponse(raw, request.sessionId, request.revisionId, request.promptString);
+    if (!parsed.ok()) throw std::runtime_error(parsed.error().message);
+    const auto& original = parsed.value();
+    auto exchange = [&](const char* stage, std::string_view instructions, const std::string& schema)
+        -> core::Result<std::string> {
+        QJsonObject call{{"stage", stage}, {"instructions", qs(std::string(instructions))}, {"schema", qs(schema)}};
+        std::cout << QJsonDocument(call).toJson(QJsonDocument::Compact).toStdString() << std::endl;
+        std::string reply;
+        if (!std::getline(std::cin, reply)) throw std::runtime_error("Missing worker reply");
+        const auto frame = QJsonDocument::fromJson(QByteArray::fromStdString(reply)).object();
+        if (!frame.value("ok").toBool()) return core::makeError(core::ErrorCode::ProviderUnavailable, "Worker failed");
+        return ss(frame.value("result").toObject().value("text").toString());
+    };
+    bridge::GraniteAdapter adapter;
+    if (!adapter.beginLoading() || !adapter.completeLoading({})) throw std::runtime_error("Adapter unavailable");
+    bridge::GoldfishDiscoveryAuditRequest audit;
+    audit.originalPrompt = request.promptString;
+    audit.sessionId = request.sessionId;
+    audit.proposedAnalysis = original.analysis;
+    const auto result = bridge::GraniteGoldfishAdapter().correctDiscoveryWithRepairLoop(audit,
+        [&](std::string_view instructions) {
+            return exchange("audit", instructions, bridge::goldfishDiscoveryAuditResponseSchema());
+        }, 1, 0, [&](const bridge::GoldfishDiscoveryAuditResult& findings) -> core::Result<core::analysis::NormalizedAnalysis> {
+            auto retry = request;
+            for (const auto* list : {&findings.violations, &findings.unresolved}) {
+                for (const auto& item : *list) {
+                    retry.repairFeedback += "- " + item.itemId + ": " + item.explanation + "\n";
+                    if (retry.repairFeedback.size() > 1536) break;
+                }
+            }
+            auto next = adapter.discoverOptions(retry, [&](std::string_view instructions) {
+                return exchange("regenerate", instructions, bridge::discoveryResponseSchema(request.promptString, 1));
+            });
+            if (!next.ok()) return next.error();
+            if (next.value().assistanceKind != original.assistanceKind)
+                return core::makeError(core::ErrorCode::ValidationFailed, "Optionality changed");
+            return std::move(next).value().analysis;
+        });
+    const auto& analysis = result.analysis;
+    QJsonArray groups, missing, conflicts, assumptions, restored;
+    for (const auto& group : analysis.choiceGroups) {
+        QJsonArray choices;
+        for (const auto& alt : group.alternatives) choices.append(qs(alt.interpretation));
+        groups.append(QJsonObject{{"question", qs(group.question)}, {"choices", choices}});
+    }
+    for (const auto& item : analysis.missingDecisions) missing.append(qs(item.question));
+    for (const auto& item : analysis.conflicts) conflicts.append(qs(item.description));
+    for (const auto& item : analysis.assumptions) assumptions.append(qs(item.statement));
+    if (groups.empty() && missing.empty() && conflicts.empty() && assumptions.empty())
+        for (const auto& group : original.analysis.choiceGroups) restored.append(qs(group.question));
+    auto presentation = [&](core::analysis::NormalizedAnalysis candidate) -> QJsonObject {
+        core::analysis::sealSnapshot(candidate);
+        if (!request.promptTriage) throw std::runtime_error("Replay requires bound triage");
+        auto snapshot = core::analysis::buildRoutedAnalysisSnapshot(candidate, *request.promptTriage,
+            request.promptString, "att_synthetic_replay", std::nullopt,
+            core::analysis::ReviewPolicy{request.reviewTrigger, original.assistanceKind});
+        if (!snapshot.ok()) return {{"error", qs(snapshot.error().message)}};
+        const auto policy = core::analysis::MaterialityPolicyV1::evaluatePrompt(candidate, request.promptString);
+        const auto decision = core::intent::InterventionStateMachine::evaluate(candidate, policy,
+            snapshot.value().evaluation, {});
+        const bool manual = decision.verdict == core::intent::InterventionVerdict::Manual;
+        const bool optional = policy.isEligible() && core::analysis::isOptionalAssistance(original.assistanceKind);
+        const char* outcome = manual && !decision.activeItemId ? "UNAVAILABLE" : optional ? "OPTIONAL_HELP"
+            : manual || decision.requiresUserIntervention() ? "QUESTION" : "READY";
+        return {{"review_outcome", outcome}, {"policy", core::analysis::toString(policy.overallVerdict)},
+                {"verdict", core::intent::toString(decision.verdict)}, {"reason", core::intent::toString(decision.reason)}};
+    };
+    auto hosted = analysis;
+    for (const auto& question : restored) {
+        core::analysis::MissingDecision item;
+        item.id = core::analysis::mintMissingDecisionId(hosted.missingDecisions.size());
+        item.question = ss(question.toString());
+        hosted.missingDecisions.push_back(std::move(item));
+    }
+    return {{"audit", qs(core::toString(result.auditVerdict.outcome))},
+            {"status", qs(core::toString(result.auditVerdict.executionStatus))}, {"groups", groups},
+            {"missing", missing}, {"conflicts", conflicts}, {"assumptions", assumptions},
+            {"before", presentation(original.analysis)}, {"after", presentation(hosted)},
+            {"host_fallback_questions", restored}};
+}
+
 QJsonArray validateRuns(const QJsonObject& report) {
     QJsonArray output;
     for (const auto& run : report.value(QStringLiteral("runs")).toArray()) {
@@ -364,6 +451,11 @@ int main(int argc, char** argv) {
             request.maximumQuestions = 1;
             request.substantialInterview = fixtures.value(QStringLiteral("substantial_interview")).toBool();
             request.isNonTechnicalPrompt = fixtures.value(QStringLiteral("non_technical")).toBool(true);
+            if (fixtures.contains("saved_discovery")) {
+                const auto replay = replayDiscovery(request, ss(fixtures.value("saved_discovery").toString()));
+                std::cout << QJsonDocument(replay).toJson(QJsonDocument::Compact).toStdString() << std::endl;
+                return 0;
+            }
             QJsonObject result{{QStringLiteral("id"), fixtures.value(QStringLiteral("id"))},
                 {QStringLiteral("op"), QStringLiteral("granite_analyze")}, {QStringLiteral("prompt"), prompt},
                 {QStringLiteral("instructions"), qs(roclint::bridge::buildDiscoveryPrompt(request))},

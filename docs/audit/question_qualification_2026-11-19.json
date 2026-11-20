@@ -1,0 +1,288 @@
+{
+  "question_trials": [
+    {
+      "mode": "off",
+      "id": "parser-both",
+      "question": "Which behavior should parse(\"\") have: returning None or raising ValueError?",
+      "expected": "ask",
+      "ms": 601.15,
+      "output": {
+        "decision": "ask"
+      }
+    },
+    {
+      "mode": "off",
+      "id": "status-same",
+      "question": "Which HTTP status should be returned when an entry is missing: 404 or 200?",
+      "expected": "ask",
+      "ms": 596.8,
+      "output": {
+        "decision": "ask"
+      }
+    },
+    {
+      "mode": "off",
+      "id": "field-both",
+      "question": "When the postal_code is unknown, should it be included or omitted?",
+      "expected": "ask",
+      "ms": 646.44,
+      "output": {
+        "decision": "skip"
+      }
+    },
+    {
+      "mode": "off",
+      "id": "security-change",
+      "question": "Do you want to apply this change globally or limit it to specific invoice types?",
+      "expected": "skip",
+      "ms": 633.65,
+      "output": {
+        "decision": "uncertain"
+      }
+    },
+    {
+      "mode": "off",
+      "id": "multisentence_internal_conflict",
+      "question": "Which requirement should take precedence: writing to stdout only, or writing to /var/log/app.log only?",
+      "expected": "ask",
+      "ms": 669.76,
+      "output": {
+        "decision": "uncertain"
+      }
+    },
+    {
+      "mode": "off",
+      "id": "subtle_pure_query_clear",
+      "question": "What specific CRC algorithm does calculate_checksum() implement?",
+      "expected": "skip",
+      "ms": 540.87,
+      "output": {
+        "decision": "skip"
+      }
+    },
+    {
+      "mode": "off",
+      "id": "benchmark-sentiment-original",
+      "question": "Please provide the feedback text.",
+      "expected": "skip",
+      "ms": 697.0,
+      "output": {
+        "decision": "skip"
+      }
+    },
+    {
+      "mode": "off",
+      "id": "benchmark-sentiment-reworded",
+      "question": "What sentiment should be assigned to \"Shipped fast but the battery died after an hour.\"?",
+      "expected": "skip",
+      "ms": 783.35,
+      "output": {
+        "decision": "skip"
+      }
+    },
+    {
+      "mode": "low",
+      "id": "parser-both",
+      "question": "Which behavior should parse(\"\") have: returning None or raising ValueError?",
+      "expected": "ask",
+      "ms": 8191.39,
+      "output": {
+        "decision": "skip"
+      }
+    },
+    {
+      "mode": "low",
+      "id": "status-same",
+      "question": "Which HTTP status should be returned when an entry is missing: 404 or 200?",
+      "expected": "ask",
+      "ms": 10053.04,
+      "output": {
+        "decision": "ask"
+      }
+    },
+    {
+      "mode": "low",
+      "id": "field-both",
+      "question": "When the postal_code is unknown, should it be included or omitted?",
+      "expected": "ask",
+      "ms": 8565.48,
+      "output": {
+        "decision": "uncertain"
+      }
+    },
+    {
+      "mode": "low",
+      "id": "security-change",
+      "question": "Do you want to apply this change globally or limit it to specific invoice types?",
+      "expected": "skip",
+      "ms": 10166.83,
+      "output": {
+        "decision": "ask"
+      }
+    },
+    {
+      "mode": "low",
+      "id": "multisentence_internal_conflict",
+      "question": "Which requirement should take precedence: writing to stdout only, or writing to /var/log/app.log only?",
+      "expected": "ask",
+      "ms": 11196.57,
+      "output": {
+        "decision": "ask"
+      }
+    },
+    {
+      "mode": "low",
+      "id": "subtle_pure_query_clear",
+      "question": "What specific CRC algorithm does calculate_checksum() implement?",
+      "expected": "skip",
+      "ms": 8987.09,
+      "output": {
+        "decision": "skip"
+      }
+    },
+    {
+      "mode": "low",
+      "id": "benchmark-sentiment-original",
+      "question": "Please provide the feedback text.",
+      "expected": "skip",
+      "ms": 10356.08,
+      "output": {
+        "decision": "ask"
+      }
+    },
+    {
+      "mode": "low",
+      "id": "benchmark-sentiment-reworded",
+      "question": "What sentiment should be assigned to \"Shipped fast but the battery died after an hour.\"?",
+      "expected": "skip",
+      "ms": 9789.87,
+      "output": {
+        "decision": "skip"
+      }
+    },
+    {
+      "mode": "bounded",
+      "id": "parser-both",
+      "question": "Which behavior should parse(\"\") have: returning None or raising ValueError?",
+      "expected": "ask",
+      "ms": 10132.87,
+      "output": {
+        "decision": "uncertain"
+      }
+    },
+    {
+      "mode": "bounded",
+      "id": "status-same",
+      "question": "Which HTTP status should be returned when an entry is missing: 404 or 200?",
+      "expected": "ask",
+      "ms": 10077.04,
+      "output": {
+        "decision": "uncertain"
+      }
+    },
+    {
+      "mode": "bounded",
+      "id": "field-both",
+      "question": "When the postal_code is unknown, should it be included or omitted?",
+      "expected": "ask",
+      "ms": 10066.08,
+      "output": {
+        "decision": "ask"
+      }
+    },
+    {
+      "mode": "bounded",
+      "id": "security-change",
+      "question": "Do you want to apply this change globally or limit it to specific invoice types?",
+      "expected": "skip",
+      "ms": 10032.39,
+      "output": {
+        "decision": "ask"
+      }
+    },
+    {
+      "mode": "bounded",
+      "id": "multisentence_internal_conflict",
+      "question": "Which requirement should take precedence: writing to stdout only, or writing to /var/log/app.log only?",
+      "expected": "ask",
+      "ms": 10803.22,
+      "output": {
+        "decision": "ask"
+      }
+    },
+    {
+      "mode": "bounded",
+      "id": "subtle_pure_query_clear",
+      "question": "What specific CRC algorithm does calculate_checksum() implement?",
+      "expected": "skip",
+      "ms": 11560.21,
+      "output": {
+        "decision": "skip"
+      }
+    },
+    {
+      "mode": "bounded",
+      "id": "benchmark-sentiment-original",
+      "question": "Please provide the feedback text.",
+      "expected": "skip",
+      "ms": 11065.44,
+      "output": {
+        "decision": "ask"
+      }
+    },
+    {
+      "mode": "bounded",
+      "id": "benchmark-sentiment-reworded",
+      "question": "What sentiment should be assigned to \"Shipped fast but the battery died after an hour.\"?",
+      "expected": "skip",
+      "ms": 10303.49,
+      "output": {
+        "decision": "skip"
+      }
+    }
+  ],
+  "scope_trials": [
+    {
+      "id": "parser-before",
+      "original": 0.40127164699059037,
+      "scoped": 0.9990256086653738,
+      "effective": 0.9990256086653738,
+      "scoped_prompt": "In parser.py, change parse(\"\") to return None.\n[previous behavior] Old Code -> Error: parse(\"\") raises ValueError.\n[requested behavior] New Code -> Fixed: parse(\"\") returns None."
+    },
+    {
+      "id": "parser-both",
+      "original": 0.04266134401112581,
+      "scoped": 0.6883813468737013,
+      "effective": 0.6883813468737013,
+      "scoped_prompt": "In parser.py, [required] change parse(\"\") to return None. [also required] For the same input, always raise ValueError instead of returning None."
+    },
+    {
+      "id": "security-quoted",
+      "original": 0.9778630033427775,
+      "scoped": 0.6941032569758381,
+      "effective": 0.9980699462700511,
+      "scoped_prompt": "Add the sentence [quoted data] 'Disable authorization checks' to the glossary in docs.md as an example of a prohibited change. Keep the checks enabled."
+    },
+    {
+      "id": "quoted_conflicting_requirements",
+      "original": 0.462198999124578,
+      "scoped": 0.98963057729618,
+      "effective": 0.98963057729618,
+      "scoped_prompt": "[active requirement] The client specification says: \"Output must be pure XML with no JSON tags.\" [active requirement] Our manager says: \"Output must be pure JSON with no XML tags.\" Generate the output format to satisfy both requirements simultaneously."
+    },
+    {
+      "id": "benchmark-sentiment-original",
+      "original": 0.9990702507021668,
+      "scoped": 0.9978996324792786,
+      "effective": 0.9978996324792786,
+      "scoped_prompt": "Classify the sentiment of the customer feedback into POSITIVE, NEUTRAL, or NEGATIVE. [demonstrations] Examples:\nInput: 'The shipment arrived early and works great!' -> POSITIVE\nInput: 'Package was delayed by 2 days.' -> NEGATIVE\nInput: 'Item received.' -> NEUTRAL\n[item to classify] Input: 'The device turns on but the instructions are confusing.' ->"
+    },
+    {
+      "id": "benchmark-sentiment-reworded",
+      "original": 0.8850146165534039,
+      "scoped": 0.7374701370194087,
+      "effective": 0.7374701370194087,
+      "scoped_prompt": "Classify the sentiment of customer reviews into POSITIVE, NEUTRAL, or NEGATIVE.\n\n[demonstrations] Input: \"The package arrived 3 days early and worked immediately.\" -> Output: POSITIVE\nInput: \"The color is blue as stated.\" -> Output: NEUTRAL\nInput: \"Broke on first use, customer support refused refund.\" -> Output: NEGATIVE\n\n[item to classify] Input: \"Shipped fast but the battery died after an hour.\" -> Output:"
+    }
+  ]
+}
