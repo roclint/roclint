@@ -436,6 +436,16 @@ int main(int argc, char** argv) {
                 for (int i = 0; i < scores.size(); ++i) triage.categoryScores[i] = scores[i].toDouble(-1);
                 auto sealed = analysis::sealPromptTriage(triage, request.promptString);
                 if (!sealed.ok()) throw std::runtime_error(sealed.error().message);
+                if (fixtures.value("historical_score_only").toBool()) {
+                    // Reconstruct the V2 evidence used before ownership cues entered the seal.
+                    auto& historical = sealed.value();
+                    historical.hashVersion = analysis::TriageHashVersion::V2;
+                    historical.ownership = analysis::DecisionOwnership::Unspecified;
+                    historical.triageHash = analysis::computePromptTriageHash(historical);
+                    historical.id = "triage_" + historical.triageHash;
+                    if (!analysis::validatePromptTriage(historical).ok())
+                        throw std::runtime_error("Invalid historical score-only fixture");
+                }
                 request.promptTriage = sealed.value();
                 routes["default"] = analysis::toString(analysis::routePromptTriage(sealed.value()).value());
                 for (double threshold : {0.65, 0.70, 0.85}) {
