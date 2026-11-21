@@ -874,8 +874,16 @@ private:
     static bool targetFocused(AXUIElementRef app, const KnownField& target) {
         if (frontmostPid() != target.pid) return false;
         CFTypeRef focused = nullptr;
-        if (AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute, &focused) != kAXErrorSuccess || !focused)
+        const auto err = AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute, &focused);
+        if (err != kAXErrorSuccess || !focused) {
+            if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+                qInfo() << "[MacAX Focus Recovery] targetFocused_error"
+                        << "bundle=" << target.bundle
+                        << "err=" << err
+                        << "hasValue=" << (focused != nullptr);
+            }
             return false;
+        }
         const bool matches = CFEqual(focused, target.element);
         if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS") && !matches) {
             const auto role = copyStringAttribute(static_cast<AXUIElementRef>(focused), kAXRoleAttribute);
@@ -889,6 +897,41 @@ private:
         if (!matches || !target.pane) return matches;
         const auto pane = xtermPane(target.element);
         return pane && CFEqual(pane, target.pane);
+    }
+
+    static void dispatchAppKitActivation(pid_t targetPid) {
+        auto performActivation = ^{
+            @autoreleasepool {
+                // Ensure Roclint yields key focus away from its own HUD/panels
+                // so the target application's window becomes the active key window.
+                for (NSWindow* window in [NSApp windows]) {
+                    if ([window isKeyWindow]) {
+                        [window resignKeyWindow];
+                    }
+                }
+                [NSApp deactivate];
+
+                NSRunningApplication* application =
+                    [NSRunningApplication runningApplicationWithProcessIdentifier:targetPid];
+                if (!application) return;
+
+                if (@available(macOS 14.0, *)) {
+                    [NSApp yieldActivationToApplication:application];
+                    [application activateFromApplication:[NSRunningApplication currentApplication] options:0];
+                } else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+                    [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+#pragma clang diagnostic pop
+                }
+            }
+        };
+
+        if ([NSThread isMainThread]) {
+            performActivation();
+        } else {
+            dispatch_sync(dispatch_get_main_queue(), performActivation);
+        }
     }
 
     static bool isWithin(AXUIElementRef element, AXUIElementRef ancestor) {
@@ -982,26 +1025,12 @@ private:
             if (targetFocused(app, target)) return true;
             // Electron/Chromium reports focusedUIElement = NULL when the host
             // process is frontmost but its key window lost AppKit first-responder
-            // status (e.g. after interacting with Roclint's non-activating HUD).
-            // Dispatch AppKit activation to restore the key responder chain
-            // before polling.
-            @autoreleasepool {
-                NSRunningApplication* application =
-                    [NSRunningApplication runningApplicationWithProcessIdentifier:target.pid];
-                if (application) {
-                    if (@available(macOS 14.0, *)) {
-                        [NSApp yieldActivationToApplication:application];
-                        [application activateFromApplication:[NSRunningApplication currentApplication] options:0];
-                    } else {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-                        [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
-#pragma clang diagnostic pop
-                    }
-                }
-            }
+            // status (e.g. after interacting with Roclint's HUD).
+            // Resign key window and dispatch AppKit activation on the main thread
+            // to restore the key responder chain before polling.
+            dispatchAppKitActivation(target.pid);
             (void)focusReturnedWebEditor(app, target);
-            for (int attempt = 0; attempt < 20 && frontmostPid() == target.pid; ++attempt) {
+            for (int attempt = 0; attempt < 25 && frontmostPid() == target.pid; ++attempt) {
                 if (targetFocused(app, target)) return true;
                 usleep(kPollMicros);
             }
@@ -1011,31 +1040,12 @@ private:
             if (target.pid != m_pid || target.token != m_token) return false;
         }
 
-        @autoreleasepool {
-            NSRunningApplication* application = [NSRunningApplication runningApplicationWithProcessIdentifier:target.pid];
-            if (!application || !application.bundleIdentifier ||
-                QString::fromNSString(application.bundleIdentifier) != target.bundle) return false;
-            // AX can return the already verified editor application to the
-            // foreground without selecting a window or an input on its behalf.
-            // Note: AXUIElementSetAttributeValue may return kAXErrorSuccess even
-            // when the target window is NOT key (observed with Chromium/Electron).
-            // Always dispatch AppKit activation unconditionally to ensure the
-            // target app regains key responder focus.
-            const auto axFrontRes = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute, kCFBooleanTrue);
-            if (@available(macOS 14.0, *)) {
-                [NSApp yieldActivationToApplication:application];
-                [application activateFromApplication:[NSRunningApplication currentApplication] options:0];
-            } else {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wdeprecated-declarations"
-                [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
-#pragma clang diagnostic pop
-            }
-            if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
-                qInfo() << "[MacAX Focus Recovery] stage=activating_dispatched"
-                        << "targetPid=" << target.pid
-                        << "axFrontmostResult=" << axFrontRes;
-            }
+        const auto axFrontRes = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute, kCFBooleanTrue);
+        dispatchAppKitActivation(target.pid);
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            qInfo() << "[MacAX Focus Recovery] stage=activating_dispatched"
+                    << "targetPid=" << target.pid
+                    << "axFrontmostResult=" << axFrontRes;
         }
         bool restoredWebFocus = false;
         for (int i = 0; i < 25; ++i) {
