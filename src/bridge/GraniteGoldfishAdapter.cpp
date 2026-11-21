@@ -1217,6 +1217,7 @@ constexpr const char* kComprehensionReviewCaution =
 struct ComprehensionSource {
     std::string ref;
     std::string text;
+    std::string id;
 };
 
 struct ComprehensionInputs {
@@ -1261,15 +1262,28 @@ struct ComprehensionInputs {
         excerpt = unescaped;
         return true;
     }
+    std::string trimmed(trimModelWhitespace(excerpt));
+    if (!trimmed.empty() && trimmed != excerpt && source.text.find(trimmed) != std::string::npos) {
+        excerpt = trimmed;
+        return true;
+    }
+    if (trimmed.size() >= 2 && ((trimmed.front() == '"' && trimmed.back() == '"') ||
+                                (trimmed.front() == '\'' && trimmed.back() == '\''))) {
+        std::string unquoted(trimModelWhitespace(trimmed.substr(1, trimmed.size() - 2)));
+        if (!unquoted.empty() && source.text.find(unquoted) != std::string::npos) {
+            excerpt = unquoted;
+            return true;
+        }
+    }
     return false;
 }
 
 [[nodiscard]] ComprehensionInputs buildComprehensionInputs(const ComprehensionReviewRequest& request) {
     ComprehensionInputs inputs;
-    inputs.sources.push_back({"candidate", request.candidatePrompt});
-    inputs.sources.push_back({"original", request.originalPrompt});
+    inputs.sources.push_back({"candidate", request.candidatePrompt, "candidate"});
+    inputs.sources.push_back({"original", request.originalPrompt, "original"});
     for (std::size_t i = 0; i < request.confirmedDecisions.size(); ++i) {
-        inputs.sources.push_back({"decision:" + std::to_string(i + 1), request.confirmedDecisions[i]});
+        inputs.sources.push_back({"decision:" + std::to_string(i + 1), request.confirmedDecisions[i], "decision:" + std::to_string(i + 1)});
     }
 
     std::set<std::string> usedRefs;
@@ -1286,11 +1300,11 @@ struct ComprehensionInputs {
             ref = base + "#" + std::to_string(suffix++);
         }
         inputs.constraintRefs.push_back(ref);
-        inputs.sources.push_back({ref, constraint.rule});
+        inputs.sources.push_back({ref, constraint.rule, constraint.id});
     }
 
     for (std::size_t i = 0; i < request.sourceExcerpts.size(); ++i) {
-        inputs.sources.push_back({"source:" + std::to_string(i + 1), request.sourceExcerpts[i]});
+        inputs.sources.push_back({"source:" + std::to_string(i + 1), request.sourceExcerpts[i], "source:" + std::to_string(i + 1)});
     }
     return inputs;
 }
@@ -1298,8 +1312,45 @@ struct ComprehensionInputs {
 [[nodiscard]] const ComprehensionSource* findComprehensionSource(
     const std::vector<ComprehensionSource>& sources, std::string_view ref) noexcept {
     for (const auto& source : sources) {
-        if (std::string_view(source.ref) == ref) return &source;
+        if (std::string_view(source.ref) == ref ||
+            (!source.id.empty() && std::string_view(source.id) == ref)) {
+            return &source;
+        }
     }
+
+    // Normalized prefix: if ref is missing "constraint:", check if "constraint:" + ref matches
+    if (!ref.starts_with("constraint:") && !ref.starts_with("decision:") && !ref.starts_with("source:")) {
+        const std::string asConstraint = "constraint:" + std::string(ref);
+        for (const auto& source : sources) {
+            if (source.ref == asConstraint || (!source.id.empty() && source.id == ref)) {
+                return &source;
+            }
+        }
+    }
+
+    // Normalized separators (e.g. "constraint_intent_grp_0" or "decision_1")
+    std::string normalized(ref);
+    for (const auto prefix : {"constraint", "decision", "source"}) {
+        const std::size_t pLen = std::strlen(prefix);
+        if (normalized.starts_with(prefix) && normalized.size() > pLen && normalized[pLen] == '_') {
+            normalized[pLen] = ':';
+            break;
+        }
+    }
+    for (const auto& source : sources) {
+        if (source.ref == normalized || (!source.id.empty() && source.id == normalized)) {
+            return &source;
+        }
+    }
+
+    // Suffix match (e.g. if source.ref has disambiguation suffix "#2")
+    for (const auto& source : sources) {
+        const auto hashPos = source.ref.find('#');
+        if (hashPos != std::string::npos && std::string_view(source.ref).substr(0, hashPos) == ref) {
+            return &source;
+        }
+    }
+
     return nullptr;
 }
 
@@ -1576,7 +1627,7 @@ struct ParsedComprehensionResponse {
         finding.kind = *kind;
         finding.severity = *severity;
         finding.summary = std::move(summary).value();
-        finding.sourceRef = std::move(sourceRef).value();
+        finding.sourceRef = source->ref;
         finding.sourceExcerpt = std::move(excerpt).value();
         finding.requiresUserDecision = requiresDecision.value();
         finding.proposedRepair = std::move(repair).value();

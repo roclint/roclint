@@ -1616,6 +1616,55 @@ void testComprehensionUnicodeAndEscapedEvidencePreserved() {
                   "Use <keep intact> & preserve \"quotes\"");
 }
 
+void testComprehensionConstraintIdNormalization() {
+    auto req = comprehensionFixture();
+    ScopedConstraint intentConstraint;
+    intentConstraint.id = "intent_grp_0";
+    intentConstraint.rule = "Keep website retro 2000s style";
+    intentConstraint.origin = Origin::User;
+    intentConstraint.derivation = Derivation::Direct;
+    intentConstraint.enforcement = Enforcement::Hard;
+    intentConstraint.polarity = Polarity::Require;
+    intentConstraint.aspect = "style";
+    intentConstraint.authorityRef = "user";
+    req.constraints.push_back(intentConstraint);
+
+    // 1. Bare constraint id (e.g. 'intent_grp_0' from IBM Granite prompt id attribute)
+    const auto bareIdFinding = reviewFinding(
+        "f1", "negative_constraint", "blocking",
+        "The candidate dropped the required 2000s style.",
+        "intent_grp_0", "Keep website retro 2000s style", false,
+        "Preserve the 2000s retro aesthetic.");
+    auto parsedBare = parseComprehensionReviewResponse(
+        comprehensionResponse({bareIdFinding}, false, "Outcome drifted from retro style."), req);
+    ROCLINT_CHECK(parsedBare.ok());
+    ROCLINT_CHECK(parsedBare.value().findings.size() == 1);
+    ROCLINT_CHECK(parsedBare.value().findings[0].sourceRef == "constraint:intent_grp_0");
+    ROCLINT_CHECK(parsedBare.value().findings[0].sourceExcerpt == "Keep website retro 2000s style");
+
+    // 2. Underscore separator (e.g. 'constraint_intent_grp_0')
+    const auto underscoreFinding = reviewFinding(
+        "f2", "negative_constraint", "blocking",
+        "The candidate dropped the required 2000s style.",
+        "constraint_intent_grp_0", "\"Keep website retro 2000s style\"", false,
+        "Preserve the 2000s retro aesthetic.");
+    auto parsedUnderscore = parseComprehensionReviewResponse(
+        comprehensionResponse({underscoreFinding}, false, "Outcome drifted from retro style."), req);
+    ROCLINT_CHECK(parsedUnderscore.ok());
+    ROCLINT_CHECK(parsedUnderscore.value().findings.size() == 1);
+    ROCLINT_CHECK(parsedUnderscore.value().findings[0].sourceRef == "constraint:intent_grp_0");
+    ROCLINT_CHECK(parsedUnderscore.value().findings[0].sourceExcerpt == "Keep website retro 2000s style");
+
+    // 3. Truly unknown source_ref still fails closed
+    const auto invalidFinding = reviewFinding(
+        "f3", "negative_constraint", "blocking",
+        "Unknown reference.", "intent_nonexistent_source", "Keep website", false, "Fix it.");
+    auto parsedInvalid = parseComprehensionReviewResponse(
+        comprehensionResponse({invalidFinding}, false, "Unknown ref"), req);
+    ROCLINT_CHECK(!parsedInvalid.ok());
+    ROCLINT_CHECK(parsedInvalid.error().code == roclint::core::ErrorCode::InvalidInput);
+}
+
 } // namespace
 
 int main() {
@@ -1647,6 +1696,7 @@ int main() {
     testComprehensionUserDecisionBlocksApply();
     testComprehensionReviewIsSingleBoundedCall();
     testComprehensionUnicodeAndEscapedEvidencePreserved();
+    testComprehensionConstraintIdNormalization();
     std::cout << "  [PASS] Comprehension review contract cases passed.\n";
     std::cout << "[PASS] All granite goldfish adapter tests passed successfully.\n";
     return 0;
