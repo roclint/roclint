@@ -1556,13 +1556,27 @@ AsyncTask<core::Status> HostController::startDiscovery(bool allowReconnect) {
         if (request.workspaceFiles.size() >= 25) break;
     }
 
+    switch (m_assistanceMode) {
+        case AssistanceMode::Auto: request.assistanceMode = "auto"; break;
+        case AssistanceMode::Tech: request.assistanceMode = "tech"; break;
+        case AssistanceMode::Create: request.assistanceMode = "create"; break;
+        case AssistanceMode::Strict: request.assistanceMode = "strict"; break;
+        case AssistanceMode::Inspect: request.assistanceMode = "inspect"; break;
+        case AssistanceMode::Quiet: request.assistanceMode = "quiet"; break;
+    }
+    request.detectedHazards = core::analysis::DataHazardPolicy::scanPrompt(request.promptString);
+
     const QString pText = qs(request.promptString);
     static const QRegularExpression codeExtRe(QStringLiteral("\\.(?:html|css|js|ts|tsx|jsx|qml|cpp|hpp|c|h|py|rs|go|java|swift|json|yaml|sql)\\b"), QRegularExpression::CaseInsensitiveOption);
     static const QRegularExpression codeSyntaxRe(QStringLiteral("[{}<>()\\[\\];:=#]"));
     static const QRegularExpression codeKeywordRe(QStringLiteral("\\b(?:function|class|const|let|var|import|export|co_return|struct|enum|void|public|private)\\b"));
-    request.isNonTechnicalPrompt = !codeExtRe.match(pText).hasMatch() &&
-                                   !codeKeywordRe.match(pText).hasMatch() &&
-                                   (pText.count(codeSyntaxRe) < 3);
+    if (m_assistanceMode == AssistanceMode::Tech || !request.detectedHazards.empty()) {
+        request.isNonTechnicalPrompt = false;
+    } else {
+        request.isNonTechnicalPrompt = !codeExtRe.match(pText).hasMatch() &&
+                                       !codeKeywordRe.match(pText).hasMatch() &&
+                                       (pText.count(codeSyntaxRe) < 3);
+    }
 
     // Stage-specific audit transport. It is deliberately separate from the discovery schema so
     // the audit cannot be mistaken for a second discovery generation.
@@ -8782,7 +8796,7 @@ HostController::ParsedCommand HostController::parseCommandPrefix(QString text) {
         return {AssistanceMode::Auto, rest, true};
     } else if (cmd == QStringLiteral("/tech")) {
         return {AssistanceMode::Tech, rest, true};
-    } else if (cmd == QStringLiteral("/create")) {
+    } else if (cmd == QStringLiteral("/create") || cmd == QStringLiteral("/creative")) {
         return {AssistanceMode::Create, rest, true};
     } else if (cmd == QStringLiteral("/strict")) {
         return {AssistanceMode::Strict, rest, true};
@@ -8835,7 +8849,8 @@ void HostController::setAssistanceMode(const QString& mode) {
         applyAssistanceMode(AssistanceMode::Auto);
     } else if (lower == QStringLiteral("tech") || lower == QStringLiteral("/tech")) {
         applyAssistanceMode(AssistanceMode::Tech);
-    } else if (lower == QStringLiteral("create") || lower == QStringLiteral("/create")) {
+    } else if (lower == QStringLiteral("create") || lower == QStringLiteral("/create") ||
+               lower == QStringLiteral("creative") || lower == QStringLiteral("/creative")) {
         applyAssistanceMode(AssistanceMode::Create);
     } else if (lower == QStringLiteral("strict") || lower == QStringLiteral("/strict")) {
         applyAssistanceMode(AssistanceMode::Strict);

@@ -55,6 +55,7 @@ set(ROCLINT_CORE_SOURCES
     src/analysis/AnalysisSnapshot.cpp
     src/analysis/PromptTriage.cpp
     src/analysis/MaterialityPolicy.cpp
+    src/analysis/DataHazardPolicy.cpp
     src/intent/InterventionStateMachine.cpp
     src/intent/ConfirmedIntent.cpp
     src/bridge/GraniteAdapter.cpp
@@ -735,6 +736,7 @@ if(BUILD_TESTING)
         endif()
     endif()
     roclint_add_test(roclint_materiality_policy    tests/analysis/testMaterialityPolicy.cpp          roclint_core_testing)
+    roclint_add_test(roclint_data_hazard_policy    tests/analysis/testDataHazardPolicy.cpp           roclint_core_testing)
     roclint_add_test(roclint_analysis_checkpoint   tests/analysis/test_analysis_checkpoint.cpp       roclint_core_testing)
     roclint_add_test(roclint_triage_audit_chain    tests/analysis/test_upstream_compatibility.cpp    roclint_storage_testing)
     roclint_add_test(roclint_jev_checkpoint        tests/analysis/test_jev_checkpoint.cpp            roclint_core_testing)

@@ -1,6 +1,7 @@
 #pragma once
 #include "roclint/analysis/PromptTriage.hpp"
 #include "roclint/analysis/ReviewPolicy.hpp"
+#include "roclint/analysis/DataHazardPolicy.hpp"
 
 #include "roclint/analysis/NormalizedAnalysis.hpp"
 #include "roclint/core/Result.hpp"
@@ -68,6 +69,8 @@ struct GraniteOptionDiscoveryRequest {
     std::optional<core::analysis::PromptTriage> promptTriage{};
     std::vector<std::string> workspaceFiles{};
     std::vector<std::string> workspaceSymbols{};
+    std::string assistanceMode{"auto"};
+    std::vector<core::analysis::DataHazardResult> detectedHazards{};
     bool isNonTechnicalPrompt{false};
     core::analysis::ReviewTrigger reviewTrigger{core::analysis::ReviewTrigger::Automatic};
     // Optional bounded repair instruction from a completed discovery audit. The model must

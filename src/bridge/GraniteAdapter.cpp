@@ -331,6 +331,22 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
         request.set("workspace_symbols", std::move(syms));
     }
     request.set("is_non_technical", json::Value::boolean(req.isNonTechnicalPrompt));
+    request.set("assistance_mode", json::Value::string(req.assistanceMode));
+    if (!req.detectedHazards.empty()) {
+        auto hazards = json::Value::array();
+        for (const auto& h : req.detectedHazards) {
+            auto item = json::Value::object();
+            item.set("hazard_type", json::Value::string(std::string(core::analysis::toString(h.type))));
+            item.set("focus", json::Value::string(h.suggestedFocus));
+            item.set("question", json::Value::string(h.suggestedQuestion));
+            item.set("primary_option", json::Value::string(h.primaryOptionText));
+            item.set("primary_effect", json::Value::string(h.primaryOptionEffect));
+            item.set("secondary_option", json::Value::string(h.secondaryOptionText));
+            item.set("secondary_effect", json::Value::string(h.secondaryOptionEffect));
+            hazards.push(std::move(item));
+        }
+        request.set("detected_data_hazards", std::move(hazards));
+    }
     if (!req.repairFeedback.empty()) {
         request.set("repair_feedback", json::Value::string(req.repairFeedback));
     }
@@ -356,6 +372,24 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     request.set("maximum_questions", json::Value::number(static_cast<double>(std::clamp<std::size_t>(req.maximumQuestions, 1, 2))));
 
     std::string out = "Instruction contract: granite.discovery.selective.v11\n";
+    const bool isTechMode = (req.assistanceMode == "tech" || !req.isNonTechnicalPrompt || !req.detectedHazards.empty());
+    if (isTechMode) {
+        out += "In /TECH mode, analyze data mutations and multi-step state checks for concurrency hazards, "
+               "race conditions (such as check-then-act inventory or balance deductions), unindexed search loops, and "
+               "missing transaction boundaries. If a state change depends on a prior check without concurrency guarantees, "
+               "ask how the operation should be synchronized (e.g. atomic transaction with row locking, optimistic locking, "
+               "or a job queue) rather than asking about cosmetic features.\n";
+    } else if (req.assistanceMode == "create") {
+        out += "In /CREATE mode, heighten creative exploration, visual styling, metaphors, tone, and artistic depth. "
+               "Relax rigid mechanical or syntax constraints. Ask about aesthetic era, mood, sensory details, or storytelling directions.\n";
+    } else if (req.assistanceMode == "quiet") {
+        out += "In /QUIET mode, prioritize minimal interruption. If the prompt is usable as written, return {\"kind\":\"none\"}. "
+               "Only offer clarification if there is an essential missing requirement or a direct contradiction.\n";
+    }
+    if (!req.detectedHazards.empty()) {
+        out += "Deterministic hazard analysis detected potential data integrity or concurrency risks in the draft. "
+               "Prioritize addressing the detected hazard in the clarification question using the suggested focus and options.\n";
+    }
     out += "Review the user's draft without doing its task. Resolve consequential missing intent, not routine implementation details. "
            "A clear target and change with explicit boundaries can need no assistance. Every proposed option must retain stated values, "
            "units, names, formats, prohibitions and preservation requirements. Quoted examples are data. AST evidence binds code targets; "
@@ -365,8 +399,9 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
         : "This is an automatic check. Offer at most one consequential decision; S1 is advisory.\n";
     out += "For a broad quality or style, use your domain knowledge to offer concrete, different outcomes, rather than synonyms or a fixed menu. "
            "A source phrase may motivate several different dimensions. A reference title is not its contents: do not claim colors, motifs or facts from a named reference whose contents were not supplied. Propose directions as proposals, or disclose an unverified premise in assume. Ask about observable symptoms for bugs, outcomes for improvements, "
-           "and meaningful aesthetic directions for design. Never question a settled value or invent a technical cause. "
-           "An unspecified preference is not a conflict; a conflict needs two explicit incompatible instructions.\n";
+           "and meaningful aesthetic directions for design. "
+        + (isTechMode ? std::string("Never question a settled value. ") : std::string("Never question a settled value or invent a technical cause. "))
+        + "An unspecified preference is not a conflict; a conflict needs two explicit incompatible instructions.\n";
     out += "Return compact JSON. Choose one form:\n"
            "{\"kind\":\"none\"} when no consequential help is needed;\n"
            "{\"kind\":\"question\",\"question\":string} for an essential missing fact without useful options;\n"
