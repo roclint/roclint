@@ -385,6 +385,10 @@ public:
         @autoreleasepool {
             NSDictionary* options = @{(__bridge id)kAXTrustedCheckOptionPrompt: @YES};
             m_trusted = AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)options);
+            if (!m_trusted.load()) {
+                NSURL* url = [NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
+                [[NSWorkspace sharedWorkspace] openURL:url];
+            }
         }
         emit accessChanged();
         return true;

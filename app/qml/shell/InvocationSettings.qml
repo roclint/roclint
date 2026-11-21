@@ -177,7 +177,14 @@ ColumnLayout {
             Layout.fillWidth: true
             text: qsTr("Watch my focused prompt field in Codex and supported IDEs")
             checked: dashboardWindow.hc && hostController.ambientModeEnabled
-            onToggled: if (dashboardWindow.hc) hostController.ambientModeEnabled = checked
+            onToggled: {
+                if (dashboardWindow.hc) {
+                    hostController.ambientModeEnabled = checked;
+                    if (checked && !hostController.accessibilityTrusted) {
+                        hostController.requestAccessibilityPermission();
+                    }
+                }
+            }
             indicator: Rectangle {
                 implicitWidth: 18; implicitHeight: 18
                 y: (ambientCaptureToggle.height - height) / 2
@@ -196,6 +203,44 @@ ColumnLayout {
                 font.pixelSize: 12
             }
         }
+        Rectangle {
+            visible: dashboardWindow.hc && hostController.ambientModeEnabled && !hostController.accessibilityTrusted
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
+            implicitHeight: invWarnRow.implicitHeight + 16
+            radius: 8
+            color: theme.surface
+            border.color: Qt.rgba(0.92, 0.77, 0.49, 0.35)
+            border.width: 1
+
+            RowLayout {
+                id: invWarnRow
+                anchors.fill: parent
+                anchors.margins: 10
+                spacing: 10
+
+                Text {
+                    text: "⚠️"
+                    font.pixelSize: 13
+                    Layout.alignment: Qt.AlignVCenter
+                }
+
+                Text {
+                    text: qsTr("macOS permission required: Enable Roclint in System Settings → Accessibility to capture prompts live.")
+                    font.family: dashboardWindow.sansFont
+                    font.pixelSize: 11
+                    color: theme.warning
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+
+                ActionButton {
+                    label: qsTr("Open Settings")
+                    primary: true
+                    onClicked: hostController.requestAccessibilityPermission()
+                }
+            }
+        }
         CheckBox {
             objectName: "ambientBadgeSuggestionsOnly"
             Layout.fillWidth: true
@@ -210,7 +255,7 @@ ColumnLayout {
         Body { text: dashboardWindow.hc ? hostController.ambientStatus : "" }
     }
     ActionButton {
-        visible: dashboardWindow.hc && hostController.accessibilityStatus === "NOT_GRANTED"
+        visible: dashboardWindow.hc && (!hostController.accessibilityTrusted || hostController.accessibilityStatus === "NOT_GRANTED")
         label: qsTr("Grant accessibility permission")
         onClicked: hostController.requestAccessibilityPermission()
     }
