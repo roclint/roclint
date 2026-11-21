@@ -3148,11 +3148,13 @@ void testClarificationFeedbackKeepsRejectedText() {
         if (prompt.find("already_shown") != std::string_view::npos) {
             if (prompt.find("easier to read") == std::string_view::npos ||
                 prompt.find("What text size?") == std::string_view::npos) return std::string("{}");
-            return std::string(R"({"options":["12pt","14pt"]})");
+            if (prompt.find("14pt") != std::string_view::npos)
+                return std::string(R"({"options":[{"label":"16pt","whyMaterial":"Make body text easier to read."},{"label":"14pt","whyMaterial":"Increase the base size."}]})");
+            return std::string(R"({"options":[{"label":"12pt","whyMaterial":"Use standard text."},{"label":"14pt","whyMaterial":"Increase the base size."}]})");
         }
         if (prompt.find("granite.clarification_check.v1") != std::string_view::npos) {
             if (prompt.find("Which font family?") != std::string_view::npos) {
-                sawPreviousAnswer = prompt.find(R"("answer":"12pt")") != std::string_view::npos;
+                sawPreviousAnswer = prompt.find(R"("answer":"16pt. Make body text easier to read.")") != std::string_view::npos;
             }
             return accept ? std::string(R"({"meaning":"The answer settles the question.","answers_question":true,"compatible":true,"feedback":""})") :
                 std::string(R"({"meaning":"The answer does not settle the question.","answers_question":false,"compatible":true,"feedback":"What text size did you mean?"})");
@@ -3181,8 +3183,18 @@ void testClarificationFeedbackKeepsRejectedText() {
     field->setProperty("text", "easier to read");
     controller.suggestOtherOptions("easier to read", version);
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
-    ROCLINT_CHECK(controller.property("additionalOptions").toStringList() == QStringList{"14pt"});
+    ROCLINT_CHECK(controller.property("additionalOptions").toList().size() == 1);
+    auto* quickWindow = qobject_cast<QQuickWindow*>(window);
+    const auto* firstCard = requireVisual(quickWindow, "alternative0");
+    const auto* refreshedCard = requireVisual(quickWindow, "alternative2");
+    ROCLINT_CHECK(refreshedCard->metaObject() == firstCard->metaObject());
     ROCLINT_CHECK(field->property("text").toString() == "easier to read");
+    controller.suggestOtherOptions("easier to read", version);
+    ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
+    ROCLINT_CHECK(controller.property("additionalOptions").toList().size() == 2);
+    ROCLINT_CHECK(QQmlExpression(engine.rootContext(), requireVisual(quickWindow, "alternative0"), "modelData.whyMaterial").evaluate().toString() == "Make body text easier to read.");
+    ROCLINT_CHECK(QQmlExpression(engine.rootContext(), requireVisual(quickWindow, "alternative0"), "modelData.label").evaluate().toString() == "16pt");
+    ROCLINT_CHECK(QQmlExpression(engine.rootContext(), requireVisual(quickWindow, "alternative1"), "modelData.label").evaluate().toString() == "14pt");
     controller.suggestOtherOptions("easier to read", version);
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(!controller.property("optionFeedback").toString().isEmpty());
@@ -3196,12 +3208,12 @@ void testClarificationFeedbackKeepsRejectedText() {
     ROCLINT_CHECK(controller.stateVersion() == version && controller.roundsCompleted() == 0);
     ROCLINT_CHECK(!controller.hasConfirmedIntent() && !controller.hasProposal());
     accept = true;
-    field->setProperty("text", "12pt");
-    ROCLINT_CHECK(QMetaObject::invokeMethod(panel, "handleAnswerSubmit", Q_ARG(QVariant, QString("12pt"))));
+    field->setProperty("text", "");
+    ROCLINT_CHECK(QMetaObject::invokeMethod(panel, "chooseAlternative", Q_ARG(QVariant, 0)));
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000));
     ROCLINT_CHECK(field->property("text").toString().isEmpty());
     ROCLINT_CHECK(controller.activeQuestion() == "Which font family?" && controller.roundsCompleted() == 1);
-    ROCLINT_CHECK(controller.property("additionalOptions").toStringList().isEmpty());
+    ROCLINT_CHECK(controller.property("additionalOptions").toList().isEmpty());
     accept = false;
     ROCLINT_CHECK(controller.waitForCommandForTesting(controller.submitCustomIntent("serif", controller.stateVersion())));
     ROCLINT_CHECK(controller.waitForIdleForTesting(3000) && sawPreviousAnswer);

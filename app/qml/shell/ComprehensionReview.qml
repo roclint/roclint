@@ -495,7 +495,7 @@ FocusScope {
                                     id: confirmControl
                                     objectName: "comprehensionFindingConfirm_" + index
                                     visible: root.embedded && findingRow.canConfirm
-                                    label: qsTr("This matches my intent")
+                                    label: qsTr("Yes, keep this wording")
                                     primary: true
                                     active: contract.reviewInvokable
                                     onClicked: root.resolve(findingRow.modelData, "confirm_intent")
@@ -509,7 +509,7 @@ FocusScope {
                                 TinyButton {
                                     id: clarifyControl
                                     objectName: "comprehensionFindingReturn_" + index
-                                    visible: root.embedded ? !findingRow.canConfirm && (findingRow.severity === "blocking" || findingRow.needsDecision) : findingRow.needsDecision
+                                    visible: findingRow.needsDecision || (root.embedded && !findingRow.canConfirm && findingRow.severity === "blocking")
                                     label: root.embedded ? qsTr("Clarify this point") : qsTr("Return to interview")
                                     active: contract.reviewInvokable
                                     onClicked: root.resolve(findingRow.modelData, "return_to_interview")

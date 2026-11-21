@@ -1117,7 +1117,6 @@ void HostController::invalidateDownstreamPipeline() {
     m_activeDimension.clear();
     m_activeAlternatives.clear();
     m_additionalOptions.clear();
-    m_previousOptions.clear();
     m_optionFeedback.clear();
     emit optionSuggestionsChanged();
     m_activeScore.reset();
@@ -2020,7 +2019,6 @@ void HostController::refreshActiveItemPresentation() {
     m_activeDimension.clear();
     m_activeAlternatives.clear();
     m_additionalOptions.clear();
-    m_previousOptions.clear();
     m_optionFeedback.clear();
     emit optionSuggestionsChanged();
     m_activeScore.reset();
@@ -2263,7 +2261,7 @@ void HostController::suggestOtherOptions(QString direction, quint64 expectedVers
         return;
     auto ticket = makeTicket();
     ticket.attemptId = newOpaqueId("att_options_");
-    const auto schema = R"({"type":"object","properties":{"options":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"string"}}},"required":["options"],"additionalProperties":false})";
+    const auto schema = R"({"type":"object","properties":{"options":{"type":"array","minItems":2,"maxItems":2,"items":{"type":"object","properties":{"label":{"type":"string","maxLength":64},"whyMaterial":{"type":"string"}},"required":["label","whyMaterial"],"additionalProperties":false}}},"required":["options"],"additionalProperties":false})";
     const auto transport = currentTransport(schema, &ticket, QStringLiteral("granite_analyze"), currentRevisionText());
     if (!transport || m_inFlight) {
         m_optionFeedback = tr("The local model is busy or unavailable. Try again shortly.");
@@ -2271,14 +2269,16 @@ void HostController::suggestOtherOptions(QString direction, quint64 expectedVers
         return;
     }
     direction = direction.trimmed();
-    QStringList seen = m_previousOptions;
+    QStringList seen;
+    for (const auto& item : m_additionalOptions) seen.append(item.toMap().value("label").toString());
     for (const auto& item : m_activeAlternatives) seen.append(item.toMap().value("label").toString());
     const QJsonObject data{{"draft", currentRevisionText()}, {"question", activeQuestion()},
                            {"direction", direction}, {"already_shown", QJsonArray::fromStringList(seen)}};
     const auto instruction = std::string("Suggest two distinct, previously unexplored answers to this same question. "
         "Use the optional direction to guide both ideas. Honor the draft's requirements. Each answer must stand "
         "alone as one short, actionable direction. Avoid synonyms of answers already shown. Return JSON with an "
-        "options array of strings. Input data:\n") + QJsonDocument(data).toJson(QJsonDocument::Compact).toStdString();
+        "options array of objects. Give each a short label (2 to 7 words) naming the choice and a whyMaterial "
+        "sentence of at most 12 words explaining its concrete effect. Finish the sentence with punctuation. Avoid repeating the label. Input data:\n") + QJsonDocument(data).toJson(QJsonDocument::Compact).toStdString();
     m_refreshingOptions = true;
     m_optionFeedback.clear();
     emit optionSuggestionsChanged();
@@ -2295,13 +2295,16 @@ void HostController::suggestOtherOptions(QString direction, quint64 expectedVers
         if (nativeWork) --m_nativeSemanticInFlight;
         m_refreshingOptions = false;
         if (isTicketCurrent(ticket, false) && activeItemId() == item) {
-            QStringList fresh;
+            QVariantList fresh;
             if (result.ok()) {
                 const auto json = QJsonDocument::fromJson(QByteArray::fromStdString(result.value()));
                 for (const auto& value : json.object().value("options").toArray()) {
-                    const auto label = value.toString().simplified();
-                    if (label.isEmpty() || label.size() > 300 || seen.contains(label, Qt::CaseInsensitive)) continue;
-                    fresh.append(label);
+                    const auto option = value.toObject();
+                    const auto label = option.value("label").toString().simplified();
+                    const auto brief = option.value("whyMaterial").toString().simplified();
+                    if (label.isEmpty() || label.size() > 64 || brief.isEmpty() || brief.size() > 140 ||
+                        seen.contains(label, Qt::CaseInsensitive)) continue;
+                    fresh.append(QVariantMap{{"label", label}, {"whyMaterial", brief}, {"suggested", true}});
                     seen.append(label);
                     if (fresh.size() == 2) break;
                 }
@@ -2309,9 +2312,7 @@ void HostController::suggestOtherOptions(QString direction, quint64 expectedVers
             if (fresh.isEmpty()) {
                 m_optionFeedback = tr("No new suggestions came back. Try again or add a direction.");
             } else {
-                m_additionalOptions = fresh;
-                m_previousOptions.append(fresh);
-                while (m_previousOptions.size() > 24) m_previousOptions.removeFirst();
+                m_additionalOptions = (fresh + m_additionalOptions).mid(0, 24);
             }
         }
         emit optionSuggestionsChanged();
@@ -5572,21 +5573,28 @@ namespace {
     return "general";
 }
 
-// The author can settle a wording comparison quoted from either side.
-// Findings about a confirmed decision or constraint still require repair.
-[[nodiscard]] bool canConfirmWording(const bridge::ComprehensionFinding& finding) {
-    using Kind = bridge::ReviewFindingKind;
-    if (finding.sourceExcerpt.empty()) return false;
-    const bool quotesDraft = finding.sourceRef == "original" || finding.sourceRef.starts_with("source:");
-    return (quotesDraft || finding.sourceRef == "candidate") &&
-           finding.kind != Kind::Omission && finding.kind != Kind::NegativeConstraint;
-}
-
 [[nodiscard]] bool findingRequiresInterview(const bridge::ComprehensionFinding& finding) {
     return finding.requiresUserDecision || finding.severity == bridge::ReviewFindingSeverity::Blocking;
 }
 
 } // namespace
+
+// The author can settle a wording comparison quoted from either side.
+// A quoted clarification answer is also wording the author can confirm.
+bool HostController::canConfirmWording(const bridge::ComprehensionFinding& finding) const {
+    using Kind = bridge::ReviewFindingKind;
+    if (finding.sourceExcerpt.empty()) return false;
+    if (finding.sourceRef.starts_with("decision:")) return true;
+    if (m_confirmedIntent) {
+        for (const auto& item : m_confirmedIntent->items) {
+            const auto& answer = item.kind == intent::IntentResolutionKind::CustomText ? item.customText : item.chosenValue;
+            if (finding.sourceExcerpt == answer) return true;
+        }
+    }
+    const bool quotesDraft = finding.sourceRef == "original" || finding.sourceRef.starts_with("source:");
+    return (quotesDraft || finding.sourceRef == "candidate") &&
+           finding.kind != Kind::Omission && finding.kind != Kind::NegativeConstraint;
+}
 
 void HostController::setComprehensionReviewHandler(ComprehensionReviewHandler handler) {
     m_reviewHandler = std::move(handler);
@@ -5655,7 +5663,8 @@ bool HostController::canAcceptReviewedWording() const {
     return m_reviewState == ReviewState::Ready && reviewBindingMatchesCurrent() &&
            m_reviewResult.status == bridge::ComprehensionReviewStatus::Completed &&
            !m_reviewResult.interpretedOutcome.empty() && !m_reviewResult.findings.empty() &&
-           std::all_of(m_reviewResult.findings.begin(), m_reviewResult.findings.end(), canConfirmWording);
+           std::all_of(m_reviewResult.findings.begin(), m_reviewResult.findings.end(),
+                       [this](const auto& finding) { return canConfirmWording(finding); });
 }
 
 bool HostController::canApplyReviewedOutput() const {
@@ -9239,6 +9248,7 @@ AsyncTask<Status> HostController::writeDraftBatch(DraftBatch batch) {
 int HostController::sessionCount() const { return static_cast<int>(m_recentSessions.size()); }
 QVariantList HostController::getRecentSessions() { return m_recentSessions; }
 QVariantList HostController::getSessionHistory(const QString& sessionId) { return m_historyCache.value(sessionId); }
+bool HostController::copyTextToClipboard(const QString& text) { return copyToClipboard(text).ok(); }
 void HostController::refreshStorageStats() {
     if (!m_repository || m_storageFault) { emit storageChanged(); return; }
     if (m_historyRefreshRunning) { m_historyRefreshAgain = true; return; }

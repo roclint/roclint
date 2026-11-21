@@ -48,6 +48,39 @@ Window {
     readonly property string globalShortcutString: typeof hostController !== "undefined" ? hostController.shortcutLabel : (isMac ? "Cmd+Shift+L" : "Ctrl+Shift+L")
     property string toastMessage: ""
     property bool confirmPurge: false
+    property string historySearchFilter: ""
+    property var expandedHistoryTrees: ({})
+    property bool historyExpandAll: false
+    readonly property var gitBranchColors: ["#58A6FF", "#3FB950", "#D29922", "#BC8CFF", "#39C5CF", "#F85149"]
+
+    function toggleTreeExpanded(sessionId) {
+        var map = Object.assign({}, dashboardWindow.expandedHistoryTrees);
+        map[sessionId] = !map[sessionId];
+        dashboardWindow.expandedHistoryTrees = map;
+    }
+
+    function isTreeExpanded(sessionId) {
+        if (dashboardWindow.historyExpandAll) return true;
+        return !!dashboardWindow.expandedHistoryTrees[sessionId];
+    }
+
+    function filteredSessions() {
+        if (typeof hostController === "undefined") return [];
+        var all = hostController.getRecentSessions();
+        if (!historySearchFilter || historySearchFilter.trim() === "") return all;
+        var query = historySearchFilter.toLowerCase().trim();
+        var out = [];
+        for (var i = 0; i < all.length; ++i) {
+            var s = all[i];
+            var sid = String(s.sessionId || "").toLowerCase();
+            var prompt = String(s.latestPrompt || "").toLowerCase();
+            var time = String(s.formattedTime || "").toLowerCase();
+            if (sid.indexOf(query) !== -1 || prompt.indexOf(query) !== -1 || time.indexOf(query) !== -1) {
+                out.push(s);
+            }
+        }
+        return out;
+    }
 
     function showToast(msg) {
         toastMessage = msg;
@@ -1151,134 +1184,1014 @@ Window {
                                     }
                                 }
 
-                                Text {
-                                    text: qsTr("Recent Prompt Sessions & Revision Lineage")
-                                    font.family: dashboardWindow.sansFont
-                                    font.pixelSize: 13
-                                    font.weight: Font.DemiBold
-                                    color: dashboardWindow.fgColor
-                                }
-
-                                ListView {
-                                    id: sessionListView
+                                // Git Tree Lineage Controls Bar
+                                RowLayout {
                                     Layout.fillWidth: true
                                     Layout.minimumWidth: 0
-                                    Layout.preferredHeight: 280
-                                    clip: true
-                                    spacing: 8
-                                    model: (typeof hostController !== "undefined") ? hostController.getRecentSessions() : []
+                                    spacing: 12
 
-                                    Connections {
-                                        target: typeof hostController !== "undefined" ? hostController : null
-                                        function onSessionListChanged() {
-                                            sessionListView.model = hostController.getRecentSessions();
+                                    ColumnLayout {
+                                        spacing: 4
+                                        Text {
+                                            text: qsTr("Recent Prompt Sessions & Revision Lineage")
+                                            font.family: dashboardWindow.sansFont
+                                            font.pixelSize: 14
+                                            font.weight: Font.DemiBold
+                                            color: dashboardWindow.fgColor
                                         }
-                                    }
-
-                                    delegate: Rectangle {
-                                        width: sessionListView.width
-                                        height: 64
-                                        radius: 10
-                                        color: theme.surface
-                                        border.color: theme.border
-                                        border.width: 1
 
                                         RowLayout {
-                                            anchors.fill: parent
-                                            anchors.margins: 12
-                                            spacing: 12
+                                            spacing: 6
 
-                                            ColumnLayout {
-                                                Layout.fillWidth: true
-                                                Layout.minimumWidth: 0
-                                                spacing: 4
+                                            // Branch Pill
+                                            Rectangle {
+                                                radius: 6
+                                                height: 22
+                                                implicitWidth: branchText.implicitWidth + 14
+                                                color: theme.inset
+                                                border.color: theme.border
+                                                border.width: 1
 
                                                 RowLayout {
-                                                    spacing: 8
+                                                    anchors.centerIn: parent
+                                                    spacing: 4
                                                     Text {
-                                                        text: modelData.sessionId
+                                                        text: "⎇"
+                                                        font.pixelSize: 11
+                                                        color: "#58A6FF"
+                                                    }
+                                                    Text {
+                                                        id: branchText
+                                                        text: "branch: main"
                                                         font.family: dashboardWindow.monoFont
                                                         font.pixelSize: 10
                                                         font.bold: true
                                                         color: "#58A6FF"
                                                     }
+                                                }
+                                            }
+
+                                            // HEAD Indicator
+                                            Rectangle {
+                                                visible: typeof hostController !== "undefined" && hostController.currentSessionId.length > 0
+                                                radius: 6
+                                                height: 22
+                                                implicitWidth: headText.implicitWidth + 14
+                                                color: "#102E1B"
+                                                border.color: "#2EA043"
+                                                border.width: 1
+
+                                                RowLayout {
+                                                    anchors.centerIn: parent
+                                                    spacing: 4
+                                                    Rectangle {
+                                                        width: 6
+                                                        height: 6
+                                                        radius: 3
+                                                        color: "#3FB950"
+                                                    }
                                                     Text {
-                                                        text: "• " + modelData.formattedTime
+                                                        id: headText
+                                                        text: (typeof hostController !== "undefined" && hostController.currentSessionId.length > 0)
+                                                            ? ("HEAD → " + hostController.currentSessionId.substring(0, 12) + "...")
+                                                            : "HEAD"
+                                                        font.family: dashboardWindow.monoFont
+                                                        font.pixelSize: 10
+                                                        color: "#3FB950"
+                                                    }
+                                                }
+                                            }
+
+                                            // Session Count Badge
+                                            Rectangle {
+                                                radius: 6
+                                                height: 22
+                                                implicitWidth: countText.implicitWidth + 14
+                                                color: theme.inset
+                                                border.color: theme.border
+                                                border.width: 1
+
+                                                Text {
+                                                    id: countText
+                                                    anchors.centerIn: parent
+                                                    text: (typeof hostController !== "undefined" ? hostController.getRecentSessions().length : 0) + " commits"
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 11
+                                                    color: dashboardWindow.mutedTextColor
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Item { Layout.fillWidth: true }
+
+                                    // Filter Input
+                                    Rectangle {
+                                        width: 220
+                                        height: 30
+                                        radius: 6
+                                        color: theme.inset
+                                        border.color: histFilterInput.activeFocus ? theme.focus : theme.border
+                                        border.width: 1
+
+                                        RowLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 8
+                                            anchors.rightMargin: 8
+                                            spacing: 6
+
+                                            Text {
+                                                text: "🔍"
+                                                font.pixelSize: 11
+                                                opacity: 0.65
+                                            }
+
+                                            TextInput {
+                                                id: histFilterInput
+                                                Layout.fillWidth: true
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 11
+                                                color: dashboardWindow.fgColor
+                                                selectByMouse: true
+                                                clip: true
+                                                onTextChanged: dashboardWindow.historySearchFilter = text
+
+                                                Text {
+                                                    text: qsTr("Filter commits or prompt text...")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 11
+                                                    color: dashboardWindow.mutedTextColor
+                                                    visible: !histFilterInput.text.length && !histFilterInput.activeFocus
+                                                }
+                                            }
+
+                                            Text {
+                                                visible: histFilterInput.text.length > 0
+                                                text: "✕"
+                                                font.pixelSize: 10
+                                                color: dashboardWindow.mutedTextColor
+                                                HudMouseArea {
+                                                    anchors.fill: parent
+                                                    hoverEnabled: true
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: histFilterInput.text = ""
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Toggle Expand All Trees
+                                    Rectangle {
+                                        implicitWidth: expAllText.implicitWidth + 20
+                                        height: 30
+                                        radius: 6
+                                        color: expAllMouse.containsMouse ? theme.hover : theme.surface
+                                        border.color: dashboardWindow.historyExpandAll ? theme.accent : theme.border
+                                        border.width: 1
+
+                                        RowLayout {
+                                            anchors.centerIn: parent
+                                            spacing: 6
+                                            Text {
+                                                text: dashboardWindow.historyExpandAll ? "▲" : "⎇"
+                                                font.pixelSize: 11
+                                                color: dashboardWindow.historyExpandAll ? theme.accent : dashboardWindow.fgColor
+                                            }
+                                            Text {
+                                                id: expAllText
+                                                text: dashboardWindow.historyExpandAll ? qsTr("Collapse Trees") : qsTr("Expand Lineage")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 11
+                                                font.weight: Font.Medium
+                                                color: dashboardWindow.historyExpandAll ? theme.accent : dashboardWindow.fgColor
+                                            }
+                                        }
+
+                                        HudMouseArea {
+                                            id: expAllMouse
+                                            anchors.fill: parent
+                                            hoverEnabled: true
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: dashboardWindow.historyExpandAll = !dashboardWindow.historyExpandAll
+                                        }
+                                    }
+                                }
+
+                                // Git Tree Graph Legend
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    spacing: 16
+
+                                    RowLayout {
+                                        spacing: 6
+                                        Rectangle { width: 8; height: 8; radius: 4; color: "#3FB950"; border.color: "#2EA043"; border.width: 1 }
+                                        Text { text: qsTr("HEAD (Active)"); font.pixelSize: 10; color: dashboardWindow.mutedTextColor; font.family: dashboardWindow.sansFont }
+                                    }
+                                    RowLayout {
+                                        spacing: 6
+                                        Rectangle { width: 8; height: 8; radius: 4; color: "#58A6FF"; border.color: "#388BFD"; border.width: 1 }
+                                        Text { text: qsTr("Session Commit"); font.pixelSize: 10; color: dashboardWindow.mutedTextColor; font.family: dashboardWindow.sansFont }
+                                    }
+                                    RowLayout {
+                                        spacing: 6
+                                        Rectangle { width: 8; height: 8; radius: 4; color: "transparent"; border.color: "#BC8CFF"; border.width: 2 }
+                                        Text { text: qsTr("Revision Node (Lineage DAG)"); font.pixelSize: 10; color: dashboardWindow.mutedTextColor; font.family: dashboardWindow.sansFont }
+                                    }
+                                    RowLayout {
+                                        spacing: 6
+                                        Rectangle { width: 14; height: 2; color: "#388BFD" }
+                                        Text { text: qsTr("Branch Trunk"); font.pixelSize: 10; color: dashboardWindow.mutedTextColor; font.family: dashboardWindow.sansFont }
+                                    }
+                                    Item { Layout.fillWidth: true }
+                                }
+
+                                // Git Tree ListView
+                                ListView {
+                                    id: sessionListView
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    Layout.preferredHeight: Math.min(620, Math.max(420, rightScrollView.height - dbStatCol.height - 110))
+                                    clip: true
+                                    spacing: 12
+                                    model: dashboardWindow.filteredSessions()
+
+                                    ScrollBar.vertical: HudScrollBar {
+                                        parent: sessionListView
+                                        x: sessionListView.width - width
+                                        y: 0
+                                        height: sessionListView.height
+                                    }
+
+                                    Connections {
+                                        target: typeof hostController !== "undefined" ? hostController : null
+                                        function onSessionListChanged() {
+                                            sessionListView.model = dashboardWindow.filteredSessions();
+                                        }
+                                    }
+
+                                    Connections {
+                                        target: dashboardWindow
+                                        function onHistorySearchFilterChanged() {
+                                            sessionListView.model = dashboardWindow.filteredSessions();
+                                        }
+                                        function onHistoryExpandAllChanged() {
+                                            // Force re-eval of layout bindings
+                                            sessionListView.model = dashboardWindow.filteredSessions();
+                                        }
+                                    }
+
+                                    // Empty State
+                                    Item {
+                                        anchors.fill: parent
+                                        visible: sessionListView.count === 0
+
+                                        Rectangle {
+                                            anchors.centerIn: parent
+                                            width: Math.min(parent.width - 40, 520)
+                                            height: 130
+                                            radius: 12
+                                            color: theme.surface
+                                            border.color: theme.border
+                                            border.width: 1
+
+                                            ColumnLayout {
+                                                anchors.centerIn: parent
+                                                spacing: 8
+                                                Text {
+                                                    text: "🌿"
+                                                    font.pixelSize: 24
+                                                    Layout.alignment: Qt.AlignHCenter
+                                                }
+                                                Text {
+                                                    text: histFilterInput.text.length > 0
+                                                        ? qsTr("No prompt sessions match '%1'").arg(histFilterInput.text)
+                                                        : qsTr("No prompt sessions recorded yet in SQLite history.")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 13
+                                                    font.weight: Font.Medium
+                                                    color: dashboardWindow.fgColor
+                                                    Layout.alignment: Qt.AlignHCenter
+                                                }
+                                                Text {
+                                                    text: histFilterInput.text.length > 0
+                                                        ? qsTr("Try clearing your filter to view all lineage commits.")
+                                                        : qsTr("Prompts approved or drafted in Roclint will automatically branch here.")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 11
+                                                    color: dashboardWindow.mutedTextColor
+                                                    Layout.alignment: Qt.AlignHCenter
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Git Tree Item Delegate
+                                    delegate: Item {
+                                        id: sessionItem
+                                        width: sessionListView.width
+                                        implicitHeight: cardRect.implicitHeight + 6
+
+                                        readonly property var sessionRecord: modelData
+                                        readonly property bool isHead: (typeof hostController !== "undefined" && hostController.currentSessionId.length > 0 && hostController.currentSessionId === sessionRecord.sessionId)
+                                        readonly property color branchColor: dashboardWindow.gitBranchColors[index % dashboardWindow.gitBranchColors.length]
+                                        readonly property bool isExpanded: dashboardWindow.isTreeExpanded(sessionRecord.sessionId)
+                                        readonly property var revisions: (isExpanded && typeof hostController !== "undefined") ? hostController.getSessionHistory(sessionRecord.sessionId) : []
+
+                                        // ---------------------------------------------
+                                        // LEFT GIT GRAPH RAIL (Trunk, Branch & Commit Node)
+                                        // ---------------------------------------------
+                                        Item {
+                                            id: gitRail
+                                            x: 0
+                                            y: 0
+                                            width: 44
+                                            height: parent.height
+
+                                            // Top Line to commit dot
+                                            Rectangle {
+                                                x: 21
+                                                y: 0
+                                                width: 2
+                                                height: 26
+                                                color: branchColor
+                                                visible: index > 0
+                                            }
+
+                                            // Bottom Line from commit dot
+                                            Rectangle {
+                                                x: 21
+                                                y: 26
+                                                width: 2
+                                                height: Math.max(0, parent.height - 26)
+                                                color: branchColor
+                                                visible: (index < sessionListView.count - 1) || (isExpanded && revisions.length > 0)
+                                            }
+
+                                            // Commit Node (Circle Dot)
+                                            Item {
+                                                id: commitDot
+                                                x: 12
+                                                y: 16
+                                                width: 20
+                                                height: 20
+
+                                                // HEAD outer glowing ring
+                                                Rectangle {
+                                                    visible: sessionItem.isHead
+                                                    anchors.fill: parent
+                                                    radius: 10
+                                                    color: "#102E1B"
+                                                    border.color: "#2EA043"
+                                                    border.width: 2
+                                                }
+
+                                                // Inner solid dot / standard node
+                                                Rectangle {
+                                                    anchors.centerIn: parent
+                                                    width: sessionItem.isHead ? 10 : 14
+                                                    height: sessionItem.isHead ? 10 : 14
+                                                    radius: width / 2
+                                                    color: sessionItem.isHead ? "#3FB950" : theme.surface
+                                                    border.color: sessionItem.isHead ? "#3FB950" : sessionItem.branchColor
+                                                    border.width: sessionItem.isHead ? 0 : 2
+
+                                                    Rectangle {
+                                                        anchors.centerIn: parent
+                                                        width: 6
+                                                        height: 6
+                                                        radius: 3
+                                                        color: sessionItem.branchColor
+                                                        visible: !sessionItem.isHead
+                                                    }
+                                                }
+                                            }
+
+                                            // Branch fork curve when expanded
+                                            Rectangle {
+                                                visible: sessionItem.isExpanded && sessionItem.revisions.length > 0
+                                                x: 21
+                                                y: 38
+                                                width: 16
+                                                height: 2
+                                                color: sessionItem.branchColor
+                                            }
+                                        }
+
+                                        // ---------------------------------------------
+                                        // RIGHT COMMIT CARD (Metadata, Message & DAG Drawer)
+                                        // ---------------------------------------------
+                                        Rectangle {
+                                            id: cardRect
+                                            x: 44
+                                            width: parent.width - 48
+                                            implicitHeight: cardCol.implicitHeight + 24
+                                            radius: 10
+                                            color: cardHoverArea.containsMouse ? theme.hover : theme.surface
+                                            border.color: sessionItem.isHead ? "#2EA043" : (cardHoverArea.containsMouse ? sessionItem.branchColor : theme.border)
+                                            border.width: sessionItem.isHead ? 2 : 1
+
+                                            HudMouseArea {
+                                                id: cardHoverArea
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                acceptedButtons: Qt.NoButton
+                                            }
+
+                                            ColumnLayout {
+                                                id: cardCol
+                                                anchors.fill: parent
+                                                anchors.margins: 12
+                                                spacing: 8
+
+                                                // Row 1: Git Commit Header
+                                                RowLayout {
+                                                    Layout.fillWidth: true
+                                                    Layout.minimumWidth: 0
+                                                    spacing: 8
+
+                                                    // Commit SHA / Session ID Pill
+                                                    Rectangle {
+                                                        radius: 6
+                                                        height: 24
+                                                        implicitWidth: shaRow.implicitWidth + 14
+                                                        color: theme.inset
+                                                        border.color: theme.border
+                                                        border.width: 1
+
+                                                        RowLayout {
+                                                            id: shaRow
+                                                            anchors.centerIn: parent
+                                                            spacing: 5
+                                                            Text {
+                                                                text: "🔀"
+                                                                font.pixelSize: 10
+                                                            }
+                                                            Text {
+                                                                text: sessionRecord.sessionId ? (sessionRecord.sessionId.substring(0, 16) + "...") : ""
+                                                                font.family: dashboardWindow.monoFont
+                                                                font.pixelSize: 11
+                                                                font.bold: true
+                                                                color: "#58A6FF"
+                                                            }
+                                                        }
+
+                                                        HudMouseArea {
+                                                            anchors.fill: parent
+                                                            hoverEnabled: true
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onClicked: {
+                                                                if (typeof hostController !== "undefined" && sessionRecord.sessionId) {
+                                                                    hostController.copyTextToClipboard(sessionRecord.sessionId);
+                                                                    dashboardWindow.showToast("COPIED COMMIT HASH: " + sessionRecord.sessionId.substring(0, 14));
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // HEAD Tag
+                                                    Rectangle {
+                                                        visible: sessionItem.isHead
+                                                        radius: 4
+                                                        height: 20
+                                                        implicitWidth: headTagTxt.implicitWidth + 10
+                                                        color: "#238636"
+
+                                                        Text {
+                                                            id: headTagTxt
+                                                            anchors.centerIn: parent
+                                                            text: "HEAD"
+                                                            font.family: dashboardWindow.sansFont
+                                                            font.pixelSize: 10
+                                                            font.bold: true
+                                                            color: "#FFFFFF"
+                                                        }
+                                                    }
+
+                                                    // Branch Pill
+                                                    Rectangle {
+                                                        radius: 4
+                                                        height: 20
+                                                        implicitWidth: branchTagTxt.implicitWidth + 10
+                                                        color: theme.inset
+                                                        border.color: theme.border
+                                                        border.width: 1
+
+                                                        Text {
+                                                            id: branchTagTxt
+                                                            anchors.centerIn: parent
+                                                            text: qsTr("session/%1").arg(sessionListView.count - index)
+                                                            font.family: dashboardWindow.monoFont
+                                                            font.pixelSize: 10
+                                                            color: dashboardWindow.mutedTextColor
+                                                        }
+                                                    }
+
+                                                    // Revision Count Pill (Clickable)
+                                                    Rectangle {
+                                                        radius: 6
+                                                        height: 22
+                                                        implicitWidth: revBadgeText.implicitWidth + 14
+                                                        color: sessionItem.isExpanded ? sessionItem.branchColor : theme.inset
+                                                        border.color: sessionItem.branchColor
+                                                        border.width: 1
+
+                                                        RowLayout {
+                                                            anchors.centerIn: parent
+                                                            spacing: 4
+                                                            Text {
+                                                                text: "🌿"
+                                                                font.pixelSize: 10
+                                                            }
+                                                            Text {
+                                                                id: revBadgeText
+                                                                text: (sessionRecord.revisionCount > 1
+                                                                    ? qsTr("%1 revs").arg(sessionRecord.revisionCount)
+                                                                    : qsTr("1 rev")) + (sessionItem.isExpanded ? " ▲" : " ▼")
+                                                                font.family: dashboardWindow.sansFont
+                                                                font.pixelSize: 11
+                                                                font.weight: Font.Medium
+                                                                color: sessionItem.isExpanded ? "#FFFFFF" : sessionItem.branchColor
+                                                            }
+                                                        }
+
+                                                        HudMouseArea {
+                                                            anchors.fill: parent
+                                                            hoverEnabled: true
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onClicked: dashboardWindow.toggleTreeExpanded(sessionRecord.sessionId)
+                                                        }
+                                                    }
+
+                                                    // Timestamp
+                                                    Text {
+                                                        text: "• " + sessionRecord.formattedTime
                                                         font.family: dashboardWindow.sansFont
                                                         font.pixelSize: 11
                                                         color: dashboardWindow.mutedTextColor
                                                     }
-                                                }
 
-                                                Text {
-                                                    text: (typeof modelData.latestPrompt !== "undefined" && modelData.latestPrompt.length > 0) ? modelData.latestPrompt : "(empty prompt)"
-                                                    font.family: dashboardWindow.sansFont
-                                                    font.pixelSize: 12
-                                                    color: dashboardWindow.fgColor
-                                                    elide: Text.ElideRight
-                                                    Layout.fillWidth: true
-                                                    Layout.minimumWidth: 0
-                                                }
-                                            }
+                                                    Item { Layout.fillWidth: true }
 
-                                            Rectangle {
-                                                implicitWidth: restTxt.contentWidth + 18
-                                                height: 26
-                                                radius: 6
-                                                color: restMouse.containsMouse ? theme.hover : theme.surface
-                                                border.color: "#227B62"
-                                                border.width: 1
+                                                    // Restore Button (Checkout)
+                                                    Rectangle {
+                                                        implicitWidth: restTxt.contentWidth + 18
+                                                        height: 26
+                                                        radius: 6
+                                                        color: restMouse.containsMouse ? theme.hover : theme.surface
+                                                        border.color: "#227B62"
+                                                        border.width: 1
 
-                                                Text {
-                                                    id: restTxt
-                                                    anchors.centerIn: parent
-                                                    text: qsTr("Restore")
-                                                    font.family: dashboardWindow.sansFont
-                                                    font.pixelSize: 11
-                                                    font.weight: Font.Medium
-                                                    color: dashboardWindow.fgColor
-                                                }
-                                                HudMouseArea {
-                                                    id: restMouse
-                                                    anchors.fill: parent
-                                                    hoverEnabled: true
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: {
-                                                        if (typeof hostController !== "undefined") {
-                                                            if (hostController.restoreSessionForReview(modelData.sessionId, hostController.stateVersion))
-                                                                hostController.hideDashboard();
-                                                            else dashboardWindow.showToast(hostController.lastError);
+                                                        RowLayout {
+                                                            anchors.centerIn: parent
+                                                            spacing: 4
+                                                            Text {
+                                                                text: "⎇"
+                                                                font.pixelSize: 11
+                                                                color: "#33B78D"
+                                                            }
+                                                            Text {
+                                                                id: restTxt
+                                                                text: qsTr("Restore")
+                                                                font.family: dashboardWindow.sansFont
+                                                                font.pixelSize: 11
+                                                                font.weight: Font.Medium
+                                                                color: dashboardWindow.fgColor
+                                                            }
+                                                        }
+
+                                                        HudMouseArea {
+                                                            id: restMouse
+                                                            anchors.fill: parent
+                                                            hoverEnabled: true
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onClicked: {
+                                                                if (typeof hostController !== "undefined") {
+                                                                    if (hostController.restoreSessionForReview(sessionRecord.sessionId, hostController.stateVersion))
+                                                                        hostController.hideDashboard();
+                                                                    else dashboardWindow.showToast(hostController.lastError);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // Copy Prompt Button
+                                                    Rectangle {
+                                                        implicitWidth: copyPromptTxt.contentWidth + 16
+                                                        height: 26
+                                                        radius: 6
+                                                        color: copyPromptMouse.containsMouse ? theme.hover : theme.surface
+                                                        border.color: theme.border
+                                                        border.width: 1
+
+                                                        RowLayout {
+                                                            anchors.centerIn: parent
+                                                            spacing: 4
+                                                            Text {
+                                                                text: "📋"
+                                                                font.pixelSize: 10
+                                                            }
+                                                            Text {
+                                                                id: copyPromptTxt
+                                                                text: qsTr("Copy")
+                                                                font.family: dashboardWindow.sansFont
+                                                                font.pixelSize: 11
+                                                                font.weight: Font.Medium
+                                                                color: dashboardWindow.fgColor
+                                                            }
+                                                        }
+
+                                                        HudMouseArea {
+                                                            id: copyPromptMouse
+                                                            anchors.fill: parent
+                                                            hoverEnabled: true
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onClicked: {
+                                                                if (typeof hostController !== "undefined") {
+                                                                    hostController.copyTextToClipboard(sessionRecord.latestPrompt || "");
+                                                                    dashboardWindow.showToast("COPIED PROMPT TO CLIPBOARD");
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // Tree View Toggle
+                                                    Rectangle {
+                                                        implicitWidth: treeToggleTxt.contentWidth + 16
+                                                        height: 26
+                                                        radius: 6
+                                                        color: treeToggleMouse.containsMouse ? theme.hover : theme.surface
+                                                        border.color: sessionItem.branchColor
+                                                        border.width: 1
+
+                                                        Text {
+                                                            id: treeToggleTxt
+                                                            anchors.centerIn: parent
+                                                            text: sessionItem.isExpanded ? qsTr("Hide DAG") : qsTr("DAG Tree")
+                                                            font.family: dashboardWindow.sansFont
+                                                            font.pixelSize: 11
+                                                            font.weight: Font.Medium
+                                                            color: sessionItem.branchColor
+                                                        }
+
+                                                        HudMouseArea {
+                                                            id: treeToggleMouse
+                                                            anchors.fill: parent
+                                                            hoverEnabled: true
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onClicked: dashboardWindow.toggleTreeExpanded(sessionRecord.sessionId)
+                                                        }
+                                                    }
+
+                                                    // Delete Button
+                                                    Rectangle {
+                                                        implicitWidth: delItemTxt.contentWidth + 18
+                                                        height: 26
+                                                        radius: 6
+                                                        color: delItemMouse.containsMouse ? "#8B1E1E" : theme.surface
+                                                        border.color: "#8B1E1E"
+                                                        border.width: 1
+
+                                                        Text {
+                                                            id: delItemTxt
+                                                            anchors.centerIn: parent
+                                                            text: qsTr("Delete")
+                                                            font.family: dashboardWindow.sansFont
+                                                            font.pixelSize: 11
+                                                            font.weight: Font.Medium
+                                                            color: "#EF4444"
+                                                        }
+
+                                                        HudMouseArea {
+                                                            id: delItemMouse
+                                                            anchors.fill: parent
+                                                            hoverEnabled: true
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onClicked: {
+                                                                if (typeof hostController !== "undefined") {
+                                                                    hostController.deleteSession(sessionRecord.sessionId);
+                                                                    dashboardWindow.showToast("SESSION DELETED");
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }
-                                            }
 
-                                            Rectangle {
-                                                implicitWidth: delItemTxt.contentWidth + 18
-                                                height: 26
-                                                radius: 6
-                                                color: delItemMouse.containsMouse ? "#8B1E1E" : theme.surface
-                                                border.color: "#8B1E1E"
-                                                border.width: 1
-
+                                                // Row 2: Prompt Commit Message Box
                                                 Text {
-                                                    id: delItemTxt
-                                                    anchors.centerIn: parent
-                                                    text: qsTr("Delete")
+                                                    text: (typeof sessionRecord.latestPrompt !== "undefined" && sessionRecord.latestPrompt.length > 0)
+                                                        ? sessionRecord.latestPrompt
+                                                        : "(empty prompt)"
                                                     font.family: dashboardWindow.sansFont
-                                                    font.pixelSize: 11
-                                                    font.weight: Font.Medium
-                                                    color: "#EF4444"
+                                                    font.pixelSize: 12
+                                                    color: dashboardWindow.fgColor
+                                                    elide: sessionItem.isExpanded ? Text.ElideNone : Text.ElideRight
+                                                    wrapMode: sessionItem.isExpanded ? Text.Wrap : Text.NoWrap
+                                                    maximumLineCount: sessionItem.isExpanded ? 16 : 1
+                                                    Layout.fillWidth: true
+                                                    Layout.minimumWidth: 0
                                                 }
-                                                HudMouseArea {
-                                                    id: delItemMouse
-                                                    anchors.fill: parent
-                                                    hoverEnabled: true
-                                                    cursorShape: Qt.PointingHandCursor
-                                                    onClicked: {
-                                                        if (typeof hostController !== "undefined") {
-                                                            hostController.deleteSession(modelData.sessionId);
-                                                            dashboardWindow.showToast("SESSION DELETED");
+
+                                                // Row 3: Expanded Revision Lineage Sub-Tree (Child Git Tree DAG)
+                                                ColumnLayout {
+                                                    id: revisionDrawer
+                                                    visible: sessionItem.isExpanded
+                                                    Layout.fillWidth: true
+                                                    Layout.minimumWidth: 0
+                                                    spacing: 10
+
+                                                    Rectangle {
+                                                        Layout.fillWidth: true
+                                                        height: 1
+                                                        color: theme.border
+                                                        opacity: 0.6
+                                                    }
+
+                                                    RowLayout {
+                                                        Layout.fillWidth: true
+                                                        spacing: 8
+                                                        Text {
+                                                            text: qsTr("🌿 Revision Lineage & Commit DAG (%1 revisions)").arg(sessionItem.revisions.length)
+                                                            font.family: dashboardWindow.sansFont
+                                                            font.pixelSize: 11
+                                                            font.weight: Font.DemiBold
+                                                            color: sessionItem.branchColor
+                                                        }
+                                                        Item { Layout.fillWidth: true }
+                                                        Text {
+                                                            text: qsTr("Root Session: %1").arg(sessionRecord.sessionId ? sessionRecord.sessionId.substring(0, 14) + "..." : "none")
+                                                            font.family: dashboardWindow.monoFont
+                                                            font.pixelSize: 10
+                                                            color: dashboardWindow.mutedTextColor
+                                                        }
+                                                    }
+
+                                                    // Nested Revision Items
+                                                    Repeater {
+                                                        model: sessionItem.revisions
+
+                                                        delegate: Item {
+                                                            id: revRowItem
+                                                            width: cardCol.width
+                                                            implicitHeight: revCardInner.implicitHeight + 8
+
+                                                            readonly property var revData: modelData
+                                                            readonly property bool isRootRev: (index === 0)
+                                                            readonly property bool isLatestRev: (index === sessionItem.revisions.length - 1)
+
+                                                            // Sub-Branch Tree Rail
+                                                            Item {
+                                                                id: subRail
+                                                                x: 8
+                                                                y: 0
+                                                                width: 28
+                                                                height: parent.height
+
+                                                                // Sub-rail top line
+                                                                Rectangle {
+                                                                    x: 13
+                                                                    y: 0
+                                                                    width: 2
+                                                                    height: 16
+                                                                    color: "#BC8CFF"
+                                                                    visible: index > 0
+                                                                }
+
+                                                                // Sub-rail bottom line
+                                                                Rectangle {
+                                                                    x: 13
+                                                                    y: 16
+                                                                    width: 2
+                                                                    height: Math.max(0, parent.height - 16)
+                                                                    color: "#BC8CFF"
+                                                                    visible: index < sessionItem.revisions.length - 1
+                                                                }
+
+                                                                // Sub-rail Revision Node (hollow commit circle)
+                                                                Rectangle {
+                                                                    x: 8
+                                                                    y: 10
+                                                                    width: 12
+                                                                    height: 12
+                                                                    radius: 6
+                                                                    color: theme.surface
+                                                                    border.color: revRowItem.isLatestRev ? "#3FB950" : "#BC8CFF"
+                                                                    border.width: 2
+
+                                                                    Rectangle {
+                                                                        anchors.centerIn: parent
+                                                                        width: 4
+                                                                        height: 4
+                                                                        radius: 2
+                                                                        color: revRowItem.isLatestRev ? "#3FB950" : "#BC8CFF"
+                                                                    }
+                                                                }
+                                                            }
+
+                                                            // Revision Card Content
+                                                            Rectangle {
+                                                                id: revCardInner
+                                                                x: 36
+                                                                width: parent.width - 40
+                                                                implicitHeight: revCol.implicitHeight + 16
+                                                                radius: 8
+                                                                color: theme.inset
+                                                                border.color: theme.border
+                                                                border.width: 1
+
+                                                                ColumnLayout {
+                                                                    id: revCol
+                                                                    anchors.fill: parent
+                                                                    anchors.margins: 10
+                                                                    spacing: 6
+
+                                                                    RowLayout {
+                                                                        Layout.fillWidth: true
+                                                                        spacing: 8
+
+                                                                        // Revision Sequence Tag
+                                                                        Rectangle {
+                                                                            radius: 4
+                                                                            height: 20
+                                                                            implicitWidth: revSeqTxt.implicitWidth + 10
+                                                                            color: revRowItem.isLatestRev ? "#102E1B" : theme.surface
+                                                                            border.color: revRowItem.isLatestRev ? "#2EA043" : theme.border
+                                                                            border.width: 1
+
+                                                                            Text {
+                                                                                id: revSeqTxt
+                                                                                anchors.centerIn: parent
+                                                                                text: "rev #" + (revData.sequence || (index + 1)) + (revRowItem.isRootRev ? " (root)" : (revRowItem.isLatestRev ? " (HEAD)" : ""))
+                                                                                font.family: dashboardWindow.monoFont
+                                                                                font.pixelSize: 10
+                                                                                font.bold: true
+                                                                                color: revRowItem.isLatestRev ? "#3FB950" : dashboardWindow.fgColor
+                                                                            }
+                                                                        }
+
+                                                                        // Revision Hash Pill
+                                                                        Rectangle {
+                                                                            radius: 4
+                                                                            height: 20
+                                                                            implicitWidth: revHashTxt.implicitWidth + 10
+                                                                            color: theme.surface
+                                                                            border.color: theme.border
+                                                                            border.width: 1
+
+                                                                            Text {
+                                                                                id: revHashTxt
+                                                                                anchors.centerIn: parent
+                                                                                text: revData.revisionId ? revData.revisionId.substring(0, 12) + "..." : ""
+                                                                                font.family: dashboardWindow.monoFont
+                                                                                font.pixelSize: 10
+                                                                                color: "#58A6FF"
+                                                                            }
+
+                                                                            HudMouseArea {
+                                                                                anchors.fill: parent
+                                                                                hoverEnabled: true
+                                                                                cursorShape: Qt.PointingHandCursor
+                                                                                onClicked: {
+                                                                                    if (typeof hostController !== "undefined" && revData.revisionId) {
+                                                                                        hostController.copyTextToClipboard(revData.revisionId);
+                                                                                        dashboardWindow.showToast("COPIED REVISION ID: " + revData.revisionId.substring(0, 12));
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+
+                                                                        // Origin Badge
+                                                                        Rectangle {
+                                                                            radius: 4
+                                                                            height: 20
+                                                                            implicitWidth: revOriginTxt.implicitWidth + 10
+                                                                            color: theme.surface
+                                                                            border.color: theme.border
+                                                                            border.width: 1
+
+                                                                            Text {
+                                                                                id: revOriginTxt
+                                                                                anchors.centerIn: parent
+                                                                                text: "origin: " + (revData.origin || "User")
+                                                                                font.family: dashboardWindow.sansFont
+                                                                                font.pixelSize: 10
+                                                                                color: dashboardWindow.mutedTextColor
+                                                                            }
+                                                                        }
+
+                                                                        // Parent Link
+                                                                        Text {
+                                                                            text: revData.parentRevisionId && revData.parentRevisionId.length > 0
+                                                                                ? ("parent: " + revData.parentRevisionId.substring(0, 10) + "...")
+                                                                                : "parent: (initial root)"
+                                                                            font.family: dashboardWindow.monoFont
+                                                                            font.pixelSize: 10
+                                                                            color: dashboardWindow.mutedTextColor
+                                                                        }
+
+                                                                        // Time
+                                                                        Text {
+                                                                            text: "• " + (revData.formattedTime || "")
+                                                                            font.family: dashboardWindow.sansFont
+                                                                            font.pixelSize: 10
+                                                                            color: dashboardWindow.mutedTextColor
+                                                                        }
+
+                                                                        Item { Layout.fillWidth: true }
+
+                                                                        // Restore This Revision
+                                                                        Rectangle {
+                                                                            implicitWidth: restRevTxt.contentWidth + 14
+                                                                            height: 22
+                                                                            radius: 4
+                                                                            color: restRevMouse.containsMouse ? theme.hover : theme.surface
+                                                                            border.color: "#227B62"
+                                                                            border.width: 1
+
+                                                                            Text {
+                                                                                id: restRevTxt
+                                                                                anchors.centerIn: parent
+                                                                                text: qsTr("⎇ Restore Rev")
+                                                                                font.family: dashboardWindow.sansFont
+                                                                                font.pixelSize: 10
+                                                                                font.weight: Font.Medium
+                                                                                color: dashboardWindow.fgColor
+                                                                            }
+
+                                                                            HudMouseArea {
+                                                                                id: restRevMouse
+                                                                                anchors.fill: parent
+                                                                                hoverEnabled: true
+                                                                                cursorShape: Qt.PointingHandCursor
+                                                                                onClicked: {
+                                                                                    if (typeof hostController !== "undefined" && revData.revisionId) {
+                                                                                        if (hostController.restoreRevision(revData.revisionId, hostController.stateVersion)) {
+                                                                                            hostController.hideDashboard();
+                                                                                            dashboardWindow.showToast("RESTORED REVISION #" + (revData.sequence || (index + 1)));
+                                                                                        } else {
+                                                                                            dashboardWindow.showToast(hostController.lastError);
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+
+                                                                        // Copy Revision Text
+                                                                        Rectangle {
+                                                                            implicitWidth: copyRevTxt.contentWidth + 12
+                                                                            height: 22
+                                                                            radius: 4
+                                                                            color: copyRevMouse.containsMouse ? theme.hover : theme.surface
+                                                                            border.color: theme.border
+                                                                            border.width: 1
+
+                                                                            Text {
+                                                                                id: copyRevTxt
+                                                                                anchors.centerIn: parent
+                                                                                text: qsTr("Copy")
+                                                                                font.family: dashboardWindow.sansFont
+                                                                                font.pixelSize: 10
+                                                                                color: dashboardWindow.fgColor
+                                                                            }
+
+                                                                            HudMouseArea {
+                                                                                id: copyRevMouse
+                                                                                anchors.fill: parent
+                                                                                hoverEnabled: true
+                                                                                cursorShape: Qt.PointingHandCursor
+                                                                                onClicked: {
+                                                                                    if (typeof hostController !== "undefined") {
+                                                                                        hostController.copyTextToClipboard(revData.text || "");
+                                                                                        dashboardWindow.showToast("COPIED REVISION TEXT");
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+
+                                                                    // Revision Prompt Text Snippet
+                                                                    Rectangle {
+                                                                        Layout.fillWidth: true
+                                                                        Layout.minimumWidth: 0
+                                                                        implicitHeight: revSnippetTxt.implicitHeight + 12
+                                                                        radius: 6
+                                                                        color: theme.surface
+                                                                        border.color: theme.border
+                                                                        border.width: 1
+
+                                                                        Text {
+                                                                            id: revSnippetTxt
+                                                                            anchors.fill: parent
+                                                                            anchors.margins: 6
+                                                                            text: (revData.text && revData.text.length > 0) ? revData.text : "(empty)"
+                                                                            font.family: dashboardWindow.sansFont
+                                                                            font.pixelSize: 11
+                                                                            color: dashboardWindow.fgColor
+                                                                            wrapMode: Text.Wrap
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }

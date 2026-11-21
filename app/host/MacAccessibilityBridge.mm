@@ -31,7 +31,7 @@ namespace {
 constexpr CFTimeInterval kTrustPollSeconds = 2.0;
 constexpr CFTimeInterval kElectronWakeSeconds = 0.06;
 constexpr CFIndex kMaxReadChars = kMacGuiCaptureLimit;
-constexpr int kReadbackPolls = 40;
+constexpr int kReadbackPolls = 80;
 constexpr useconds_t kPollMicros = 30000;
 
 bool isElectronBundle(const QString& bundleId) {
@@ -284,6 +284,7 @@ bool postKey(CGKeyCode key, CGEventFlags flags, pid_t targetPid) {
         CGEventSetFlags(down, flags);
         CGEventSetFlags(up, flags);
         CGEventPostToPid(targetPid, down);
+        usleep(15000);
         CGEventPostToPid(targetPid, up);
     }
     if (down != nullptr) CFRelease(down);
@@ -846,92 +847,177 @@ private:
         if (AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute, &focused) != kAXErrorSuccess || !focused)
             return false;
         const bool matches = CFEqual(focused, target.element);
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS") && !matches) {
+            const auto role = copyStringAttribute(static_cast<AXUIElementRef>(focused), kAXRoleAttribute);
+            const auto subrole = copyStringAttribute(static_cast<AXUIElementRef>(focused), kAXSubroleAttribute);
+            qInfo() << "[MacAX Focus Recovery] targetFocused_mismatch"
+                    << "bundle=" << target.bundle
+                    << "focusedRole=" << role
+                    << "focusedSubrole=" << subrole;
+        }
         CFRelease(focused);
         if (!matches || !target.pane) return matches;
         const auto pane = xtermPane(target.element);
         return pane && CFEqual(pane, target.pane);
     }
 
-    static bool belongsToWebArea(const KnownField& target, AXUIElementRef area) {
-        if (!area || target.kind != FieldKind::GuiEditor || !isElectronBundle(target.bundle) ||
-            copyStringAttribute(area, kAXRoleAttribute) != QLatin1String("AXWebArea")) return false;
-        auto parent = target.element;
-        for (int depth = 0; parent && depth < 32; ++depth) {
-            if (CFEqual(parent, area)) return true;
-            parent = (AXUIElementRef)axAttribute(parent, kAXParentAttribute);
+    static bool isWithin(AXUIElementRef element, AXUIElementRef ancestor) {
+        for (int depth = 0; element && ancestor && depth < 64; ++depth) {
+            if (CFEqual(element, ancestor)) return true;
+            element = (AXUIElementRef)axAttribute(element, kAXParentAttribute);
         }
         return false;
     }
 
-    // Chromium can return focus to the containing web document when the
-    // user clicks Roclint. Restore only the last observed editor inside that
-    // exact focused document and window. A sibling input or pane is a veto.
-    static bool focusReturnedWebEditor(AXUIElementRef app, const KnownField& target) {
+    static bool isComposerContainer(const KnownField& target, AXUIElementRef element) {
+        if (!element || target.kind != FieldKind::GuiEditor || !isElectronBundle(target.bundle)) return false;
+        const auto role = copyStringAttribute(element, kAXRoleAttribute);
+        return (role == QLatin1String("AXWebArea") || role == QLatin1String("AXGroup") ||
+                role == QLatin1String("AXScrollArea") || role == QLatin1String("AXSplitGroup") ||
+                role == QLatin1String("AXWindow")) && isWithin(target.element, element);
+    }
+
+    // Chromium can briefly expose only the window or document during activation.
+    // Restore the captured control only in that same window, never over a sibling input.
+    bool focusReturnedWebEditor(AXUIElementRef app, const KnownField& target) {
         if (target.kind != FieldKind::GuiEditor || !isElectronBundle(target.bundle) ||
             frontmostPid() != target.pid) return false;
         auto focused = (AXUIElementRef)axAttribute(app, kAXFocusedUIElementAttribute);
-        if (!belongsToWebArea(target, focused)) return false;
+        const auto currentFocusedRole = focused ? copyStringAttribute(focused, kAXRoleAttribute) : QStringLiteral("none");
+        const auto currentFocusedSubrole = focused ? copyStringAttribute(focused, kAXSubroleAttribute) : QStringLiteral("none");
+        const bool composerContainer = isComposerContainer(target, focused);
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            qInfo() << "[MacAX Focus Recovery] stage=confirming_composer_check"
+                    << "bundle=" << target.bundle
+                    << "hasFocused=" << (focused != nullptr)
+                    << "currentFocusedRole=" << currentFocusedRole
+                    << "currentFocusedSubrole=" << currentFocusedSubrole
+                    << "isComposerContainer=" << composerContainer;
+        }
+        if (focused) {
+            if (!composerContainer) return false;
+        } else if (m_pid != target.pid || m_token != target.token) {
+            return false;
+        }
         id window = axAttribute(app, kAXFocusedWindowAttribute);
         id capturedWindow = axAttribute(target.element, kAXWindowAttribute);
-        if (!window || !capturedWindow || !CFEqual((CFTypeRef)window, (CFTypeRef)capturedWindow)) return false;
+        const bool hasAppWin = (window != nullptr);
+        const bool hasCapWin = (capturedWindow != nullptr);
+        const bool winMatch = hasAppWin && hasCapWin && CFEqual((CFTypeRef)window, (CFTypeRef)capturedWindow);
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            const auto winRole = hasAppWin ? copyStringAttribute((AXUIElementRef)window, kAXRoleAttribute) : QStringLiteral("none");
+            const auto capWinRole = hasCapWin ? copyStringAttribute((AXUIElementRef)capturedWindow, kAXRoleAttribute) : QStringLiteral("none");
+            qInfo() << "[MacAX Focus Recovery] stage=locating_window"
+                    << "bundle=" << target.bundle
+                    << "hasAppWindow=" << hasAppWin
+                    << "hasCapturedWindow=" << hasCapWin
+                    << "windowsMatch=" << winMatch
+                    << "appWindowRole=" << winRole
+                    << "capturedWindowRole=" << capWinRole;
+        }
+        if (!winMatch) return false;
         const auto rect = elementRect(target.element);
         if (rect.isEmpty()) return false;
         AXUIElementRef hit = nullptr;
         const auto center = rect.center();
-        if (AXUIElementCopyElementAtPosition(app, center.x(), center.y(), &hit) != kAXErrorSuccess || !hit) return false;
-        bool visible = CFEqual(hit, target.element);
-        // Rich composers can expose the rendered text under the pointer as a child.
-        if (!visible && copyStringAttribute(hit, kAXRoleAttribute) == QLatin1String("AXStaticText")) {
-            auto parent = (AXUIElementRef)axAttribute(hit, kAXParentAttribute);
-            for (int depth = 0; parent && depth < 32; ++depth) {
-                if (CFEqual(parent, target.element)) { visible = true; break; }
-                if (copyStringAttribute(parent, kAXRoleAttribute) != QLatin1String("AXGroup")) break;
-                parent = (AXUIElementRef)axAttribute(parent, kAXParentAttribute);
-            }
+        const auto hitErr = AXUIElementCopyElementAtPosition(app, center.x(), center.y(), &hit);
+        const bool hitWithinTarget = hit && isWithin(hit, target.element);
+        const bool targetWithinHit = hit && isWithin(target.element, hit);
+        const bool hitEqualsTarget = hit && CFEqual(hit, target.element);
+        const bool visible = hitWithinTarget || targetWithinHit || hitEqualsTarget;
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            const auto hitRole = hit ? copyStringAttribute(hit, kAXRoleAttribute) : QStringLiteral("none");
+            const auto hitSubrole = hit ? copyStringAttribute(hit, kAXSubroleAttribute) : QStringLiteral("none");
+            qInfo() << "[MacAX Focus Recovery] stage=hit_test"
+                    << "bundle=" << target.bundle
+                    << "hitErr=" << hitErr
+                    << "hasHit=" << (hit != nullptr)
+                    << "hitRole=" << hitRole
+                    << "hitSubrole=" << hitSubrole
+                    << "hitWithinTarget=" << hitWithinTarget
+                    << "targetWithinHit=" << targetWithinHit
+                    << "hitEqualsTarget=" << hitEqualsTarget
+                    << "visible=" << visible;
         }
-        CFRelease(hit);
+        if (hit) CFRelease(hit);
         if (!visible) return false;
-        return AXUIElementSetAttributeValue(target.element, kAXFocusedAttribute, kCFBooleanTrue) == kAXErrorSuccess;
+        const auto setFocRes = AXUIElementSetAttributeValue(target.element, kAXFocusedAttribute, kCFBooleanTrue);
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            qInfo() << "[MacAX Focus Recovery] stage=set_focused_attribute"
+                    << "bundle=" << target.bundle
+                    << "setFocusedResult=" << setFocRes;
+        }
+        return setFocRes == kAXErrorSuccess;
     }
 
     bool activateCapturedApp(AXUIElementRef app, const KnownField& target) {
         const auto front = frontmostPid();
-        if (front == target.pid) {
-            if (targetFocused(app, target)) return true;
-            if (!focusReturnedWebEditor(app, target)) return false;
-            for (int attempt = 0; attempt < 18 && frontmostPid() == target.pid; ++attempt) {
-                if (targetFocused(app, target)) return true;
-                usleep(kPollMicros);
-            }
-            return false;
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            const auto targetRole = copyStringAttribute(target.element, kAXRoleAttribute);
+            const auto targetSubrole = copyStringAttribute(target.element, kAXSubroleAttribute);
+            const auto focusedRole = m_focused ? copyStringAttribute(m_focused, kAXRoleAttribute) : QStringLiteral("null");
+            const auto focusedSubrole = m_focused ? copyStringAttribute(m_focused, kAXSubroleAttribute) : QStringLiteral("null");
+            qInfo() << "[MacAX Focus Recovery] stage=activating_check"
+                    << "bundle=" << target.bundle
+                    << "targetPid=" << target.pid
+                    << "frontmostPid=" << front
+                    << "myPid=" << getpid()
+                    << "m_pid=" << m_pid
+                    << "sameToken=" << (target.token == m_token)
+                    << "targetRole=" << targetRole
+                    << "targetSubrole=" << targetSubrole
+                    << "focusedRole=" << focusedRole
+                    << "focusedSubrole=" << focusedSubrole
+                    << "isElectron=" << isElectronBundle(target.bundle);
         }
-        if (front != getpid() || target.pid != m_pid || !m_focused) return false;
-        const bool sameField = target.token == m_token && CFEqual(target.element, m_focused);
-        if (!sameField && !belongsToWebArea(target, m_focused)) return false;
-
-        @autoreleasepool {
-            NSRunningApplication* application = [NSRunningApplication runningApplicationWithProcessIdentifier:target.pid];
-            if (!application || !application.bundleIdentifier ||
-                QString::fromNSString(application.bundleIdentifier) != target.bundle) return false;
-            // AX can return the already verified editor application to the
-            // foreground without selecting a window or an input on its behalf.
-            if (AXUIElementSetAttributeValue(app, kAXFrontmostAttribute, kCFBooleanTrue) != kAXErrorSuccess) {
-                if (@available(macOS 14.0, *)) {
-                    [NSApp yieldActivationToApplication:application];
-                    [application activateFromApplication:[NSRunningApplication currentApplication] options:0];
-                } else {
+        if (front != getpid() && front != target.pid) return false;
+        if (target.pid != m_pid) return false;
+        const bool sameField = m_focused && target.token == m_token && CFEqual(target.element, m_focused);
+        const bool lostWebFocus = !m_focused && target.token == m_token &&
+            target.kind == FieldKind::GuiEditor && isElectronBundle(target.bundle);
+        const bool composerContainer = isComposerContainer(target, m_focused);
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            qInfo() << "[MacAX Focus Recovery] stage=activating_preconditions"
+                    << "sameField=" << sameField
+                    << "lostWebFocus=" << lostWebFocus
+                    << "isComposerContainer=" << composerContainer;
+        }
+        if (!sameField && !lostWebFocus && !composerContainer) return false;
+        NSRunningApplication* application = [NSRunningApplication runningApplicationWithProcessIdentifier:target.pid];
+        if (!application || !application.bundleIdentifier ||
+            QString::fromNSString(application.bundleIdentifier) != target.bundle) return false;
+        // AX frontmost attribute request
+        const auto axFrontRes = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute, kCFBooleanTrue);
+        // On macOS 14+, foreground activation requires the current foreground application
+        // to yield activation so the target application can reliably take key focus.
+        if (@available(macOS 14.0, *)) {
+            [NSApp yieldActivationToApplication:application];
+            [application activateFromApplication:[NSRunningApplication currentApplication] options:0];
+        } else {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-                    [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+            [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
 #pragma clang diagnostic pop
-                }
-            }
+        }
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            qInfo() << "[MacAX Focus Recovery] stage=activating_dispatched"
+                    << "targetPid=" << target.pid
+                    << "axFrontmostResult=" << axFrontRes;
         }
         bool restoredWebFocus = false;
         for (int i = 0; i < 18; ++i) {
             const auto active = frontmostPid();
+            const bool tf = targetFocused(app, target);
+            if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+                qInfo() << "[MacAX Focus Recovery] stage=poll"
+                        << "i=" << i
+                        << "activePid=" << active
+                        << "targetPid=" << target.pid
+                        << "targetFocused=" << tf
+                        << "restoredWebFocus=" << restoredWebFocus;
+            }
             if (active != getpid() && active != target.pid) return false;
-            if (targetFocused(app, target)) return true;
+            if (tf) return true;
             if (!restoredWebFocus && active == target.pid)
                 restoredWebFocus = focusReturnedWebEditor(app, target);
             usleep(kPollMicros);
@@ -980,13 +1066,46 @@ private:
         return matches;
     }
 
+    static std::optional<QString> readTextForReadback(const KnownField& target, FieldKind kind, const QString& expected) {
+        auto text = deliveryText(target, kind);
+        if (text && RangeInjectionPolicy::readbackMatches(expected, *text)) return text;
+        if (kind == FieldKind::GuiEditor) {
+            // In rich Electron/Chromium web editors (e.g. Antigravity/VS Code),
+            // AXValue and AXNumberOfCharacters cache updates asynchronously,
+            // while the parameterized string range reflects the committed replacement immediately.
+            NSString* rangeText = axParameter(target.element, kAXStringForRangeParameterizedAttribute, axRange({0, static_cast<CFIndex>(expected.size())}));
+            if ([rangeText isKindOfClass:NSString.class]) {
+                auto qRange = QString::fromNSString(rangeText);
+                if (RangeInjectionPolicy::readbackMatches(expected, qRange)) return qRange;
+            }
+        }
+        return text;
+    }
+
     static bool waitForText(AXUIElementRef app, const KnownField& target, FieldKind kind,
                             const QString& expected, int polls = kReadbackPolls) {
         for (int i = 0; i < polls; ++i) {
-            if (!targetFocused(app, target)) return false;
-            const auto text = deliveryText(target, kind);
-            if (text && RangeInjectionPolicy::readbackMatches(expected, *text)) return true;
+            const bool tf = targetFocused(app, target);
+            if (!tf) {
+                if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+                    qInfo() << "[MacAX waitForText] stopped: targetFocused=false at poll=" << i;
+                }
+                return false;
+            }
+            const auto text = readTextForReadback(target, kind, expected);
+            const bool matches = text && RangeInjectionPolicy::readbackMatches(expected, *text);
+            if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+                qInfo() << "[MacAX waitForText] poll=" << i
+                        << "hasText=" << text.has_value()
+                        << "textLen=" << (text ? text->size() : 0)
+                        << "expectedLen=" << expected.size()
+                        << "matches=" << matches;
+            }
+            if (matches) return true;
             usleep(kPollMicros);
+        }
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            qInfo() << "[MacAX waitForText] timed out after" << polls << "polls";
         }
         return false;
     }
@@ -999,9 +1118,25 @@ private:
     static std::optional<InjectionOutcome> selectionError(AXUIElementRef app, const KnownField& target,
                                                           const QString& before, CFRange range) {
         // Chromium applies an AX selection asynchronously in the renderer.
-        for (int i = 0; i < 6; ++i) {
-            if (!exactText(app, target, FieldKind::GuiEditor, before)) return InjectionOutcome::FieldChanged;
-            if (selectionMatches(target.element, range)) return std::nullopt;
+        for (int i = 0; i < 15; ++i) {
+            if (!exactText(app, target, FieldKind::GuiEditor, before)) {
+                if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+                    qInfo() << "[MacAX selectionError] exactText failed at poll=" << i;
+                }
+                return InjectionOutcome::FieldChanged;
+            }
+            const auto cur = readSelection(target.element);
+            const bool matches = cur && cur->location == range.location && cur->length == range.length;
+            if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+                qInfo() << "[MacAX selectionError] poll=" << i
+                        << "hasCur=" << cur.has_value()
+                        << "curLoc=" << (cur ? cur->location : -1)
+                        << "curLen=" << (cur ? cur->length : -1)
+                        << "expLoc=" << range.location
+                        << "expLen=" << range.length
+                        << "matches=" << matches;
+            }
+            if (matches) return std::nullopt;
             usleep(kPollMicros);
         }
         return InjectionOutcome::NotSupported;
@@ -1018,9 +1153,13 @@ private:
                 NSPasteboardItem* copy = [[[NSPasteboardItem alloc] init] autorelease];
                 for (NSPasteboardType type in item.types) {
                     NSData* data = [item dataForType:type];
-                    if (!data || ![copy setData:data forType:type]) return InjectionOutcome::NotSupported;
+                    if (data) {
+                        [copy setData:data forType:type];
+                    }
                 }
-                [saved addObject:copy];
+                if (copy.types.count > 0) {
+                    [saved addObject:copy];
+                }
             }
             const auto validTarget = [&]() {
                 return exactText(app, target, kind, before) &&
@@ -1038,11 +1177,27 @@ private:
             const bool owned = board.changeCount == clearedChange;
             InjectionOutcome outcome = InjectionOutcome::Failed;
             if (owned && copied) {
-                if (!validTarget() || board.changeCount != clearedChange) {
+                const bool targetValid = validTarget();
+                const bool changeValid = (board.changeCount == clearedChange);
+                if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+                    qInfo() << "[MacAX pasteAndVerify] owned=true copied=true"
+                            << "validTarget=" << targetValid
+                            << "boardChangeValid=" << changeValid;
+                }
+                if (!targetValid || !changeValid) {
                     outcome = InjectionOutcome::FieldChanged;
-                } else if (postKey(kVK_ANSI_V, kCGEventFlagMaskCommand, target.pid) &&
-                           waitForText(app, target, kind, expected)) {
-                    outcome = InjectionOutcome::Injected;
+                } else {
+                    const bool posted = postKey(kVK_ANSI_V, kCGEventFlagMaskCommand, target.pid);
+                    if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+                        qInfo() << "[MacAX pasteAndVerify] postKey(Cmd+V) result=" << posted;
+                    }
+                    if (posted && waitForText(app, target, kind, expected)) {
+                        outcome = InjectionOutcome::Injected;
+                    }
+                }
+            } else {
+                if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+                    qInfo() << "[MacAX pasteAndVerify] owned=" << owned << "copied=" << copied;
                 }
             }
             if (board.changeCount == clearedChange) {
@@ -1069,6 +1224,11 @@ private:
         if (!exactText(app, target, FieldKind::GuiEditor, before)) return InjectionOutcome::FieldChanged;
         if (!selectRange(target.element, whole) && !postKey(kVK_ANSI_A, kCGEventFlagMaskCommand, target.pid))
             return InjectionOutcome::Failed;
+        if (isElectronBundle(target.bundle)) {
+            // Electron/Chromium can accept AXSelectedTextRange without updating the DOM selection.
+            // Post Cmd+A to guarantee the full draft is selected before pasting.
+            postKey(kVK_ANSI_A, kCGEventFlagMaskCommand, target.pid);
+        }
         if (const auto error = selectionError(app, target, before, whole)) return *error;
         return pasteAndVerify(app, target, FieldKind::GuiEditor, before, expected, expected, whole);
     }
@@ -1096,6 +1256,13 @@ private:
     InjectionOutcome withCapturedField(quint64 token, FieldKind kind, const QString& before, Write write, QString* detail = nullptr) {
         if (!m_observing || !AXIsProcessTrusted()) return InjectionOutcome::NotSupported;
         const auto* target = capturedField(token, kind);
+        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+            qInfo() << "[MacAX Delivery] start token=" << token
+                    << "kind=" << static_cast<int>(kind)
+                    << "targetFound=" << (target != nullptr)
+                    << "targetPid=" << (target ? target->pid : 0)
+                    << "bundle=" << (target ? target->bundle : QString());
+        }
         if (!target) {
             if (detail) *detail = QStringLiteral("The captured editor field is no longer available.");
             return InjectionOutcome::FieldChanged;
@@ -1147,6 +1314,10 @@ private:
                     if (r.text.size() > kMaxReadChars) return InjectionOutcome::NotSupported;
                     return replaceGuiValue(app, target, r.expectedCurrentText, r.text);
                 }, &detail);
+            if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+                qInfo() << "[MacAX Delivery] finished outcome=" << static_cast<int>(outcome)
+                        << "detail=" << detail;
+            }
             emit injectionFinished(r.requestId, outcome, detail.isEmpty() ? deliveryDetail(outcome) : detail);
         }
     }

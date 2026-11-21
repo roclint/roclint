@@ -220,7 +220,7 @@ public:
     Q_PROPERTY(QString activeItemKind READ activeItemKind NOTIFY interventionChanged)
     Q_PROPERTY(QString activeQuestion READ activeQuestion NOTIFY interventionChanged)
     Q_PROPERTY(bool isCheckingClarification READ isCheckingClarification NOTIFY clarificationCheckChanged)
-    Q_PROPERTY(QStringList additionalOptions MEMBER m_additionalOptions NOTIFY optionSuggestionsChanged)
+    Q_PROPERTY(QVariantList additionalOptions MEMBER m_additionalOptions NOTIFY optionSuggestionsChanged)
     Q_PROPERTY(bool refreshingOptions MEMBER m_refreshingOptions NOTIFY optionSuggestionsChanged)
     Q_PROPERTY(QString optionFeedback MEMBER m_optionFeedback NOTIFY optionSuggestionsChanged)
     Q_PROPERTY(QString clarificationFeedback READ clarificationFeedback NOTIFY clarificationCheckChanged)
@@ -870,6 +870,7 @@ public slots:
     Q_INVOKABLE quint64 purgeHistory();
     Q_INVOKABLE void resetActiveDraft();
     Q_INVOKABLE void refreshStorageStats();
+    Q_INVOKABLE bool copyTextToClipboard(const QString& text);
 
     // Scorer and model runtime.
     Q_INVOKABLE bool setScorerEngine(const QString& engine);
@@ -1312,6 +1313,7 @@ private:
     [[nodiscard]] bridge::ComprehensionReviewRequest makeComprehensionRequest() const;
     [[nodiscard]] std::optional<ComprehensionBinding> currentReviewBinding() const;
     [[nodiscard]] bool reviewBindingMatchesCurrent() const;
+    [[nodiscard]] bool canConfirmWording(const bridge::ComprehensionFinding& finding) const;
     [[nodiscard]] bool findingIsResolved(std::string_view findingId) const;
     [[nodiscard]] bool hasUnresolvedRequiredFindings() const;
     [[nodiscard]] bool reviewIsFreshAndComplete() const;
@@ -1605,7 +1607,7 @@ private:
     QString m_activeQuestion;
     quint64 m_clarificationCheckSerial{0};
     bool m_checkingClarification{false};
-    QStringList m_additionalOptions, m_previousOptions;
+    QVariantList m_additionalOptions;
     QString m_optionFeedback;
     bool m_refreshingOptions{false};
     QString m_clarificationFeedback;

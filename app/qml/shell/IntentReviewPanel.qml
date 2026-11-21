@@ -166,13 +166,24 @@ FocusScope {
     readonly property color warnColor: rocPalette.warning
     readonly property color errorColor: "#EEA4AF"
 
+    readonly property var displayedAlternatives: {
+        if (!hc || manualResolution || hostController.activeItemKind !== "CHOICE_GROUP") return []
+        const extra = Array.from(hostController.additionalOptions || [])
+        return extra.concat(Array.from(hostController.activeAlternatives || []))
+    }
+    function selectAlternative(option) {
+        if (!option.suggested) return confirmAlternative(option.id)
+        const direction = customAnswer.text.trim()
+        const answer = option.label + ". " + option.whyMaterial
+        handleAnswerSubmit(direction.length ? direction + "\n" + answer : answer)
+    }
     function chooseAlternative(index) {
         if (!hc || !hostController.isClarifying || hostController.activeItemKind !== "CHOICE_GROUP") {
             return;
         }
-        const alts = hostController.activeAlternatives;
+        const alts = displayedAlternatives;
         if (index >= 0 && index < alts.length) {
-            confirmAlternative(alts[index].id);
+            selectAlternative(alts[index]);
         }
     }
 
@@ -460,8 +471,22 @@ FocusScope {
                         color: rootWindow.fgColor
                     }
 
+                    ActionButton {
+                        visible: rootWindow.hc && !rootWindow.manualResolution && hostController.activeItemKind === "CHOICE_GROUP"
+                        label: rootWindow.hc && hostController.refreshingOptions ? qsTr("Finding other options…") : qsTr("Suggest other options")
+                        active: rootWindow.hc && !hostController.refreshingOptions && !hostController.isCheckingClarification
+                        onClicked: hostController.suggestOtherOptions(customAnswer.text, hostController.stateVersion)
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        visible: text.length > 0
+                        text: rootWindow.hc ? hostController.optionFeedback : ""
+                        wrapMode: Text.WordWrap
+                        color: rootWindow.mutedTextColor
+                    }
+
                     Repeater {
-                        model: rootWindow.hc && !rootWindow.manualResolution && hostController.activeItemKind === "CHOICE_GROUP" ? hostController.activeAlternatives : []
+                        model: rootWindow.displayedAlternatives
                         delegate: Rectangle {
                             required property var modelData
                             required property int index
@@ -471,10 +496,11 @@ FocusScope {
                             activeFocusOnTab: enabled
                             Accessible.role: Accessible.Button
                             Accessible.name: modelData.label
-                            Accessible.onPressAction: rootWindow.confirmAlternative(modelData.id)
+                            Accessible.description: modelData.whyMaterial || ""
+                            Accessible.onPressAction: rootWindow.selectAlternative(modelData)
                             Keys.onPressed: function(event) {
                                 if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Space) {
-                                    rootWindow.confirmAlternative(modelData.id);
+                                    rootWindow.selectAlternative(modelData);
                                     event.accepted = true;
                                 }
                             }
@@ -519,37 +545,10 @@ FocusScope {
                                 onClicked: {
                                     parent.forceActiveFocus();
                                     if (rootWindow.hc) hostController.pauseAmbientFollowing();
-                                    rootWindow.confirmAlternative(modelData.id);
+                                    rootWindow.selectAlternative(modelData);
                                 }
                             }
                         }
-                    }
-
-                    Repeater {
-                        model: rootWindow.hc && !rootWindow.manualResolution ? hostController.additionalOptions : []
-                        delegate: ActionButton {
-                            required property string modelData
-                            label: modelData
-                            Layout.fillWidth: true
-                            onClicked: {
-                                const direction = customAnswer.text.trim()
-                                handleAnswerSubmit(direction.length ? direction + "\n" + modelData : modelData)
-                            }
-                        }
-                    }
-
-                    ActionButton {
-                        visible: rootWindow.hc && !rootWindow.manualResolution && hostController.activeItemKind === "CHOICE_GROUP"
-                        label: rootWindow.hc && hostController.refreshingOptions ? qsTr("Finding other options…") : qsTr("Suggest other options")
-                        active: rootWindow.hc && !hostController.refreshingOptions && !hostController.isCheckingClarification
-                        onClicked: hostController.suggestOtherOptions(customAnswer.text, hostController.stateVersion)
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        visible: text.length > 0
-                        text: rootWindow.hc ? hostController.optionFeedback : ""
-                        wrapMode: Text.WordWrap
-                        color: rootWindow.mutedTextColor
                     }
 
                     RowLayout {
@@ -919,7 +918,7 @@ FocusScope {
                                 visible: modelData.needsReview
                                 checked: modelData.acknowledged
                                 enabled: rootWindow.hc && hostController.isStorageAvailable && !hostController.storageBusy
-                                onClicked: {
+                                onToggled: {
                                     if (!hostController.acknowledgeConstraint(modelData.id, checked, hostController.stateVersion)) rootWindow.reviewRefresh++;
                                 }
                             }
@@ -950,8 +949,10 @@ FocusScope {
                                     visible: hasAuditExplanation || constraintLabel.truncated
                                     label: hasAuditExplanation ? qsTr("Why review?") : qsTr("Read full requirement")
                                     onClicked: {
-                                        reviewExplanationDialog.explanation = constraintLabel.text
-                                            + (hasAuditExplanation && rootWindow.showDiagnostics ? "\n\n" + modelData.auditExplanation : "");
+                                        reviewExplanationDialog.explanation = hasAuditExplanation
+                                            ? (rootWindow.showDiagnostics ? modelData.auditExplanation
+                                                : qsTr("Roclint could not verify that the rewrite preserved every detail. Compare the rewritten prompt with the requirement below, then check the box if the meaning matches.")) + "\n\n" + constraintLabel.text
+                                            : constraintLabel.text;
                                         reviewExplanationDialog.returnFocusItem = constraintCheck;
                                         reviewExplanationDialog.open();
                                     }

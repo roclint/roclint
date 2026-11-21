@@ -577,9 +577,7 @@ Window {
         anchors.fill: parent
         color: rootWindow.bgColor
         radius: rootWindow.compactPresentation ? 15 : 18
-        gradient: rootWindow.compactPresentation ? companionWash : null
-        Gradient {
-            id: companionWash
+        gradient: Gradient {
             GradientStop { position: 0; color: rocPalette.light ? "#F1F5FF" : "#172746" }
             GradientStop { position: 0.62; color: rootWindow.bgColor }
         }
