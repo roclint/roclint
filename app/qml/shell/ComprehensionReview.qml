@@ -285,11 +285,12 @@ FocusScope {
             }
             Text {
                 objectName: "comprehensionStateDetail"
-                visible: !root.embedded && !root.compactSuccess
+                visible: (!root.embedded || root.reviewState === "failed") && !root.compactSuccess
                 Layout.fillWidth: true
                 Layout.minimumWidth: 0
                 textFormat: Text.PlainText
-                text: root.reviewStateDetail(root.reviewState)
+                text: root.reviewState === "failed" && contract.host && contract.host.comprehensionFailureDetail
+                    ? contract.host.comprehensionFailureDetail : root.reviewStateDetail(root.reviewState)
                 wrapMode: Text.WordWrap
                 font.family: root.sansFont
                 font.pixelSize: 12

@@ -325,6 +325,7 @@ public:
     Q_PROPERTY(QString interviewFeedback READ interviewFeedback NOTIFY interviewChanged)
 
     // Independent comprehension review of a substantial rewrite.
+    Q_PROPERTY(QString comprehensionFailureDetail READ comprehensionFailureDetail NOTIFY comprehensionReviewChanged)
     Q_PROPERTY(QString comprehensionReviewState READ comprehensionReviewState NOTIFY comprehensionReviewChanged)
     Q_PROPERTY(QString comprehensionInterpretation READ comprehensionInterpretation NOTIFY comprehensionReviewChanged)
     Q_PROPERTY(QVariantList comprehensionFindings READ comprehensionFindings NOTIFY comprehensionReviewChanged)
@@ -597,6 +598,7 @@ public:
     using ComprehensionReviewHandler =
         std::function<bridge::ComprehensionReviewResult(const bridge::ComprehensionReviewRequest&)>;
     void setComprehensionReviewHandler(ComprehensionReviewHandler handler);
+    [[nodiscard]] QString comprehensionFailureDetail() const;
     [[nodiscard]] QString comprehensionReviewState() const;
     [[nodiscard]] QString comprehensionInterpretation() const;
     [[nodiscard]] QVariantList comprehensionFindings() const;

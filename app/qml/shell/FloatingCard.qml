@@ -1185,7 +1185,7 @@ Window {
                         Text {
                             objectName: "pendingReviewLabel"
                             visible: rootWindow.hc && hostController.pendingReviewCount > 0
-                            text: rootWindow.hc ? qsTr("%1 checks left").arg(hostController.pendingReviewCount) : ""
+                            text: rootWindow.hc ? (hostController.pendingReviewCount === 1 ? qsTr("1 check left") : qsTr("%1 checks left").arg(hostController.pendingReviewCount)) : ""
                             font.family: rootWindow.sansFont; font.pixelSize: 11
                             color: rocPalette.warning
                         }

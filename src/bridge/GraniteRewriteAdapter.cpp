@@ -83,8 +83,8 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
            "lists are metadata, not additional user requirements. Never add API preservation, return-value "
            "policies or overload selection from this metadata. Ambiguous or missing targets may remain "
            "ambiguous in the rewritten request.\n";
-    out += "Use the shortest wording that preserves the original request, confirmed answers, explicit constraints "
-           "and requested format. A short request should normally stay short. Do not add generic praise or "
+    out += "Retain each explicitly named object and attribute, including details that seem obvious or unusual. "
+           "Check the final prompt against the draft and confirmed answers for omitted details. Do not add generic praise or "
            "boilerplate such as as specified, engaging, or visually appealing unless the user requested those "
            "goals. Retain explicitly requested usability, accessibility and quality requirements. "
            "Do not add sentences merely to sound polished or fill a format section.\n";

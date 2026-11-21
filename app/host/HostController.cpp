@@ -5687,6 +5687,11 @@ QString HostController::comprehensionReviewState() const {
     return QStringLiteral("not_run");
 }
 
+QString HostController::comprehensionFailureDetail() const {
+    if (m_reviewState != ReviewState::Failed || !reviewBindingMatchesCurrent()) return {};
+    return boundedText(m_reviewResult.rationale, 480).section(QStringLiteral("\n\n"), 0, 0);
+}
+
 QString HostController::comprehensionInterpretation() const {
     // Display-only: the reviewer's inference is never authoritative. A stale or
     // failed review belongs to another proposal/revision; do not show its text as
@@ -5897,7 +5902,10 @@ AsyncTask<core::Status> HostController::requestComprehensionReviewOperation(quin
             if (!wellFormed || duplicateIds) {
                 m_reviewState = ReviewState::Failed;
                 m_reviewResult = bridge::ComprehensionReviewResult{};
-                m_reviewResult.status = bridge::ComprehensionReviewStatus::Malformed;
+                m_reviewResult.status = wellFormed || result.status == bridge::ComprehensionReviewStatus::Completed
+                    ? bridge::ComprehensionReviewStatus::Malformed : result.status;
+                m_reviewResult.rationale = result.status == bridge::ComprehensionReviewStatus::Completed
+                    ? "The reviewer returned an incomplete or inconsistent result." : result.rationale;
                 m_reviewResult.readyForTask = false;
                 m_findingResolutions.clear();
                 emit comprehensionReviewChanged();

@@ -141,6 +141,16 @@ Result<core::analysis::ChoiceGroup> readGroup(const json::Value& g, std::size_t 
         auto why = readText(altValue, "why_material", false);
         if (!why.ok()) return why.error();
         alt.whyMaterial = std::move(why).value();
+        // Some local models serialize ordinary phrases as lowercase identifiers.
+        // Preserve identifiers explicitly supplied by the user.
+        for (auto* phrase : {&alt.interpretation, &alt.whyMaterial}) {
+            if (phrase->find('_') != std::string::npos &&
+                phrase->find_first_not_of("abcdefghijklmnopqrstuvwxyz_") == std::string::npos &&
+                phrase->front() != '_' && phrase->back() != '_' &&
+                frozenText.find(*phrase) == std::string_view::npos) {
+                std::replace(phrase->begin(), phrase->end(), '_', ' ');
+            }
+        }
         auto evidence = readEvidence(altValue, frozenText, ungrounded);
         if (!evidence.ok()) return evidence.error();
         alt.evidence = std::move(evidence).value();
@@ -367,6 +377,7 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
            "{\"text\":string,\"effect\":string,\"assume\":string}]}]} for useful choices.\n";
     out += "Creative/refinement/decomposition choices are optional proposals. Clarification is a decision needed to determine intent. "
            "source is ONLY a verbatim source quotation from evidence_quotes, never an explanation. "
+           "Ask about one concrete detail from the draft. Write choices as ordinary phrases with spaces. Avoid category menus and snake_case labels. "
            "text is a proposed outcome, effect explains its consequence, and assume discloses any added premise, or is empty. "
            "A proposal is not a source fact or an approved requirement; only selecting it adopts it.\n";
     if (req.interviewFollowUp || req.substantialInterview) {

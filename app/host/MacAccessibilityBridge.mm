@@ -96,27 +96,38 @@ id axRange(CFRange range) {
 }
 
 std::optional<QString> guiText(AXUIElementRef element, bool rich) {
+    const auto placeholder = copyStringAttribute(element, kAXPlaceholderValueAttribute);
+    if (rich) {
+        // Electron can update the editable document before AXValue and its count.
+        // Read the complete range belonging to this control, including trailing text.
+        id markers = axParameter(element, CFSTR("AXTextMarkerRangeForUIElement"), (id)element);
+        NSNumber* complete = axParameter(element, CFSTR("AXLengthForTextMarkerRange"), markers);
+        if ([complete isKindOfClass:NSNumber.class]) {
+            const auto length = complete.longLongValue;
+            if (length < 0 || length > kMaxReadChars) return std::nullopt;
+            NSString* text = axParameter(element, CFSTR("AXStringForTextMarkerRange"), markers);
+            if (![text isKindOfClass:NSString.class])
+                text = axParameter(element, kAXStringForRangeParameterizedAttribute, axRange({0, length}));
+            if (![text isKindOfClass:NSString.class] || text.length != static_cast<NSUInteger>(length))
+                return std::nullopt;
+            const auto live = QString::fromNSString(text);
+            if (!live.isEmpty() && live == placeholder) return std::nullopt;
+            return live;
+        }
+    }
     NSNumber* length = axAttribute(element, kAXNumberOfCharactersAttribute);
     std::optional<qsizetype> count;
     if ([length isKindOfClass:NSNumber.class]) count = length.longLongValue;
     if (count && (*count < 0 || *count > kMaxReadChars)) return std::nullopt;
     const auto value = readStringAttribute(element, kAXValueAttribute);
-    // Chromium can cap both AXValue and AXNumberOfCharacters at 10,000
-    // UTF-16 units. The marker range belongs to this exact focused control.
-    if (rich && (!value || value->isEmpty() || value->size() >= 10000 || (count && *count != value->size()))) {
-        id markers = axParameter(element, CFSTR("AXTextMarkerRangeForUIElement"), (id)element);
-        NSNumber* complete = axParameter(element, CFSTR("AXLengthForTextMarkerRange"), markers);
-        if ([complete isKindOfClass:NSNumber.class]) count = complete.longLongValue;
-        else if ((value && value->size() == 10000) || count == 10000) return std::nullopt;
-    }
-    if (count && (*count < 0 || *count > kMaxReadChars)) return std::nullopt;
+    if (rich && ((value && value->size() == 10000) || count == 10000)) return std::nullopt;
     const bool verifyEmpty = rich || copyStringAttribute(element, kAXRoleAttribute) == QLatin1String("AXComboBox");
     std::optional<QString> range;
     if (count && (!value || value->isEmpty() || *count != value->size())) {
         NSString* text = axParameter(element, kAXStringForRangeParameterizedAttribute, axRange({0, *count}));
         if ([text isKindOfClass:NSString.class]) range = QString::fromNSString(text);
     }
-    return verifiedMacGuiText(value, verifyEmpty, count, range, copyStringAttribute(element, kAXPlaceholderValueAttribute));
+    return verifiedMacGuiText(value, verifyEmpty, count, range, placeholder);
 }
 
 bool hasClass(AXUIElementRef el, NSString* name) {
@@ -558,6 +569,14 @@ private:
             CFRelease(value);
             m_consecutiveFocusMisses = 0;
         } else if (m_focused != nullptr) {
+            bool roclintActive = false;
+            @autoreleasepool {
+                roclintActive = [NSApp keyWindow] != nil || [NSApp isActive] || m_cardVisible.load();
+            }
+            if (roclintActive) {
+                m_consecutiveFocusMisses = 0;
+                return;
+            }
             if (++m_consecutiveFocusMisses >= 5) {
                 detachFocused();
                 emit fieldLost();
@@ -693,6 +712,13 @@ private:
 
     void onFocusChanged() {
         if (m_app == nullptr) {
+            return;
+        }
+        bool roclintActive = false;
+        @autoreleasepool {
+            roclintActive = [NSApp keyWindow] != nil || [NSApp isActive] || m_cardVisible.load();
+        }
+        if (roclintActive) {
             return;
         }
         // A floating panel can retain a key window while an editor owns input.
@@ -877,8 +903,9 @@ private:
                 role == QLatin1String("AXWindow")) && isWithin(target.element, element);
     }
 
-    // Chromium can briefly expose only the window or document during activation.
-    // Restore the captured control only in that same window, never over a sibling input.
+    // Chromium can return focus to the containing web document when the
+    // user clicks Roclint. Restore only the last observed editor inside that
+    // exact focused document and window. A sibling input or pane is a veto.
     bool focusReturnedWebEditor(AXUIElementRef app, const KnownField& target) {
         if (target.kind != FieldKind::GuiEditor || !isElectronBundle(target.bundle) ||
             frontmostPid() != target.pid) return false;
@@ -895,9 +922,8 @@ private:
                     << "isComposerContainer=" << composerContainer;
         }
         if (focused) {
-            if (!composerContainer) return false;
-        } else if (m_pid != target.pid || m_token != target.token) {
-            return false;
+            const bool targetAlreadyFocused = CFEqual(focused, target.element);
+            if (!targetAlreadyFocused && !composerContainer) return false;
         }
         id window = axAttribute(app, kAXFocusedWindowAttribute);
         id capturedWindow = axAttribute(target.element, kAXWindowAttribute);
@@ -918,29 +944,6 @@ private:
         if (!winMatch) return false;
         const auto rect = elementRect(target.element);
         if (rect.isEmpty()) return false;
-        AXUIElementRef hit = nullptr;
-        const auto center = rect.center();
-        const auto hitErr = AXUIElementCopyElementAtPosition(app, center.x(), center.y(), &hit);
-        const bool hitWithinTarget = hit && isWithin(hit, target.element);
-        const bool targetWithinHit = hit && isWithin(target.element, hit);
-        const bool hitEqualsTarget = hit && CFEqual(hit, target.element);
-        const bool visible = hitWithinTarget || targetWithinHit || hitEqualsTarget;
-        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
-            const auto hitRole = hit ? copyStringAttribute(hit, kAXRoleAttribute) : QStringLiteral("none");
-            const auto hitSubrole = hit ? copyStringAttribute(hit, kAXSubroleAttribute) : QStringLiteral("none");
-            qInfo() << "[MacAX Focus Recovery] stage=hit_test"
-                    << "bundle=" << target.bundle
-                    << "hitErr=" << hitErr
-                    << "hasHit=" << (hit != nullptr)
-                    << "hitRole=" << hitRole
-                    << "hitSubrole=" << hitSubrole
-                    << "hitWithinTarget=" << hitWithinTarget
-                    << "targetWithinHit=" << targetWithinHit
-                    << "hitEqualsTarget=" << hitEqualsTarget
-                    << "visible=" << visible;
-        }
-        if (hit) CFRelease(hit);
-        if (!visible) return false;
         const auto setFocRes = AXUIElementSetAttributeValue(target.element, kAXFocusedAttribute, kCFBooleanTrue);
         if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
             qInfo() << "[MacAX Focus Recovery] stage=set_focused_attribute"
@@ -970,42 +973,37 @@ private:
                     << "focusedSubrole=" << focusedSubrole
                     << "isElectron=" << isElectronBundle(target.bundle);
         }
+        if (front == target.pid) return targetFocused(app, target);
         if (front != getpid() && front != target.pid) return false;
-        if (target.pid != m_pid) return false;
-        const bool sameField = m_focused && target.token == m_token && CFEqual(target.element, m_focused);
-        const bool lostWebFocus = !m_focused && target.token == m_token &&
-            target.kind == FieldKind::GuiEditor && isElectronBundle(target.bundle);
-        const bool composerContainer = isComposerContainer(target, m_focused);
-        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
-            qInfo() << "[MacAX Focus Recovery] stage=activating_preconditions"
-                    << "sameField=" << sameField
-                    << "lostWebFocus=" << lostWebFocus
-                    << "isComposerContainer=" << composerContainer;
-        }
-        if (!sameField && !lostWebFocus && !composerContainer) return false;
-        NSRunningApplication* application = [NSRunningApplication runningApplicationWithProcessIdentifier:target.pid];
-        if (!application || !application.bundleIdentifier ||
-            QString::fromNSString(application.bundleIdentifier) != target.bundle) return false;
-        // AX frontmost attribute request
-        const auto axFrontRes = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute, kCFBooleanTrue);
-        // On macOS 14+, foreground activation requires the current foreground application
-        // to yield activation so the target application can reliably take key focus.
-        if (@available(macOS 14.0, *)) {
-            [NSApp yieldActivationToApplication:application];
-            [application activateFromApplication:[NSRunningApplication currentApplication] options:0];
-        } else {
+        if (target.token != m_token || !m_focused || !CFEqual(target.element, m_focused))
+            return false;
+
+        @autoreleasepool {
+            NSRunningApplication* application = [NSRunningApplication runningApplicationWithProcessIdentifier:target.pid];
+            if (!application || !application.bundleIdentifier ||
+                QString::fromNSString(application.bundleIdentifier) != target.bundle) return false;
+            // AX can return the already verified editor application to the
+            // foreground without selecting a window or an input on its behalf.
+            const auto axFrontRes = AXUIElementSetAttributeValue(app, kAXFrontmostAttribute, kCFBooleanTrue);
+            if (axFrontRes != kAXErrorSuccess) {
+                if (@available(macOS 14.0, *)) {
+                    [NSApp yieldActivationToApplication:application];
+                    [application activateFromApplication:[NSRunningApplication currentApplication] options:NSApplicationActivateAllWindows];
+                } else {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-            [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+                    [application activateWithOptions:NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps];
 #pragma clang diagnostic pop
-        }
-        if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
-            qInfo() << "[MacAX Focus Recovery] stage=activating_dispatched"
-                    << "targetPid=" << target.pid
-                    << "axFrontmostResult=" << axFrontRes;
+                }
+            }
+            if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
+                qInfo() << "[MacAX Focus Recovery] stage=activating_dispatched"
+                        << "targetPid=" << target.pid
+                        << "axFrontmostResult=" << axFrontRes;
+            }
         }
         bool restoredWebFocus = false;
-        for (int i = 0; i < 18; ++i) {
+        for (int i = 0; i < 25; ++i) {
             const auto active = frontmostPid();
             const bool tf = targetFocused(app, target);
             if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
@@ -1070,9 +1068,6 @@ private:
         auto text = deliveryText(target, kind);
         if (text && RangeInjectionPolicy::readbackMatches(expected, *text)) return text;
         if (kind == FieldKind::GuiEditor) {
-            // In rich Electron/Chromium web editors (e.g. Antigravity/VS Code),
-            // AXValue and AXNumberOfCharacters cache updates asynchronously,
-            // while the parameterized string range reflects the committed replacement immediately.
             NSString* rangeText = axParameter(target.element, kAXStringForRangeParameterizedAttribute, axRange({0, static_cast<CFIndex>(expected.size())}));
             if ([rangeText isKindOfClass:NSString.class]) {
                 auto qRange = QString::fromNSString(rangeText);

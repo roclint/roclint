@@ -37,6 +37,16 @@ const char* kTwoGroupResponse = R"({
   "conflicts": []
 })";
 
+void testReadableDiscoveryChoices() {
+    const auto result = parse(R"({"kind":"clarification","groups":[{"focus":"controls","question":"Which controls?","source":"game","options":[{"text":"gameplay_mechanics","effect":"define_core_actions","assume":""},{"text":"touch_controls","effect":"Use the named setting","assume":""}]}]})",
+                              "Make a game using touch_controls.");
+    ROCLINT_CHECK(result.ok());
+    const auto& options = result.value().analysis.choiceGroups.at(0).alternatives;
+    ROCLINT_CHECK(options.at(0).interpretation == "gameplay mechanics");
+    ROCLINT_CHECK(options.at(0).whyMaterial == "define core actions");
+    ROCLINT_CHECK(options.at(1).interpretation == "touch_controls");
+}
+
 void testParsesAndMintsHostIds() {
     auto r = parse(kTwoGroupResponse);
     ROCLINT_CHECK(r.ok());
@@ -915,6 +925,7 @@ void testCompactWireContractsRetainProvenanceAndSpanSafety() {
 
 int main() {
     std::cout << "[Test GraniteAdapter] Starting...\n";
+    testReadableDiscoveryChoices();
     testParsesAndMintsHostIds();
     testUngroundedEvidenceIsDroppedNotApproximated();
     testUnicodeEscapesDecodeBeforeGrounding();

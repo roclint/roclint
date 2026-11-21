@@ -441,7 +441,7 @@ FocusScope {
                             color: rootWindow.hc && hostController.isOptionalHelp ? rootWindow.fgColor : rootWindow.warnColor
                         }
                         Text {
-                            text: rootWindow.hc && hostController.isOptionalHelp ? qsTr("Optional") : rootWindow.manualResolution ? qsTr("Manual decision") : rootWindow.hc ? qsTr("%1 guided answer(s) left").arg(hostController.remainingBudget) : ""
+                            text: rootWindow.hc && hostController.isOptionalHelp ? qsTr("Optional") : rootWindow.manualResolution ? qsTr("Manual decision") : rootWindow.hc ? (hostController.remainingBudget === 1 ? qsTr("1 guided answer left") : qsTr("%1 guided answers left").arg(hostController.remainingBudget)) : ""
                             font.family: rootWindow.monoFont
                             font.pixelSize: 10
                             color: rootWindow.mutedTextColor
@@ -770,7 +770,8 @@ FocusScope {
                         Layout.minimumWidth: 0
                         textFormat: Text.PlainText
                         text: reviewPanel.status === "READY_FOR_REVIEW"
-                            ? (rootWindow.hc && hostController.proposalText === hostController.currentRevisionText
+                            ? (rootWindow.showOriginal && !rootWindow.showChanges ? qsTr("Your original prompt")
+                               : rootWindow.hc && hostController.proposalText === hostController.currentRevisionText
                                ? qsTr("No wording changes suggested. This is your original prompt.")
                                : qsTr("Review your rewritten prompt"))
                             : rootWindow.hc ? hostController.proposalMessage : ""

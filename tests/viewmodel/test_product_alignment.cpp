@@ -2992,6 +2992,7 @@ void testManualGraniteRewriteConnectsEditorWithoutLosingReview(bool manualApprov
         clickVisual(window, approve);
     QTRY_COMPARE(controller.comprehensionReviewState(), QStringLiteral("failed"));
     ROCLINT_CHECK(approve->property("label").toString() == "Manually approve & Insert");
+    ROCLINT_CHECK(controller.comprehensionFailureDetail().contains("No scripted reread"));
     if (!manualApproval) {
         controller.setComprehensionReviewForTesting([](const roclint::bridge::ComprehensionReviewRequest& request) {
             using namespace roclint::bridge;
