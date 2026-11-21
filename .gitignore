@@ -25,6 +25,12 @@ aqtinstall.log
 
 # macOS junk files
 .DS_Store
+**/.DS_Store
+
+# Diagnostic logs and patch files
+*.log
+docs/audit/**/*.log
+*.patch
 
 # IDE and Editor folders
 .vscode/*

@@ -1,7 +1,0 @@
-preservation|text=Do not modify token validation.|outcome=Pass|violations=0|unresolved=0
-preservation|text=Don't modify token validation.|outcome=Fail|violations=1|unresolved=0
-preservation|text=Do not change Reader::open.|outcome=Pass|violations=0|unresolved=0
-preservation|text=Do not modify token validation and tests.|outcome=Pass|violations=0|unresolved=0
-preservation|text=Modify token validation and leave tests unchanged.|outcome=Fail|violations=1|unresolved=0
-concise_requirement|candidate=alt_base|rollback=1|text=Write a migration guide explaining how to roll back safely.
-concise_requirement|candidate=alt_concise|rollback=0|text=Write a migration guide.

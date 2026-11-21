@@ -1,6 +1,0 @@
-platform=offscreen
-unresolved_host|audit=Unresolved|status=READY_FOR_REVIEW|can_approve=1|pending=0
-review_reuse|initial_pending=1|changed=1|pending_after=0|can_approve=1|version_unchanged=1|new_model_calls=0
-selection_storage|changed=1|can_approve=1|version_unchanged=1|audit_calls=1
-selection_approval|success=0|error=SQLite step failed: FOREIGN KEY constraint failed
-selection_restore|restored_base=1|retained_selected=0

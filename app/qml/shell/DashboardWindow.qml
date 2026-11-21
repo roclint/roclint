@@ -2235,7 +2235,7 @@ Window {
 
                                         RowLayout {
                                             Text {
-                                                text: qsTr("Prompt Actions Reference · Clarify vs. Rewrite vs. Edit")
+                                                text: qsTr("Prompt Actions Reference · HUD Controls & Actions")
                                                 font.family: dashboardWindow.sansFont
                                                 font.pixelSize: 13
                                                 font.weight: Font.DemiBold
@@ -2462,6 +2462,433 @@ Window {
                                                 font.pixelSize: 12
                                                 color: dashboardWindow.mutedTextColor
                                                 wrapMode: Text.WordWrap
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            height: 1
+                                            color: dashboardWindow.borderColor
+                                            opacity: 0.5
+                                        }
+
+                                        // Improve wording block
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+                                            RowLayout {
+                                                spacing: 8
+                                                Rectangle {
+                                                    implicitWidth: iwTagTxt.contentWidth + 14
+                                                    height: 22
+                                                    radius: 6
+                                                    color: theme.accent
+                                                    border.color: theme.accent
+                                                    border.width: 1
+                                                    Text {
+                                                        id: iwTagTxt
+                                                        anchors.centerIn: parent
+                                                        text: qsTr("Improve wording")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.bold: true
+                                                        color: "#FFFFFF"
+                                                    }
+                                                }
+                                                Text {
+                                                    text: qsTr("Profile-Guided Synthesis")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 12
+                                                    font.weight: Font.DemiBold
+                                                    color: dashboardWindow.fgColor
+                                                }
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: qsTr("Applies your chosen target Rewrite Profile (Plain prose, Anthropic Structured, OpenAI Structured, Local Compact) to directly synthesize an optimized, structured prompt without launching interview questions.")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 12
+                                                color: dashboardWindow.mutedTextColor
+                                                wrapMode: Text.WordWrap
+                                            }
+                                            Text {
+                                                text: qsTr("→ Use when: Your requirements are set and you want to format the prompt for a specific AI model or style.")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 11
+                                                color: dashboardWindow.mutedTextColor
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            height: 1
+                                            color: dashboardWindow.borderColor
+                                            opacity: 0.5
+                                        }
+
+                                        // Review prompt block
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+                                            RowLayout {
+                                                spacing: 8
+                                                Rectangle {
+                                                    implicitWidth: rpTagTxt.contentWidth + 14
+                                                    height: 22
+                                                    radius: 6
+                                                    color: theme.surface
+                                                    border.color: theme.border
+                                                    border.width: 1
+                                                    Text {
+                                                        id: rpTagTxt
+                                                        anchors.centerIn: parent
+                                                        text: qsTr("Review prompt")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.weight: Font.DemiBold
+                                                        color: dashboardWindow.fgColor
+                                                    }
+                                                }
+                                                Text {
+                                                    text: qsTr("Semantic Analysis & Triage Dispatch")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 12
+                                                    font.weight: Font.DemiBold
+                                                    color: dashboardWindow.fgColor
+                                                }
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: qsTr("The primary HUD footer dispatch action (also triggered by Enter). Commits the draft into session history, runs the lightweight S1 ambiguity classifier, and advances the card into the full review state.")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 12
+                                                color: dashboardWindow.mutedTextColor
+                                                wrapMode: Text.WordWrap
+                                            }
+                                            Text {
+                                                text: qsTr("→ Use when: You finish typing or editing a draft in the HUD and want to submit it to proceed.")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 11
+                                                color: dashboardWindow.mutedTextColor
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            height: 1
+                                            color: dashboardWindow.borderColor
+                                            opacity: 0.5
+                                        }
+
+                                        // Keep original block
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+                                            RowLayout {
+                                                spacing: 8
+                                                Rectangle {
+                                                    implicitWidth: koTagTxt.contentWidth + 14
+                                                    height: 22
+                                                    radius: 6
+                                                    color: theme.surface
+                                                    border.color: theme.border
+                                                    border.width: 1
+                                                    Text {
+                                                        id: koTagTxt
+                                                        anchors.centerIn: parent
+                                                        text: qsTr("Keep original")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.weight: Font.DemiBold
+                                                        color: dashboardWindow.fgColor
+                                                    }
+                                                }
+                                                Text {
+                                                    text: qsTr("Hard Bypass & Direct Delivery")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 12
+                                                    font.weight: Font.DemiBold
+                                                    color: dashboardWindow.fgColor
+                                                }
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: qsTr("The non-destructive escape hatch. Bypasses all triage, clarification, and model rewriting, delivering or copying your raw draft verbatim into the target application as typed. (Also triggered instantly by Shift + Enter or Esc).")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 12
+                                                color: dashboardWindow.mutedTextColor
+                                                wrapMode: Text.WordWrap
+                                            }
+                                            Text {
+                                                text: qsTr("→ Use when: You want to send your exact words without any AI intervention or delay.")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 11
+                                                color: dashboardWindow.mutedTextColor
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            height: 1
+                                            color: dashboardWindow.borderColor
+                                            opacity: 0.5
+                                        }
+
+                                        RowLayout {
+                                            spacing: 8
+                                            Text {
+                                                text: qsTr("Review Decisions · \"Check the wording\" Finding Cards")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 12
+                                                font.weight: Font.DemiBold
+                                                color: dashboardWindow.fgColor
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                            Rectangle {
+                                                implicitWidth: revChipTxt.contentWidth + 12
+                                                height: 18
+                                                radius: 9
+                                                color: theme.surface
+                                                border.color: theme.border
+                                                border.width: 1
+                                                Text {
+                                                    id: revChipTxt
+                                                    anchors.centerIn: parent
+                                                    text: qsTr("Meaning Check")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 9
+                                                    font.weight: Font.Medium
+                                                    color: dashboardWindow.mutedTextColor
+                                                }
+                                            }
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: qsTr("When an independent Meaning Check flags a reworded phrase, each finding card offers specific resolution actions:")
+                                            font.family: dashboardWindow.sansFont
+                                            font.pixelSize: 11
+                                            color: dashboardWindow.mutedTextColor
+                                            wrapMode: Text.WordWrap
+                                        }
+
+                                        // Yes, keep this wording block
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+                                            RowLayout {
+                                                spacing: 8
+                                                Rectangle {
+                                                    implicitWidth: ykwTagTxt.contentWidth + 14
+                                                    height: 22
+                                                    radius: 6
+                                                    color: theme.accent
+                                                    border.color: theme.accent
+                                                    border.width: 1
+                                                    Text {
+                                                        id: ykwTagTxt
+                                                        anchors.centerIn: parent
+                                                        text: qsTr("Yes, keep this wording")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.bold: true
+                                                        color: "#FFFFFF"
+                                                    }
+                                                }
+                                                Text {
+                                                    text: qsTr("Approve AI Rewording")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 12
+                                                    font.weight: Font.DemiBold
+                                                    color: dashboardWindow.fgColor
+                                                }
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: qsTr("Confirms that the AI's rewritten phrase accurately reflects your intended outcome, resolving the flagged check. (Note: this approves the AI's new phrasing, not your raw draft).")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 12
+                                                color: dashboardWindow.mutedTextColor
+                                                wrapMode: Text.WordWrap
+                                            }
+                                            Text {
+                                                text: qsTr("→ Use when: You've reviewed the quoted rewrite phrase, agree with its interpretation, and want to include it.")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 11
+                                                color: dashboardWindow.mutedTextColor
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            height: 1
+                                            color: dashboardWindow.borderColor
+                                            opacity: 0.5
+                                        }
+
+                                        // Clarify this point block
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 6
+                                            RowLayout {
+                                                spacing: 8
+                                                Rectangle {
+                                                    implicitWidth: ctpTagTxt.contentWidth + 14
+                                                    height: 22
+                                                    radius: 6
+                                                    color: theme.surface
+                                                    border.color: theme.border
+                                                    border.width: 1
+                                                    Text {
+                                                        id: ctpTagTxt
+                                                        anchors.centerIn: parent
+                                                        text: qsTr("Clarify this point")
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        font.weight: Font.DemiBold
+                                                        color: dashboardWindow.fgColor
+                                                    }
+                                                }
+                                                Text {
+                                                    text: qsTr("Return Flagged Point to AI Interview")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 12
+                                                    font.weight: Font.DemiBold
+                                                    color: dashboardWindow.fgColor
+                                                }
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: qsTr("Instead of manually typing an edit, this hands the flagged point back to Granite to ask you a targeted multiple-choice question so you can resolve the ambiguity or trade-off interactively.")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 12
+                                                color: dashboardWindow.mutedTextColor
+                                                wrapMode: Text.WordWrap
+                                            }
+                                            Text {
+                                                text: qsTr("→ Use when: The rewrite's interpretation is slightly off or you're unsure how to phrase it yourself, and you want the AI to present concrete options.")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 11
+                                                color: dashboardWindow.mutedTextColor
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Card 1b: Quick Commands (/)
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    implicitHeight: quickCmdCol.implicitHeight + 28
+                                    color: dashboardWindow.inputBgColor
+                                    border.color: dashboardWindow.borderColor
+                                    border.width: 1
+                                    radius: 14
+
+                                    ColumnLayout {
+                                        id: quickCmdCol
+                                        anchors.fill: parent
+                                        anchors.margins: 14
+                                        spacing: 12
+
+                                        RowLayout {
+                                            Text {
+                                                text: qsTr("Quick Commands · Slash Command Palette (/)")
+                                                font.family: dashboardWindow.sansFont
+                                                font.pixelSize: 13
+                                                font.weight: Font.DemiBold
+                                                color: dashboardWindow.fgColor
+                                            }
+                                            Item { Layout.fillWidth: true }
+                                            Rectangle {
+                                                implicitWidth: cmdChipTxt.contentWidth + 14
+                                                height: 20
+                                                radius: 10
+                                                color: theme.surface
+                                                border.color: theme.border
+                                                border.width: 1
+                                                Text {
+                                                    id: cmdChipTxt
+                                                    anchors.centerIn: parent
+                                                    text: qsTr("Assistance Modes")
+                                                    font.family: dashboardWindow.sansFont
+                                                    font.pixelSize: 10
+                                                    font.weight: Font.Medium
+                                                    color: dashboardWindow.mutedTextColor
+                                                }
+                                            }
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: qsTr("Type '/' at the beginning of the prompt editor to open the quick command palette. Slash commands set the Assistance Mode to control how Roclint analyzes, scopes, and reviews your prompt:")
+                                            font.family: dashboardWindow.sansFont
+                                            font.pixelSize: 12
+                                            color: dashboardWindow.mutedTextColor
+                                            wrapMode: Text.WordWrap
+                                        }
+
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            height: 1
+                                            color: dashboardWindow.borderColor
+                                            opacity: 0.5
+                                        }
+
+                                        ColumnLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 10
+
+                                            Repeater {
+                                                model: [
+                                                    { cmd: "/auto", title: qsTr("Adaptive Fast-Path (Default)"), desc: qsTr("Runs <15ms S1 triage in the background. Passes clear prompts straight through with zero delay; only unfurls clarification when ambiguity or missing decisions are detected.") },
+                                                    { cmd: "/strict", title: qsTr("Mandatory Deep Review"), desc: qsTr("Forces an eager Granite analysis and independent Meaning Check pass on every prompt, even when the draft is evaluated as clear.") },
+                                                    { cmd: "/tech", title: qsTr("Technical & Code Scoping"), desc: qsTr("Scopes the review engine to code generation, debugging, and APIs. Rigorously verifies syntax, code identifiers, method names, and parameter types.") },
+                                                    { cmd: "/create", title: qsTr("Creative & Open-Ended Scoping"), desc: qsTr("Scopes the review engine to writing, design, and ideation. Relaxes rigid mechanical constraints in favor of tone, imagery, and aesthetic depth.") },
+                                                    { cmd: "/inspect", title: qsTr("Adversarial Audit Inspector"), desc: qsTr("Immediately unfolds the Goldfish Boundary Audit panel in the HUD to reveal constraint derivations, source evidence spans, and mechanical verification proofs.") },
+                                                    { cmd: "/quiet", title: qsTr("Minimal Interruption"), desc: qsTr("Suppresses non-blocking advisory suggestions and deferred trade-offs, proceeding directly unless a hard contradictory constraint exists.") }
+                                                ]
+
+                                                delegate: ColumnLayout {
+                                                    Layout.fillWidth: true
+                                                    spacing: 4
+
+                                                    RowLayout {
+                                                        spacing: 8
+                                                        Rectangle {
+                                                            implicitWidth: cmdTagTxt.contentWidth + 14
+                                                            height: 22
+                                                            radius: 6
+                                                            color: theme.surface
+                                                            border.color: theme.border
+                                                            border.width: 1
+                                                            Text {
+                                                                id: cmdTagTxt
+                                                                anchors.centerIn: parent
+                                                                text: modelData.cmd
+                                                                font.family: dashboardWindow.monoFont
+                                                                font.pixelSize: 11
+                                                                font.bold: true
+                                                                color: theme.accent
+                                                            }
+                                                        }
+                                                        Text {
+                                                            text: modelData.title
+                                                            font.family: dashboardWindow.sansFont
+                                                            font.pixelSize: 12
+                                                            font.weight: Font.DemiBold
+                                                            color: dashboardWindow.fgColor
+                                                        }
+                                                    }
+                                                    Text {
+                                                        Layout.fillWidth: true
+                                                        text: modelData.desc
+                                                        font.family: dashboardWindow.sansFont
+                                                        font.pixelSize: 11
+                                                        color: dashboardWindow.mutedTextColor
+                                                        wrapMode: Text.WordWrap
+                                                    }
+                                                }
                                             }
                                         }
                                     }

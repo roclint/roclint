@@ -108,6 +108,7 @@
     "handoffs",
     "include",
     "models",
+    "scripts",
     "src",
     "tests",
     "tools"
@@ -161,7 +162,16 @@
     "bob_sessions/Kirby",
     "bob_sessions/bob_artifacts",
     "docs",
+    "docs/archive",
     "docs/audit",
+    "docs/audit/domain_triage",
+    "docs/audit/domain_triage/by_model",
+    "docs/audit/domain_triage/by_model/Julia-1+granite-4.2-3b-GGUF",
+    "docs/audit/domain_triage/by_model/Julia-1+granite-4.2-3b-GGUF/coding",
+    "docs/audit/domain_triage/by_model/Julia-1+granite-4.2-3b-GGUF/creative",
+    "docs/audit/domain_triage/by_model/Julia-1+granite-4.2-3b-GGUF/enterprise",
+    "docs/audit/domain_triage/by_model/Julia-1+granite-4.2-3b-GGUF/tutoring",
+    "docs/images",
     "docs/audit/companion_evidence_2026-11-15",
     "docs/audit/companion_evidence_2026-11-15/followup_code_ast",
     "docs/audit/companion_evidence_2026-11-15/followup_code_ast/probe-settings",
@@ -217,6 +227,7 @@
     "models/julia-1/julia/router",
     "models/julia-1/julia/router/tests",
     "models/julia-1/tokenizer",
+    "scripts",
     "models/s1",
     "models/s1/encoder",
     "models/s1/julia",
@@ -248,6 +259,7 @@
     "tests/fixtures/companion_eval/code_project",
     "tests/fixtures/companion_eval/code_project/include",
     "tests/fixtures/companion_eval/code_project/src",
+    "tests/fixtures/domain_triage",
     "tests/intent",
     "tests/retrieval",
     "tests/retrieval/e2e",
@@ -313,6 +325,16 @@
       ],
       "scope": "Companion/interview/review evaluation tooling, synthetic fixtures, UI screenshots and raw runtime/intent evidence. Documentation and test-only or standalone evaluation code; no upstream or preserved-specification hashes change.",
       "evidence": "docs/audit/companion_delivery_2026-11-15.md; docs/audit/companion_after_evidence_2026-11-15.md"
+    },
+    {
+      "date": "2026-11-21",
+      "paths": [
+        "docs/archive",
+        "docs/images",
+        "scripts"
+      ],
+      "scope": "Submission hardening: consolidated Windows launch/download scripts to scripts/, archived internal QA discussions to docs/archive/, and curated high-resolution production HUD screenshots to docs/images/ for README and evaluator presentation.",
+      "evidence": "roclint_repository_cleanup_plan.md"
     }
   ]
 }
