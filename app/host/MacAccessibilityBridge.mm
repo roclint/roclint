@@ -546,6 +546,10 @@ private:
                 // Preserve the source target while Roclint itself is foreground.
                 return;
             }
+            bool roclintActive = [NSApp keyWindow] != nil || [NSApp isActive] || m_cardVisible.load();
+            if (roclintActive) {
+                return;
+            }
             if (frontPid > 0 && frontPid != m_pid) {
                 this->onAppActivated(frontPid);
                 return;
@@ -926,10 +930,11 @@ private:
             if (!targetAlreadyFocused && !composerContainer) return false;
         }
         id window = axAttribute(app, kAXFocusedWindowAttribute);
+        if (!window) window = axAttribute(app, kAXMainWindowAttribute);
         id capturedWindow = axAttribute(target.element, kAXWindowAttribute);
         const bool hasAppWin = (window != nullptr);
         const bool hasCapWin = (capturedWindow != nullptr);
-        const bool winMatch = hasAppWin && hasCapWin && CFEqual((CFTypeRef)window, (CFTypeRef)capturedWindow);
+        const bool winMatch = !hasCapWin || (hasAppWin && CFEqual((CFTypeRef)window, (CFTypeRef)capturedWindow));
         if (qEnvironmentVariableIsSet("ROCLINT_CAPTURE_DIAGNOSTICS")) {
             const auto winRole = hasAppWin ? copyStringAttribute((AXUIElementRef)window, kAXRoleAttribute) : QStringLiteral("none");
             const auto capWinRole = hasCapWin ? copyStringAttribute((AXUIElementRef)capturedWindow, kAXRoleAttribute) : QStringLiteral("none");
@@ -973,10 +978,18 @@ private:
                     << "focusedSubrole=" << focusedSubrole
                     << "isElectron=" << isElectronBundle(target.bundle);
         }
-        if (front == target.pid) return targetFocused(app, target);
+        if (front == target.pid) {
+            if (targetFocused(app, target)) return true;
+            (void)focusReturnedWebEditor(app, target);
+            for (int attempt = 0; attempt < 18 && frontmostPid() == target.pid; ++attempt) {
+                if (targetFocused(app, target)) return true;
+                usleep(kPollMicros);
+            }
+        }
         if (front != getpid() && front != target.pid) return false;
-        if (target.token != m_token || !m_focused || !CFEqual(target.element, m_focused))
-            return false;
+        if (target.token != m_token || !m_focused || !CFEqual(target.element, m_focused)) {
+            if (target.pid != m_pid || target.token != m_token) return false;
+        }
 
         @autoreleasepool {
             NSRunningApplication* application = [NSRunningApplication runningApplicationWithProcessIdentifier:target.pid];
@@ -988,11 +1001,11 @@ private:
             if (axFrontRes != kAXErrorSuccess) {
                 if (@available(macOS 14.0, *)) {
                     [NSApp yieldActivationToApplication:application];
-                    [application activateFromApplication:[NSRunningApplication currentApplication] options:NSApplicationActivateAllWindows];
+                    [application activateFromApplication:[NSRunningApplication currentApplication] options:0];
                 } else {
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
-                    [application activateWithOptions:NSApplicationActivateAllWindows | NSApplicationActivateIgnoringOtherApps];
+                    [application activateWithOptions:NSApplicationActivateIgnoringOtherApps];
 #pragma clang diagnostic pop
                 }
             }
