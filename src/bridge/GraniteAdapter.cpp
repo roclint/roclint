@@ -372,8 +372,18 @@ std::string buildDiscoveryPrompt(const GraniteOptionDiscoveryRequest& req) {
     request.set("maximum_questions", json::Value::number(static_cast<double>(std::clamp<std::size_t>(req.maximumQuestions, 1, 2))));
 
     std::string out = "Instruction contract: granite.discovery.selective.v11\n";
+    const bool isAuditMode = (req.assistanceMode == "inspect" || req.assistanceMode == "audit" ||
+                              req.promptString.find("read-only audit") != std::string::npos ||
+                              req.promptString.find("Read-only audit") != std::string::npos ||
+                              req.promptString.find("/audit") != std::string::npos ||
+                              req.promptString.find("/inspect") != std::string::npos);
     const bool isTechMode = (req.assistanceMode == "tech" || !req.isNonTechnicalPrompt || !req.detectedHazards.empty());
-    if (isTechMode) {
+    if (isAuditMode) {
+        out += "In /AUDIT or /INSPECT mode, the objective is a strictly READ-ONLY audit or codebase inspection. "
+               "Never propose code changes, refactorings, or file writes. Clarification options must focus "
+               "exclusively on audit criteria, inspection depth (e.g. security vulnerabilities, concurrency hazards, "
+               "performance bottlenecks, or dead code analysis), and findings reporting standards.\n";
+    } else if (isTechMode) {
         out += "In /TECH mode, analyze data mutations and multi-step state checks for concurrency hazards, "
                "race conditions (such as check-then-act inventory or balance deductions), unindexed search loops, and "
                "missing transaction boundaries. If a state change depends on a prior check without concurrency guarantees, "

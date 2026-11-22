@@ -95,6 +95,17 @@ std::string buildRewritePrompt(const GraniteRewriteRequest& request, const rw::R
            "Preserve all negative prohibitions as strict direct prohibitions. "
            "Do not add generic filler, buzzwords, or unsupported claims.\n";
 
+    const bool isAuditMode = (request.originalText.find("read-only audit") != std::string::npos ||
+                              request.originalText.find("Read-only audit") != std::string::npos ||
+                              request.originalText.find("/audit") != std::string::npos ||
+                              request.originalText.find("/inspect") != std::string::npos);
+    if (isAuditMode) {
+        out += "READ-ONLY AUDIT INVARIANT: The task is strictly a read-only audit or inspection. "
+               "The rewritten prompt MUST explicitly preserve the read-only audit constraint: "
+               "strictly prohibit all file modifications, code edits, or deletions, and direct output strictly toward "
+               "reporting audit findings, vulnerabilities, or analysis.\n";
+    }
+
     out += "This is a wording request, not permission to choose requirements or execute actions. "
            "Retain already grammatical explicit API-invariant clauses verbatim; correct spelling/grammar "
            "errors without changing the invariant. Never broaden minor semantic changes into broad "

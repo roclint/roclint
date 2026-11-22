@@ -8800,7 +8800,7 @@ HostController::ParsedCommand HostController::parseCommandPrefix(QString text) {
         return {AssistanceMode::Create, rest, true};
     } else if (cmd == QStringLiteral("/strict")) {
         return {AssistanceMode::Strict, rest, true};
-    } else if (cmd == QStringLiteral("/inspect")) {
+    } else if (cmd == QStringLiteral("/inspect") || cmd == QStringLiteral("/audit")) {
         return {AssistanceMode::Inspect, rest, true};
     } else if (cmd == QStringLiteral("/quiet")) {
         return {AssistanceMode::Quiet, rest, true};
@@ -8854,7 +8854,8 @@ void HostController::setAssistanceMode(const QString& mode) {
         applyAssistanceMode(AssistanceMode::Create);
     } else if (lower == QStringLiteral("strict") || lower == QStringLiteral("/strict")) {
         applyAssistanceMode(AssistanceMode::Strict);
-    } else if (lower == QStringLiteral("inspect") || lower == QStringLiteral("/inspect")) {
+    } else if (lower == QStringLiteral("inspect") || lower == QStringLiteral("/inspect") ||
+               lower == QStringLiteral("audit") || lower == QStringLiteral("/audit")) {
         applyAssistanceMode(AssistanceMode::Inspect);
     } else if (lower == QStringLiteral("quiet") || lower == QStringLiteral("/quiet")) {
         applyAssistanceMode(AssistanceMode::Quiet);
@@ -9029,6 +9030,21 @@ std::vector<core::ScopedConstraint> HostController::extractSessionConstraints(
     std::string lowerPrompt;
     lowerPrompt.reserve(promptStr.size());
     for (char c : promptStr) lowerPrompt.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+
+    if (lowerPrompt.find("read-only audit") != std::string::npos ||
+        lowerPrompt.find("read-only") != std::string::npos ||
+        lowerPrompt.find("/audit") != std::string::npos ||
+        lowerPrompt.find("/inspect") != std::string::npos) {
+        core::ScopedConstraint sc;
+        sc.id = "audit_read_only_boundary";
+        sc.rule = "Do not modify, write, or delete any files; audit is strictly read-only";
+        sc.origin = core::Origin::User;
+        sc.derivation = core::Derivation::Direct;
+        sc.enforcement = core::Enforcement::Hard;
+        sc.polarity = core::Polarity::Prohibit;
+        sc.aspect = "boundary";
+        constraints.push_back(std::move(sc));
+    }
 
     if (lowerPrompt.find("layer 3") != std::string::npos || lowerPrompt.find("packet forwarding") != std::string::npos) {
         core::ScopedConstraint sc;

@@ -437,7 +437,11 @@ Window {
         const preamble = hostController.scopePreamble(activeProject.path, activeScope, targetLocalFile);
         if (!preamble.length) return;
         let draft = promptInput.text;
-        if (scopePreamble.length && draft.startsWith(scopePreamble)) draft = draft.substring(scopePreamble.length);
+        if (scopePreamble.length && draft.startsWith(scopePreamble)) {
+            draft = draft.substring(scopePreamble.length);
+        } else if (draft.startsWith("Workspace: ") && draft.indexOf("\n\n") !== -1) {
+            draft = draft.substring(draft.indexOf("\n\n") + 2);
+        }
         scopePreamble = preamble;
         promptInput.text = preamble + draft;
         showToast(qsTr("SCOPE ADDED TO VISIBLE DRAFT"));
@@ -944,6 +948,7 @@ Window {
                                     { cmd: "/tech", desc: "Tech" },
                                     { cmd: "/create", desc: "Create" },
                                     { cmd: "/strict", desc: "Strict" },
+                                    { cmd: "/audit", desc: "Audit" },
                                     { cmd: "/inspect", desc: "Inspect" },
                                     { cmd: "/quiet", desc: "Quiet" }
                                 ]
@@ -977,7 +982,7 @@ Window {
                                             promptInput.forceActiveFocus();
                                             if (rootWindow.hc) {
                                                 hostController.setAssistanceMode(modelData.cmd.substring(1));
-                                                if (modelData.cmd === "/inspect") {
+                                                if (modelData.cmd === "/inspect" || modelData.cmd === "/audit") {
                                                     rootWindow.inspectPanelExplicitOpen = true;
                                                 }
                                             }
@@ -1013,7 +1018,7 @@ Window {
                                     padding: 0
                                     Keys.onTabPressed: (event) => {
                                         if (text.startsWith("/") && !text.includes(" ")) {
-                                            const cmds = ["/auto", "/tech", "/create", "/strict", "/inspect", "/quiet"];
+                                            const cmds = ["/auto", "/tech", "/create", "/strict", "/audit", "/inspect", "/quiet"];
                                             for (let i = 0; i < cmds.length; ++i) {
                                                 if (cmds[i].startsWith(text.toLowerCase())) {
                                                     text = cmds[i] + " ";

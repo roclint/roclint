@@ -610,7 +610,7 @@ QString HostController::scopePreamble(const QString& projectPath, const QString&
     QString nextActiveFile;
     QString preamble;
     if (scope == QLatin1String("global")) {
-        preamble = QStringLiteral("Workspace: %1\nScope: entire project.\n\n").arg(root);
+        preamble = QStringLiteral("Workspace: %1\nScope: entire project. Read-only audit: perform non-destructive inspection only; do not modify or delete files.\n\n").arg(root);
     } else {
         if (scope != QLatin1String("local") || file.isEmpty() || file.contains(QLatin1Char('\n')) || file.contains(QLatin1Char('\r'))) {
             setLastError(QStringLiteral("Select a real file before applying single-file scope.")); return {};
@@ -622,7 +622,7 @@ QString HostController::scopePreamble(const QString& projectPath, const QString&
             setLastError(QStringLiteral("The selected file must be inside the workspace.")); return {};
         }
         nextActiveFile = relative;
-        preamble = QStringLiteral("Workspace: %1\nScope: single file %2. Do not modify other files.\n\n").arg(root, relative);
+        preamble = QStringLiteral("Workspace: %1\nScope: single file %2. Read-only audit: inspect this file only. Do not modify other files.\n\n").arg(root, relative);
     }
     if (nextActiveFile == m_codebaseActiveFile) return preamble;
 
