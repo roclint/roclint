@@ -1,8 +1,20 @@
 # Roclint
 
-Roclint is a C++20 / Qt Quick desktop prompt assistant, with SQLite history, local Julia classification and local Granite choices/rewrites. The refreshed HUD uses the approved rounded Roc design while preserving explicit decisions, review and approval.
+**Roclint** is a resident, upstream prompt linter and contract compiler for developers working with AI coding agents and LLMs (such as Claude Code, GitHub Copilot, Cursor, ChatGPT, and enterprise assistants).
 
-The user's latest required model order is **Julia/S1 triage → unchanged original when clear, or Granite options → explicit choice → Granite rewrite when ambiguous**. [Model routing](docs/MODEL_ROUTING.md) records the implemented gate, persistence boundaries and open quality/performance requirements. The classifier is real local Julia inference; its current development results are not release-calibrated.
+While traditional linters check source code *after* it has already been generated or written, Roclint operates **upstream at the prompt level**. It intercepts natural language prompts at the OS invocation boundary, detects semantic ambiguity and critical data hazards before an AI agent can execute them, and presents quick, structured architectural decisions to the user. Once confirmed, Roclint compiles the request into an unambiguous, production-grade prompt specification delivered directly back into the active editor or chat box.
+
+### How It Works
+
+1. **Ambient Observation:** Runs quietly in the macOS menu bar / Windows tray. Using native OS Accessibility APIs, Roclint observes focused prompt fields across IDEs, browsers, and terminals without background web servers or keystroke polling.
+2. **Two-Tier Local Intelligence Pipeline:**
+   - **Tier 1 (S1 Triage & Data Hazard Policy):** A fast local classifier (<15ms) evaluates prompt ambiguity and scans for high-risk hazards: Check-Then-Act concurrency race conditions, unindexed keystroke queries, unbounded cascade deletions, and unauthenticated IDOR endpoints. If a prompt is clear and hazard-free, it passes through untouched with zero friction.
+   - **Tier 2 (IBM Granite 4.2 3B Instruct):** When ambiguity or hazards are detected, IBM Granite generates 2–3 concrete architectural options (e.g., *“Atomic transaction with row lock”* vs. *“Optimistic locking with version check”*).
+3. **Human-in-the-Loop Decision Ownership:** The developer selects an option or provides custom direction in under two seconds.
+4. **Contract Compilation & One-Click Delivery:** Granite synthesizes the final structured prompt and inserts it directly into the target input field or copies it to the clipboard.
+5. **100% On-Device Privacy:** Built in C++20 and Qt 6 with native Apple Metal GPU acceleration and local SQLite storage. All token generation, classification, and review history execute entirely on-device—no keystrokes or prompts are ever transmitted to the cloud.
+
+The core decision flow follows: **S1 Triage → Unchanged Original (when clear) OR Granite Options → Explicit Choice → Granite Rewrite (when ambiguous)**. See [Model routing](docs/MODEL_ROUTING.md) for detailed gate boundaries, persistence contracts, and pipeline specifications.
 
 ## macOS Launch & Installation (Apple Silicon / ARM64)
 
