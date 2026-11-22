@@ -1,20 +1,15 @@
 # Roclint
 
-**Roclint** is a resident, upstream prompt linter and contract compiler for developers working with AI coding agents and LLMs (such as Claude Code, GitHub Copilot, Cursor, ChatGPT, and enterprise assistants).
+**Roclint** is a smart desktop assistant that helps you write better prompts for AI tools (like ChatGPT, Claude, Cursor, and GitHub Copilot).
 
-While traditional linters check source code *after* it has already been generated or written, Roclint operates **upstream at the prompt level**. It intercepts natural language prompts at the OS invocation boundary, detects semantic ambiguity and critical data hazards before an AI agent can execute them, and presents quick, structured architectural decisions to the user. Once confirmed, Roclint compiles the request into an unambiguous, production-grade prompt specification delivered directly back into the active editor or chat box.
+Instead of letting AI tools guess what you mean or generate buggy code that you have to fix later, Roclint catches missing details and risks in your prompt **before** the AI runs.
 
-### How It Works
+### What Roclint Does
 
-1. **Ambient Observation:** Runs quietly in the macOS menu bar / Windows tray. Using native OS Accessibility APIs, Roclint observes focused prompt fields across IDEs, browsers, and terminals without background web servers or keystroke polling.
-2. **Two-Tier Local Intelligence Pipeline:**
-   - **Tier 1 (S1 Triage & Data Hazard Policy):** A fast local classifier (<15ms) evaluates prompt ambiguity and scans for high-risk hazards: Check-Then-Act concurrency race conditions, unindexed keystroke queries, unbounded cascade deletions, and unauthenticated IDOR endpoints. If a prompt is clear and hazard-free, it passes through untouched with zero friction.
-   - **Tier 2 (IBM Granite 4.2 3B Instruct):** When ambiguity or hazards are detected, IBM Granite generates 2–3 concrete architectural options (e.g., *“Atomic transaction with row lock”* vs. *“Optimistic locking with version check”*).
-3. **Human-in-the-Loop Decision Ownership:** The developer selects an option or provides custom direction in under two seconds.
-4. **Contract Compilation & One-Click Delivery:** Granite synthesizes the final structured prompt and inserts it directly into the target input field or copies it to the clipboard.
-5. **100% On-Device Privacy:** Built in C++20 and Qt 6 with native Apple Metal GPU acceleration and local SQLite storage. All token generation, classification, and review history execute entirely on-device—no keystrokes or prompts are ever transmitted to the cloud.
-
-The core decision flow follows: **S1 Triage → Unchanged Original (when clear) OR Granite Options → Explicit Choice → Granite Rewrite (when ambiguous)**. See [Model routing](docs/MODEL_ROUTING.md) for detailed gate boundaries, persistence contracts, and pipeline specifications.
+1. **Spots Hidden Issues:** When you write a quick or casual prompt, Roclint highlights risks that usually lead to broken or insecure code—such as database race conditions, missing safety checks, or performance bottlenecks.
+2. **Offers Simple Choices:** Instead of guessing your intentions, a clean card pops up beside your prompt box with 2 or 3 clear options to choose from.
+3. **One-Click Polish & Delivery:** Once you pick an option, Roclint rewrites your prompt into clear, production-grade instructions and inserts it directly back into your chat or editor.
+4. **Completely Private & Local:** All prompt reviews run 100% locally on your computer (powered by IBM Granite). Your keystrokes and prompts never leave your device.
 
 ## macOS Launch & Installation (Apple Silicon / ARM64)
 
