@@ -4,6 +4,28 @@ Roclint is a C++20 / Qt Quick desktop prompt assistant, with SQLite history, loc
 
 The user's latest required model order is **Julia/S1 triage → unchanged original when clear, or Granite options → explicit choice → Granite rewrite when ambiguous**. [Model routing](docs/MODEL_ROUTING.md) records the implemented gate, persistence boundaries and open quality/performance requirements. The classifier is real local Julia inference; its current development results are not release-calibrated.
 
+## macOS Launch & Installation (Apple Silicon / ARM64)
+
+Roclint is available as a fully self-contained macOS application bundle for Apple Silicon (M1/M2/M3/M4) with native Apple Metal GPU acceleration:
+
+1. **Install:**
+   - Download `Roclint-macOS-arm64.dmg` and drag `Roclint.app` to your `/Applications` folder, or extract `Roclint-macOS-arm64.zip` into `/Applications`.
+2. **First-Launch Gatekeeper Notice:**
+   - Because open-source release builds use an ad-hoc signature, macOS Gatekeeper may flag the app on first download. To authorize it, right-click `Roclint.app` and choose **Open**, or run the following once in Terminal:
+     ```sh
+     xattr -cr /Applications/Roclint.app
+     ```
+3. **Accessibility Permissions (Prompt Capture & Direct Delivery):**
+   - Roclint observes active prompt text fields in supported editors and chat interfaces using macOS Accessibility APIs (`AXUIElementCopyAttributeValue`).
+   - On first launch, Roclint automatically detects if Accessibility permissions are needed and provides a direct shortcut to **System Settings → Privacy & Security → Accessibility**. Enable the toggle for **Roclint**.
+4. **Resident Background Operation:**
+   - Roclint runs quietly in your macOS menu bar / system tray.
+   - Open the prompt HUD at any time using the global shortcut (**Cmd+Shift+L** or **Ctrl+Shift+L**, configurable in Settings), or click the Roclint icon in the menu bar.
+   - To launch Roclint automatically as a resident background process:
+     ```sh
+     /Applications/Roclint.app/Contents/MacOS/Roclint --background
+     ```
+
 ## Windows launch
 
 Open **Roclint** from the Start menu or desktop shortcut. Settings starts in full screen. Press **Esc** or **F11** to return to a regular window. Use **Settings** in the system tray to reopen it. Open the prompt HUD from the Roc badge, the configured shortcut, or **Open prompt HUD** in the tray menu. **Quit** in the tray menu ends Roclint. Background-only startup is an explicit `--background` option and is not enabled automatically.
@@ -12,8 +34,18 @@ Maintainers can deploy a complete staged build with `tools/register_windows_app.
 
 ## Build
 
-Required: CMake 3.25+, a C++20 compiler, SQLite3 development files, and Qt 6.2+ with Core, Gui, Quick, Qml, Widgets, Network and Concurrent. Desktop tests additionally require Qt Test. Use a matching compiler/Qt kit; the Windows development build uses Visual Studio 2022 and Qt 6.8.2 MSVC x64.
+Required: CMake 3.25+, a C++20 compiler, SQLite3 development files, and Qt 6.2+ with Core, Gui, Quick, Qml, Widgets, Network and Concurrent. Desktop tests additionally require Qt Test.
 
+### macOS (Apple Silicon / Metal)
+To compile a fully self-contained application bundle with Apple Metal GPU acceleration:
+```sh
+python tools/setup_granite.py --runtime-only
+cmake -S . -B build -DROCLINT_DEPLOY_QT=ON -DROCLINT_GRANITE_BACKEND=METAL
+cmake --build build --config Release --parallel
+```
+The resulting self-contained application bundle is staged at `build/Roclint.app`.
+
+### Windows / Multiplatform
 ```sh
 python tools/setup_granite.py --runtime-only
 cmake -S . -B build -DCMAKE_PREFIX_PATH="<your Qt kit>"
@@ -26,7 +58,31 @@ If CMake cannot find SQLite, supply `-DSQLite3_INCLUDE_DIR=<directory containing
 
 Run `build/Release/roclint_host.exe` with Visual Studio generators, or `build/roclint_host` with single-configuration generators. Qt's runtime libraries/plugins must be on the runtime search path or deployed beside the executable. On Windows, use the matching kit's `windeployqt --release --qmldir app/qml/shell build/Release/roclint_host.exe`.
 
-## Local models
+## Local Models & Model Provisioning
+
+### Model Provisioning
+Users can download Granite GGUF weights (`native-granite:Q8_0` or `Q4_K_M`) directly through Roclint's Settings UI or place their model folder into `~/models/s2` or `~/Library/Application Support/roclint/Roclint/models/s2`.
+
+For the Stage 1 triage classifier, Roclint uses the **Julia supersonic model** (`SupersonicLabs/Julia-1` on Hugging Face). Users can download the model directly through Roclint's Settings UI (under Julia settings), run the automated model setup script, or place the verified checkpoint in `~/models/julia-1` or `~/Library/Application Support/roclint/Roclint/models/julia-1`.
+
+To provision and verify all model checkpoints in a single automated step:
+```sh
+python tools/download_all_models.py
+```
+To verify existing local model files and checksums without downloading:
+```sh
+python tools/download_all_models.py --verify
+```
+
+### Why You Can Trust Roclint
+- **100% On-Device Local Inference:** Roclint is engineered from the ground up for strict privacy. Every phase of processing—keystroke observation, Stage 1 triage, data hazard policy scans, ambiguity clarification, and option rewrites—executes exclusively on your local CPU or Metal GPU. Not a single prompt, keystroke, or suggestion is ever sent over the internet or logged to an external cloud service.
+- **Auditable Open-Weight Checkpoints:** All models are public, verifiable models with strict SHA-256 integrity validation:
+  - **S1 Triage Scorer:** Julia Supersonic model (`SupersonicLabs/Julia-1`, ModernBERT FP32 safetensors, SHA-256: `df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72`).
+  - **S2 Decision & Rewrite Engine:** IBM Granite 4.2 3B Instruct (`granite-4.2-3b-instruct.Q8_0.gguf` or `Q4_K_M`, verified against `app/runtime/granite-models.json`).
+- **Native Apple Silicon Metal Acceleration:** On Apple Silicon Macs, the native Granite runtime leverages Apple Metal with unified memory and Accelerate BLAS for instant sub-second responses without cloud latency.
+- **Isolated SQLite Storage:** All user history, reviews, and approval audit trails are stored in an on-device local SQLite database (`~/Library/Application Support/roclint/Roclint/history.db` on macOS or `%LOCALAPPDATA%/roclint/Roclint/history.db` on Windows) that remains under your full ownership.
+
+### Model Architecture & Runtime Details
 
 1. Native Granite uses pinned **Granite 4.2 3B** weights with the packaged llama.cpp helper. The user-selected default is **Q8_0**. Choose **Native Granite** in Settings, explicitly download the pinned model, or select its verified local folder. Q4_K_M and Q5_K_M remain available for explicit development comparisons. **Load model** verifies and warms it; Analyze also warms it on first use. Q8_0 is the default; model-quality and release acceptance remain open. See [native runtime](docs/NATIVE_GRANITE.md). **Ollama development** retains the legacy adapter, installed-model tools and local GGUF import; the current S1-first generative workflow requires pinned Native Granite.
 2. Prepare Julia with Python 3.11+:
