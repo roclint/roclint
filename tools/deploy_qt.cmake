@@ -54,6 +54,41 @@ if(DEFINED MACDEPLOYQT)
     endfunction()
 
     roclint_run_deploy_step(macdeployqt "${MACDEPLOYQT}" ${_macdeploy_args})
+
+    # Remove unused QML modules and plugins that macdeployqt copies by default
+    # but which reference Qt frameworks not bundled with Roclint (e.g. QtPdf, QtVirtualKeyboard, Qt3D).
+    # Pruning them prevents host-path fallback and cuts bundle size.
+    set(_unused_qml_dirs
+        "Resources/qml/QtQuick/Scene3D"
+        "Resources/qml/QtQuick/Scene2D"
+        "Resources/qml/QtQuick/VirtualKeyboard"
+        "Resources/qml/QtQuick/Pdf"
+        "Resources/qml/QtQuick/Timeline"
+        "Resources/qml/QtQml/StateMachine")
+    foreach(_dir IN LISTS _unused_qml_dirs)
+        if(EXISTS "${BUNDLE_DIR}/Contents/${_dir}")
+            file(REMOVE_RECURSE "${BUNDLE_DIR}/Contents/${_dir}")
+        endif()
+    endforeach()
+
+    file(GLOB_RECURSE _unused_plugins
+        "${BUNDLE_DIR}/Contents/PlugIns/*vkb*"
+        "${BUNDLE_DIR}/Contents/PlugIns/*virtualkeyboard*"
+        "${BUNDLE_DIR}/Contents/PlugIns/*scene2d*"
+        "${BUNDLE_DIR}/Contents/PlugIns/*scene3d*"
+        "${BUNDLE_DIR}/Contents/PlugIns/*timeline*"
+        "${BUNDLE_DIR}/Contents/PlugIns/*statemachine*"
+        "${BUNDLE_DIR}/Contents/PlugIns/*qpdf*"
+        "${BUNDLE_DIR}/Contents/PlugIns/*pdf*")
+    foreach(_plugin IN LISTS _unused_plugins)
+        if(EXISTS "${_plugin}")
+            file(REMOVE "${_plugin}")
+        endif()
+    endforeach()
+    if(EXISTS "${BUNDLE_DIR}/Contents/PlugIns/multimedia")
+        file(REMOVE_RECURSE "${BUNDLE_DIR}/Contents/PlugIns/multimedia")
+    endif()
+
     roclint_run_deploy_step("codesign signing" codesign --force --deep --sign - "${BUNDLE_DIR}")
     roclint_run_deploy_step("codesign verification" codesign --verify --deep --strict "${BUNDLE_DIR}")
 
