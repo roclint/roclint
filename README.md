@@ -74,14 +74,6 @@ To verify existing local model files and checksums without downloading:
 python tools/download_all_models.py --verify
 ```
 
-### Why You Can Trust Roclint
-- **100% On-Device Local Inference:** Roclint is engineered from the ground up for strict privacy. Every phase of processing—keystroke observation, Stage 1 triage, data hazard policy scans, ambiguity clarification, and option rewrites—executes exclusively on your local CPU or Metal GPU. Not a single prompt, keystroke, or suggestion is ever sent over the internet or logged to an external cloud service.
-- **Auditable Open-Weight Checkpoints:** All models are public, verifiable models with strict SHA-256 integrity validation:
-  - **S1 Triage Scorer:** Julia Supersonic model (`SupersonicLabs/Julia-1`, ModernBERT FP32 safetensors, SHA-256: `df853bf7fe424420011f3d0c47a05d7341aa9eefa7fb9f203ea4aada4ad95b72`).
-  - **S2 Decision & Rewrite Engine:** IBM Granite 4.2 3B Instruct (`granite-4.2-3b-instruct.Q8_0.gguf` or `Q4_K_M`, verified against `app/runtime/granite-models.json`).
-- **Native Apple Silicon Metal Acceleration:** On Apple Silicon Macs, the native Granite runtime leverages Apple Metal with unified memory and Accelerate BLAS for instant sub-second responses without cloud latency.
-- **Isolated SQLite Storage:** All user history, reviews, and approval audit trails are stored in an on-device local SQLite database (`~/Library/Application Support/roclint/Roclint/history.db` on macOS or `%LOCALAPPDATA%/roclint/Roclint/history.db` on Windows) that remains under your full ownership.
-
 ### Model Architecture & Runtime Details
 
 1. Native Granite uses pinned **Granite 4.2 3B** weights with the packaged llama.cpp helper. The user-selected default is **Q8_0**. Choose **Native Granite** in Settings, explicitly download the pinned model, or select its verified local folder. Q4_K_M and Q5_K_M remain available for explicit development comparisons. **Load model** verifies and warms it; Analyze also warms it on first use. Q8_0 is the default; model-quality and release acceptance remain open. See [native runtime](docs/NATIVE_GRANITE.md). **Ollama development** retains the legacy adapter, installed-model tools and local GGUF import; the current S1-first generative workflow requires pinned Native Granite.
