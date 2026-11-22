@@ -41,7 +41,7 @@ Window {
     readonly property color inputBgColor: theme.inset
     readonly property color shadowColor: "#030918"
 
-    // Active Navigation Tab Index (0: Models & Rewrite, 1: Integration & Theme, 2: SQLite History)
+    // Active Navigation Tab Index (0: Models & Rewrite, 1: Integration & Theme, 2: Prompt History)
     property int currentTab: 0
 
     readonly property string scorerMode: (typeof hostController !== "undefined" ? (hostController.scorerEngine === "JULIA_LOCAL" ? "julia" : "jev") : "julia")
@@ -311,7 +311,7 @@ Window {
                                 model: [
                                     { index: 0, tag: "01", label: qsTr("Models & Rewrite") },
                                     { index: 1, tag: "02", label: qsTr("Integration & Theme") },
-                                    { index: 2, tag: "03", label: qsTr("SQLite History") },
+                                    { index: 2, tag: "03", label: qsTr("Prompt History") },
                                     { index: 3, tag: "04", label: qsTr("Prompt Actions Guide") }
                                 ]
 
@@ -1183,7 +1183,7 @@ Window {
                                 spacing: 14
 
                                 Text {
-                                    text: qsTr("SQLite History & Prompt Lineage")
+                                    text: qsTr("Prompt History & Lineage")
                                     font.family: dashboardWindow.sansFont
                                     font.pixelSize: 18
                                     font.weight: Font.DemiBold
@@ -1206,7 +1206,7 @@ Window {
                                         spacing: 10
 
                                         Text {
-                                            text: qsTr("SQLite Database Status · WAL Mode ACID Storage")
+                                            text: qsTr("Local Database Status · WAL Mode ACID Storage")
                                             font.family: dashboardWindow.sansFont
                                             font.pixelSize: 13
                                             font.weight: Font.DemiBold
@@ -1603,7 +1603,7 @@ Window {
                                                 Text {
                                                     text: histFilterInput.text.length > 0
                                                         ? qsTr("No prompt sessions match '%1'").arg(histFilterInput.text)
-                                                        : qsTr("No prompt sessions recorded yet in SQLite history.")
+                                                        : qsTr("No prompt sessions recorded yet in history.")
                                                     font.family: dashboardWindow.sansFont
                                                     font.pixelSize: 13
                                                     font.weight: Font.Medium
