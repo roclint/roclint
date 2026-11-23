@@ -1,11 +1,14 @@
 """Run 2026 Vibe Coding vs SWE Prompts through Roclint's Production S1 Triage Engine."""
 import json
+import os
 import time
 from pathlib import Path
 import importlib.util
 
+ROOT = Path(__file__).resolve().parent.parent
+
 def load_worker():
-    spec_path = Path("/Users/jesse/roclint/app/runtime/julia_worker.py")
+    spec_path = ROOT / "app" / "runtime" / "julia_worker.py"
     spec = importlib.util.spec_from_file_location("julia_worker", spec_path)
     worker = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(worker)
@@ -13,7 +16,7 @@ def load_worker():
 
 def main():
     worker = load_worker()
-    model_dir = Path("/Users/jesse/models/s1")
+    model_dir = Path(os.getenv("ROCLINT_MODEL_DIR", str(ROOT / "models" / "granite-4.2-3b")))
     engine = worker.load(model_dir)
 
     test_cases = [
@@ -160,7 +163,8 @@ def main():
     print("-" * 110)
 
     # Save to disk
-    out_file = Path("/Users/jesse/roclint/build/roclint_test_run.json")
+    out_file = ROOT / "build" / "roclint_test_run.json"
+    out_file.parent.mkdir(parents=True, exist_ok=True)
     out_file.write_text(json.dumps(results, indent=2))
     print(f"\nSaved test artifact to {out_file}")
 

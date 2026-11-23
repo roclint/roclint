@@ -23,7 +23,7 @@ if str(ROOT) not in sys.path:
 
 MODEL_DIR = Path.home() / "Library" / "Application Support" / "roclint" / "Roclint" / "models" / "embedding"
 WORKER_PATH = ROOT / "app" / "runtime" / "embedding_worker.py"
-PYTHON_BIN = Path("/Users/jesse/.unsloth/studio/unsloth_studio/bin/python3")
+PYTHON_BIN = Path(os.getenv("PYTHON_BIN", sys.executable))
 
 def run_retrieval_mutation_test():
     print("=" * 60)

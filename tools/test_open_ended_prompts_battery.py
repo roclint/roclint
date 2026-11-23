@@ -12,13 +12,14 @@ import json
 import time
 import hashlib
 import sys
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 WORKER_BIN = str(ROOT / "build" / "roclint_granite_worker")
 CONTRACTS_BIN = str(ROOT / "build" / "roclint_granite_contracts")
-BUILDER_BIN = "/Users/jesse/.gemini/antigravity/brain/8b9565d1-f062-445f-b9f2-18f892ffa8b4/scratch/roclint_prompt_builder"
-MODEL_DIR = "/Users/jesse/roclint_notes/2026-10-31-final-mac-143729/recovery/dependencies/models-s2"
+BUILDER_BIN = os.getenv("ROCLINT_BUILDER_BIN", str(ROOT / "build" / "roclint_prompt_builder"))
+MODEL_DIR = os.getenv("ROCLINT_MODEL_DIR", str(ROOT / "models" / "granite-4.2-3b"))
 
 PROMPTS = [
     {

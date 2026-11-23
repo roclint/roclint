@@ -28,7 +28,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 BUILD_DIR = ROOT / "build"
 WORKER_BIN = str(BUILD_DIR / "roclint_granite_worker")
-MODEL_DIR = "/Users/jesse/roclint_notes/2026-10-31-final-mac-143729/recovery/dependencies/models-s2"
+MODEL_DIR = os.getenv("ROCLINT_MODEL_DIR", str(ROOT / "models" / "granite-4.2-3b"))
 
 TEST_CASES = [
     # ---------------------------------------------------------
@@ -424,7 +424,9 @@ def main():
     # Helper to call compiled C++ prompt builder
     builder_bin = ROOT / "scratch" / "roclint_prompt_builder"
     if not builder_bin.exists():
-        builder_bin = Path("/Users/jesse/.gemini/antigravity/brain/8b9565d1-f062-445f-b9f2-18f892ffa8b4/scratch/roclint_prompt_builder")
+        builder_bin = BUILD_DIR / "tools" / "roclint_prompt_builder"
+    if not builder_bin.exists():
+        builder_bin = BUILD_DIR / "roclint_prompt_builder"
     def get_prompt_instructions(prompt_str):
         p = subprocess.run([str(builder_bin), "discovery", prompt_str], capture_output=True, text=True)
         return p.stdout
