@@ -2,7 +2,7 @@
   "tool": "built-in image_gen imagegen",
   "mode": "reference extraction with edge-quality edit",
   "reference": "docs/research/roclint-ux-2026-11-05-approved-rounded-roc-long-prompt.png",
-  "generated_source": "C:/Users/kirby/.codex/generated_images/01a1b788-effc-7713-a375-3a156bf15cf5/exec-a0f2a11a-bc02-4b5a-b937-c4485c470177.png",
+  "generated_source": "assets/generated_images/01a1b788-effc-7713-a375-3a156bf15cf5/exec-a0f2a11a-bc02-4b5a-b937-c4485c470177.png",
   "output": "app/qml/shell/assets/roc-mark.png",
   "width": 1330,
   "height": 1182,

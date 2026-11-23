@@ -1,7 +1,0 @@
-# Antigravity and ChatGPT rewrite session report
-
-On November 19, a macOS user switched between two open reviews. In Antigravity, the composer asked for a retro-console website. Its rewrite card showed text from Roclint’s Granite rewrite instructions. In ChatGPT, the rewrite of the user’s report changed “Roclint” to “RCLint” and made concurrent execution sound like the purpose of clicking an option. The user wanted the option accepted immediately, with execution queued when the model was busy. The screenshots do not establish memory pressure or a result crossing session boundaries.
-
-The current scheduler runs one field’s model work at a time. The acceptance check is to hold one editor’s review open, choose an answer in the other, and verify which field receives it after the worker becomes available. Editing the waiting draft must invalidate its pending answer. A returned rewrite that copies the reported instruction text should fail validation before preview. Semantic fidelity of free-form paraphrases still needs evaluation with the live model.
-
-The later ChatGPT insertion report showed a checked open-question item alongside a separate wording finding. The footer still offered “Resolve checks” and the count showed zero decisions. The rewrite added a request to explain the resume buttons. The author should be able to confirm that meaning explicitly when the reviewer quotes the original draft. An unanswered question should never display its internal group ID as the author’s answer.

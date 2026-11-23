@@ -39,13 +39,13 @@ void testBoxedInputWithBorders() {
 }
 
 void testShellDollarPrompt() {
-    const QString buffer = QStringLiteral("total 4\ndrwxr-xr-x 2 kirby\nkirby@box:~/src$ codex \"add caching\"");
+    const QString buffer = QStringLiteral("total 4\ndrwxr-xr-x 2 dev\ndev@box:~/src$ codex \"add caching\"");
     ROCLINT_CHECK(draftOf(buffer) == "codex \"add caching\"");
     std::cout << "  [PASS] Shell '$' prompt with a path prefix.\n";
 }
 
 void testPowerShellAngleAndInlineGreaterThan() {
-    const QString buffer = QStringLiteral("PS C:\\Users\\kirby> echo a > out.txt");
+    const QString buffer = QStringLiteral("PS C:\\Users\\developer> echo a > out.txt");
     ROCLINT_CHECK(draftOf(buffer) == "echo a > out.txt");
     std::cout << "  [PASS] The first delimiter on the line wins; '>' inside the draft is kept.\n";
 }

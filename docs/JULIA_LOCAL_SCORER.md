@@ -26,8 +26,8 @@ Build the `roclint_host` CMake target and run `build/Release/roclint_host.exe`.
 Prepared local paths:
 
 ```text
-Python: D:\Stardust\roclint\build\runtime\julia-python\Scripts\python.exe
-Model:  C:\Users\kirby\AppData\Local\roclint\Roclint\models\julia-1
+Python: build\runtime\julia-python\Scripts\python.exe
+Model:  models\julia-1
 ```
 
 The Python environment isolates `transformers==5.0.0` while reusing this machine's installed PyTorch and other dependencies. It is a development environment, not a redistributable installation. The helper is copied beside the executable under `runtime/` during each host build. Runtime lookup first tries an application-local Python installation, then the development environment, then PATH. Settings preserve explicit Python and model-directory choices.

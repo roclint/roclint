@@ -53,3 +53,10 @@ roclint_card_render.png
 # Local agent coordination and root-level CTest run logs; retain locally, exclude from source delivery.
 /.agents/
 /Testing/
+
+# Exclude internal research, audit evidence, plans, and raw images from public repository
+docs/audit/
+docs/research/
+docs/archive/
+docs/plans/
+docs/images/

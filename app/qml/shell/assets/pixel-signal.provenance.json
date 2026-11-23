@@ -2,7 +2,7 @@
   "tool": "built-in image_gen imagegen",
   "mode": "reference extraction/recreation",
   "reference": "docs/research/roclint-ux-2026-11-05-approved-rounded-roc-long-prompt.png",
-  "generated_source": "C:/Users/kirby/.codex/generated_images/01a1b788-effc-7713-a375-3a156bf15cf5/exec-3c64ca7d-0acb-4f72-89cb-58fb518393fe.png",
+  "generated_source": "assets/generated_images/01a1b788-effc-7713-a375-3a156bf15cf5/exec-3c64ca7d-0acb-4f72-89cb-58fb518393fe.png",
   "output": "app/qml/shell/assets/pixel-signal.png",
   "width": 2172,
   "height": 724,
